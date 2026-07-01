@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Darkmoon MCP — Complete Architecture &amp; Pentesting Analysis Report</title>
+<style>
+  :root {
+    --bg: #0a0e1a;
+    --surface: #111627;
+    --surface2: #182044;
+    --border: #2a3366;
+    --accent: #7c5cfc;
+    --accent2: #5a3fd4;
+    --text: #e8e6f0;
+    --text2: #9895b0;
+    --green: #4ade80;
+    --yellow: #facc15;
+    --orange: #fb923c;
+    --red: #f87171;
+    --blue: #60a5fa;
+    --purple: #c084fc;
+    --cyan: #22d3ee;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+  .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+  header { background: linear-gradient(135deg, #1a1040, #0a0e1a); border-bottom: 3px solid var(--accent); padding: 40px 0 30px; text-align: center; }
+  header h1 { font-size: 2.4rem; color: var(--accent); }
+  header .subtitle { color: var(--text2); font-size: 1.1rem; margin-top: 8px; }
+  header .badge { display: inline-block; background: var(--accent2); color: #fff; padding: 3px 12px; border-radius: 12px; font-size: 0.8rem; margin-top: 10px; }
+  section { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; margin: 24px 0; padding: 28px 32px; }
+  section h2 { font-size: 1.6rem; color: var(--accent); border-bottom: 2px solid var(--border); padding-bottom: 12px; margin-bottom: 20px; }
+  section h3 { font-size: 1.2rem; color: var(--yellow); margin: 20px 0 10px; }
+  section h4 { font-size: 1.05rem; color: var(--blue); margin: 16px 0 8px; }
+  p { margin-bottom: 12px; }
+  .diagram { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin: 16px 0; overflow-x: auto; font-family: 'Consolas', 'Courier New', monospace; font-size: 0.82rem; line-height: 1.5; white-space: pre; color: #c9d1d9; }
+  .hl-a { color: var(--accent); } .hl-b { color: var(--blue); } .hl-g { color: var(--green); }
+  .hl-y { color: var(--yellow); } .hl-p { color: var(--purple); } .hl-o { color: var(--orange); } .hl-r { color: var(--red); } .hl-c { color: var(--cyan); }
+  .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin: 16px 0; }
+  .card { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 18px; }
+  .card h4 { margin-top: 0; }
+  .card .label { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; margin-bottom: 8px; }
+  .l-g { background: #0a2e1a; color: var(--green); } .l-r { background: #2e0a0a; color: var(--red); }
+  .l-y { background: #2e2a0a; color: var(--yellow); } .l-b { background: #0a1a2e; color: var(--blue); }
+  .l-p { background: #1a0a2e; color: var(--purple); } .l-c { background: #0a2e2e; color: var(--cyan); }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 0.9rem; }
+  th, td { border: 1px solid var(--border); padding: 10px 14px; text-align: left; }
+  th { background: var(--surface2); color: var(--accent); font-weight: 600; }
+  tr:nth-child(even) { background: var(--surface2); }
+  ul, ol { margin: 8px 0 16px 24px; } li { margin-bottom: 6px; }
+  .score-bar { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+  .score-bar .bar { flex: 1; height: 10px; background: var(--surface2); border-radius: 5px; overflow: hidden; }
+  .score-bar .fill { height: 100%; border-radius: 5px; }
+  .score-bar .lb { width: 110px; font-size: 0.85rem; }
+  .score-bar .pct { width: 40px; text-align: right; font-size: 0.85rem; font-weight: 600; }
+  .s-crit { color: var(--red); font-weight: 700; } .s-high { color: var(--orange); font-weight: 600; }
+  .s-med { color: var(--yellow); } .s-low { color: var(--blue); }
+  footer { text-align: center; color: var(--text2); font-size: 0.85rem; padding: 30px 0 20px; border-top: 1px solid var(--border); margin-top: 40px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="container">
+    <div class="badge">Deep Analysis Report v1.0</div>
+    <h1>Darkmoon MCP</h1>
+    <div class="subtitle">Complete Architecture, Autonomous Pentesting Capability &amp; Gap Analysis</div>
+    <div style="margin-top:12px;color:var(--text2);font-size:0.85rem;">Repository: ASCIT31/Dark-Moon | License: GPLv3 | AI-Native | Multi-Agent | ISO 27001 / NIST / MITRE</div>
+  </div>
+</header>
+<div class="container">
+
+<section>
+  <h2>Table of Contents</h2>
+  <ol style="columns:2;column-gap:40px;">
+    <li><a href="#arch" style="color:var(--blue);">Architecture Overview — AI-Native Multi-Agent Design</a></li>
+    <li><a href="#workflow" style="color:var(--blue);">Working Paths / Workflow</a></li>
+    <li><a href="#arch-sw" style="color:var(--blue);">Architecture: Strengths &amp; Weaknesses</a></li>
+    <li><a href="#pentest-sw" style="color:var(--blue);">Pentesting Performance: Strengths &amp; Weaknesses</a></li>
+    <li><a href="#detailed" style="color:var(--blue);">Detailed Capability Breakdown</a></li>
+    <li><a href="#agents" style="color:var(--blue);">AI Agent Ecosystem (18 Agents)</a></li>
+    <li><a href="#comparison" style="color:var(--blue);">Three-Way Comparison: Darkmoon vs HexStrike vs pentestMCP</a></li>
+    <li><a href="#verdict" style="color:var(--blue);">Final Verdict</a></li>
+  </ol>
+</section>
+
+<section id="arch">
+  <h2>1. Architecture Overview — AI-Native Multi-Agent Design</h2>
+  <p>Darkmoon is fundamentally different from HexStrike and pentestMCP. Where those tools are <strong>tool dispensers</strong> (expose CLI tools as MCP functions and push all orchestration to the client AI), Darkmoon is a <strong>complete autonomous platform</strong> with its own AI brain, multi-agent subsystem, live dashboard, and CI/CD integration.</p>
+
+  <h3>1.1 Architecture Diagram (Source-Verified)</h3>
+  <div class="diagram">┌─────────────────────────────────────────────────────────────────────────┐
+│                      Darkmoon Platform Architecture                         │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│  ┌─────────────────────────────────────────────────────────────────────┐ │
+│  │  User Interfaces                                                      │ │
+│  │  ───────────────                                                      │ │
+│  │  • darkmoon.sh CLI (docker compose exec)                              │ │
+│  │  • TUI Console (interactive terminal UI)                              │ │
+│  │  • GitHub Actions CI/CD pipeline                                     │ │
+│  │  • REST API (Darkmoon Dashboard)                                      │ │
+│  └─────────────────────────────────────────────────────────────────────┘ │
+│                                  │                                        │
+│  ┌──────────────────────────────▼──────────────────────────────────────┐ │
+│  │  1. OpenCode — The AI Brain (opencode container)                    │ │
+│  │  ───────────────────────────────────────                            │ │
+│  │  • Runs inside Docker (ascit/opencode-darkmoon-pro)                 │ │
+│  │  • Configurable LLM: Anthropic (Opus 4.6/4.7), OpenAI, OpenRouter,  │ │
+│  │    Ollama, llama.cpp (local models up to 671B MoE)                  │ │
+│  │  • Generates opencode.json + auth.json automatically                 │ │
+│  │  • Orchestrates full pentest campaign lifecycle                     │ │
+│  │  • Reactive loop: discover → model → dispatch agents → correlate    │ │
+│  └─────────────────────────────────────────────────────────────────────┘ │
+│                                  │                                        │
+│  ┌──────────────────────────────▼──────────────────────────────────────┐ │
+│  │  2. AI Agents — The Strategy Layer (18 specialized agents)          │ │
+│  │  ────────────────────────────────────────                          │ │
+│  │  Each agent is a markdown file with: metadata, execution rules,      │ │
+│  │  MCP call rules, capabilities, security constraints                  │ │
+│  │                                                                     │ │
+│  │  Web:         nodejs, php, flask, aspnet, springboot, ruby, graphql │ │
+│  │  CMS:         wordpress, drupal, joomla, magento, prestashop, moodle│ │
+│  │  Infra:       kubernetes, ad, headless-browser                      │ │
+│  │  Orchestrator: pentest-web (entrypoint agent)                       │ │
+│  │                                                                     │ │
+│  │  Agents are reactive — the orchestrator detects technology signals   │ │
+│  │  and dispatches the matching agent(s) in parallel or sequence.      │ │
+│  │  Cascade depth capped at 3 levels (no runaway recursion).           │ │
+│  └─────────────────────────────────────────────────────────────────────┘ │
+│                                  │                                        │
+│  ┌──────────────────────────────▼──────────────────────────────────────┐ │
+│  │  3. MCP Darkmoon — The Security Gatekeeper                          │ │
+│  │  ───────────────────────────────────────                            │ │
+│  │  • FastMCP-based Python MCP server                                  │ │
+│  │  • Exposes only explicitly authorized functions to the AI           │ │
+│  │  • All inputs/outputs strictly controlled and structured            │ │
+│  │  • AI NEVER gets a shell — only MCP tool calls                      │ │
+│  │  • Implements 6 workflows (port_scan, vulnerability_scan, etc.)     │ │
+│  │  • Implements 115 allowed-tool allowlist (via execute_command)      │ │
+│  │  • Dashboard integration (push findings, infra nodes, campaigns)    │ │
+│  └─────────────────────────────────────────────────────────────────────┘ │
+│                                  │                                        │
+│  ┌──────────────────────────────▼──────────────────────────────────────┐ │
+│  │  4. Darkmoon Toolbox — Docker Container (pentest tools)              │ │
+│  │  ────────────────────────────────────────                          │ │
+│  │  • Isolated Docker container with 50+ pre-compiled tools            │ │
+│  │  • Multi-stage build: builder stage compiles, runtime stage runs    │ │
+│  │  • Categories: port scanners (naabu,masscan), web (nuclei,httpx,    │ │
+│  │    ffuf,sqlmap,dirb,wafw00f,whatweb,cmseek,wpscan,finalrecon,      │ │
+│  │    lightpanda,vulnx,hydra,arjun), recon (subfinder,waybackurls,     │ │
+│  │    katana), AD/Win (netexec,bloodhound,60+ impacket scripts,       │ │
+│  │    mimikatz.py, kerberos, ldapdomaindump, smbexec, wmiexec, etc.), │ │
+│  │    K8s (kubectl,kubeletctl,kubescape), network (dig,nslookup,       │ │
+│  │    curl,wget), CMS (wpscan,cmseek), misc (hashcat,sqlmap,jq,etc.)  │ │
+│  └─────────────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────┘</div>
+
+  <h3>1.2 Deployment Architecture</h3>
+  <div class="diagram">Host Machine
+├── Docker Compose Stack
+│   ├── Container 1: opencode (ascit/opencode-darkmoon-pro)
+│   │   ├── OpenCode AI Brain
+│   │   ├── AI Agents (18 markdown files)
+│   │   ├── MCP Client (connects to MCP Server)
+│   │   └── Volume: darkmoon-settings (config persistence)
+│   │
+│   ├── Container 2: darkmoon-toolbox (ascit/darkmoon)
+│   │   ├── MCP Server (Python FastMCP)
+│   │   ├── 115+ allowed tools (pre-compiled)
+│   │   ├── 6 MCP Workflows (orchestrated multi-tool)
+│   │   ├── Wordlists (/usr/share/wordlists/)
+│   │   └── Impacket 0.12.0 (full install)
+│   │
+│   └── Shared volumes:
+│       ├── ./darkmoon-settings → /root/.config/opencode/
+│       ├── ./darkmoon-settings → /root/.local/share/opencode/
+│       └── ./darkmoon-settings/agents → /root/.opencode/agents/
+│
+├── LLM Connection (outbound to API or local)
+│   ├── Cloud: Anthropic / OpenAI / OpenRouter (API key in .opencode.env)
+│   └── Local: Ollama / llama.cpp on host (OPENCODE_LOCAL_MODE=true)
+│
+└── darkmoon.sh (CLI wrapper, docker compose exec) or TUI</div>
+
+  <h3>1.3 Key Architectural Innovations</h3>
+  <ul>
+    <li><strong>Security by Design — AI Never Gets a Shell:</strong> The AI (OpenCode) can <em>only</em> call MCP functions. It cannot execute arbitrary commands, read arbitrary files, or access the network outside defined workflows. This is enforced at the protocol level — not by policy or convention. "The AI reasons and plans. The MCP controls what can be executed."</li>
+    <li><strong>Reactive Multi-Agent System:</strong> Unlike pentestMCP's flat tool list or HexStrike's hardcoded if/else "engine," Darkmoon uses 18 specialized AI agents, each with its own prompt, methodology, and toolset. The orchestrator detects technology signals (e.g., "Apache + PHP detected") and dispatches the matching agent (e.g., "WordPress agent"). If new signals appear mid-scan (e.g., a WordPress plugin exposes a GraphQL endpoint), new agents are dispatched reactively.</li>
+    <li><strong>Live Dashboard:</strong> Darkmoon has a real-time dashboard API (init_campaign, push_finding, push_infra_node, finalize_campaign) that provides session visibility. No other MCP pentesting tool has this.</li>
+    <li><strong>CI/CD Native:</strong> Ships with a GitHub Actions workflow that runs autonomous pentests as part of the build pipeline. Results uploaded as artifacts.</li>
+    <li><strong>Methodology-Aligned:</strong> Assessments follow ISO 27001, NIST SP 800-115, and MITRE ATT&CK. Findings are mapped to these frameworks — not just CVSS.</li>
+  </ul>
+
+  <h3>1.4 MCP Server Implementation Details</h3>
+  <p>The MCP server running in the toolbox container exposes <strong>6 structured workflows</strong> and <strong>115+ individual tools</strong> via <code>execute_command</code>. Workflows are Python files implementing multi-tool orchestration with structured output schemas. Individual tools run via subprocess inside the toolbox container.</p>
+  <table>
+    <tr><th>MCP Layer</th><th>Count</th><th>Notes</th></tr>
+    <tr><td>Structured Workflows</td><td>6</td><td>Port scan, vulnerability scan, subdomain discovery, web crawl, AD enum, K8s audit</td></tr>
+    <tr><td>Allowed Individual Tools</td><td>115</td><td>Strict allowlist; anything not in the list is rejected</td></tr>
+    <tr><td>Dashboard Functions</td><td>7</td><td>get_session, init_campaign, push_finding, push_infra_node, finalize, health_check, diagnose</td></tr>
+    <tr><td>Tool Categories</td><td>7</td><td>Port scanners, web, recon, DNS, AD/Windows, K8s, misc</td></tr>
+  </table>
+</section>
+
+<section id="workflow">
+  <h2>2. Working Paths / Workflow</h2>
+
+  <h3>2.1 Autonomous Pentest Campaign Lifecycle</h3>
+  <div class="diagram">╔══════════════════════════════════════════════════════════════════════╗
+║              Darkmoon Autonomous Pentest Campaign Flow                  ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────┐
+│  PHASE 0: User Input                                                 │
+│  ─────────────────────                                                 │
+│  darkmoon "TARGET: http://target.com"                                  │
+│  Optional flags: PROGRAM, FOCUS, EXCLUDE, CREDS, TOKEN, NOISE, etc.   │
+└──────────────────────────┬──────────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  PHASE 1: Campaign Initialization (darkmoon_get_session)             │
+│  ─────────────────────────────────────────────                        │
+│  • Create session_id                                                 │
+│  • Initialize campaign via dashboard (darkmoon_dashboard_init)       │
+│  • Build target model                                                │
+│  • Return monitoring command: darkmoon.sh --log &lt;session_id&gt;       │
+└──────────────────────────┬──────────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  PHASE 2: Environmental Discovery (Recon)                            │
+│  ─────────────────────────────────────                                │
+│                                                                       │
+│  Step 2a: Port Scan (workflow: port_scan)                             │
+│  └─ naabu -host target -top-ports 100 → discovers open ports         │
+│                                                                       │
+│  Step 2b: HTTP Service Probing                                        │
+│  └─ httpx -probe -tech-detect -status-code → technology detection    │
+│                                                                       │
+│  Step 2c: Technology Fingerprinting                                   │
+│  └─ whatweb target → Server, X-Powered-By, framework detection        │
+│  └─ curl -sI → security headers, server version                       │
+│  └─ wafw00f target → WAF detection                                   │
+│                                                                       │
+│  Step 2d: Subdomain Discovery (workflow: subdomain_discovery)         │
+│  └─ subfinder -d domain → discover subdomains                         │
+│  └─ httpx -l subdomains.txt → verify live hosts                       │
+│                                                                       │
+│  Step 2e: Web Crawling (workflow: web_crawler)                        │
+│  └─ katana -u target -jc -kf robotstxt,sitemapxml → discover URLs    │
+│  └─ waybackurls domain → historical URL discovery                     │
+│                                                                       │
+│  OUTPUT: Technology Profile + Attack Surface Model                    │
+│  └─ e.g., "Apache/2.4.38, PHP/7.1.33, WordPress 5.x detected"        │
+└──────────────────────────┬──────────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  PHASE 3: Technology Classification & Agent Dispatch                 │
+│  ────────────────────────────────────────────                        │
+│                                                                       │
+│  Orchestrator analyzes technology profile and dispatches agents:      │
+│                                                                       │
+│  Signal Detected           → Agent(s) Dispatched                      │
+│  ──────────────              ───────────────────                      │
+│  Apache + PHP + WP         → wordpress (CMS scanner)                   │
+│  Node.js + Express         → nodejs                                   │
+│  GraphQL endpoint          → graphql                                  │
+│  Flask/Django              → flask                                    │
+│  ASP.NET                   → aspnet                                   │
+│  Java Spring Boot          → springboot                               │
+│  Ruby/Rails                → ruby                                     │
+│  WordPress plugins found   → wordpress (deep)                          │
+│  Port 445 open             → ad (Active Directory)                     │
+│  Kubernetes API            → kubernetes                                │
+│  SPA detected (React/Ang)  → headless-browser                         │
+│  CMS but not WP            → drupal/joomla/magento/prestashop/moodle   │
+│                                                                       │
+│  Agents run in PARALLEL if multiple technologies detected.             │
+│  Cascade depth MAX 3 (no infinite loops).                             │
+└──────────────────────────┬──────────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  PHASE 4: Vulnerability Discovery & Exploitation (Per Agent)         │
+│  ────────────────────────────────────────────────                    │
+│                                                                       │
+│  Each specialized agent runs its own methodology:                    │
+│                                                                       │
+│  WordPress Agent:                                                     │
+│  └─ wpscan --url target --enumerate vp,vt,u --plugins-version-detection │
+│  └─ nuclei -t cves/wordpress/ -u target                              │
+│  └─ Check wp-config.php backup, xmlrpc.php abuse                     │
+│                                                                       │
+│  AD Agent:                                                            │
+│  └─ netexec smb target -u '' -p '' → anonymous access check           │
+│  └─ bloodhound-python -d domain -u user -p pass -c All               │
+│  └─ impacket-GetNPUsers → AS-REP roasting                             │
+│  └─ impacket-GetUserSPNs → Kerberoasting                              │
+│  └─ impacket-secretsdump → DCSync                                     │
+│                                                                       │
+│  GraphQL Agent:                                                       │
+│  └─ Introspection query → dump schema                                 │
+│  └─ Test query depth, batching, auth bypass                           │
+│                                                                       │
+│  NodeJS Agent:                                                        │
+│  └─ nuclei -t tech/nodejs/                                           │
+│  └─ Check for exposed .env, debug endpoints                           │
+│                                                                       │
+│  K8s Agent:                                                           │
+│  └─ kubescape scan --framework nsa                                    │
+│  └─ kubeletctl check → anonymous kubelet access                      │
+│  └─ kubectl auth-check → RBAC analysis                                │
+│                                                                       │
+│  Common: workflow: vulnerability_scan (nuclei)                         │
+│  └─ nuclei -u target -t cves/ -severity critical,high                 │
+│  └─ nuclei -l targets.txt -t exposures/                              │
+└──────────────────────────┬──────────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  PHASE 5: Evidence-Based Finding Generation                          │
+│  ──────────────────────────────────────                              │
+│                                                                       │
+│  Each finding requires:                                               │
+│  • HTTP request used                                                  │
+│  • Payload sent                                                       │
+│  • Raw response received                                              │
+│  • Extracted data or PoC execution evidence                           │
+│                                                                       │
+│  Status options:                                                      │
+│  └─ EXPLOITED → Confirmed with reproducible proof                    │
+│  └─ CONFIRMED → Validated, review recommended                        │
+│  └─ UNCONFIRMED → Signal detected, needs human verification          │
+│                                                                       │
+│  Findings pushed to dashboard in real-time:                           │
+│  └─ darkmoon_dashboard_push_finding(...)                              │
+└──────────────────────────┬──────────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  PHASE 6: Campaign Finalization & Report                             │
+│  ──────────────────────────────────────                              │
+│                                                                       │
+│  Conditions to end:                                                   │
+│  • No new technology signals appear                                   │
+│  • All relevant agents have executed                                  │
+│  • Attack surface coverage is sufficient                              │
+│                                                                       │
+│  Actions:                                                             │
+│  └─ darkmoon_dashboard_finalize_campaign(...)                         │
+│  └─ Generate structured markdown report                               │
+│  └─ Push to /root/.local/share/opencode/reports/                     │
+│  └─ (CI/CD: docker cp → GitHub Artifact)                             │
+│                                                                       │
+│  Report includes:                                                     │
+│  • Discovered technologies & attack surface                           │
+│  • Validated vulnerabilities with evidence                            │
+│  • Risk classification (ISO 27001 / NIST / MITRE ATT&CK mapping)      │
+│  • Infrastructure node graph                                          │
+│  • Executive summary                                                  │
+└─────────────────────────────────────────────────────────────────────┘</div>
+
+  <h3>2.2 Workflow-Level Flow (MCP Server)</h3>
+  <p>The 6 MCP workflows provide structured, multi-step operations that return JSON output. The AI orchestrator calls these instead of raw tools for common patterns.</p>
+
+  <div class="diagram">┌──────────────────────────────────────────────────────────────┐
+│           Darkmoon MCP Workflow Execution Pattern              │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│  AI Agent → run_workflow("port_scan", "scan_ports", {...})    │
+│                                                              │
+│  MCP Server:                                                  │
+│  1. Parses target, selects top_ports                           │
+│  2. Runs naabu → port discovery                               │
+│  3. For each HTTP port, runs httpx → service detection         │
+│  4. Aggregates results into structured JSON                    │
+│  5. Returns: {workflow, steps, summary, has_errors}            │
+│                                                              │
+│  AI Agent receives structured output:                         │
+│  {                                                             │
+│    "workflow": "scan_ports",                                   │
+│    "target": "172.20.0.4",                                     │
+│    "steps": { "port_scan": {...}, "http_services": {...} },    │
+│    "summary": { "total_ports": 5, "hosts_scanned": 1, ... }   │
+│  }                                                             │
+│                                                              │
+│  → AI decides next step based on structured output            │
+└──────────────────────────────────────────────────────────────┘</div>
+</section>
+
+<section id="arch-sw">
+  <h2>3. Architecture: Strengths &amp; Weaknesses</h2>
+
+  <div class="card-grid">
+    <div class="card">
+      <span class="label l-g">STRENGTH</span>
+      <h4>True AI-Native Architecture</h4>
+      <p>Darkmoon is the <em>only</em> MCP pentesting tool with genuine AI in the loop. The AI brain (OpenCode) plans strategy, dispatches specialized agents, and correlates results. Neither HexStrike (heuristic if/else) nor pentestMCP (zero AI) approach this.</p>
+    </div>
+    <div class="card">
+      <span class="label l-g">STRENGTH</span>
+      <h4>Multi-Agent Subsystem (18 Agents)</h4>
+      <p>18 specialized agents with individual prompts, rules, and tool sets. The orchestrator detects technology signals and dispatches matching agents reactively — including parallel dispatch and cascade depth control (max 3).</p>
+    </div>
+    <div class="card">
+      <span class="label l-g">STRENGTH</span>
+      <h4>Security by Design — MCP Gatekeeper</h4>
+      <p>"The AI never directly touches the system." All actions must pass through the MCP layer's strict allowlist (115 tools + 6 workflows). The AI cannot execute arbitrary commands, read files, or access the network — only call approved MCP functions.</p>
+    </div>
+    <div class="card">
+      <span class="label l-g">STRENGTH</span>
+      <h4>Live Dashboard + CI/CD Native</h4>
+      <p>Real-time campaign visibility via the Darkmoon Dashboard API (init, push findings, push infra nodes, finalize). Ships with a ready-made GitHub Actions CI pipeline. No other MCP tool has this.</p>
+    </div>
+    <div class="card">
+      <span class="label l-g">STRENGTH</span>
+      <h4>Methodology-Aligned Reporting</h4>
+      <p>Findings mapped to ISO 27001, NIST SP 800-115, and MITRE ATT&CK by default. Evidence-based findings (EXPLOITED/CONFIRMED/UNCONFIRMED). Infrastructure node graph for attack path visualization.</p>
+    </div>
+    <div class="card">
+      <span class="label l-g">STRENGTH</span>
+      <h4>Incredible LLM Model Support</h4>
+      <p>Supports Anthropic (Opus, Sonnet), OpenAI, OpenRouter, Ollama, llama.cpp, and custom Anthropic-compatible endpoints. Local models up to DeepSeek-V3.2 (671B MoE) and GLM-4.6 (357B MoE). GPU passthrough for NVIDIA and AMD.</p>
+    </div>
+    <div class="card">
+      <span class="label l-g">STRENGTH</span>
+      <h4>Broadest Pentesting Coverage (of all MCP tools)</h4>
+      <p>115+ tools across 7 categories: web (14 tools), AD/Windows (60+ impacket scripts + netexec + bloodhound), K8s (3 tools), network, DNS, port scanning, recon. Covers web, CMS, AD, K8s, network, and OSINT.</p>
+    </div>
+    <div class="card">
+      <span class="label l-r">WEAKNESS</span>
+      <h4>Requires Frontier LLM to Be Effective</h4>
+      <p>Darkmoon explicitly states that small models (7B, 13B, 20B) "will not finish a real campaign." The recommended setup is Claude Opus 4.6/4.7 or equivalent frontier models (DeepSeek-V3.2, Kimi-K2, GLM-4.6). This means $10-25+ per scan in API costs, or a multi-GPU workstation for local models.</p>
+    </div>
+    <div class="card">
+      <span class="label l-r">WEAKNESS</span>
+      <h4>No Binary Exploitation</h4>
+      <p>Despite having 115+ tools, there are zero binary exploitation tools: no Ghidra, GDB, ROPgadget, Pwntools, angr, or reverse engineering tools. The toolbox is missing an entire domain that HexStrike covers.</p>
+    </div>
+    <div class="card">
+      <span class="label l-r">WEAKNESS</span>
+      <h4>No Cloud Pentesting Tools</h4>
+      <p>No AWS/Azure/GCP specific tools. No ScoutSuite, Prowler, Pacu, CloudMapper, or Trivy for cloud configuration review. K8s is covered (kubectl, kubeletctl, kubescape), but cloud IAM/S3/storage is not.</p>
+    </div>
+    <div class="card">
+      <span class="label l-r">WEAKNESS</span>
+      <h4>No Mobile Testing</h4>
+      <p>No Android/iOS testing capability. No MobSF, objection, Frida, or APK analysis.</p>
+    </div>
+    <div class="card">
+      <span class="label l-r">WEAKNESS</span>
+      <h4>No Python/Ruby/Node Scripting Inside Container</h4>
+      <p>The MCP gatekeeper blocks <code>python3</code>, <code>node</code>, <code>npm</code>, and general scripting. While this is intentional for security, it means custom exploit scripts cannot run through the MCP layer. The AI can only call pre-installed tools.</p>
+    </div>
+    <div class="card">
+      <span class="label l-y">MIXED</span>
+      <h4>MCP Tool Allowlist is a Static List</h4>
+      <p>The 115-tool allowlist is static — new tools require a PR to the Docker image and an update to the allowlist. Compare to pentestMCP's approach where any tool can be added by writing a wrapper. However, this is by design for security.</p>
+    </div>
+    <div class="card">
+      <span class="label l-y">MIXED</span>
+      <h4>Docker-Compose Heavy Deployment</h4>
+      <p>Requires docker-compose with two containers, shared volumes, GPU passthrough configuration, and a complex install.sh script. Not as simple as pentestMCP's single <code>docker run</code> or HexStrike's <code>pip install</code>. But the complexity buys multi-container isolation and CI/CD integration.</p>
+    </div>
+  </div>
+</section>
+
+<section id="pentest-sw">
+  <h2>4. Pentesting Performance: Strengths &amp; Weaknesses</h2>
+
+  <div class="card-grid">
+    <div class="card">
+      <span class="label l-g">STRENGTH</span>
+      <h4>Best Web + CMS Coverage</h4>
+      <p>14 web tools (nuclei, httpx, ffuf, sqlmap, wpscan, cmseek, whatweb, wafw00f, arjun, dirb, hydra, finalrecon, lightpanda, vulnx) plus 7 CMS-specific agents. Covers the widest range of web technologies of any MCP tool.</p>
+    </div>
+    <div class="card">
+      <span class="label l-g">STRENGTH</span>
+      <h4>Best AD Coverage (60+ Impacket Scripts)</h4>
+      <p>60+ impacket-based tools + netexec + bloodhound-python + ldapdomaindump + mimikatz.py + kerberos tools. Significantly more AD depth than even pentestMCP's 18 AD tools. Covers SMB, Kerberos, LDAP, MS-RPC, MS-EFSRPC, MS-RPRN, DCOM, WMI, WinRM.</p>
+    </div>
+    <div class="card">
+      <span class="label l-g">STRENGTH</span>
+      <h4>Only MCP Tool with K8s Pentesting</h4>
+      <p>kubectl, kubeletctl, kubescape with structured K8s audit workflow. Checks anonymous kubelet access, RBAC analysis, NSA compliance framework, MITRE ATT&CK for K8s. Unique among all three tools.</p>
+    </div>
+    <div class="card">
+      <span class="label l-g">STRENGTH</span>
+      <h4>Evidence-Based Finding Validation</h4>
+      <p>Three-tier finding classification (EXPLOITED/CONFIRMED/UNCONFIRMED) with structured evidence (request, payload, response, extracted data). This is much more rigorous than pentestMCP's simple "Finding" object or HexStrike's unvalidated output.</p>
+    </div>
+    <div class="card">
+      <span class="label l-r">WEAKNESS</span>
+      <h4>LLM Cost / Complexity Barrier</h4>
+      <p>Opus-class models cost $10-25+/scan. Local frontier models require multi-GPU setups. This is a significant barrier vs. pentestMCP (free, no AI needed) or HexStrike (free tools, simple orchestration).</p>
+    </div>
+    <div class="card">
+      <span class="label l-r">WEAKNESS</span>
+      <h4>AI Can Hallucinate or Get Stuck</h4>
+      <p>Autonomous AI agents can hallucinate findings, get stuck in loops, or make wrong decisions about which agents to dispatch. Darkmoon addresses this with cascade depth limits and the MCP gatekeeper, but fundamental AI reliability issues remain. Campaigns can end in "Unknown" state.</p>
+    </div>
+    <div class="card">
+      <span class="label l-r">WEAKNESS</span>
+      <h4>No Binary/Reverse Engineering</h4>
+      <p>Binary exploitation is a gap shared by pentestMCP, but HexStrike covers it well. Darkmoon has no way to analyze or exploit binary files.</p>
+    </div>
+    <div class="card">
+      <span class="label l-r">WEAKNESS</span>
+      <h4>No Cloud Beyond K8s</h4>
+      <p>AWS S3, Azure Blob, GCP Storage, IAM misconfigurations, cloud metadata service (IMDS) exploitation — none covered. Cloud security is increasingly critical and Darkmoon doesn't address it.</p>
+    </div>
+    <div class="card">
+      <span class="label l-r">WEAKNESS</span>
+      <h4>No Data Exfiltration / C2 Testing</h4>
+      <p>No DNS exfiltration testing, no C2 channel simulation, no data leakage testing. The toolbox is focused on discovery and exploitation, not data security testing.</p>
+    </div>
+  </div>
+</section>
+
+<section id="detailed">
+  <h2>5. Detailed Capability Breakdown</h2>
+
+  <h3>5.1 MCP Workflows (6)</h3>
+  <table>
+    <tr><th>Workflow</th><th>Method</th><th>Tools Used</th><th>Output Structure</th></tr>
+    <tr><td>port_scan</td><td>scan_ports</td><td>naabu, httpx</td><td>Ports found, HTTP services, web tech detection</td></tr>
+    <tr><td>vulnerability_scan</td><td>scan_vulnerabilities</td><td>nuclei (with templates)</td><td>Findings by severity, CVE mappings, affected hosts</td></tr>
+    <tr><td>subdomain_discovery</td><td>discover_subdomains</td><td>subfinder, httpx</td><td>Subdomains, live hosts, tech detection</td></tr>
+    <tr><td>web_crawler</td><td>crawl_website</td><td>katana, waybackurls</td><td>URLs, endpoints, API routes, JS files, forms</td></tr>
+    <tr><td>ad_enumeration</td><td>enumerate_ad</td><td>netexec, bloodhound-python</td><td>Users, groups, computers, trusts, BloodHound data</td></tr>
+    <tr><td>kubernetes_audit</td><td>audit_kubernetes</td><td>kubescape, kubectl, kubeletctl</td><td>Compliance score, RBAC issues, anonymous access, misconfig</td></tr>
+  </table>
+
+  <h3>5.2 Tool Categories (115 Allowed Tools)</h3>
+
+  <h4>5.2.1 Port Scanners (2)</h4>
+  <table>
+    <tr><th>Tool</th><th>Purpose</th><th>Notes</th></tr>
+    <tr><td>naabu</td><td>Fast port scanner</td><td>Used in port_scan workflow, top-ports configurable</td></tr>
+    <tr><td>masscan</td><td>Internet-scale port scanner</td><td>High-speed, requires rate configuration</td></tr>
+  </table>
+
+  <h4>5.2.2 Web Application Tools (14)</h4>
+  <table>
+    <tr><th>Tool</th><th>Purpose</th></tr>
+    <tr><td>nuclei</td><td>Vulnerability scanner (templates for CVE, exposures, misconfigs)</td></tr>
+    <tr><td>httpx</td><td>HTTP probing + technology detection</td></tr>
+    <tr><td>ffuf</td><td>Web fuzzing (directories, parameters, VHosts)</td></tr>
+    <tr><td>dirb</td><td>Directory brute-forcing</td></tr>
+    <tr><td>wafw00f</td><td>WAF detection and fingerprinting</td></tr>
+    <tr><td>sqlmap</td><td>SQL injection automation</td></tr>
+    <tr><td>arjun</td><td>HTTP parameter discovery</td></tr>
+    <tr><td>finalrecon</td><td>All-in-one web recon (SSL, headers, CMS, links)</td></tr>
+    <tr><td>lightpanda</td><td>Headless browser for JS-heavy pages</td></tr>
+    <tr><td>vulnx</td><td>CMS vulnerability scanner</td></tr>
+    <tr><td>hydra</td><td>Password brute-forcing (HTTP, FTP, SSH, etc.)</td></tr>
+    <tr><td>whatweb</td><td>Web technology fingerprinting</td></tr>
+    <tr><td>cmseek</td><td>CMS identification + version detection</td></tr>
+    <tr><td>wpscan</td><td>WordPress vulnerability scanner</td></tr>
+  </table>
+
+  <h4>5.2.3 Reconnaissance Tools (3)</h4>
+  <table>
+    <tr><th>Tool</th><th>Purpose</th></tr>
+    <tr><td>subfinder</td><td>Passive subdomain enumeration</td></tr>
+    <tr><td>waybackurls</td><td>Historical URL discovery from Wayback Machine</td></tr>
+    <tr><td>katana</td><td>Next-gen web crawler (JS parsing, form extraction)</td></tr>
+  </table>
+
+  <h4>5.2.4 AD &amp; Windows Tools (60+)</h4>
+  <table>
+    <tr><th>Category</th><th>Tools</th></tr>
+    <tr><td>NetExec Suite</td><td>netexec (SMB, SSH, WinRM, LDAP, RDP), smbclient.py, smbexec.py, smbserver.py, wmiexec.py, wmipersist.py, wmiquery.py</td></tr>
+    <tr><td>Impacket Core</td><td>secretsdump.py, psexec.py, dcomexec.py, samrdump.py, rpcdump.py, rpcmap.py, regsecrets.py, netview.py, lookupsid.py, getArch.py</td></tr>
+    <tr><td>Kerberos Suite</td><td>GetNPUsers.py, GetUserSPNs.py, getTGT.py, getST.py, getPac.py, ticketConverter.py, ticketer.py, goldenPac.py, changerPassword.py, addcomputer.py</td></tr>
+    <tr><td>minikerberos Suite</td><td>minikerberos-asreproast, minikerberos-kerberoast, minikerberos-getTGT, minikerberos-getTGS, minikerberos-getS4U2proxy, minikerberos-getS4U2self, minikerberos-ccache2kirbi, minikerberos-ccacheedit, minikerberos-ccacheroast, minikerberos-cve202233647, minikerberos-cve202233679, minikerberos-getNTPKInit, minikerberos-keylist, minikerberos-kirbi2ccache, minikerberos-kerb23hashdecrypt, minikerberos-pw</td></tr>
+    <tr><td>AD Enumeration</td><td>bloodhound-python, ldapdomaindump, GetADComputers.py, GetADUsers.py, GetLAPSPassword.py, Get-GPPPassword.py</td></tr>
+    <tr><td>Privilege Escalation</td><td>mimikatz.py (via impacket), findDelegation.py, owneredit.py, badsuccessor.py, raiseChild.py, samedit.py</td></tr>
+    <tr><td>Lateral Movement</td><td>ntmlrelayx.py, sambaPipe.py, mssqlclient.py, mssqlinstance.py, rdp_check.py, exchanger.py, keylistattack.py, mqtt_check.py</td></tr>
+    <tr><td>Registry/Filesystem</td><td>registry-read.py, ntfs-read.py, dpapi.py, net.py</td></tr>
+    <tr><td>Sniffing</td><td>sniff.py, sniffer.py, snmpwalk, ping.py</td></tr>
+    <tr><td>File Manipulation</td><td>jp.py, tstool.py, filetime.py</td></tr>
+  </table>
+
+  <h4>5.2.5 Kubernetes Tools (3)</h4>
+  <table>
+    <tr><th>Tool</th><th>Purpose</th></tr>
+    <tr><td>kubectl</td><td>K8s resource enumeration (pods, secrets, services, namespaces, RBAC)</td></tr>
+    <tr><td>kubeletctl</td><td>Kubelet API enumeration (anonymous access, pod listing)</td></tr>
+    <tr><td>kubescape</td><td>K8s compliance scanning (NSA, MITRE frameworks)</td></tr>
+  </table>
+
+  <h4>5.2.6 DNS &amp; Network Tools (5)</h4>
+  <table>
+    <tr><th>Tool</th><th>Purpose</th></tr>
+    <tr><td>dig</td><td>DNS queries (ANY, A, AAAA, MX, TXT, NS, CNAME, SOA)</td></tr>
+    <tr><td>nslookup</td><td>DNS name resolution</td></tr>
+    <tr><td>curl</td><td>HTTP requests (methods, headers, data, cookies)</td></tr>
+    <tr><td>wget</td><td>File downloading, mirroring</td></tr>
+    <tr><td>ping</td><td>ICMP reachability testing</td></tr>
+  </table>
+
+  <h4>5.2.7 Misc Tools (5+)</h4>
+  <table>
+    <tr><th>Tool</th><th>Purpose</th></tr>
+    <tr><td>hashcat</td><td>Password hash cracking (GPU-accelerated)</td></tr>
+    <tr><td>jq</td><td>JSON parsing in scripts</td></tr>
+    <tr><td>grep, awk, sed</td><td>Text processing</td></tr>
+    <tr><td>zip, unzip</td><td>Archive handling</td></tr>
+  </table>
+
+  <h3>5.3 Dashboard Functions (7)</h3>
+  <table>
+    <tr><th>Function</th><th>Purpose</th></tr>
+    <tr><td>darkmoon_get_session</td><td>Get session ID for campaign tracking</td></tr>
+    <tr><td>darkmoon_dashboard_init_campaign</td><td>Create campaign skeleton on dashboard</td></tr>
+    <tr><td>darkmoon_dashboard_push_finding</td><td>Push vulnerability finding with evidence</td></tr>
+    <tr><td>darkmoon_dashboard_push_infra_node</td><td>Push infrastructure node (host/service/app)</td></tr>
+    <tr><td>darkmoon_dashboard_finalize_campaign</td><td>Complete campaign, save report</td></tr>
+    <tr><td>darkmoon_health_check</td><td>Check container + tool availability</td></tr>
+    <tr><td>darkmoon_diagnose</td><td>Full system diagnostics (health, network, resources)</td></tr>
+  </table>
+</section>
+
+<section id="agents">
+  <h2>6. AI Agent Ecosystem (18 Agents)</h2>
+
+  <p>Darkmoon's agents are markdown files that define the AI's behavior for a specific technology domain. Each agent has: metadata (id, name, description), execution rules, capabilities, MCP call rules, and security constraints.</p>
+
+  <h3>6.1 Agent Categories</h3>
+
+  <h4>Orchestrator Agent (1)</h4>
+  <table>
+    <tr><th>Agent</th><th>Role</th></tr>
+    <tr><td>pentest</td><td>Master orchestrator — receives user input, performs recon, determines tech stack, dispatches sub-agents, correlates results, generates report</td></tr>
+  </table>
+
+  <h4>Web Application Agents (7)</h4>
+  <table>
+    <tr><th>Agent</th><th>Target</th></tr>
+    <tr><td>nodejs</td><td>Node.js/Express applications</td></tr>
+    <tr><td>php</td><td>PHP applications (Laravel, Symfony, vanilla)</td></tr>
+    <tr><td>flask</td><td>Python Flask/Django applications</td></tr>
+    <tr><td>aspnet</td><td>ASP.NET/.NET Core applications</td></tr>
+    <tr><td>springboot</td><td>Java Spring Boot applications</td></tr>
+    <tr><td>ruby</td><td>Ruby on Rails applications</td></tr>
+    <tr><td>graphql</td><td>GraphQL APIs (introspection, depth, auth)</td></tr>
+  </table>
+
+  <h4>CMS Agents (6)</h4>
+  <table>
+    <tr><th>Agent</th><th>CMS</th></tr>
+    <tr><td>wordpress</td><td>WordPress (plugins, themes, users, wp-config)</td></tr>
+    <tr><td>drupal</td><td>Drupal (modules, users, db creds)</td></tr>
+    <tr><td>joomla</td><td>Joomla (extensions, configuration.php)</td></tr>
+    <tr><td>magento</td><td>Magento (admin panels, SQLi, RCE)</td></tr>
+    <tr><td>prestashop</td><td>PrestaShop (vulnerabilities, config)</td></tr>
+    <tr><td>moodle</td><td>Moodle (vulnerabilities, user enumeration)</td></tr>
+  </table>
+
+  <h4>Infrastructure Agents (4)</h4>
+  <table>
+    <tr><th>Agent</th><th>Target</th></tr>
+    <tr><td>kubernetes</td><td>K8s clusters (kubescape, kubeletctl, RBAC)</td></tr>
+    <tr><td>ad</td><td>Active Directory (netexec, bloodhound, impacket)</td></tr>
+    <tr><td>headless-browser</td><td>SPAs (React, Angular, Vue) — runs browser-based XSS, CSRF, DOM tests</td></tr>
+  </table>
+
+  <h3>6.2 Agent Dispatch Flow</h3>
+  <div class="diagram">User: "TARGET: http://172.19.0.3:3000"
+                    │
+                    ▼
+              ┌──────────────┐
+              │ pentest      │
+              │ (orchestrator)│
+              └──────┬───────┘
+                     │
+             performs recon:
+             port_scan → httpx → whatweb → katana
+                     │
+                     ▼
+             Technology Signals Detected:
+             ├── Apache/2.4.38
+             ├── Node.js/Express
+             ├── GraphQL endpoint (/graphql)
+             └── React SPA
+                     │
+                     ▼
+             Dispatch sub-agents (parallel):
+             ┌──────────┐  ┌──────────┐  ┌──────────────┐
+             │ nodejs   │  │ graphql  │  │ headless     │
+             │ agent    │  │ agent    │  │ browser agent│
+             └────┬─────┘  └────┬─────┘  └──────┬───────┘
+                  │              │               │
+                  ▼              ▼               ▼
+             nuclei -t      introspect       page.goto
+             tech/nodejs    schema, test     test DOM
+                            depth, batch     XSS, CSRF
+                  │              │               │
+                  └──────────────┴───────────────┘
+                                     │
+                                     ▼
+                             Correlate findings
+                             Push to dashboard
+                             Generate report</div>
+
+  <h3>6.3 Agent Lifecycle</h3>
+  <div class="diagram">Agent Lifecycle:
+1. LOADED   → Agent file read by OpenCode
+2. ACTIVATED → Orchestrator selects agent based on tech signal
+3. EXECUTING → Agent calls MCP workflows and tools
+4. REPORTING → Agent pushes findings to dashboard
+5. IDLE     → Agent idle, orchestrator may reactivate if new signals appear
+
+Cascade Control:
+- Max 3 dispatching levels (orchestrator → sub-agent → sub-sub-agent)
+- Prevents infinite loops from recursive signal detection
+- Example of level-3 cascade: pentest → wordpress → plugin reveals GraphQL → graphql</div>
+</section>
+
+<section id="comparison">
+  <h2>7. Three-Way Comparison: Darkmoon vs HexStrike vs pentestMCP</h2>
+
+  <table>
+    <tr><th>Dimension</th><th>Darkmoon</th><th>HexStrike AI MCP</th><th>pentestMCP</th></tr>
+    <tr><td><strong>Architecture Philosophy</strong></td><td>AI-native autonomous platform (OpenCode + agents + MCP + toolbox)</td><td>Tool dispenser (150+ tools, no AI)</td><td>Structured tool launcher (35 tools, no AI)</td></tr>
+    <tr><td><strong>AI / Autonomy</strong></td><td><span class="s-crit">9/10</span> — Full AI brain, 18 agents, reactive orchestration, autonomous campaigns</td><td><span class="s-med">2/10</span> — Hardcoded if/else "Intelligent Engine", not AI</td><td><span class="s-low">1/10</span> — Zero AI, all orchestration pushed to client</td></tr>
+    <tr><td><strong>Total Tools</strong></td><td>115+</td><td>150+</td><td>~35</td></tr>
+    <tr><td><strong>Web Pentesting</strong></td><td><span class="s-high">8/10</span> — 14 tools + 7 web agents + 6 CMS agents</td><td><span class="s-med">5/10</span> — 6+ types but shallow</td><td><span class="s-low">3/10</span> — Only SQLMap</td></tr>
+    <tr><td><strong>AD Pentesting</strong></td><td><span class="s-crit">9/10</span> — 60+ impacket + netexec + bloodhound + kerberos suite</td><td><span class="s-low">0/10</span> — None</td><td><span class="s-crit">8/10</span> — 18 tools, best attack chain</td></tr>
+    <tr><td><strong>K8s Pentesting</strong></td><td><span class="s-high">8/10</span> — kubectl + kubeletctl + kubescape + workflow</td><td><span class="s-low">0/10</span> — None</td><td><span class="s-low">0/10</span> — None</td></tr>
+    <tr><td><strong>Binary Exploitation</strong></td><td><span class="s-low">0/10</span> — None</td><td><span class="s-high">7/10</span> — Ghidra, GDB, ROPgadget, Pwntools, angr</td><td><span class="s-low">0/10</span> — None</td></tr>
+    <tr><td><strong>Cloud Pentesting</strong></td><td><span class="s-low">1/10</span> — K8s only, no AWS/Azure/GCP</td><td><span class="s-med">6/10</span> — CloudMapper, Pacu, Prowler, Scout Suite</td><td><span class="s-low">0/10</span> — None</td></tr>
+    <tr><td><strong>State Management</strong></td><td><span class="s-high">8/10</span> — Dashboard with findings, infra nodes, campaigns, sessions</td><td><span class="s-low">1/10</span> — Stateless</td><td><span class="s-med">6/10</span> — Findings/ScanState/Credential objects</td></tr>
+    <tr><td><strong>Async Tools</strong></td><td><span class="s-med">3/10</span> — Most tools are synchronous via execute_command</td><td><span class="s-low">0/10</span> — All synchronous</td><td><span class="s-high">8/10</span> — 8 tools with launch/fetch pattern</td></tr>
+    <tr><td><strong>Report Generation</strong></td><td><span class="s-crit">9/10</span> — Structured markdown + dashboard + PDF + evidence-based findings (EXPLOITED/CONFIRMED/UNCONFIRMED)</td><td><span class="s-med">5/10</span> — HTML scan summary, vulnerability report</td><td><span class="s-low">2/10</span> — Minimal findings resource only</td></tr>
+    <tr><td><strong>CI/CD Integration</strong></td><td><span class="s-crit">9/10</span> — Native GitHub Actions pipeline</td><td><span class="s-low">0/10</span> — None</td><td><span class="s-low">0/10</span> — None</td></tr>
+    <tr><td><strong>Security Model</strong></td><td><span class="s-crit">10/10</span> — MCP gatekeeper, strict allowlist, AI never gets shell</td><td><span class="s-med">3/10</span> — Allowlist but AI can shell</td><td><span class="s-low">2/10</span> — All client-driven, no controls</td></tr>
+    <tr><td><strong>Deployment Complexity</strong></td><td><span class="s-y">Medium</span> — Docker-compose, 2 containers, GPU config</td><td><span class="s-g">Easy</span> — pip or Docker single container</td><td><span class="s-g">Easy</span> — Single docker run</td></tr>
+    <tr><td><strong>Cost to Run</strong></td><td><span class="s-r">$10-25+/scan</span> (Opus API) or multi-GPU local</td><td><span class="s-g">Free</span> (no LLM needed)</td><td><span class="s-g">Free</span> (no LLM needed)</td></tr>
+    <tr><td><strong>LLM Dependence</strong></td><td>Required (Opus-class mandatory for full campaigns)</td><td>Optional (tools work without LLM)</td><td>None (but client AI recommended)</td></tr>
+    <tr><td><strong>Methodology Mapping</strong></td><td>ISO 27001, NIST SP 800-115, MITRE ATT&CK</td><td>None</td><td>None</td></tr>
+    <tr><td><strong>Overall Score</strong></td><td><span class="s-crit">8/10</span></td><td><span class="s-med">5/10</span></td><td><span class="s-med">4.5/10</span></td></tr>
+  </table>
+
+  <h3>7.1 Where Darkmoon Dominates</h3>
+  <ul>
+    <li><strong>True autonomous pentesting:</strong> The only MCP tool that runs a complete pentest campaign from target input to structured report with minimal human intervention.</li>
+    <li><strong>Multi-agent intelligence:</strong> 18 specialized agents with reactive dispatch — no other tool has anything comparable.</li>
+    <li><strong>AD + K8s + Web + CMS + GraphQL:</strong> Broadest domain coverage of any MCP pentesting tool. Only lacks binary and cloud (which HexStrike covers).</li>
+    <li><strong>Security architecture:</strong> The MCP gatekeeper is a genuine security boundary — unlike HexStrike where the AI effectively has shell access through tool execution.</li>
+    <li><strong>Reporting and dashboards:</strong> Evidence-based findings with EXPLOITED/CONFIRMED/UNCONFIRMED classification, live dashboard, structured methodology mapping.</li>
+  </ul>
+
+  <h3>7.2 Where Darkmoon Lags</h3>
+  <ul>
+    <li><strong>Binary exploitation:</strong> No binary tools at all. HexStrike dominates here.</li>
+    <li><strong>Cloud security:</strong> K8s-only. No AWS/Azure/GCP tools. HexStrike has CloudMapper, Pacu, Prowler, Scout Suite.</li>
+    <li><strong>Cost:</strong> Requires an Opus-class LLM ($10-25+/scan) or expensive local hardware. pentestMCP and HexStrike are free to run.</li>
+    <li><strong>LLM-dependent reliability:</strong> Campaigns can fail or get stuck if the LLM makes poor decisions. The AI halluncination problem is real.</li>
+    <li><strong>Async execution:</strong> Darkmoon's tools run synchronously via execute_command. pentestMCP's async launch/fetch pattern is superior for long-running tools.</li>
+    <li><strong>Deployment complexity:</strong> Two containers with shared volumes, GPU passthrough config, install.sh script. pentestMCP is one line: <code>docker run ramgameer/pentest-mcp</code>.</li>
+  </ul>
+</section>
+
+<section id="verdict">
+  <h2>8. Final Verdict</h2>
+
+  <div class="card-grid">
+    <div class="card">
+      <h4>Score Card</h4>
+      <div class="score-bar"><span class="lb">Autonomy / AI</span><div class="bar"><div class="fill" style="width:90%;background:var(--purple);"></div></div><span class="pct">9/10</span></div>
+      <div class="score-bar"><span class="lb">Web Pentesting</span><div class="bar"><div class="fill" style="width:80%;background:var(--green);"></div></div><span class="pct">8/10</span></div>
+      <div class="score-bar"><span class="lb">AD Pentesting</span><div class="bar"><div class="fill" style="width:90%;background:var(--green);"></div></div><span class="pct">9/10</span></div>
+      <div class="score-bar"><span class="lb">K8s Pentesting</span><div class="bar"><div class="fill" style="width:80%;background:var(--green);"></div></div><span class="pct">8/10</span></div>
+      <div class="score-bar"><span class="lb">Binary Exploitation</span><div class="bar"><div class="fill" style="width:5%;background:var(--red);"></div></div><span class="pct">0/10</span></div>
+      <div class="score-bar"><span class="lb">Cloud Pentesting</span><div class="bar"><div class="fill" style="width:10%;background:var(--orange);"></div></div><span class="pct">1/10</span></div>
+      <div class="score-bar"><span class="lb">Architecture Quality</span><div class="bar"><div class="fill" style="width:90%;background:var(--blue);"></div></div><span class="pct">9/10</span></div>
+      <div class="score-bar"><span class="lb">Reporting</span><div class="bar"><div class="fill" style="width:90%;background:var(--cyan);"></div></div><span class="pct">9/10</span></div>
+      <div class="score-bar" style="margin-top:16px;"><span class="lb"><strong>Overall</strong></span><div class="bar"><div class="fill" style="width:80%;background:var(--accent);"></div></div><span class="pct">8/10</span></div>
+    </div>
+    <div class="card">
+      <h4>Summary</h4>
+      <p><strong>Darkmoon is the most advanced and capable MCP pentesting tool available — but it comes with tradeoffs.</strong></p>
+      <p>It is the <strong>only tool that genuinely qualifies as "AI-powered pentesting"</strong> rather than "a list of tools exposed over MCP." The multi-agent architecture, reactive orchestration, evidence-based finding validation, live dashboard, and CI/CD integration put it in a different class from both HexStrike and pentestMCP.</p>
+      <p>Its coverage of <strong>Web, CMS, AD, K8s, and Network</strong> pentesting is excellent — significantly broader than any alternative. The 115-tool toolbox covers the vast majority of day-to-day pentesting needs.</p>
+      <p><strong>However, it has two critical gaps:</strong> zero binary exploitation capability and essentially zero cloud security testing (beyond K8s). These are increasingly important domains. Additionally, the LLM cost and reliability dependency means it's not a drop-in replacement for a human pentester in all scenarios.</p>
+      <div style="margin-top:16px;padding:12px;background:var(--surface2);border-left:3px solid var(--accent);">
+        <strong>Best for:</strong> Organizations that want to automate most of their pentesting workflow across web, AD, K8s, and CMS domains. Great for CI/CD-driven security testing. Best paired with HexStrike or purpose-built tools for binary and cloud testing.<br>
+        <strong>Not suitable for:</strong> Pure binary exploitation engagements, cloud security audits (beyond K8s), or resource-constrained teams without access to frontier LLMs.
+      </div>
+    </div>
+    <div class="card">
+      <h4>Quick Summary</h4>
+      <ul>
+        <li><strong>Author:</strong> ASCIT31 (Mehdi Boutayeb)</li>
+        <li><strong>License:</strong> GPLv3</li>
+        <li><strong>Language:</strong> Python (FastMCP) + Shell + Docker</li>
+        <li><strong>Architecture:</strong> OpenCode AI → MCP Gatekeeper → Docker Toolbox</li>
+        <li><strong>Total Tools:</strong> 115+</li>
+        <li><strong>AI Agents:</strong> 18 (specialized by technology)</li>
+        <li><strong>MCP Workflows:</strong> 6</li>
+        <li><strong>Dashboard:</strong> Yes (real-time campaign tracking)</li>
+        <li><strong>CI/CD:</strong> Native GitHub Actions</li>
+        <li><strong>Methodology:</strong> ISO 27001, NIST SP 800-115, MITRE ATT&CK</li>
+        <li><strong>Deployment:</strong> Docker-compose (2 containers)</li>
+        <li><strong>LLM Cost:</strong> $10-25+/scan (Opus) or multi-GPU local</li>
+        <li><strong>Gaps:</strong> No binary, no cloud (beyond K8s), no mobile</li>
+        <li><strong>Overall Score:</strong> 8/10 ★</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>8.1 Decision Matrix: Which Tool When?</h3>
+  <table>
+    <tr><th>If you need...</th><th>Pick</th><th>Why</th></tr>
+    <tr><td>Fully autonomous pentest campaigns</td><td><strong>Darkmoon</strong></td><td>Only tool with AI orchestration + 18 agents + complete lifecycle</td></tr>
+    <tr><td>AD-focused internal pentesting</td><td><strong>Darkmoon</strong> or <strong>pentestMCP</strong></td><td>Darkmoon has broader AD tooling (60+ vs 18), pentestMCP has better attack chain structure</td></tr>
+    <tr><td>Web application pentesting</td><td><strong>Darkmoon</strong></td><td>Best web coverage + framework-specific agents + CMS agents</td></tr>
+    <tr><td>Binary exploitation / RE</td><td><strong>HexStrike</strong></td><td>Only tool with Ghidra, GDB, ROPgadget, Pwntools, angr</td></tr>
+    <tr><td>Cloud security audit</td><td><strong>HexStrike</strong></td><td>Only tool with CloudMapper, Pacu, Prowler, Scout Suite</td></tr>
+    <tr><td>K8s security audit</td><td><strong>Darkmoon</strong></td><td>Only tool with kubectl + kubeletctl + kubescape + structured workflow</td></tr>
+    <tr><td>Quick, focused, low-cost scanning</td><td><strong>pentestMCP</strong></td><td>Lightest deployment, no LLM cost, best async model for long-running tools</td></tr>
+    <tr><td>CI/CD-integrated security testing</td><td><strong>Darkmoon</strong></td><td>Only tool with native GitHub Actions pipeline</td></tr>
+    <tr><td>Maximum tool breadth (all domains)</td><td><strong>Darkmoon + HexStrike</strong></td><td>Complementary — Darkmoon for web/AD/K8s, HexStrike for binary/cloud</td></tr>
+  </table>
+</section>
+
+<footer>
+  Darkmoon Analysis Report — Generated from live MCP tool interaction (darkmoon_health_check, darkmoon_diagnose, darkmoon_list_workflows, darkmoon_list_allowed_tools, workflow executions), web research (GitHub: ASCIT31/Dark-Moon, docs.dark-moon.org, helpnetsecurity.com, cybersecuritynews.com), and source code analysis (docs/full.md).
+</footer>
+
+</div>
+</body>
+</html>
