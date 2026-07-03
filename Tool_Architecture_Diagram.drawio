@@ -1,0 +1,178 @@
+<mxfile host="app.diagrams.net" modified="2026-07-03T00:00:00.000Z" agent="Claude" version="24.0.0" type="device">
+  <diagram name="Autonomous Pentest Architecture" id="architecture">
+    <mxGraphModel dx="1600" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Title -->
+        <mxCell id="title" value="Autonomous AI Penetration Testing Platform - Architecture" style="text;html=1;fontSize=22;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="20" y="0" width="1460" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Target environment -->
+        <mxCell id="target" value="Target / Client Environment&#10;(scoped assets - domains, IPs, apps)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="530" y="50" width="400" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- PLANE A: Planning and Reasoning -->
+        <mxCell id="planeA" value="PLANNING and REASONING PLANE" style="swimlane;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;fontStyle=1;startSize=30;" vertex="1" parent="1">
+          <mxGeometry x="20" y="130" width="1460" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="llm" value="LLM Backend&#10;(swappable - any model)&#10;plugs into Planner/Critic roles only" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="planeA">
+          <mxGeometry x="30" y="40" width="200" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="planner" value="Planner Agent&#10;Live task tree&#10;(Recon -&gt; Enum -&gt; VulnScan -&gt; Exploit -&gt; PostEx -&gt; Report)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="planeA">
+          <mxGeometry x="270" y="40" width="280" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="critic" value="Critic Agent&#10;Cost/expected-value scoring&#10;prunes low-value branches early" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="planeA">
+          <mxGeometry x="570" y="40" width="280" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="escalation" value="Escalation Matrix&#10;WAF/block/timeout -&gt; alternate&#10;tool / path / vector" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="planeA">
+          <mxGeometry x="870" y="40" width="280" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="reflection" value="Reflection Loop&#10;post-phase self-critique&#10;vs. expected coverage checklist" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="planeA">
+          <mxGeometry x="1170" y="40" width="260" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- PLANE B: Memory and State -->
+        <mxCell id="planeB" value="MEMORY and STATE PLANE" style="swimlane;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=14;fontStyle=1;startSize=30;" vertex="1" parent="1">
+          <mxGeometry x="20" y="320" width="1460" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="engGraph" value="Engagement Graph&#10;typed graph: assets, IPs, subdomains,&#10;sister-domains, findings, relationships" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="planeB">
+          <mxGeometry x="30" y="40" width="450" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="workflow" value="Durable Workflow Engine&#10;(Temporal-style)&#10;survives crashes / long engagements" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="planeB">
+          <mxGeometry x="510" y="40" width="450" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="vault" value="Credential/Session Vault&#10;harvested creds, tokens, keys&#10;queryable by later phases" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="planeB">
+          <mxGeometry x="990" y="40" width="440" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- PLANE C: Execution -->
+        <mxCell id="planeC" value="EXECUTION PLANE - MCP Tool Servers (sandboxed, containerized)" style="swimlane;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;startSize=30;" vertex="1" parent="1">
+          <mxGeometry x="20" y="510" width="1460" height="250" as="geometry" />
+        </mxCell>
+        <mxCell id="recon" value="recon.mcp&#10;WHOIS/DNS/subfinder/&#10;sister-domain, OSINT, Wayback" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="planeC">
+          <mxGeometry x="30" y="40" width="330" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="network" value="network.mcp&#10;port scan, service/version enum,&#10;TLS/cert inspection" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="planeC">
+          <mxGeometry x="380" y="40" width="330" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="webapp" value="webapp.mcp&#10;dir/vhost busting, param discovery,&#10;header/config audit, CMS enum" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="planeC">
+          <mxGeometry x="730" y="40" width="330" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="vuln" value="vuln.mcp&#10;template scanning, CVE correlation,&#10;SQLi/XSS/SSRF probing" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="planeC">
+          <mxGeometry x="1080" y="40" width="330" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="exploit" value="exploit.mcp&#10;Metasploit RPC, exploit-db lookup,&#10;custom PoC runner (gated)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="planeC">
+          <mxGeometry x="200" y="140" width="330" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="postex" value="postex.mcp&#10;credential/artifact collection,&#10;lateral-movement mapping (gated)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="planeC">
+          <mxGeometry x="560" y="140" width="330" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="reportmcp" value="report.mcp&#10;finding schema, CVSS scoring,&#10;PoC evidence bundling" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="planeC">
+          <mxGeometry x="920" y="140" width="330" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- PLANE D: Governance -->
+        <mxCell id="planeD" value="GOVERNANCE PLANE" style="swimlane;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=14;fontStyle=1;startSize=30;" vertex="1" parent="1">
+          <mxGeometry x="20" y="800" width="1460" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="scope" value="Scope Engine&#10;in-scope domains/IPs/CIDR,&#10;excluded techniques, time windows" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;fontSize=11;" vertex="1" parent="planeD">
+          <mxGeometry x="30" y="40" width="330" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="approval" value="Human Approval Gates&#10;impact-tiered: auto-approve read-only,&#10;gate destructive/persistence actions" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;fontSize=11;" vertex="1" parent="planeD">
+          <mxGeometry x="380" y="40" width="330" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="rategov" value="Rate / Impact Governor&#10;request-rate caps, backoff on 5xx,&#10;circuit breaker on repeated failures" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;fontSize=11;" vertex="1" parent="planeD">
+          <mxGeometry x="730" y="40" width="330" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="auditlog" value="Authorization Ledger and Audit Log&#10;signed engagement contract ref,&#10;full command+response trail" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;fontSize=11;" vertex="1" parent="planeD">
+          <mxGeometry x="1080" y="40" width="330" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- Reporting engine -->
+        <mxCell id="reportengine" value="Reporting and Validation Engine&#10;confirmed/unconfirmed discipline - CVSS + MITRE ATT&amp;CK mapping - exploitation evidence required for &quot;confirmed&quot; status" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="330" y="990" width="800" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="output" value="Final Report Output&#10;(HTML / PDF / JSON)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="530" y="1090" width="400" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- Edges: internal Plane A loop -->
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="llm" target="planner">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="propose branch" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="planner" target="critic">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="prune / escalate" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="critic" target="escalation">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="coverage check" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="escalation" target="reflection">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="replan" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;exitX=0.5;exitY=0;entryX=0.5;entryY=0;" edge="1" parent="1" source="reflection" target="planner">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1300" y="115" />
+              <mxPoint x="410" y="115" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Target into planning -->
+        <mxCell id="e6" value="engagement config and scope" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="target" target="planner">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Plane A to Plane B -->
+        <mxCell id="e7" value="read/write task and engagement state" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;fontStyle=1;strokeWidth=2;" edge="1" parent="1" source="planeA" target="planeB">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Plane A to Plane C -->
+        <mxCell id="e8" value="structured tool calls (MCP)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;fontStyle=1;strokeWidth=2;exitX=0.25;exitY=1;entryX=0.25;entryY=0;" edge="1" parent="1" source="planeA" target="planeC">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Plane C to Plane D and back -->
+        <mxCell id="e9" value="pre-execution scope / approval check" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;fontStyle=1;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="planeC" target="planeD">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" value="approve / deny" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;strokeColor=#b85450;exitX=0.75;exitY=0;entryX=0.75;entryY=1;" edge="1" parent="1" source="planeD" target="planeC">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Plane C to Plane B -->
+        <mxCell id="e11" value="findings / evidence write-back" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;fontStyle=1;strokeWidth=2;exitX=0.75;exitY=0;entryX=0.75;entryY=1;" edge="1" parent="1" source="planeC" target="planeB">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- specific detail edges -->
+        <mxCell id="e12" value="harvested creds feed exploitation" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;dashed=1;" edge="1" parent="1" source="vault" target="exploit">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e13" value="compromised-host state" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;dashed=1;" edge="1" parent="1" source="postex" target="engGraph">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e14" value="sibling-subdomain / shared-host signal" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;dashed=1;" edge="1" parent="1" source="engGraph" target="recon">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Reporting -->
+        <mxCell id="e15" value="structured findings" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="planeB" target="reportengine">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e16" value="evidence / audit trail" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="planeD" target="reportengine">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e17" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="reportengine" target="output">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
