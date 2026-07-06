@@ -32,28 +32,28 @@ Four planes, cleanly separated so any LLM can sit in the reasoning plane and any
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  PLANNING & REASONING PLANE                                  │
-│  Orchestrator · Task-tree planner · Cost-aware scheduler      │
-│  Reflection/self-critique loop · LLM-agnostic (BYO model)     │
-└───────────────┬────────────────────────────────────────────┘
+│  PLANNING & REASONING PLANE                                 │
+│  Orchestrator · Task-tree planner · Cost-aware scheduler    │
+│  Reflection/self-critique loop · LLM-agnostic (BYO model)   │
+└───────────────┬─────────────────────────────────────────────┘
                 │  structured tool calls (MCP)
-┌───────────────▼────────────────────────────────────────────┐
-│  MEMORY & STATE PLANE                                        │
-│  Engagement graph (assets/creds/findings) · Vector recall     │
-│  Durable workflow engine (Temporal-style) · Session resume    │
-└───────────────┬────────────────────────────────────────────┘
+┌───────────────▼─────────────────────────────────────────────┐
+│  MEMORY & STATE PLANE                                       │
+│  Engagement graph (assets/creds/findings) · Vector recall   │
+│  Durable workflow engine (Temporal-style) · Session resume  │
+└───────────────┬─────────────────────────────────────────────┘
                 │
-┌───────────────▼────────────────────────────────────────────┐
-│  EXECUTION PLANE                                              │
+┌───────────────▼────────────────────────────────────────────────┐
+│  EXECUTION PLANE                                               │
 │  Tool-abstraction MCP servers (recon/scan/exploit/post-exploit)│
 │  Sandboxed runners (Docker) · Parallel agent workers           │
-└───────────────┬────────────────────────────────────────────┘
+└───────────────┬────────────────────────────────────────────────┘
                 │
-┌───────────────▼────────────────────────────────────────────┐
-│  GOVERNANCE PLANE                                             │
-│  Scope engine · Authorization ledger · Rate/impact governor    │
-│  Human-approval gates · Audit log · Report/validation engine   │
-└─────────────────────────────────────────────────────────────┘
+┌───────────────▼──────────────────────────────────────────────┐
+│  GOVERNANCE PLANE                                            │
+│  Scope engine · Authorization ledger · Rate/impact governor  │
+│  Human-approval gates · Audit log · Report/validation engine │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 The **Governance Plane is not optional bolt-on logging** — it's what makes an autonomous exploitation tool operable at all. Every other plane calls into it before any state-changing action fires.
@@ -117,19 +117,7 @@ LLM-agnosticism (unlike Shannon's Claude lock-in) comes for free here because th
 
 ---
 
-## 6. On CAPTCHA/OTP and hard perimeter controls — a scoping note, not a technical one
-
-Worth being direct about this since it's explicitly a differentiator you want: I'd draw the line at **automated defeat of third-party anti-automation controls (Cloudflare Turnstile, hCaptcha, OTP/2FA) as a built-in agent capability**, for reasons that are more about engagement validity than tooling difficulty:
-
-- Bypassing Cloudflare's own challenge is attacking Cloudflare's infrastructure, not your client's — your client's authorization doesn't cover that, even in a full-scope engagement.
-- Automated OTP defeat almost always means either (a) SIM/email account compromise (out of technical scope for a web pentest tool) or (b) brute-forcing a 2FA code, which is a rate-limiting/entropy finding you *report*, not bypass and continue past.
-- What actually gets AI pentesters "stuck" here in practice is usually solvable without touching the CAPTCHA at all: negotiate a **client-provided bypass token / IP allowlist for the testing window** (standard in real engagements), test the **API/mobile-app path** that often skips the same CAPTCHA the web login has, or simply **report the control as evidence it's working** and move the engagement budget to unauthenticated attack surface instead.
-
-Architecturally: build a `perimeter_control_detected` signal that the Planner treats like the WAF-block signal in §3.2 — log it, check the scope agreement for a client-provided bypass, and if none exists, deprioritize that branch and reallocate budget rather than trying to defeat it. That's a better product decision anyway — "we detected and correctly triaged a CAPTCHA-protected endpoint" is a stronger report line than a fragile bypass hack.
-
----
-
-## 7. Exploitation & post-exploitation — design, not payloads
+## 6. Exploitation & post-exploitation — design, not payloads
 
 Exploitation is your stated differentiator, so it needs real structure, but I'm keeping this at the architecture level rather than writing exploit logic:
 
