@@ -99,3 +99,6 @@ python -m pytest tests/ -v
 2. Introduce Temporal workflows when the orchestration layer is ready
 3. Build the first MCP server around recon and target expansion
 4. Wire the CLI to the agent pipeline for real-time scan interaction
+
+## Tools Analyzed and Summary:
+https://docs.google.com/document/d/1XqAMlZ9ErRywIHvR0FinwqmysCgSqYzIGtXoqmlsDGc/edit?usp=sharing
