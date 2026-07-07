@@ -174,3 +174,44 @@ Validation rule before a finding is marked `confirmed`: it must have either a re
 - vs. **Metasploit-MCP**: recon-first graph reasoning (sister/subdomain discovery) closes the "missed 6 defaced subdomains" gap.
 - vs. **Shannon**: keeps its confirmed/unconfirmed rigor and MITRE mapping, drops the hardcoded checklist and single-vendor lock-in.
 - vs. **Darkmoon**: keeps the exploratory cross-asset reasoning, adds the CVSS/validation discipline it was missing.
+
+## 12. Repo scaffold and container baseline
+
+The implementation should start as a monorepo so each plane can evolve without forcing a later rewrite of the folder structure.
+
+- `backend/` is the FastAPI control plane, with a `src/pentest_platform/` layout for settings, API routes, database access, workflows, and future MCP/client adapters.
+- `frontend/` is the Next.js dashboard, kept separate so the operator UI can evolve independently of backend release cadence.
+- `mcp-servers/` is reserved for capability-based servers, not vendor-specific wrappers, so the planner can keep the same contracts even if tools change.
+- `docker-compose.yml` should own the local dev stack and bring up Postgres immediately.
+- `backend` should build from `python:3.12-slim`.
+- `frontend` should build from `node:22-alpine`.
+- `postgres` should use `postgres:16-alpine` for the first durable datastore.
+- Temporal is still part of the architecture, but it is not part of the first bootstrap because the workflow code is not present yet.
+
+Recommended on-disk shape:
+
+```text
+AI-Pentesting-Tool/
+  backend/
+    pyproject.toml
+    Dockerfile
+    src/pentest_platform/
+      main.py
+      core/
+      api/
+      db/
+      models/
+      schemas/
+      services/
+      workflows/
+      mcp/
+      security/
+    tests/
+  frontend/
+    package.json
+    Dockerfile
+    src/app/
+  mcp-servers/
+  docker-compose.yml
+  .env.example
+```
