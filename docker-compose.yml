@@ -8,7 +8,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-pentest}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pentest}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -17,20 +17,44 @@ services:
       timeout: 5s
       retries: 5
 
+  kali-tools:
+    build:
+      context: ./kali-tools
+    container_name: ai-pentest-kali
+    restart: unless-stopped
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    volumes:
+      - ./mcp-servers:/home/mcpuser/mcp-servers
+    stdin_open: true
+    tty: true
+    healthcheck:
+      test: ["CMD", "which", "nmap"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
   backend:
     build:
       context: ./backend
+    container_name: ai-pentest-backend
     env_file:
       - .env
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://pentest:pentest@postgres:5432/pentest}
       ENVIRONMENT: ${ENVIRONMENT:-development}
+      KALI_CONTAINER: ai-pentest-kali
     volumes:
       - ./backend:/app
+      - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "9000:9000"
     depends_on:
       postgres:
+        condition: service_healthy
+      kali-tools:
         condition: service_healthy
 
 volumes:

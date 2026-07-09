@@ -49,11 +49,17 @@ def print_tools(tools: list[dict[str, Any]]) -> None:
     table = Table(title="Available Tools", show_header=True, header_style="bold cyan")
     table.add_column("Name", style="bold")
     table.add_column("Category")
+    table.add_column("Status")
+    table.add_column("Safety")
     table.add_column("Description")
     for tool in tools:
+        installed = tool.get("installed")
+        status = Text("installed", style="green") if installed else Text("missing", style="yellow")
         table.add_row(
             tool.get("name", "unknown"),
             tool.get("category", "-"),
+            status,
+            tool.get("safety_level", "-"),
             tool.get("description", "-"),
         )
     console.print(table)

@@ -8,7 +8,7 @@ __pycache__/
 .venv/
 venv/
 .env
-.env.*
+.env.local
 
 # Node
 node_modules/
@@ -25,3 +25,10 @@ dist/
 .DS_Store
 Thumbs.db
 .vscode/*.log
+
+.uv-cache
+.agents
+
+hexstrike-ai
+strix
+shannon
