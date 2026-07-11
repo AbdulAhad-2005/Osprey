@@ -24,13 +24,43 @@ def print_info(message: str) -> None:
 
 
 def print_response(data: dict[str, Any]) -> None:
-    if "error" in data:
+    if "error" in data and not data.get("response"):
         print_error(data["error"])
         return
     if "response" in data:
+        # Show tool calls summary if present
+        tool_calls = data.get("tool_calls", [])
+        if tool_calls:
+            print_tool_calls_summary(tool_calls, data.get("model", ""), data.get("duration_seconds", 0))
         console.print(Markdown(data["response"]))
         return
     console.print(Panel(str(data), title="Response"))
+
+
+def print_agent_thinking(message: str) -> None:
+    console.print(f"[dim italic]{message}[/]")
+
+
+def print_tool_call(tool_name: str, arguments: dict[str, Any]) -> None:
+    console.print(f"  [bold cyan]>[/] {tool_name}({', '.join(f'{k}={v}' for k, v in arguments.items() if v)})")
+
+
+def print_tool_calls_summary(tool_calls: list[dict[str, Any]], model: str, duration: float) -> None:
+    if not tool_calls:
+        return
+    table = Table(title="Agent Execution Summary", show_header=True, header_style="bold cyan")
+    table.add_column("Tool", style="bold")
+    table.add_column("Status")
+    table.add_column("Duration")
+    for tc in tool_calls:
+        status = Text("OK", style="green") if tc.get("success") else Text("FAIL", style="red")
+        dur = f"{tc.get('duration_seconds', 0):.1f}s"
+        table.add_row(tc.get("tool_name", "?"), status, dur)
+    # Summary row
+    total = len(tool_calls)
+    ok = sum(1 for tc in tool_calls if tc.get("success"))
+    console.print(table)
+    console.print(f"[dim]Model: {model} | Tools: {ok}/{total} succeeded | Time: {duration:.1f}s[/]")
 
 
 def print_health(data: dict[str, Any]) -> None:
@@ -72,12 +102,14 @@ def print_models(models: list[dict[str, Any]]) -> None:
     table = Table(title="Available Models", show_header=True, header_style="bold cyan")
     table.add_column("Name", style="bold")
     table.add_column("Provider")
+    table.add_column("Description")
     table.add_column("Status")
     for model in models:
-        status = Text("active", style="green") if model.get("active") else Text("inactive", style="red")
+        status = Text("active", style="green") if model.get("active") else Text("inactive", style="dim")
         table.add_row(
             model.get("name", "unknown"),
             model.get("provider", "-"),
+            model.get("description", "-"),
             status,
         )
     console.print(table)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 
+from dotenv import load_dotenv
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.history import InMemoryHistory
@@ -25,7 +26,10 @@ class CommandCompleter(Completer):
 
 
 def main() -> None:
-    api_url = os.getenv("API_BASE_URL", "http://localhost:8000")
+    # Load .env so API_BASE_URL and other env vars are available
+    load_dotenv()
+
+    api_url = os.getenv("API_BASE_URL", "http://localhost:9000")
     client = APIClient(base_url=api_url)
 
     print_banner()
