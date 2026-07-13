@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 from rich.console import Console
@@ -43,6 +44,103 @@ def print_agent_thinking(message: str) -> None:
 
 def print_tool_call(tool_name: str, arguments: dict[str, Any]) -> None:
     console.print(f"  [bold cyan]>[/] {tool_name}({', '.join(f'{k}={v}' for k, v in arguments.items() if v)})")
+
+
+def _format_tool_args(arguments: dict[str, Any], max_len: int = 80) -> str:
+    parts = [f"{k}={v}" for k, v in arguments.items() if v not in (None, "", [], {})]
+    text = ", ".join(parts)
+    if len(text) > max_len:
+        return text[: max_len - 3] + "..."
+    return text
+
+
+def print_run_start(data: dict[str, Any]) -> None:
+    target = data.get("target") or "—"
+    tools = data.get("tools", 0)
+    model = data.get("model", "")
+    phase = data.get("phase", "full")
+    console.print(
+        f"[bold green]▶[/] [bold]Agent run[/] "
+        f"[dim]({phase} · target: {target} · {tools} tools · {model})[/]"
+    )
+
+
+def print_tool_start_live(tool_name: str, arguments: dict[str, Any]) -> None:
+    args = _format_tool_args(arguments)
+    suffix = f"({args})" if args else "()"
+    console.print(f"  [bold cyan]▶[/] [bold]{tool_name}[/]{suffix}")
+
+
+def print_tool_end_live(tool_name: str, data: dict[str, Any]) -> None:
+    success = data.get("success", False)
+    duration = data.get("duration_seconds", 0)
+    icon = "[green]✓[/]" if success else "[red]✗[/]"
+    status = "ok" if success else "failed"
+    console.print(f"  {icon} [bold]{tool_name}[/] {status} [dim]({duration:.1f}s)[/]")
+
+    preview = (data.get("preview") or "").strip()
+    if not preview:
+        return
+
+    parsed_summary = ""
+    lines = preview.split("\n")
+    in_summary = False
+    summary_lines: list[str] = []
+    for line in lines:
+        if "PARSED SUMMARY:" in line:
+            in_summary = True
+            continue
+        if in_summary:
+            if line.startswith("OPTIONAL SUGGESTIONS:") or line.startswith("SESSION FINDINGS:") or line.startswith("REPEAT WARNING:"):
+                in_summary = False
+            else:
+                summary_lines.append(line)
+    parsed_summary = "\n".join(summary_lines).strip()
+
+    if parsed_summary:
+        console.print(f"    [bold green]{parsed_summary}[/]")
+
+    display_lines = [l for l in lines if l.strip() and "PARSED SUMMARY:" not in l and not (l.startswith("OPTIONAL SUGGESTIONS:") or l.startswith("SESSION FINDINGS:") or l.startswith("REPEAT WARNING:"))]
+    if display_lines:
+        for line in display_lines[:6]:
+            console.print(f"    [dim]{line[:160]}[/]")
+
+
+def print_stream_error(message: str) -> None:
+    console.print(f"  [bold red]✗[/] {message}")
+
+
+def consume_agent_stream(stream: Iterator[tuple[str, dict[str, Any]]]) -> dict[str, Any] | None:
+    """Render live agent events in the terminal (OpenCode-style). Returns final done payload."""
+    final: dict[str, Any] | None = None
+
+    for event_type, data in stream:
+        if event_type == "run_start":
+            print_run_start(data)
+        elif event_type == "status":
+            print_agent_thinking(data.get("message", "Working..."))
+        elif event_type == "tool_start":
+            print_tool_start_live(data.get("tool_name", "?"), data.get("arguments", {}))
+        elif event_type == "tool_end":
+            print_tool_end_live(data.get("tool_name", "?"), data)
+        elif event_type == "error":
+            print_stream_error(data.get("message", "Unknown error"))
+        elif event_type == "done":
+            final = data
+
+    if final:
+        tool_calls = final.get("tool_calls", [])
+        if tool_calls:
+            print_tool_calls_summary(
+                tool_calls,
+                final.get("model", ""),
+                final.get("duration_seconds", 0),
+            )
+        response = final.get("response", "")
+        if response:
+            console.print()
+            console.print(Markdown(response))
+    return final
 
 
 def print_tool_calls_summary(tool_calls: list[dict[str, Any]], model: str, duration: float) -> None:

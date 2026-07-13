@@ -85,7 +85,7 @@ RUN cargo install rustscan 2>/dev/null || \
 RUN git clone --depth 1 https://github.com/RhinoSecurityLabs/pacu.git /opt/pacu \
     && cd /opt/pacu \
     && pip3 install --break-system-packages --no-cache-dir . \
-    && ln -s /opt/pacu/cli.py /usr/local/bin/pacu \
+    && ln -sf /opt/pacu/cli.py /usr/local/bin/pacu \
     || true
 
 # ── ghidra (headless) ──

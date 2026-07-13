@@ -31,6 +31,7 @@ def handle_help(args: list[str], client: "APIClient") -> None:
         "/status": "Show current session status (auto-refreshes config)",
         "/config": "Show config (auto-refreshes from .env)",
         "/reconnect": "Re-read .env and reconnect to changed API_BASE_URL",
+        "/reset": "Clear agent conversation memory for this CLI session",
         "/clear": "Clear the terminal screen",
         "/exit": "Exit the CLI",
     }
@@ -67,8 +68,7 @@ def handle_models(args: list[str], client: "APIClient") -> None:
 
 
 def handle_model(args: list[str], client: "APIClient") -> None:
-    """Show active model info (auto-refreshes from .env)."""
-    _reload_backend_config(client)
+    """Show active model info."""
     try:
         resp = client._client.get(f"{client.base_url}/api/v1/models/active")
         resp.raise_for_status()
@@ -103,22 +103,14 @@ def handle_engagements(args: list[str], client: "APIClient") -> None:
 def handle_findings(args: list[str], client: "APIClient") -> None:
     engagement_id = args[0] if args else None
     findings = client.list_findings(engagement_id)
-    print_findings(findings)
-
-
-def _reload_backend_config(client: "APIClient") -> bool:
-    """Trigger backend config reload from .env. Returns True on success."""
-    try:
-        client._client.post(f"{client.base_url}/api/v1/config/reload")
-        return True
-    except Exception:
-        return False
+    if not findings and not engagement_id:
+        print_info("No findings yet. Run a pentest to discover findings.")
+        print_info("Tip: Findings are stored per-session. Start with: pentest> <target URL>")
+    else:
+        print_findings(findings)
 
 
 def handle_status(args: list[str], client: "APIClient") -> None:
-    # Auto-reload backend config first so status is always fresh
-    _reload_backend_config(client)
-
     try:
         health = client.health()
         backend_status = "connected" if health.get("status") == "ok" else "degraded"
@@ -151,10 +143,6 @@ def handle_config(args: list[str], client: "APIClient") -> None:
         except Exception as exc:
             print_error(f"Failed to reload config: {exc}")
         return
-
-    # Auto-reload before showing so info is always fresh
-    _reload_backend_config(client)
-
     try:
         resp = client._client.get(f"{client.base_url}/api/v1/config")
         resp.raise_for_status()
@@ -165,8 +153,14 @@ def handle_config(args: list[str], client: "APIClient") -> None:
         print_info(f"Max Tokens:   {data.get('max_tokens', '?')}")
         print_info(f"Temperature:  {data.get('temperature', '?')}")
         print_info(f"Max Turns:    {data.get('max_agent_turns', '?')}")
+        print_info(f"\nTo reload after editing .env: /config reload")
     except Exception as exc:
         print_error(str(exc))
+
+
+def handle_reset(args: list[str], client: "APIClient") -> None:
+    client.reset_conversation()
+    print_success("Conversation cleared. Next prompt starts a fresh agent thread.")
 
 
 def handle_clear(args: list[str], client: "APIClient") -> None:
@@ -196,6 +190,7 @@ SLASH_COMMANDS: dict[str, tuple[str, "callable"]] = {
     "/status": ("Session status", handle_status),
     "/config": ("Show configuration", handle_config),
     "/reconnect": ("Re-read .env and reconnect to backend", handle_reconnect),
+    "/reset": ("Clear agent conversation", handle_reset),
     "/clear": ("Clear screen", handle_clear),
 }
 

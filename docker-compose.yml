@@ -46,11 +46,24 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://pentest:pentest@postgres:5432/pentest}
       ENVIRONMENT: ${ENVIRONMENT:-development}
       KALI_CONTAINER: ai-pentest-kali
+      LLM_MODEL: ${LLM_MODEL:-gemini/gemini-3.5-flash}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_API_BASE: ${LLM_API_BASE:-}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-4096}
+      LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.1}
+      LLM_REQUEST_TIMEOUT: ${LLM_REQUEST_TIMEOUT:-300}
+      LLM_MAX_AGENT_TURNS: ${LLM_MAX_AGENT_TURNS:-40}
+      LLM_TOOL_TIMEOUT: ${LLM_TOOL_TIMEOUT:-900}
     volumes:
       - ./backend:/app
+      - ./.env:/app/.env
+      - ./config:/config
+      - ./skills:/skills
+      - ./mcp-servers:/mcp-servers
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "9000:9000"
+    command: ["uvicorn", "pentest_platform.main:app", "--host", "0.0.0.0", "--port", "9000"]
     depends_on:
       postgres:
         condition: service_healthy

@@ -1,0 +1,101 @@
+# Recon + network escalation matrix (Dark-Moon WAF pivot + HexStrike fallback chains).
+# Planner consults this when a tool returns blocked / timeout / thin results.
+
+techniques:
+  subdomain_enumeration:
+    thin_results_signals: [few_results, empty_stdout, count_lt_5]
+    blocked_signals: [rate_limit, timeout, dns_error]
+    escalations:
+      - action: alternate_tool
+        from_tool: subfinder_scan
+        tool_name: amass_scan
+        additional_args: "-passive"
+        reason: "Few subdomains — try deeper passive amass"
+      - action: alternate_tool
+        from_tool: subfinder_scan
+        tool_name: fierce_scan
+        reason: "DNS-focused brute when passive sources exhausted"
+      - action: alternate_tool
+        from_tool: amass_scan
+        tool_name: dnsenum_scan
+        reason: "Zone transfer and DNS intel"
+      - action: adjust_params
+        tool_name: subfinder_scan
+        additional_args: "-all -recursive"
+        reason: "Expand passive sources"
+
+  live_host_probing:
+    blocked_signals: [waf_block, 403, cloudflare, access_denied]
+    escalations:
+      - action: alternate_path
+        tool_name: httpx_probe
+        additional_args: "-follow-redirects -path /index.php/"
+        reason: "Dark-Moon pattern: path pivot when root blocked"
+      - action: adjust_params
+        tool_name: httpx_probe
+        additional_args: "-H 'X-Forwarded-For: 127.0.0.1'"
+        reason: "Header bypass attempt"
+      - action: graph_pivot
+        query: siblings_same_ip
+        reason: "Check sibling hosts on shared IP (defacement pattern)"
+
+  port_discovery:
+    blocked_signals: [timeout, rate_limit, filtered]
+    escalations:
+      - action: alternate_tool
+        from_tool: rustscan_fast_scan
+        tool_name: masscan_high_speed
+        additional_args: "--rate 1000"
+        reason: "Wide sweep when rustscan filtered"
+      - action: alternate_tool
+        from_tool: masscan_high_speed
+        tool_name: nmap_syn_scan
+        additional_args: "-Pn -T3"
+        reason: "Stealth SYN when masscan noisy"
+      - action: adjust_params
+        tool_name: rustscan_fast_scan
+        additional_args: "--batch-size 1000"
+        reason: "Reduce batch on resource errors"
+
+  service_enumeration:
+    blocked_signals: [timeout, host_down, tool_failure]
+    escalations:
+      - action: adjust_params
+        tool_name: nmap_service_scan
+        additional_args: "--top-ports 1000 -Pn -sV"
+        reason: "Full-range scan timed out — start with top 1000 ports"
+      - action: adjust_params
+        tool_name: nmap_custom_scan
+        additional_args: "--top-ports 1000 -Pn -sV -sC"
+        reason: "Shrink port range after timeout; add scripts on known-open ports"
+      - action: adjust_params
+        tool_name: nmap_service_scan
+        additional_args: "-Pn -T2"
+        reason: "Skip host discovery, slower timing"
+      - action: alternate_tool
+        tool_name: nmap_custom_scan
+        params:
+          flags: "-sV -sC -Pn"
+        reason: "Custom nmap when defaults fail"
+
+  smb_enumeration:
+    trigger_signals: [port_445_open, port_139_open]
+    escalations:
+      - action: dispatch_task
+        task_id: smb_enumeration
+        tool_name: enum4linux_scan
+        additional_args: "-a"
+        reason: "445/139 open — SMB enum"
+      - action: alternate_tool
+        tool_name: smbmap_scan
+        reason: "Share listing alternative"
+      - action: alternate_tool
+        tool_name: netexec_scan
+        params:
+          protocol: smb
+        reason: "Modern netexec enum"
+
+fallback_chains:
+  subdomain_enumeration: [subfinder_scan, amass_scan, fierce_scan, dnsenum_scan]
+  port_discovery: [rustscan_fast_scan, masscan_high_speed, nmap_syn_scan]
+  service_enumeration: [nmap_service_scan, nmap_syn_scan, nmap_custom_scan]

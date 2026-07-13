@@ -1,0 +1,323 @@
+# Recon + network tool capabilities for the Commander LLM.
+# Skills live in skills/recon/ and skills/network/.
+# LLM may pass ANY flags via additional_args — not limited to examples below.
+
+tasks:
+  subdomain_enumeration:
+    phase: recon
+    description: Discover subdomains for a root domain (passive first).
+    default_tool: subfinder_scan
+    alternatives: [amass_scan, fierce_scan, dnsenum_scan]
+    skill_file: recon/subdomain-enumeration.md
+    produces: [subdomain, observation]
+
+  live_host_probing:
+    phase: recon
+    description: Probe which hosts/URLs respond over HTTP(S) and fingerprint tech.
+    default_tool: httpx_probe
+    alternatives: []
+    skill_file: recon/live-host-probing.md
+    produces: [host, url, technology]
+
+  historical_url_discovery:
+    phase: recon
+    description: Find historical URLs from archives and OSINT sources.
+    default_tool: waybackurls_discovery
+    alternatives: [gau_discovery]
+    skill_file: recon/historical-url-discovery.md
+    produces: [url, observation]
+
+  web_crawling:
+    phase: recon
+    description: Crawl a target URL for endpoints and forms.
+    default_tool: hakrawler_crawl
+    alternatives: []
+    skill_file: recon/web-crawling.md
+    produces: [url, observation]
+
+  dns_intelligence:
+    phase: recon
+    description: DNS enumeration, zone transfer attempts, IP range discovery.
+    default_tool: dnsenum_scan
+    alternatives: [fierce_scan]
+    skill_file: recon/dns-intelligence.md
+    produces: [host, observation]
+
+  port_discovery:
+    phase: network
+    description: Fast discovery of open TCP ports on a host.
+    default_tool: rustscan_fast_scan
+    alternatives: [masscan_high_speed, nmap_syn_scan]
+    skill_file: network/port-scan-strategy.md
+    produces: [port, host]
+
+  service_enumeration:
+    phase: network
+    description: Identify services and versions on known open ports.
+    default_tool: nmap_service_scan
+    alternatives: [nmap_syn_scan, nmap_custom_scan]
+    skill_file: network/service-enumeration.md
+    produces: [service, port]
+
+  smb_enumeration:
+    phase: network
+    description: Enumerate SMB/NetBIOS when ports 445/139 are open.
+    default_tool: enum4linux_scan
+    alternatives: [smbmap_scan, enum4linux_ng_advanced, netexec_scan]
+    skill_file: network/smb-enumeration.md
+    produces: [service, observation]
+
+tools:
+  subfinder_scan:
+    task: subdomain_enumeration
+    phase: recon
+    freeform_args_field: additional_args
+    default_for_task: true
+    alternatives: [amass_scan, fierce_scan, dnsenum_scan]
+    llm_hints: |
+      Default passive subdomain enum. If few results, try amass with additional_args "-passive" or fierce.
+    parameters:
+      domain: { type: string, required: true, description: "Root domain" }
+      silent: { type: bool, default: true }
+      all_sources: { type: bool, default: false }
+    example_calls:
+      - { domain: "example.com" }
+      - { domain: "example.com", additional_args: "-all" }
+
+  amass_scan:
+    task: subdomain_enumeration
+    phase: recon
+    freeform_args_field: additional_args
+    default_for_task: false
+    llm_hints: |
+      Deeper subdomain enum. mode=enum (default) or mode=passive for passive-only.
+      Do not use mode=passive as a top-level command — passive runs via enum -passive.
+    parameters:
+      domain: { type: string, required: true }
+      mode: { type: string, default: enum }
+
+  fierce_scan:
+    task: subdomain_enumeration
+    phase: recon
+    freeform_args_field: additional_args
+    default_for_task: false
+    parameters:
+      domain: { type: string, required: true }
+
+  dnsenum_scan:
+    task: dns_intelligence
+    phase: recon
+    freeform_args_field: additional_args
+    default_for_task: true
+    parameters:
+      domain: { type: string, required: true }
+      dns_server: { type: string, default: "" }
+
+  httpx_probe:
+    task: live_host_probing
+    phase: recon
+    freeform_args_field: additional_args
+    default_for_task: true
+    llm_hints: |
+      Run after subdomain enum. Pass a single domain/URL in target.
+      Uses -u for single targets, -l for file paths, stdin pipe for multiple.
+      Enable tech_detect for stack fingerprinting. Any httpx flags via additional_args.
+      Timing parameter uses numeric 0-5 (e.g. timing=4 for fast).
+    parameters:
+      target: { type: string, required: true, description: "URL, domain, or host list" }
+      tech_detect: { type: bool, default: false }
+      status_code: { type: bool, default: false }
+      title: { type: bool, default: false }
+      threads: { type: int, default: 50 }
+
+  waybackurls_discovery:
+    task: historical_url_discovery
+    phase: recon
+    freeform_args_field: additional_args
+    default_for_task: true
+    parameters:
+      domain: { type: string, required: true }
+
+  gau_discovery:
+    task: historical_url_discovery
+    phase: recon
+    freeform_args_field: additional_args
+    default_for_task: false
+    parameters:
+      domain: { type: string, required: true }
+      providers: { type: string, default: "wayback,commoncrawl,otx,urlscan" }
+
+  hakrawler_crawl:
+    task: web_crawling
+    phase: recon
+    freeform_args_field: additional_args
+    default_for_task: true
+    parameters:
+      url: { type: string, required: true }
+      depth: { type: int, default: 2 }
+      forms: { type: bool, default: true }
+
+  anew_data_processing:
+    task: subdomain_enumeration
+    phase: recon
+    freeform_args_field: additional_args
+    default_for_task: false
+    llm_hints: Utility for deduplicating line-based tool output — not a scanner.
+    parameters:
+      input_data: { type: string, required: true }
+      output_file: { type: string, default: "" }
+
+  rustscan_fast_scan:
+    task: port_discovery
+    phase: network
+    freeform_args_field: additional_args
+    default_for_task: false
+    llm_hints: |
+      Not installed in this environment. Use nmap_custom_scan or masscan_high_speed instead.
+    parameters:
+      target: { type: string, required: true }
+      ports: { type: string, default: "" }
+      batch_size: { type: int, default: 4500 }
+
+  masscan_high_speed:
+    task: port_discovery
+    phase: network
+    freeform_args_field: additional_args
+    default_for_task: false
+    parameters:
+      target: { type: string, required: true }
+      ports: { type: string, default: "1-65535" }
+      rate: { type: int, default: 1000 }
+      banners: { type: bool, default: false }
+
+  nmap_syn_scan:
+    task: port_discovery
+    phase: network
+    freeform_args_field: extra_args
+    default_for_task: false
+    llm_hints: |
+      Runs as unprivileged TCP connect scan (-sT -Pn) in this environment unless privileged=true.
+      Use extra_args/additional_args for port ranges (-p), scripts, etc.
+      Timing: use numeric 0-5 (e.g. timing=4 for fast). Do NOT use words like "fast" for timing.
+    parameters:
+      target: { type: string, required: true }
+      ports: { type: string, default: "" }
+      timing: { type: string, default: "" }
+
+  nmap_service_scan:
+    task: service_enumeration
+    phase: network
+    freeform_args_field: extra_args
+    default_for_task: true
+    llm_hints: |
+      Version + default scripts. Prefer focused port list. extra_args/additional_args for -Pn, -T2, --script, etc.
+    parameters:
+      target: { type: string, required: true }
+      ports: { type: string, default: "" }
+
+  nmap_custom_scan:
+    task: service_enumeration
+    phase: network
+    freeform_args_field: flags
+    default_for_task: false
+    llm_hints: |
+      Full escape hatch — pass arbitrary nmap flag string in flags or additional_args.
+    parameters:
+      target: { type: string, required: true }
+      flags: { type: string, required: true, description: "Full nmap flag string" }
+      privileged: { type: bool, default: false }
+
+  enum4linux_scan:
+    task: smb_enumeration
+    phase: network
+    freeform_args_field: additional_args
+    default_for_task: true
+    parameters:
+      target: { type: string, required: true }
+      additional_args: { type: string, default: "-a" }
+
+  enum4linux_ng_advanced:
+    task: smb_enumeration
+    phase: network
+    freeform_args_field: additional_args
+    default_for_task: false
+    parameters:
+      target: { type: string, required: true }
+      shares: { type: bool, default: true }
+      users: { type: bool, default: true }
+
+  smbmap_scan:
+    task: smb_enumeration
+    phase: network
+    freeform_args_field: additional_args
+    default_for_task: false
+    parameters:
+      target: { type: string, required: true }
+      username: { type: string, default: "" }
+      password: { type: string, default: "" }
+
+  netexec_scan:
+    task: smb_enumeration
+    phase: network
+    freeform_args_field: additional_args
+    default_for_task: false
+    parameters:
+      target: { type: string, required: true }
+      protocol: { type: string, default: smb }
+
+  nbtscan_netbios:
+    task: smb_enumeration
+    phase: network
+    freeform_args_field: additional_args
+    default_for_task: false
+    llm_hints: |
+      Requires a literal IPv4 — use RESOLVED_IP from context, not the hostname.
+    parameters:
+      target: { type: string, required: true, description: "IPv4 address (not hostname)" }
+
+  arp_scan_discovery:
+    task: port_discovery
+    phase: network
+    freeform_args_field: additional_args
+    default_for_task: false
+    llm_hints: Local network only.
+    parameters:
+      target: { type: string, required: true }
+
+  autorecon_scan:
+    task: service_enumeration
+    phase: network
+    freeform_args_field: additional_args
+    default_for_task: false
+    llm_hints: Heavy automated bundle — use when narrower scans are insufficient.
+    parameters:
+      target: { type: string, required: true }
+      output_dir: { type: string, default: "/tmp/autorecon" }
+
+  autorecon_comprehensive:
+    task: service_enumeration
+    phase: network
+    freeform_args_field: additional_args
+    default_for_task: false
+    parameters:
+      target: { type: string, required: true }
+      output_dir: { type: string, default: "/tmp/autorecon" }
+
+  rpcclient_enumeration:
+    task: smb_enumeration
+    phase: network
+    freeform_args_field: additional_args
+    default_for_task: false
+    parameters:
+      target: { type: string, required: true }
+      commands: { type: string, default: "enumdomusers;enumdomgroups;querydominfo" }
+
+  responder_credential_harvest:
+    task: smb_enumeration
+    phase: network
+    freeform_args_field: additional_args
+    default_for_task: false
+    llm_hints: GATED — requires allow_exploitation in engagement RoE.
+    parameters:
+      interface: { type: string, default: eth0 }
+      analyze: { type: bool, default: false }

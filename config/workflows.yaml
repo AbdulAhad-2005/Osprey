@@ -1,0 +1,83 @@
+# Dark-Moon-style structured workflows for recon + network.
+# LLM may call these OR chain individual tools freely.
+
+workflows:
+  subdomain_discovery:
+    phase: recon
+    description: Passive subdomain enum then live HTTP probe (subfinder → httpx).
+    source: darkmoon_subdomain_discovery
+    input_params: [domain]
+    steps:
+      - id: enum
+        tool: subfinder_scan
+        params:
+          domain: "{{domain}}"
+        additional_args: "-all"
+      - id: probe
+        tool: httpx_probe
+        feed_findings_from: enum
+        finding_type: subdomain
+        join: newline
+        param: target
+        additional_args: "-td -sc -title -status-code"
+
+  deep_subdomain_discovery:
+    phase: recon
+    description: subfinder then amass if first step yields fewer than 5 hosts.
+    input_params: [domain]
+    steps:
+      - id: passive
+        tool: subfinder_scan
+        params:
+          domain: "{{domain}}"
+        additional_args: "-all"
+      - id: deep
+        tool: amass_scan
+        params:
+          domain: "{{domain}}"
+          mode: enum
+        additional_args: "-passive"
+        skip_if_prior_findings_gte: 5
+        prior_step: passive
+      - id: probe
+        tool: httpx_probe
+        feed_findings_from: passive
+        also_feed_from: deep
+        finding_type: subdomain
+        join: newline
+        param: target
+        additional_args: "-td -sc"
+
+  port_scan_pipeline:
+    phase: network
+    description: Fast rustscan then nmap service scan on discovered ports.
+    source: darkmoon_port_scan
+    input_params: [target]
+    steps:
+      - id: fast
+        tool: rustscan_fast_scan
+        params:
+          target: "{{target}}"
+        additional_args: "-- -u 5000"
+      - id: services
+        tool: nmap_service_scan
+        params:
+          target: "{{target}}"
+        feed_ports_from: fast
+        param: ports
+        additional_args: "-Pn"
+
+  smb_followup:
+    phase: network
+    description: When 445 is open — enum4linux then smbmap.
+    input_params: [target]
+    steps:
+      - id: enum4linux
+        tool: enum4linux_scan
+        params:
+          target: "{{target}}"
+        additional_args: "-a"
+      - id: smbmap
+        tool: smbmap_scan
+        params:
+          target: "{{target}}"

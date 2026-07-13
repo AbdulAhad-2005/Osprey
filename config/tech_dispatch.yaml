@@ -1,0 +1,97 @@
+# Tech/signal dispatch for recon + network (Dark-Moon reactive pattern, config-driven).
+# Commander reads active signals from graph + findings and gets task suggestions.
+
+phase: recon_network
+
+signals:
+  - id: few_subdomains
+    match:
+      finding_type: subdomain
+      max_count: 5
+    dispatch:
+      task_id: subdomain_enumeration
+      default_tool: amass_scan
+      alternatives: [fierce_scan, dnsenum_scan]
+      skill_file: recon/subdomain-enumeration.md
+      reason: "Thin subdomain set — escalate enumeration depth"
+      priority: 8
+
+  - id: live_hosts_found
+    match:
+      finding_type: url
+      min_count: 1
+    dispatch:
+      task_id: historical_url_discovery
+      default_tool: waybackurls_discovery
+      alternatives: [gau_discovery]
+      skill_file: recon/historical-url-discovery.md
+      reason: "Live hosts found — mine historical URLs"
+      priority: 5
+
+  - id: technology_wordpress
+    match:
+      metadata_key: technology
+      metadata_contains: wordpress
+    dispatch:
+      task_id: live_host_probing
+      default_tool: httpx_probe
+      additional_args: "-path /wp-json/wp/v2/users -status-code"
+      reason: "WordPress detected — probe wp-json users"
+      priority: 7
+
+  - id: port_445_open
+    match:
+      metadata_key: port
+      metadata_value: "445"
+    dispatch:
+      task_id: smb_enumeration
+      default_tool: enum4linux_scan
+      alternatives: [smbmap_scan, netexec_scan]
+      skill_file: network/smb-enumeration.md
+      reason: "Port 445 open — SMB enumeration"
+      priority: 9
+
+  - id: port_139_open
+    match:
+      metadata_key: port
+      metadata_value: "139"
+    dispatch:
+      task_id: smb_enumeration
+      default_tool: enum4linux_scan
+      skill_file: network/smb-enumeration.md
+      reason: "NetBIOS port 139 open"
+      priority: 8
+
+  - id: open_ports_without_service
+    match:
+      finding_type: port
+      min_count: 1
+      missing_finding_type: service
+    dispatch:
+      task_id: service_enumeration
+      default_tool: nmap_service_scan
+      alternatives: [nmap_syn_scan]
+      skill_file: network/service-enumeration.md
+      reason: "Open ports known — run service/version scan"
+      priority: 9
+
+  - id: shared_hosting_pivot
+    match:
+      graph_query: siblings_same_ip
+      min_siblings: 2
+    dispatch:
+      task_id: live_host_probing
+      default_tool: httpx_probe
+      reason: "Multiple hosts on same IP — probe siblings (defacement check)"
+      priority: 10
+
+  - id: recon_complete_handoff
+    match:
+      phases_complete: [subdomain_enumeration, live_host_probing]
+      has_live_hosts: true
+    dispatch:
+      task_id: port_discovery
+      default_tool: rustscan_fast_scan
+      skill_file: network/port-scan-strategy.md
+      reason: "Recon baseline done — begin network port discovery on live hosts"
+      priority: 6

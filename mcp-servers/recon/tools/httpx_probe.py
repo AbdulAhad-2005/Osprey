@@ -45,7 +45,19 @@ def build_command(**params: Any) -> str:
     web_server = params.get("web_server", False)
     threads = params.get("threads", 50)
     additional_args = params.get("additional_args", "")
-    command = f"httpx -l {target} -t {threads}"
+
+    import os
+    is_file = os.path.isfile(target) if target else False
+
+    if is_file:
+        command = f"httpx -l {target} -t {threads}"
+    elif "\n" in target:
+        targets = [t.strip() for t in target.strip().splitlines() if t.strip()]
+        joined = "\\n".join(targets)
+        command = f"echo -e '{joined}' | httpx -t {threads}"
+    else:
+        command = f"httpx -u {target} -t {threads}"
+
     if probe:
         command += " -probe"
     if tech_detect:
