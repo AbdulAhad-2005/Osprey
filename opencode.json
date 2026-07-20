@@ -1,0 +1,22 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    "AGENTS.md"
+  ],
+  "mcp": {
+    "pentest-platform": {
+      "type": "local",
+      "command": [
+        "python",
+        "D:\\personal work\\AI-Pentesting-Tool\\llmwork\\AI-Pentesting-Tool\\platform-mcp\\server.py"
+      ],
+      "cwd": "D:\\personal work\\AI-Pentesting-Tool\\llmwork\\AI-Pentesting-Tool",
+      "environment": {
+        "PENTEST_API_BASE": "http://localhost:9000",
+        "PENTEST_QUICK_TIMEOUT": "60"
+      },
+      "enabled": true,
+      "timeout": 960000
+    }
+  }
+}

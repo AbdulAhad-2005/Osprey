@@ -29,6 +29,10 @@ Thumbs.db
 .uv-cache
 .agents
 
+# Local engagement artifacts (sensitive)
+Pentest-Reports/
+platform-mcp/Pentest-Reports/
+
 hexstrike-ai
 strix
 shannon

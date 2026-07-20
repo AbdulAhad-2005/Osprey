@@ -1,0 +1,132 @@
+{
+  "universal_loop": [
+    "SIGNAL - name the likely product/role using your knowledge (do not wait for a skill file).",
+    "CONFIRM - second observed probe (status/title/headers/banner) on the same asset.",
+    "GRADE - observed / inferred / unverified before any severity word.",
+    "DEEPEN - on ALL confirmed live crown jewels: crawl, dir probe, JS/API extraction \u2014 not titles alone. Historical URLs help but do not replace app depth.",
+    "REPORT - finalize gate; never COMPLETE while js_surface_unanalyzed / web_surface_no_app_depth remain on a web-shaped target."
+  ],
+  "role_weights": [
+    {
+      "pattern": "(?i)\\bvpn\\b|anyconnect|globalprotect|forticlient",
+      "weight": 40,
+      "role": "remote_access"
+    },
+    {
+      "pattern": "(?i)owa|webmail|exchange|autodiscover|mail\\.",
+      "weight": 38,
+      "role": "mail"
+    },
+    {
+      "pattern": "(?i)mdm|intune|mobile.?device",
+      "weight": 36,
+      "role": "device_mgmt"
+    },
+    {
+      "pattern": "(?i)gitlab|jenkins|harbor|confluence|jira|n8n|gitea",
+      "weight": 35,
+      "role": "devops"
+    },
+    {
+      "pattern": "(?i)admin|staging|console|pam|sso|identity|auth\\.",
+      "weight": 32,
+      "role": "admin_identity"
+    },
+    {
+      "pattern": "(?i)\\bapi\\b|graphql|swagger|gateway|apim",
+      "weight": 28,
+      "role": "api"
+    },
+    {
+      "pattern": "(?i)sip|pbx|voice|vpbx",
+      "weight": 30,
+      "role": "voice"
+    },
+    {
+      "pattern": "(?i)supplier|portal|intranet|extranet|partner|erp|ebs",
+      "weight": 24,
+      "role": "business_portal"
+    }
+  ],
+  "signal_classes": [
+    {
+      "id": "vendor_http_header",
+      "pattern": "(?i)(?:^|\\n)((?:X-[A-Z0-9-]+|Server|WWW-Authenticate|X-Powered-By):\\s*[^\\n]{3,160})",
+      "think": [
+        "Name the product/family from this header using your knowledge (any vendor).",
+        "Confirm with a second probe: status + title + 2 more headers on the same host.",
+        "Do not claim CRITICAL from a header alone \u2014 need auth bypass, data leak, or RCE proof.",
+        "Record observed evidence (quote the header) before raising severity."
+      ],
+      "next_probes": [
+        "httpx_probe",
+        "platform_script banner grab",
+        "chunked port/service check on resolved IP"
+      ]
+    },
+    {
+      "id": "console_or_login_path",
+      "pattern": "(?i)(/((?:console|login|admin|manager|portal|owa|ecp|OA_HTML|AppsLocalLogin)[^\\s\"']{0,80}))",
+      "think": [
+        "Treat path as a lead, not exposure. DNS or path \u2260 open unauth service.",
+        "Probe live: HTTP status, title, auth challenge, redirect chain.",
+        "If body is SPA/HTML shell on an API-looking path \u2014 demote; prove JSON."
+      ],
+      "next_probes": [
+        "httpx_probe",
+        "follow redirects in platform_script"
+      ]
+    },
+    {
+      "id": "auth_realm",
+      "pattern": "(?i)WWW-Authenticate:\\s*([^\\n]{3,120})",
+      "think": [
+        "Auth challenge proves a real service surface \u2014 note scheme/realm.",
+        "Next: is default/weak auth in scope? Only if authorized. Else document as observed auth wall."
+      ],
+      "next_probes": [
+        "targeted auth surface notes",
+        "related sibling hosts on same IP"
+      ]
+    },
+    {
+      "id": "spa_false_api",
+      "pattern": "(?i)(spa_catchall|<!DOCTYPE html).{0,80}(/(?:api|swagger|graphql)|api)",
+      "think": [
+        "HTML catch-all on /api|/swagger|/graphql is not an open API.",
+        "Re-probe for Content-Type: application/json and real JSON body before HIGH/CRITICAL."
+      ],
+      "next_probes": [
+        "platform_script with Accept: application/json",
+        "force_refresh httpx_probe"
+      ]
+    },
+    {
+      "id": "spa_js_surface",
+      "pattern": "(?i)(angular|ng-version|__NEXT_DATA__|chunk-[a-z0-9]+\\.js|main\\.[a-f0-9]+\\.js)",
+      "think": [
+        "SPA shell means real APIs live in JS bundles / XHR \u2014 not in the HTML route table.",
+        "Fetch index HTML \u2192 collect script src \u2192 download chunk/main bundles \u2192 extract /api paths, keys, internal hosts.",
+        "Record findings with tags js_bundle / embedded_api_key / api_endpoint_from_js.",
+        "Clear js_surface_unanalyzed before declaring recon done or starting mass vuln scans."
+      ],
+      "next_probes": [
+        "platform_script JS bundle miner",
+        "katana_crawl",
+        "hakrawler_crawl"
+      ]
+    },
+    {
+      "id": "stack_banner",
+      "pattern": "(?i)(OpenSSH[_/]\\S+|Apache/\\S+|nginx/\\S+|Microsoft-IIS/\\S+|Product:\\s*\\S+|Version:\\s*\\S+)",
+      "think": [
+        "Banner/version is observed footprint \u2014 map to weakness classes only after version is solid.",
+        "Prefer prove-then-search over CVE-title theater."
+      ],
+      "next_probes": [
+        "service enum on that port",
+        "version-confirm before CVE claims"
+      ]
+    }
+  ]
+}

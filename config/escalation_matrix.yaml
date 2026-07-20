@@ -4,8 +4,21 @@
 techniques:
   subdomain_enumeration:
     thin_results_signals: [few_results, empty_stdout, count_lt_5]
-    blocked_signals: [rate_limit, timeout, dns_error]
+    blocked_signals: [rate_limit, timeout, dns_error, tool_failure, incomplete_output]
     escalations:
+      - action: adjust_params
+        from_tool: dnsenum_scan
+        tool_name: dnsenum_scan
+        additional_args: "--enum --threads 5"
+        reason: "dnsenum needs --enum; prior run exited after banner only"
+      - action: alternate_tool
+        from_tool: dnsenum_scan
+        tool_name: subfinder_scan
+        reason: "DNS enum failed — passive subdomain discovery"
+      - action: alternate_tool
+        from_tool: dnsenum_scan
+        tool_name: fierce_scan
+        reason: "DNS-focused recon when dnsenum invocation fails"
       - action: alternate_tool
         from_tool: subfinder_scan
         tool_name: amass_scan

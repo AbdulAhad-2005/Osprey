@@ -85,6 +85,30 @@ signals:
       reason: "Multiple hosts on same IP — probe siblings (defacement check)"
       priority: 10
 
+  - id: cdn_hint_seen
+    match:
+      metadata_key: waf
+      metadata_contains: cloudflare
+    dispatch:
+      task_id: cdn_origin_clues
+      default_tool: cdn_origin_probe
+      alternatives: [dnsx_resolve, tlsx_inspect]
+      skill_file: recon/ip-attribution.md
+      reason: "CDN/WAF signal — soft origin clues before heavy port scans on edges"
+      priority: 7
+
+  - id: cdn_provider_hint
+    match:
+      metadata_key: cdn_provider
+      metadata_contains: cloud
+    dispatch:
+      task_id: cdn_origin_clues
+      default_tool: dnsx_resolve
+      alternatives: [tlsx_inspect, cdn_origin_probe]
+      skill_file: recon/ip-attribution.md
+      reason: "CDN provider metadata present — resolve carefully; avoid scanning edges first"
+      priority: 6
+
   - id: recon_complete_handoff
     match:
       phases_complete: [subdomain_enumeration, live_host_probing]
@@ -94,4 +118,38 @@ signals:
       default_tool: rustscan_fast_scan
       skill_file: network/port-scan-strategy.md
       reason: "Recon baseline done — begin network port discovery on live hosts"
+      priority: 6
+
+  # --- Adaptive depth (config-driven, no target hardcoding) ---
+  - id: many_urls_thin_history
+    match:
+      finding_type: url
+      min_count: 3
+    dispatch:
+      task_id: historical_url_discovery
+      default_tool: waybackurls_discovery
+      alternatives: [gau_discovery]
+      reason: "Several live URLs — mine historical paths before calling recon done"
+      priority: 8
+
+  - id: technology_express_or_nodejs
+    match:
+      metadata_key: technology
+      metadata_contains: express
+    dispatch:
+      task_id: live_host_probing
+      default_tool: httpx_probe
+      alternatives: [platform_script]
+      reason: "Express/Node signal — probe APIs, debug endpoints, alt ports (e.g. 8443)"
+      priority: 7
+
+  - id: technology_apache
+    match:
+      metadata_key: technology
+      metadata_contains: apache
+    dispatch:
+      task_id: content_discovery
+      default_tool: platform_script
+      alternatives: [ffuf_scan, gobuster_scan]
+      reason: "Apache live — light content discovery / interesting paths"
       priority: 6

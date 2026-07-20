@@ -30,7 +30,8 @@ services:
     stdin_open: true
     tty: true
     healthcheck:
-      test: ["CMD", "which", "nmap"]
+      # nmap (apt) + subfinder (Go) — catches PATH / missing-tool regressions
+      test: ["CMD-SHELL", "command -v nmap && command -v subfinder"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -56,13 +57,14 @@ services:
       LLM_TOOL_TIMEOUT: ${LLM_TOOL_TIMEOUT:-900}
     volumes:
       - ./backend:/app
-      - ./.env:/app/.env
       - ./config:/config
       - ./skills:/skills
       - ./mcp-servers:/mcp-servers
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "9000:9000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: ["uvicorn", "pentest_platform.main:app", "--host", "0.0.0.0", "--port", "9000"]
     depends_on:
       postgres:

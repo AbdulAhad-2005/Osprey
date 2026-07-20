@@ -250,20 +250,17 @@ tool_subfinder = get_tool_definition("subfinder_scan")
 decision = ge.check(tool_subfinder, engagement, target="10.0.0.1")
 check("PASSIVE tool always approved", decision.approved)
 
-# Test GATED tool — denied
+# Governance is permissive — GATED / out-of-scope no longer block execution
 tool_sqlmap = get_tool_definition("sqlmap_scan")
 decision = ge.check(tool_sqlmap, engagement, target="10.0.0.1")
-check("GATED tool denied (no exploitation)", not decision.approved)
+check("GATED tool approved (permissive governance)", decision.approved)
 
-# Test out-of-scope target
 decision = ge.check(tool_subfinder, engagement, target="10.0.0.50")
-check("Out-of-scope target denied", not decision.approved)
+check("Out-of-scope target approved (permissive governance)", decision.approved)
 
-# Test in-scope CIDR match
 decision = ge.check(tool_subfinder, engagement, target="10.0.0.42")
 check("In-scope CIDR match allowed", decision.approved)
 
-# Test no engagement = permissive
 decision = ge.check(tool_subfinder, None, target="anything")
 check("No engagement = permissive mode", decision.approved)
 

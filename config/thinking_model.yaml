@@ -1,0 +1,87 @@
+# Universal thinking model — expand surface + grade evidence (any product)
+#
+# Do NOT add per-vendor markdown packs (no oracle-ebs.md, no exchange.md).
+# Extend patterns here; the LLM supplies product knowledge at runtime.
+
+# How a strong operator expands a domain — instincts, not a mandatory stage machine.
+# Skip/reorder when evidence already covers a concern; invent when catalog is thin.
+surface_expansion:
+  - "SEED - bind target; whois/org context; ask if scope includes affiliates."
+  - "WIDEN - sister/affiliate roots (domain_hunter) alongside subdomain enum (subfinder/amass/crt.sh) — do not stop after one passive tool."
+  - "LIVE - as names appear, probe HTTP(S) in parallel (httpx / fanout / jobs); mark live vs DNS-only."
+  - "IP MAP - resolve live names; group by IP; note CDN/WAF/firewall vs origin-looking IPs."
+  - "PORTS - top-ports/1-1000/known opens on worth-time IPs; NEVER full 1-65535 unless human OK + confirm_expensive; on fail shrink don't widen."
+  - "FOOTPRINT - OS/service banners, tech, emails/creds only when observed; web stack + interesting paths/URLs on live apps."
+  - "INVENT - custom paths, JS route extract, API trees → platform_script (+ FINDING markers); use platform_job_start for long branches."
+  - "DEEPEN - crown jewels / confirmed roles get app depth; then finalize grades."
+
+# Product/fingerprint loop — runs *on assets you already reached*, not instead of expansion.
+universal_loop:
+  - "EXPAND - use the full resource set (typed tools, domain_hunter, jobs, fanout, scripts) until the surface story is coherent — not until the first tool returns."
+  - "SIGNAL - name the likely product/role using your knowledge (do not wait for a skill file)."
+  - "CONFIRM - second observed probe (status/title/headers/banner) on the same asset."
+  - "GRADE - observed / inferred / unverified before any severity word."
+  - "DEEPEN - on confirmed high-value roles (remote_access, mail, admin, api, business apps) and invent probes when wrappers are thin."
+  - "REPORT - finalize gate; never COMPLETE from chat memory alone."
+
+# Host/path *roles* — not vendor lists. Weights guide crown-jewel ranking.
+role_weights:
+  - { pattern: '(?i)\bvpn\b|anyconnect|globalprotect|forticlient', weight: 40, role: remote_access }
+  - { pattern: '(?i)owa|webmail|exchange|autodiscover|mail\.', weight: 38, role: mail }
+  - { pattern: '(?i)mdm|intune|mobile.?device', weight: 36, role: device_mgmt }
+  - { pattern: '(?i)gitlab|jenkins|harbor|confluence|jira|n8n|gitea', weight: 35, role: devops }
+  - { pattern: '(?i)admin|staging|console|pam|sso|identity|auth\.', weight: 32, role: admin_identity }
+  - { pattern: '(?i)\bapi\b|graphql|swagger|gateway|apim', weight: 28, role: api }
+  - { pattern: '(?i)sip|pbx|voice|vpbx', weight: 30, role: voice }
+  - { pattern: '(?i)supplier|portal|intranet|extranet|partner|erp|ebs', weight: 24, role: business_portal }
+
+# Signal classes → thinking cards (how to reason, not what CVE to claim)
+signal_classes:
+  - id: vendor_http_header
+    pattern: '(?i)(?:^|\n)((?:X-[A-Z0-9-]+|Server|WWW-Authenticate|X-Powered-By):\s*[^\n]{3,160})'
+    think:
+      - "Name the product/family from this header using your knowledge (any vendor)."
+      - "Confirm with a second probe: status + title + 2 more headers on the same host."
+      - "Do not claim CRITICAL from a header alone — need auth bypass, data leak, or RCE proof."
+      - "Record observed evidence (quote the header) before raising severity."
+    next_probes:
+      - httpx_probe
+      - platform_script banner grab
+      - chunked port/service check on resolved IP
+
+  - id: console_or_login_path
+    pattern: '(?i)(/((?:console|login|admin|manager|portal|owa|ecp|OA_HTML|AppsLocalLogin)[^\s"'']{0,80}))'
+    think:
+      - "Treat path as a lead, not exposure. DNS or path ≠ open unauth service."
+      - "Probe live: HTTP status, title, auth challenge, redirect chain."
+      - "If body is SPA/HTML shell on an API-looking path — demote; prove JSON."
+    next_probes:
+      - httpx_probe
+      - follow redirects in platform_script
+
+  - id: auth_realm
+    pattern: '(?i)WWW-Authenticate:\s*([^\n]{3,120})'
+    think:
+      - "Auth challenge proves a real service surface — note scheme/realm."
+      - "Next: is default/weak auth in scope? Only if authorized. Else document as observed auth wall."
+    next_probes:
+      - targeted auth surface notes
+      - related sibling hosts on same IP
+
+  - id: spa_false_api
+    pattern: '(?i)(spa_catchall|<!DOCTYPE html).{0,80}(/(?:api|swagger|graphql)|api)'
+    think:
+      - "HTML catch-all on /api|/swagger|/graphql is not an open API."
+      - "Re-probe for Content-Type: application/json and real JSON body before HIGH/CRITICAL."
+    next_probes:
+      - "platform_script with Accept: application/json"
+      - "force_refresh httpx_probe"
+
+  - id: stack_banner
+    pattern: '(?i)(OpenSSH[_/]\S+|Apache/\S+|nginx/\S+|Microsoft-IIS/\S+|Product:\s*\S+|Version:\s*\S+)'
+    think:
+      - "Banner/version is observed footprint — map to weakness classes only after version is solid."
+      - "Prefer prove-then-search over CVE-title theater."
+    next_probes:
+      - service enum on that port
+      - version-confirm before CVE claims

@@ -19,10 +19,10 @@ RUN apt-get update \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
     # ── Recon ──
-    amass dnsenum fierce \
+    amass dnsenum fierce whois \
     # ── Network ──
-    nmap masscan enum4linux smbmap \
-    nbtscan arp-scan responder samba-common-bin \
+    nmap masscan enum4linux enum4linux-ng smbmap \
+    netexec nbtscan arp-scan responder samba-common-bin \
     net-tools iputils-ping dnsutils \
     # ── Web ──
     nikto sqlmap wafw00f wfuzz ffuf dirb dirsearch \
@@ -58,6 +58,8 @@ RUN go install github.com/tomnomnom/anew@latest
 RUN go install github.com/hakluke/hakrawler@latest
 RUN go install github.com/hahwul/dalfox/v2@latest
 RUN go install github.com/tomnomnom/qsreplace@latest
+RUN go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest
+RUN go install github.com/projectdiscovery/tlsx/cmd/tlsx@latest
 
 # ─── 4. Python pip tools ──────────────────────────────────────────────────────
 RUN pip3 install --break-system-packages --no-cache-dir --ignore-installed \
@@ -71,21 +73,39 @@ RUN pip3 install --break-system-packages --no-cache-dir --ignore-installed \
        arjun \
        volatility3
 
-# ─── 4b. Ruby gem tools ──────────────────────────────────────────────────────
+# ─── 4b. domain-hunter deps (mcp-servers/recon/tools/domain-hunter) ──────────
+RUN pip3 install --break-system-packages --no-cache-dir \
+       requests pyyaml openpyxl dnspython tldextract beautifulsoup4
+
+# ─── 4c. Ruby gem tools ──────────────────────────────────────────────────────
 RUN gem install one_gadget
 
 # ─── 5. GitHub / binary installs ──────────────────────────────────────────────
 
-# ── rustscan ──
-RUN cargo install rustscan 2>/dev/null || \
-    (apt-get update && apt-get install -y --no-install-recommends cargo \
-     && cargo install rustscan && rm -rf /var/lib/apt/lists/*) || true
+# whois is also in the apt recon layer above; this late install is a safety net
+# for cached builds that predate that package.
+RUN command -v whois >/dev/null 2>&1 || (apt-get update \
+    && apt-get install -y --no-install-recommends whois \
+    && rm -rf /var/lib/apt/lists/*)
+
+# ── rustscan (prebuilt release — cargo is slow/flaky; fail the build if missing) ──
+RUN set -eux; \
+    mkdir -p /tmp/rustscan; \
+    wget -q "https://github.com/bee-san/RustScan/releases/download/2.4.1/rustscan.deb.zip" \
+      -O /tmp/rustscan/rustscan.deb.zip; \
+    unzip -q /tmp/rustscan/rustscan.deb.zip -d /tmp/rustscan; \
+    apt-get update; \
+    DEB="$(find /tmp/rustscan -name 'rustscan_*.deb' | head -n1)"; \
+    test -n "$DEB"; \
+    apt-get install -y --no-install-recommends "$DEB"; \
+    command -v rustscan; \
+    rm -rf /tmp/rustscan /var/lib/apt/lists/*
 
 # ── pacu (AWS exploitation) ──
 RUN git clone --depth 1 https://github.com/RhinoSecurityLabs/pacu.git /opt/pacu \
     && cd /opt/pacu \
     && pip3 install --break-system-packages --no-cache-dir . \
-    && ln -sf /opt/pacu/cli.py /usr/local/bin/pacu \
+    && ln -s /opt/pacu/cli.py /usr/local/bin/pacu \
     || true
 
 # ── ghidra (headless) ──
@@ -118,8 +138,8 @@ RUN wget -q https://github.com/aquasecurity/kube-bench/releases/download/v0.9.3/
 # ── clairctl (Clair) ──
 RUN go install github.com/quay/clair/cmd/clairctl@latest 2>/dev/null || true
 
-# ── prowler ──
-RUN pip3 install --break-system-packages --no-cache-dir prowler
+# ── prowler (cloud — optional; pip/debian pytz conflict on Kali) ──
+RUN pip3 install --break-system-packages --no-cache-dir prowler || true
 
 # ── falco ──
 RUN apt-get update \
@@ -143,9 +163,27 @@ RUN ln -sf /usr/bin/python3 /usr/bin/python
 # This step ensures the base Python environment can import mcp.
 RUN pip3 install --break-system-packages --no-cache-dir mcp>=1.2.0
 
+# ─── 6b. Make Go tools + PATH permanent for all shells / healthchecks ──────────
+# Symlink into /usr/local/bin so login shells (`bash -lc`) still find tools when
+# they reset PATH and drop Dockerfile ENV /opt/go/bin.
+RUN find /opt/go/bin -type f -executable -exec bash -c \
+      'for f; do ln -sfn "$f" "/usr/local/bin/$(basename "$f")"; done' _ {} + \
+    && printf '%s\n' \
+      'export GOPATH=/opt/go' \
+      'export PATH="/opt/go/bin:/usr/local/go/bin:/usr/local/bin:$PATH"' \
+      > /etc/profile.d/99-pentest-tools.sh \
+    && chmod 644 /etc/profile.d/99-pentest-tools.sh \
+    && printf '%s\n' \
+      'PATH="/opt/go/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"' \
+      > /etc/environment \
+    && command -v subfinder \
+    && command -v whois \
+    && command -v rustscan \
+    && command -v nmap
+
 # ─── 7. User setup ────────────────────────────────────────────────────────────
 RUN useradd -m -s /bin/bash mcpuser \
-    && chown -R mcpuser:mcpuser /opt/go
+    && chown -R mcpuser:mcpuser /opt/go/bin
 USER mcpuser
 WORKDIR /home/mcpuser
 

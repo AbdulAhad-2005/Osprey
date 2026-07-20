@@ -72,8 +72,15 @@ def run_tool(
                     "recovery_applied": len(recovery_history) > 0,
                     "recovery_history": recovery_history,
                 }
-            if use_cache:
+            # Never cache empty "success" — looks like a working tool that returns 0 results.
+            stdout = (result.raw_stdout or "").strip()
+            if use_cache and stdout:
                 cache.set(current_command, current_params, payload)
+            elif use_cache and not stdout:
+                payload["warning"] = (
+                    "Tool exited successfully but produced empty stdout "
+                    "(likely missing/wrong target param or no findings)."
+                )
             return payload
 
         if not use_recovery:

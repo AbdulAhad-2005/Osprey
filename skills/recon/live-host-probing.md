@@ -11,3 +11,11 @@
 **Input:** Pipe subdomains from prior findings or pass a file path if the tool supports it via flags.
 
 **Output:** Live URLs, status codes, technologies — feed into crawling or historical URL tasks.
+
+## WAF pivot families (examples — not exhaustive)
+- Path: `/index.php/`, `/api/`, trailing dot, case variants
+- Headers: `X-Forwarded-For`, `X-Original-URL`, `X-Rewrite-URL`
+- Method: GET vs POST on same path
+- Historical: waybackurls may hit unprotected old endpoints
+
+Use httpx `additional_args` for any of these. Combine with graph pivot (siblings on same IP).

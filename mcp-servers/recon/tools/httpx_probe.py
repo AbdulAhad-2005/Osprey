@@ -20,6 +20,7 @@ Category: recon
 
 from __future__ import annotations
 
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -36,7 +37,7 @@ CATEGORY = "recon"
 
 def build_command(**params: Any) -> str:
     """Build CLI command (harvested from HexStrike server route)."""
-    target = params.get("target", "")
+    target = str(params.get("target", "")).strip()
     probe = params.get("probe", True)
     tech_detect = params.get("tech_detect", False)
     status_code = params.get("status_code", False)
@@ -46,33 +47,50 @@ def build_command(**params: Any) -> str:
     threads = params.get("threads", 50)
     additional_args = params.get("additional_args", "")
 
-    import os
-    is_file = os.path.isfile(target) if target else False
-
-    if is_file:
-        command = f"httpx -l {target} -t {threads}"
-    elif "\n" in target:
-        targets = [t.strip() for t in target.strip().splitlines() if t.strip()]
-        joined = "\\n".join(targets)
-        command = f"echo -e '{joined}' | httpx -t {threads}"
-    else:
-        command = f"httpx -u {target} -t {threads}"
-
+    suffix = f"-t {threads}"
     if probe:
-        command += " -probe"
+        suffix += " -probe"
     if tech_detect:
-        command += " -tech-detect"
+        suffix += " -tech-detect"
     if status_code:
-        command += " -sc"
+        suffix += " -sc"
     if content_length:
-        command += " -cl"
+        suffix += " -cl"
     if title:
-        command += " -title"
+        suffix += " -title"
     if web_server:
-        command += " -server"
+        suffix += " -server"
     if additional_args:
-        command += f" {additional_args}"
-    return command.strip()
+        suffix += f" {additional_args}"
+
+    lines = [line.strip() for line in target.replace(",", "\n").splitlines() if line.strip()]
+    if not lines:
+        raise ValueError("httpx_probe requires target")
+
+    # -l expects a file path; -u accepts a single host/URL.
+    if len(lines) == 1 and Path(lines[0]).is_file():
+        return f"httpx -l {shlex.quote(lines[0])} {suffix}".strip()
+
+    if len(lines) == 1:
+        return f"httpx -u {shlex.quote(lines[0])} {suffix}".strip()
+
+    # Multi-target: NEVER stuff 50+ hosts into `httpx -u a b c` (breaks ARG_MAX /
+    # docker exec and caused backend 500s). Write a list file then `httpx -l`.
+    import hashlib
+
+    digest = hashlib.sha1("\n".join(lines).encode()).hexdigest()[:12]
+    list_path = f"/tmp/httpx_targets_{digest}.txt"
+    # printf is safer than echo for large lists; run under bash -c in Kali.
+    payload = "\n".join(lines) + "\n"
+    # Use python to write the file to avoid shell-escaping hundreds of hosts.
+    write_py = (
+        "python3 -c "
+        + shlex.quote(
+            "import pathlib; pathlib.Path(%r).write_text(%r, encoding='utf-8')"
+            % (list_path, payload)
+        )
+    )
+    return f"{write_py} && httpx -l {shlex.quote(list_path)} {suffix}".strip()
 
 def parse(result: ToolResult) -> dict[str, Any]:
     return default_parse(result)
