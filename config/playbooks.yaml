@@ -1,0 +1,102 @@
+# Advisory playbooks only — the LLM may follow, edit, or ignore.
+# platform_playbook returns these as suggestions; nothing auto-executes.
+
+playbooks:
+  web_recon_light:
+    phase: recon
+    description: >
+      Lightweight web attack-surface pass: widen (sisters + subs), probe live HTTP,
+      then selective depth. Adapt if volume is huge (chunk httpx; use jobs).
+    input: domain
+    steps:
+      - tool: domain_hunter
+        why: Sister/affiliate roots early — expansion instinct, not optional fluff.
+        suggested_params:
+          domain: "{{target}}"
+          confidence_min: medium
+        fallback: [whois_lookup, amass_scan]
+      - tool: subfinder_scan
+        why: Passive subdomain inventory (prefer typed tool or platform_exec).
+        suggested_params:
+          domain: "{{target}}"
+          silent: true
+        fallback: [amass_scan, crt_sh_query, platform_shell]
+      - tool: httpx_probe
+        why: Confirm which hosts speak HTTP(S) and grab titles/tech — batch/parallel.
+        suggested_params:
+          target: "{{from_prior_subdomains}}"
+        fallback: [platform_script, platform_fanout_assets]
+      - tool: nuclei
+        why: Selective CVE/templates on live hosts only — not the whole internet.
+        note: Use platform_shell 'nuclei -u …' if no nuclei wrapper in recon set.
+        suggested_params:
+          target: "{{live_hosts}}"
+        fallback: [platform_shell]
+
+  network_crown_jewels:
+    phase: network
+    description: >
+      Fast ports then careful service confirm on crown-jewel hosts/IPs.
+      Chunk ports; avoid full -sV on huge ranges (timeouts).
+    input: target
+    steps:
+      - tool: rustscan_fast_scan
+        why: Quick open-port discovery before deep nmap.
+        suggested_params:
+          target: "{{target}}"
+        fallback: [masscan_high_speed, nmap_syn_scan]
+      - tool: nmap_syn_scan
+        why: Confirm top ports with TCP connect (-sT --unprivileged in this lab).
+        suggested_params:
+          target: "{{target}}"
+          ports: "{{from_rustscan_or_top100}}"
+        fallback: [nmap_service_scan, platform_shell]
+      - tool: nmap_service_scan
+        why: Banner/service on a SMALL port set only (chunk to avoid MCP timeout).
+        suggested_params:
+          target: "{{target}}"
+          ports: "{{few_interesting_ports}}"
+        fallback: [platform_shell]
+
+  dns_deep:
+    phase: recon
+    description: >
+      DNS depth beyond subfinder — records, zone edges, fierce/dnsenum when needed.
+    input: domain
+    steps:
+      - tool: platform_shell
+        why: dig NS/MX/TXT/A individually (container DNS quirks).
+        suggested_params:
+          command: "dig +short NS {{target}}"
+        fallback: [whois_lookup]
+      - tool: whois_lookup
+        why: Registrar / org context for sister-domain pivots.
+        suggested_params:
+          domain: "{{target}}"
+        fallback: [platform_shell]
+      - tool: amass_scan
+        why: Deeper passive intel if subfinder inventory looks thin.
+        suggested_params:
+          domain: "{{target}}"
+        fallback: [dnsenum_scan, fierce_scan]
+      - tool: dnsenum_scan
+        why: Classic DNS enum when passive sources stall.
+        suggested_params:
+          domain: "{{target}}"
+        fallback: [fierce_scan]
+
+  smb_followup:
+    phase: network
+    description: When 445 is open — enum shares/users carefully.
+    input: target
+    steps:
+      - tool: enum4linux_ng_advanced
+        why: Broad SMB/Windows enum.
+        suggested_params:
+          target: "{{target}}"
+        fallback: [enum4linux_scan, netexec_scan]
+      - tool: smbmap_scan
+        why: Share listing / permissions.
+        suggested_params:
+          target: "{{target}}"
+        fallback: [netexec_scan]

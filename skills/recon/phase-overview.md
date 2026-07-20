@@ -2,13 +2,18 @@
 
 Goal: map the external attack surface before intrusive network testing.
 
-**Workflow (suggested, not mandatory):**
-1. Subdomain enumeration on the root domain
-2. Live host probing on discovered hosts
-3. Historical URL / archive mining for hidden endpoints
-4. Light crawling on high-value URLs
-5. DNS intelligence when nameservers or zone data are unclear
+**Instincts (suggested order of concerns — not mandatory stages):**
+1. Sister / seed scope (`domain_hunter`) when a domain is in play
+2. Subdomain enumeration — more than one source if inventory looks thin
+3. Live host probing **alongside** discovery (jobs/fanout), not only after
+4. IP grouping / edge vs origin; ports + services on worth-time IPs
+5. Historical URL / crawl / `platform_script` for app depth on high-value hosts
+6. DNS / shared-infra pivots when the graph shows `co_hosts`
 
-**Tool selection:** Pick the tool that fits the current finding. You may use any CLI flags via `additional_args` — examples in the catalog are hints only.
+**Next step:** Prefer `platform_context` coverage gaps + thinking expansion cards + tree
+over a fixed checklist — but do not treat “advisory” as “ignore.”
 
-**Output:** Emit structured findings (subdomains, URLs, technologies). Reference prior finding IDs in `based_on_findings` when pivoting.
+**Tool selection:** Pick the tool that fits the current finding. Any CLI flags via
+`additional_args`. Failures → TRY NEXT / invent with script.
+
+**Output:** Structured findings (subdomains, URLs, technologies) into platform memory.

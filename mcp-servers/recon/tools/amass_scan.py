@@ -32,12 +32,18 @@ CATEGORY = "recon"
 def build_command(**params: Any) -> str:
     """Build CLI command (harvested from HexStrike server route)."""
     domain = params.get("domain", "")
-    mode = params.get("mode", "enum")
+    mode = str(params.get("mode", "enum")).strip().lower()
     additional_args = params.get("additional_args", "")
-    command = f"amass {mode}"
-    if mode == "enum":
-        command += f" -d {domain}"
-        command += f" -d {domain}"
+
+    # Kali's /usr/bin/amass wrapper may invoke sudo for libpostal setup — call binary directly.
+    # passive is a sub-mode of enum, not a top-level amass subcommand.
+    if mode == "passive":
+        command = f"/usr/lib/amass/amass enum -passive -d {domain}"
+    elif mode == "intel":
+        command = f"/usr/lib/amass/amass intel -d {domain}"
+    else:
+        command = f"/usr/lib/amass/amass enum -d {domain}"
+
     if additional_args:
         command += f" {additional_args}"
     return command.strip()

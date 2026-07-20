@@ -1,0 +1,62 @@
+# Universal stdout → finding promotion. Applies to EVERY tool/script/shell.
+# New tools inherit these rules automatically — add patterns, don't fork code.
+
+rules:
+  - id: vendor_fingerprint_header
+    pattern: '(?i)(?:^|\n)((?:X-[A-Z0-9-]{3,40}|Server|X-Powered-By):\s*[^\n]{3,120})'
+    finding_type: technology
+    evidence_grade: observed
+    claim_severity: medium
+    title_template: "HTTP fingerprint header: {match}"
+    tags: [auto_ingest, banner, product_hint]
+
+  - id: cors_star
+    pattern: '(?i)Access-Control-Allow-Origin:\s*\*'
+    finding_type: observation
+    evidence_grade: observed
+    claim_severity: medium
+    title_template: "CORS Allow-Origin: * observed"
+    tags: [auto_ingest, cors]
+
+  - id: open_port_line
+    pattern: '(?i)(\d{1,5})/(tcp|udp)\s+open(?:\s+(\S+))?'
+    finding_type: port
+    evidence_grade: inferred
+    claim_severity: info
+    title_template: "Open port {g1}/{g2} {g3}"
+    tags: [auto_ingest, port]
+
+  - id: spa_catchall_suspect
+    pattern: '(?i)(<!DOCTYPE html|<div id=["'']root["'']|ng-version=|__NEXT_DATA__)'
+    finding_type: observation
+    evidence_grade: unverified
+    claim_severity: info
+    title_template: "SPA/HTML shell body — do not treat path as open API without JSON proof"
+    tags: [auto_ingest, spa_catchall_suspect]
+    require_path_hint: true
+    path_hint_pattern: '(?i)/(api|swagger|graphql|rest)(/|$|\?)'
+
+  - id: json_api_body
+    pattern: '(?i)^\s*[\{\[][\s\S]{20,}("users"|"data"|"items"|"token"|"access")'
+    finding_type: observation
+    evidence_grade: observed
+    claim_severity: high
+    title_template: "JSON API-shaped body with sensitive keys"
+    tags: [auto_ingest, api_json]
+
+  - id: console_or_app_path
+    pattern: '(?i)(/(?:console|manager|login|admin|owa|ecp|OA_HTML|AppsLocalLogin|frmservlet)[^\s"'']{0,60})'
+    finding_type: url
+    evidence_grade: observed
+    claim_severity: medium
+    title_template: "Console/app path indicator: {match}"
+    tags: [auto_ingest, console_path, product_hint]
+
+  - id: subdomain_line
+    pattern: '(?i)^(?:\*\.)?([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)\s*$'
+    finding_type: subdomain
+    evidence_grade: inferred
+    claim_severity: info
+    title_template: "{g1}"
+    tags: [auto_ingest, subdomain]
+    multiline: true

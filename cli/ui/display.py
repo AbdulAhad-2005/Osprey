@@ -76,33 +76,11 @@ def print_tool_end_live(tool_name: str, data: dict[str, Any]) -> None:
     duration = data.get("duration_seconds", 0)
     icon = "[green]✓[/]" if success else "[red]✗[/]"
     status = "ok" if success else "failed"
-    console.print(f"  {icon} [bold]{tool_name}[/] {status} [dim]({duration:.1f}s)[/]")
-
+    console.print(f"  {icon} [dim]{tool_name}[/] {status} [dim]({duration:.1f}s)[/]")
     preview = (data.get("preview") or "").strip()
-    if not preview:
-        return
-
-    parsed_summary = ""
-    lines = preview.split("\n")
-    in_summary = False
-    summary_lines: list[str] = []
-    for line in lines:
-        if "PARSED SUMMARY:" in line:
-            in_summary = True
-            continue
-        if in_summary:
-            if line.startswith("OPTIONAL SUGGESTIONS:") or line.startswith("SESSION FINDINGS:") or line.startswith("REPEAT WARNING:"):
-                in_summary = False
-            else:
-                summary_lines.append(line)
-    parsed_summary = "\n".join(summary_lines).strip()
-
-    if parsed_summary:
-        console.print(f"    [bold green]{parsed_summary}[/]")
-
-    display_lines = [l for l in lines if l.strip() and "PARSED SUMMARY:" not in l and not (l.startswith("OPTIONAL SUGGESTIONS:") or l.startswith("SESSION FINDINGS:") or l.startswith("REPEAT WARNING:"))]
-    if display_lines:
-        for line in display_lines[:6]:
+    if preview:
+        max_lines = 8 if not success else 4
+        for line in preview.splitlines()[:max_lines]:
             console.print(f"    [dim]{line[:160]}[/]")
 
 

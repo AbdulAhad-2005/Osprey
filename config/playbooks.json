@@ -1,0 +1,211 @@
+{
+  "playbooks": {
+    "web_recon_light": {
+      "phase": "recon",
+      "description": "Lightweight web attack-surface pass: enumerate subs, probe live HTTP, then selective nuclei. Adapt if volume is huge (chunk httpx/nuclei).\n",
+      "input": "domain",
+      "steps": [
+        {
+          "tool": "subfinder_scan",
+          "why": "Passive subdomain inventory (prefer typed tool or platform_exec).",
+          "suggested_params": {
+            "domain": "{{target}}",
+            "silent": true
+          },
+          "fallback": [
+            "amass_scan",
+            "platform_shell"
+          ]
+        },
+        {
+          "tool": "httpx_probe",
+          "why": "Confirm which hosts speak HTTP(S) and grab titles/tech.",
+          "suggested_params": {
+            "target": "{{from_prior_subdomains}}"
+          },
+          "fallback": [
+            "platform_script"
+          ]
+        },
+        {
+          "tool": "nuclei",
+          "why": "Selective CVE/templates on live hosts only \u2014 not the whole internet.",
+          "note": "Use platform_shell 'nuclei -u \u2026' if no nuclei wrapper in recon set.",
+          "suggested_params": {
+            "target": "{{live_hosts}}"
+          },
+          "fallback": [
+            "platform_shell"
+          ]
+        }
+      ]
+    },
+    "network_crown_jewels": {
+      "phase": "network",
+      "description": "Fast ports then careful service confirm on crown-jewel hosts/IPs. Chunk ports; avoid full -sV on huge ranges (timeouts).\n",
+      "input": "target",
+      "steps": [
+        {
+          "tool": "rustscan_fast_scan",
+          "why": "Quick open-port discovery before deep nmap.",
+          "suggested_params": {
+            "target": "{{target}}"
+          },
+          "fallback": [
+            "masscan_high_speed",
+            "nmap_syn_scan"
+          ]
+        },
+        {
+          "tool": "nmap_syn_scan",
+          "why": "Confirm top ports with TCP connect (-sT --unprivileged in this lab).",
+          "suggested_params": {
+            "target": "{{target}}",
+            "ports": "{{from_rustscan_or_top100}}"
+          },
+          "fallback": [
+            "nmap_service_scan",
+            "platform_shell"
+          ]
+        },
+        {
+          "tool": "nmap_service_scan",
+          "why": "Banner/service on a SMALL port set only (chunk to avoid MCP timeout).",
+          "suggested_params": {
+            "target": "{{target}}",
+            "ports": "{{few_interesting_ports}}"
+          },
+          "fallback": [
+            "platform_shell"
+          ]
+        }
+      ]
+    },
+    "dns_deep": {
+      "phase": "recon",
+      "description": "DNS depth beyond subfinder \u2014 records, zone edges, fierce/dnsenum when needed.\n",
+      "input": "domain",
+      "steps": [
+        {
+          "tool": "platform_shell",
+          "why": "dig NS/MX/TXT/A individually (container DNS quirks).",
+          "suggested_params": {
+            "command": "dig +short NS {{target}}"
+          },
+          "fallback": [
+            "whois_lookup"
+          ]
+        },
+        {
+          "tool": "whois_lookup",
+          "why": "Registrar / org context for sister-domain pivots.",
+          "suggested_params": {
+            "domain": "{{target}}"
+          },
+          "fallback": [
+            "platform_shell"
+          ]
+        },
+        {
+          "tool": "amass_scan",
+          "why": "Deeper passive intel if subfinder inventory looks thin.",
+          "suggested_params": {
+            "domain": "{{target}}"
+          },
+          "fallback": [
+            "dnsenum_scan",
+            "fierce_scan"
+          ]
+        },
+        {
+          "tool": "dnsenum_scan",
+          "why": "Classic DNS enum when passive sources stall.",
+          "suggested_params": {
+            "domain": "{{target}}"
+          },
+          "fallback": [
+            "fierce_scan"
+          ]
+        }
+      ]
+    },
+    "smb_followup": {
+      "phase": "network",
+      "description": "When 445 is open \u2014 enum shares/users carefully.",
+      "input": "target",
+      "steps": [
+        {
+          "tool": "enum4linux_ng_advanced",
+          "why": "Broad SMB/Windows enum.",
+          "suggested_params": {
+            "target": "{{target}}"
+          },
+          "fallback": [
+            "enum4linux_scan",
+            "netexec_scan"
+          ]
+        },
+        {
+          "tool": "smbmap_scan",
+          "why": "Share listing / permissions.",
+          "suggested_params": {
+            "target": "{{target}}"
+          },
+          "fallback": [
+            "netexec_scan"
+          ]
+        }
+      ]
+    },
+    "web_depth_before_vuln": {
+      "phase": "recon",
+      "description": "Exhaust app depth on crown-jewel live hosts BEFORE mass nuclei/vuln scanning. Clear js_surface_unanalyzed / content_discovery_thin / web_surface_no_app_depth. Advisory only \u2014 adapt to evidence; do not treat as a rigid stage machine.\n",
+      "input": "domain",
+      "steps": [
+        {
+          "tool": "platform_context",
+          "why": "Read coverage gaps + crown jewels; list what is still shallow.",
+          "fallback": [
+            "platform_crown_jewels"
+          ]
+        },
+        {
+          "tool": "gau_discovery",
+          "why": "Historical paths (helps but does not replace JS/dir depth).",
+          "suggested_params": {
+            "domain": "{{target}}"
+          },
+          "fallback": [
+            "waybackurls_discovery"
+          ]
+        },
+        {
+          "tool": "platform_script",
+          "why": "On SPA/Angular/React hosts \u2014 fetch HTML, collect script src, download chunk/main bundles, extract /api routes and embedded keys; record findings with tags js_bundle / embedded_api_key.\n",
+          "fallback": [
+            "katana_crawl",
+            "hakrawler_crawl"
+          ]
+        },
+        {
+          "tool": "ffuf_scan",
+          "why": "Light directory discovery on 3\u20135 crown jewels only (not whole inventory).",
+          "suggested_params": {
+            "target": "{{crown_jewel_https}}"
+          },
+          "fallback": [
+            "gobuster_scan",
+            "platform_script"
+          ]
+        },
+        {
+          "tool": "platform_finalize_check",
+          "why": "Confirm app-depth gaps cleared before COMPLETE or broad vuln scan.",
+          "fallback": [
+            "platform_findings"
+          ]
+        }
+      ]
+    }
+  }
+}
