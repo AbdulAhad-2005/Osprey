@@ -1,5 +1,6 @@
 # Universal stdout → finding promotion. Applies to EVERY tool/script/shell.
-# New tools inherit these rules automatically — add patterns, don't fork code.
+# New tools inherit these rules automatically — add patterns here, don't fork code.
+# Config owns patterns. The LLM owns interpretation, relations, and next probes.
 
 rules:
   - id: vendor_fingerprint_header
@@ -60,3 +61,101 @@ rules:
     title_template: "{g1}"
     tags: [auto_ingest, subdomain]
     multiline: true
+
+  # --- Phase 3 expansions (YAML only — no AGENTS bullets per pattern) ---
+
+  - id: http_status_title
+    pattern: '(?i)(?:^|\n)(?:https?://\S+\s+)?\[?(\d{3})\]?\s+[^\n]{0,40}?\[([^\]]{2,80})\]'
+    finding_type: observation
+    evidence_grade: observed
+    claim_severity: info
+    title_template: "HTTP {g1} title: {g2}"
+    tags: [auto_ingest, http_title]
+
+  - id: httpx_status_line
+    pattern: '(?i)(https?://[^\s]+)\s+\[(\d{3})\](?:\s+\[([^\]]{1,80})\])?'
+    finding_type: url
+    evidence_grade: observed
+    claim_severity: info
+    title_template: "{g1} [{g2}] {g3}"
+    tags: [auto_ingest, http_probe, http_title]
+
+  - id: www_authenticate
+    pattern: '(?i)(WWW-Authenticate:\s*[^\n]{3,160})'
+    finding_type: observation
+    evidence_grade: observed
+    claim_severity: medium
+    title_template: "Auth challenge: {match}"
+    tags: [auto_ingest, auth_challenge, product_hint]
+
+  - id: set_cookie_domain
+    pattern: '(?i)Set-Cookie:\s*([^\n]{5,200})'
+    finding_type: observation
+    evidence_grade: observed
+    claim_severity: info
+    title_template: "Set-Cookie: {match}"
+    tags: [auto_ingest, cookie, auth_surface]
+
+  - id: location_redirect
+    pattern: '(?i)(?:^|\n)((?:Location|location):\s*https?://[^\s\n]{5,200})'
+    finding_type: observation
+    evidence_grade: observed
+    claim_severity: info
+    title_template: "Redirect: {match}"
+    tags: [auto_ingest, redirect]
+
+  - id: redirect_chain_marker
+    pattern: '(?i)(?:redirect(?:ed|s|ion)?\s*(?:to|→|->|:)\s*|final[_ -]?url[=:]\s*)(https?://[^\s\n]{5,200})'
+    finding_type: url
+    evidence_grade: inferred
+    claim_severity: info
+    title_template: "Redirect target: {g1}"
+    tags: [auto_ingest, redirect]
+
+  - id: tls_san_or_cn
+    pattern: '(?i)(?:DNS:|subject(?:AltName)?[=:]|CN\s*=\s*|commonName\s*=\s*)([a-z0-9*.-]{3,120})'
+    finding_type: observation
+    evidence_grade: inferred
+    claim_severity: info
+    title_template: "TLS name hint: {g1}"
+    tags: [auto_ingest, tls, cert_name]
+
+  - id: certificate_issuer
+    pattern: '(?i)(?:issuer[=:]\s*|i:\s*)([^\n]{5,160})'
+    finding_type: observation
+    evidence_grade: inferred
+    claim_severity: info
+    title_template: "TLS issuer: {g1}"
+    tags: [auto_ingest, tls, cert_issuer]
+
+  - id: version_banner
+    pattern: '(?i)((?:SSH|OpenSSH|FTP|SMTP|MySQL|PostgreSQL|Redis|MongoDB|Apache|nginx|IIS)[^\n]{0,80}(?:version|/|\s)\s*[\w.()-]{2,40})'
+    finding_type: technology
+    evidence_grade: observed
+    claim_severity: medium
+    title_template: "Service banner: {match}"
+    tags: [auto_ingest, banner, version]
+
+  - id: nmap_service_version
+    pattern: '(?i)(\d{1,5})/(tcp|udp)\s+open\s+(\S+)\s+([^\n]{3,100})'
+    finding_type: service
+    evidence_grade: observed
+    claim_severity: info
+    title_template: "Service {g1}/{g2} {g3}: {g4}"
+    tags: [auto_ingest, service, banner]
+
+  - id: json_content_type
+    pattern: '(?i)(Content-Type:\s*application/json[^\n]*)'
+    finding_type: observation
+    evidence_grade: observed
+    claim_severity: info
+    title_template: "JSON content-type: {match}"
+    tags: [auto_ingest, api_json, content_type]
+
+  - id: js_route_hint
+    pattern: '(?i)["''`](/(?:api|rest|v[0-9]+|graphql|backend)[/a-z0-9_\-{}:.]{2,80})["''`]'
+    finding_type: url
+    evidence_grade: inferred
+    claim_severity: info
+    title_template: "JS route hint: {g1}"
+    tags: [auto_ingest, js_route, app_depth]

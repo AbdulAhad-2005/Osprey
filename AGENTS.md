@@ -16,9 +16,8 @@ When a domain lands (reorder/skip when evidence already covers it):
 5. Web depth — tech, paths, crawl/history; **`platform_script`** when catalog is thin
 6. Deepen crown jewels → only then summarize / finalize
 
-After each result, prefer **OPEN LOOPS** in the tool/context output (loop back to an earlier
-tool with *new* targets) over one-and-done linear chains. The platform lists unfinished work
-from memory — you choose which loop to close.
+After each result, prefer **OPEN GAPS** in the tool/context output (unfinished work
+from memory) — **you** choose how to close them. Gaps are data, not tool orders.
 
 ## Tools (pick what fits)
 
@@ -26,15 +25,23 @@ from memory — you choose which loop to close.
 |------|------|
 | Bind scope | `platform_set_target` |
 | Memory / gaps / tree | `platform_context` (when you need orientation) |
+| Search memory | `platform_memory_search` (flashlight — you interpret) |
+| Evidence parents/children | `platform_evidence_chain` |
+| What was tried near asset | `platform_attempts` (history, not a ban) |
 | Catalog recon/network | typed tools (`subfinder_scan`, `httpx_probe`, …) or `platform_exec` |
 | Long / parallel | `platform_job_start` → keep working → poll/result |
 | Batch hosts | `platform_fanout_assets` |
-| Invent / custom | `platform_script` (print `FINDING\|…` or PATH lines if you want memory) |
+| Invent / custom | `platform_script` (print `FINDING\|…`, `REL\|…`, `HYPOTHESIS\|…`) |
+| Name a graph link | `platform_graph_link` (non-observed → hypothesis edge) |
+| Boost an asset | `platform_tag_asset` |
+| Re-read full stdout | `platform_artifact` (path from Recent artifacts / exec card) |
 | One binary / simple pipe | `platform_shell` |
 | Stuck on sequence | `platform_playbook` (advisory) |
-| Before COMPLETE report | `platform_finalize_check` |
+| Before COMPLETE report | `platform_finalize_check` then `platform_report_outline` |
 
-Prefer typed tools when they work. Prefer **jobs** for anything slow. Prefer **scripts** over fighting shell limits.
+Prefer typed tools when they work. Prefer **jobs** for anything slow (see context
+`jobs: n/max` line). Prefer **scripts** / chunking over fighting shell limits —
+`platform_skills(path='shared/chunked-scans')` when inventing batches.
 
 ## Keep it light (no rituals)
 

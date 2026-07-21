@@ -32,6 +32,7 @@ Thumbs.db
 # Local engagement artifacts (sensitive)
 Pentest-Reports/
 platform-mcp/Pentest-Reports/
+**/Pentest-Reports/
 
 hexstrike-ai
 strix

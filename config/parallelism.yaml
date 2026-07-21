@@ -1,0 +1,29 @@
+# Parallelism — help the operator go wide without freezing the chat.
+# Config owns caps + "often long" tool names. The LLM chooses when to branch.
+# Never auto-start jobs from this file.
+
+max_running_jobs: 4
+suggest_job_timeout_seconds: 120
+
+# Tool names that often deserve a background branch (soft hint only).
+# Add/remove here — do not hardcode chains in AGENTS.
+long_tools:
+  - amass_scan
+  - dnsenum_scan
+  - fierce_scan
+  - nmap_syn_scan
+  - nmap_service_scan
+  - nmap_custom_scan
+  - rustscan_fast_scan
+  - masscan_high_speed
+  - httpx_probe
+  - dnsx_resolve
+  - crt_sh_query
+  - nuclei_scan
+  - ffuf_scan
+  - gobuster_scan
+  - domain_hunter
+
+# Open-gap thresholds (data, not "must fanout")
+batch_probe_min_hosts: 8
+batch_probe_min_subdomains: 20

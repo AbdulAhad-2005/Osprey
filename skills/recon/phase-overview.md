@@ -14,6 +14,6 @@ Goal: map the external attack surface before intrusive network testing.
 over a fixed checklist — but do not treat “advisory” as “ignore.”
 
 **Tool selection:** Pick the tool that fits the current finding. Any CLI flags via
-`additional_args`. Failures → TRY NEXT / invent with script.
+`additional_args`. Failures → invent another probe (script, job, different binary).
 
 **Output:** Structured findings (subdomains, URLs, technologies) into platform memory.

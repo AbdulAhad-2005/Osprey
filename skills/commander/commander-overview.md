@@ -21,7 +21,7 @@ and Kali. Skills here sharpen judgment — they do not prescribe a fixed playboo
 - Verify before CRITICAL/HIGH — requires `evidence_grade=observed` **and** raw proof.  
 - When stuck: `platform_thinking` (evidence→hypothesis cards) or `platform_playbook`, then adapt.  
 - Unfamiliar product fingerprint → SIGNAL→CONFIRM→GRADE (no vendor skill packs).  
-- On empty/timeout: follow **TRY NEXT / FALLBACK TOOLS** in the exec mirror.  
+- On empty/timeout: read the gap note + error, invent a different probe (flags, tool, script, chunk).  
 - Before any final report: `platform_finalize_check` — if BLOCKED, do not polish a fake complete report.
 
 ## Refuse

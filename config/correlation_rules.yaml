@@ -1,0 +1,27 @@
+# Cross-finding correlation — memory enrichment only.
+# Emits hypothesis edges / soft tags. Never mints observed CRITICAL.
+# The LLM confirms or overrides via platform_graph_link / platform_tag_asset.
+
+correlations:
+  - id: likely_same_app
+    type: same_ip_similar_title
+    relation: likely_same_app
+    evidence_grade: inferred
+    min_title_token_overlap: 0.5
+    min_title_len: 4
+    max_links_per_run: 12
+    tag: correlated_same_app
+
+  - id: shares_auth
+    type: shared_cookie_domain
+    relation: shares_auth
+    evidence_grade: inferred
+    max_links_per_run: 8
+    tag: correlated_auth
+
+  - id: app_depth_urls
+    type: host_url_fanout
+    min_urls: 5
+    role: app_depth_candidate
+    boost: 12
+    max_tags_per_run: 6
