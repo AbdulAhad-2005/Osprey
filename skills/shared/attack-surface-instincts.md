@@ -28,7 +28,7 @@ invent when evidence says so. Do **not** treat this as autopilot stages.
 - Subfinder once → httpx once → “ports filtered” → report. That is incomplete thinking.
 - Skipping `domain_hunter` / second enum / jobs / scripts because “enough for chat.”
 - Treating advisory gaps as optional noise instead of unanswered questions.
-- Giving up after one tool error (HTTP 500, rustscan syntax) without TRY NEXT.
+- Giving up after one tool error (HTTP 500, rustscan syntax) without inventing a different probe.
 
 ## Parallelism default
 

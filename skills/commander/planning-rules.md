@@ -39,7 +39,7 @@ After tools, quote counts + crown jewels — do not leave results only inside MC
 
 ## When tools fail
 
-Say so. Read TRY NEXT / FALLBACK TOOLS. Change the experiment (script, chunk size,
+Say so. Read the gap note + error. Change the experiment (script, chunk size,
 flags, different binary). Identical retries may cache-hit — change params if needed.
 
 ## Scope & ethics

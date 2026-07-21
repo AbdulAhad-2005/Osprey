@@ -309,34 +309,87 @@ def _fetch_context() -> str:
     finalize_banner = (
         f"can_finalize={readiness.get('can_finalize')} | "
         f"blocked_by={readiness.get('blocked_by') or []} | "
-        f"{(readiness.get('guidance') or '')[:500]}"
+        f"{(readiness.get('guidance') or '')[:400]}"
     )
+
+    # Jobs: compact one-liner from backend (config-driven max slots)
+    jobs_line = (data.get("jobs_line") or "").strip()
+    if not jobs_line:
+        jobs = data.get("background_jobs") or []
+        running = sum(1 for j in jobs if str(j.get("status") or "") in ("queued", "running"))
+        jobs_line = f"jobs: {running}/? running"
+        if jobs:
+            labels = [
+                f"{j.get('label') or j.get('tool_name') or j.get('kind')}"
+                for j in jobs[:6]
+                if str(j.get("status") or "") in ("queued", "running")
+            ]
+            if labels:
+                jobs_line = f"jobs: {running}/? running [{', '.join(str(x) for x in labels)}]"
+
+    # Coverage: gap_id + reason only (no suggested_tool orders)
+    gap_lines: list[str] = []
+    for g in (data.get("coverage_gaps") or [])[:8]:
+        if isinstance(g, dict):
+            gid = g.get("gap_id") or ""
+            reason = (g.get("reason") or g.get("evidence") or "")[:120]
+            asset = g.get("asset") or ""
+            bit = f"[{gid}] {reason}"
+            if asset:
+                bit += f" ({asset})"
+            gap_lines.append(bit)
+        else:
+            gap_lines.append(str(g)[:140])
+
+    # Crown jewels: top 5 compact
+    jewels = data.get("crown_jewels") or []
+    jewel_lines = []
+    for j in jewels[:5]:
+        if isinstance(j, dict):
+            jewel_lines.append(
+                f"{j.get('asset')} score={j.get('score')} "
+                f"({', '.join(str(r) for r in (j.get('reasons') or [])[:3])})"
+            )
+
+    open_loops = data.get("open_loops") or {}
+    gaps_text = open_loops.get("text") if isinstance(open_loops, dict) else open_loops
+
+    idx = data.get("stdout_index") or {}
+    idx_text = (idx.get("text") if isinstance(idx, dict) else "") or ""
 
     parts = [
         _session_header(),
-        "### OPEN LOOPS (pick one — loop back to earlier tools with NEW targets)",
-        _block(
-            "open_loops",
-            (data.get("open_loops") or {}).get("text")
-            or (data.get("open_loops") or {}),
-        ),
+        f"**Jobs:** {jobs_line}",
+        "### OPEN GAPS (memory — you choose how to close)",
+        str(gaps_text or "(none)"),
         _block("Context delta", data.get("context_delta") or {}),
-        _block("Crown jewels", data.get("crown_jewels") or []),
-        _block("Coverage gaps (top)", (data.get("coverage_gaps") or [])[:12]),
-        _block("Background jobs", data.get("background_jobs") or []),
-        _block("Findings summary", data.get("findings_summary", "")[:2500]),
+        "**Crown jewels (top):**\n" + ("\n".join(jewel_lines) if jewel_lines else "(none yet)"),
+        "**Recent artifacts:**\n" + (idx_text if idx_text else "(none — run a tool first)"),
+        "**Coverage gaps:**\n" + ("\n".join(gap_lines) if gap_lines else "(none)"),
         _block("Inferred focus", data.get("inferred_focus", {})),
         _block("Finalize", finalize_banner),
     ]
-    if data.get("network_surface_text"):
-        parts.append(_block("Network surface", data["network_surface_text"]))
-    if data.get("attack_surface_tree_text"):
-        tree = data["attack_surface_tree_text"]
-        parts.append(_block("Attack surface tree", tree[:4000] + ("…" if len(tree) > 4000 else "")))
+    # Network surface: short only
+    ns = data.get("network_surface_text") or ""
+    if ns:
+        parts.append(_block("Network surface", ns[:1500] + ("…" if len(ns) > 1500 else "")))
+    # Tree: condensed, capped
+    tree = data.get("attack_surface_tree_text") or ""
+    if tree:
+        parts.append(
+            _block("Attack surface (condensed)", tree[:2000] + ("…" if len(tree) > 2000 else ""))
+        )
+    # Findings: short summary only — full dump on demand via platform_findings
+    fs = data.get("findings_summary") or ""
+    if fs:
+        parts.append(_block("Findings (brief)", fs[:1200] + ("…" if len(fs) > 1200 else "")))
+
     parts.append(
         "---\n"
-        "Act on an OPEN LOOP (or invent). Do not one-and-done each tool. "
-        "Jobs for slow scans; scripts when wrappers fail."
+        "You decide the next probe. Gaps are data, not orders. "
+        "Use platform_tools / platform_skills / platform_findings / platform_artifact "
+        "only when you need detail. "
+        "platform_graph_link / platform_tag_asset / platform_script when inventing."
     )
     return "\n\n---\n\n".join(parts)
 
@@ -344,10 +397,10 @@ def _fetch_context() -> str:
 @mcp.tool()
 def platform_context(target: str = "") -> str:
     """
-    Load platform brain from evidence: inferred focus, gaps, tree, findings, tools.
+    Compact briefing from evidence: gaps, crown jewels, jobs, delta.
 
-    No phase argument — the platform infers where the engagement is and you move
-    accordingly. Pass target= only to analyze/switch (short names still clarify first).
+    No phase argument. Pass target= only to analyze/switch.
+    Pull details on demand: platform_tools, platform_skills, platform_findings.
     """
     def _run() -> str:
         if target.strip():
@@ -360,14 +413,69 @@ def platform_context(target: str = "") -> str:
     return _safe(_run)
 
 
+@mcp.tool()
+def platform_artifact(path: str = "", offset: int = 0, limit: int = 80000) -> str:
+    """
+    Read a slice of a Kali artifact (full tool stdout that didn't fit the card).
+    Empty path → list recent index + workdir listing.
+    path = basename or /tmp/pentest/<engagement>/….stdout.txt
+    """
+    def _run() -> str:
+        _require_bound_target()
+        params = dict(_memory_params())
+        if not (path or "").strip():
+            idx = _get("/api/v1/hybrid/stdout-index", params={**params, "limit": 8})
+            listing = _get("/api/v1/hybrid/artifacts", params=params)
+            return (
+                f"{_session_header()}\n\n"
+                f"**Index:**\n{idx.get('text') or '(empty)'}\n\n"
+                f"**Workdir:** `{listing.get('workdir')}`\n"
+                f"```\n{(listing.get('listing') or '')[:4000]}\n```\n"
+                "Pass path= to read a file slice."
+            )
+        data = _get(
+            "/api/v1/hybrid/artifacts/read",
+            params={
+                **params,
+                "path": path,
+                "offset": max(0, int(offset)),
+                "limit": max(1, min(int(limit), 500_000)),
+            },
+        )
+        if not data.get("ok"):
+            return f"ERROR: {data.get('error') or data}"
+        body = data.get("content") or ""
+        return (
+            f"{_session_header()}\n"
+            f"path={data.get('path')} bytes={data.get('returned_bytes')}/"
+            f"{data.get('total_bytes')} offset={data.get('offset')}\n"
+            f"truncated={data.get('truncated')} next_offset={data.get('next_offset')}\n\n"
+            f"```\n{body}\n```"
+        )
+
+    return _safe(_run)
+
+
 def _format_exec_result(data: dict[str, Any]) -> str:
     stdout = data.get("stdout") or ""
     stderr = data.get("stderr") or ""
-    # Prefer showing more to OpenCode; artifacts hold the rest.
-    stdout_show = stdout if len(stdout) <= 280000 else (
-        stdout[:140000] + "\n\n…[middle omitted — full artifact on Kali]…\n\n" + stdout[-120000:]
-    )
-    stderr_show = stderr if len(stderr) <= 60000 else stderr[:60000] + "\n…[stderr truncated]…"
+    # Trim: status + top findings + gaps; full stdout via artifact path
+    arts = (data.get("hybrid") or {}).get("artifacts") or (data.get("parsed") or {}).get("artifacts") or {}
+    stdout_path = ""
+    if isinstance(arts, dict):
+        stdout_path = str(arts.get("stdout_path") or "")
+
+    if len(stdout) <= 12000:
+        stdout_show = stdout
+    else:
+        stdout_show = (
+            stdout[:6000]
+            + "\n\n…[trimmed — full stdout on Kali"
+            + (f" `{stdout_path}`" if stdout_path else "")
+            + " — platform_artifact]…\n\n"
+            + stdout[-3000:]
+        )
+    stderr_show = stderr if len(stderr) <= 8000 else stderr[:8000] + "\n…[stderr truncated]…"
 
     parts = [
         "### OPERATOR MIRROR — EXECUTION",
@@ -383,7 +491,7 @@ def _format_exec_result(data: dict[str, Any]) -> str:
     if data.get("cache_hit"):
         parts.append(
             "**CACHE HIT** — identical tool+params already ran this engagement. "
-            "Reuse results, change params, or platform_exec(..., force_refresh=true)."
+            "Reuse, change params, or force_refresh=true."
         )
     if stdout_show:
         parts.append(f"**STDOUT** ({len(stdout)} chars):\n```\n{stdout_show}\n```")
@@ -395,22 +503,24 @@ def _format_exec_result(data: dict[str, Any]) -> str:
         parts.append(f"**ERROR:** {data['error']}")
     titles = data.get("finding_titles") or []
     if titles:
-        parts.append(_block(f"Parsed findings this run ({len(titles)})", titles[:120]))
-        if len(titles) > 120:
-            parts.append(f"… +{len(titles) - 120} more titles — memory has them; dump via platform_findings at end of pass")
-    if data.get("next_hint"):
-        parts.append(f"**TRY NEXT / HINT:** {data['next_hint']}")
-    fallbacks = data.get("fallback_tools") or []
-    if fallbacks:
-        parts.append("**FALLBACK TOOLS:** " + ", ".join(str(x) for x in fallbacks[:8]))
-    if data.get("alternative_tool_suggested"):
-        parts.append(f"SUGGESTED ALTERNATIVE: {data['alternative_tool_suggested']}")
-    if data.get("hybrid"):
-        parts.append(_block("Hybrid / artifacts", data["hybrid"]))
-    arts = (data.get("hybrid") or {}).get("artifacts") or (data.get("parsed") or {}).get("artifacts")
+        parts.append(_block(f"Top findings this run ({min(len(titles), 15)}/{len(titles)})", titles[:15]))
+        if len(titles) > 15:
+            parts.append(f"… +{len(titles) - 15} more — platform_findings / platform_report_outline")
+    # Soft notes — failure gaps + optional parallel branch hint (never orders)
+    hybrid = data.get("hybrid") or {}
+    parallel_note = hybrid.get("parallel_note") if isinstance(hybrid, dict) else None
+    if data.get("timed_out") or not data.get("success") or (
+        data.get("next_hint") and "EMPTY" in str(data.get("next_hint"))
+    ):
+        if data.get("next_hint"):
+            parts.append(f"**Note:** {data['next_hint']}")
+    elif parallel_note:
+        parts.append(f"**Note:** {parallel_note}")
+    elif data.get("next_hint") and "Parallel note" in str(data.get("next_hint")):
+        parts.append(f"**Note:** {data['next_hint']}")
     if arts:
         parts.append(_block("Full output on disk (Kali)", arts))
-    # Adaptive nudge from memory — not a stage script
+    # Gaps from memory — data, not orders
     if _SESSION_ENGAGEMENT_ID:
         try:
             loops = _get(
@@ -420,16 +530,14 @@ def _format_exec_result(data: dict[str, Any]) -> str:
             )
             text = (loops or {}).get("text") or ""
             if text and (loops or {}).get("count"):
-                parts.append(f"\n**OPEN LOOPS** (loop back — pick one):\n{text}")
+                parts.append(f"\n**OPEN GAPS** (you choose):\n{text}")
         except Exception:
             pass
     parts.append(
         "\n---\n"
-        "Prefer an OPEN LOOP with new targets over jumping to a new 'phase'. "
-        "Jobs/scripts if this failed."
+        "You decide the next move from evidence + gaps. Invent when catalog is thin."
     )
     return "\n".join(parts)
-
 
 def _execute_catalog_tool(
     tool: str,
@@ -470,22 +578,136 @@ def platform_think(
     next_tool: str = "",
 ) -> str:
     """
-    Optional: mirror a hypothesis to the operator. Not required before tools —
-    use when a pivot needs a clear note. Prefer chat narration for routine moves.
+    Optional: persist a hypothesis into engagement memory (and mirror to operator).
+
+    Not required before tools — use when a pivot needs a durable note. Prefer chat
+    narration for routine moves. Stored as unverified observation (not proof).
     """
-    parts = [
-        "### OPERATOR MIRROR — THINKING",
-        _session_header() if _SESSION_ENGAGEMENT_ID else "(no engagement bound yet)",
-        f"**Hypothesis:** {hypothesis.strip() or '(empty)'}",
-    ]
-    if plan.strip():
-        parts.append(f"**Plan:** {plan.strip()}")
-    if evidence.strip():
-        parts.append(f"**Evidence so far:** {evidence.strip()}")
-    if next_tool.strip():
-        parts.append(f"**Next tool:** `{next_tool.strip()}`")
-    parts.append("\n(Optional note recorded — continue the engagement.)")
-    return "\n".join(parts)
+    def _run() -> str:
+        parts = [
+            "### OPERATOR MIRROR — THINKING",
+            _session_header() if _SESSION_ENGAGEMENT_ID else "(no engagement bound yet)",
+            f"**Hypothesis:** {hypothesis.strip() or '(empty)'}",
+        ]
+        if plan.strip():
+            parts.append(f"**Plan:** {plan.strip()}")
+        if evidence.strip():
+            parts.append(f"**Evidence so far:** {evidence.strip()}")
+        if next_tool.strip():
+            parts.append(f"**Next tool:** `{next_tool.strip()}`")
+        if _SESSION_ENGAGEMENT_ID and hypothesis.strip():
+            data = _post(
+                "/api/v1/hybrid/think",
+                {
+                    "engagement_id": _SESSION_ENGAGEMENT_ID,
+                    "run_id": SESSION_RUN_ID,
+                    "seed_target": _SESSION_TARGET,
+                    "hypothesis": hypothesis.strip(),
+                    "plan": plan.strip(),
+                    "evidence": evidence.strip(),
+                    "next_tool": next_tool.strip(),
+                },
+                timeout=30,
+            )
+            parts.append(
+                f"\nStored finding_id=`{data.get('finding_id')}` — "
+                "visible in platform_findings / context."
+            )
+        else:
+            parts.append("\n(No engagement bound — not persisted. Call platform_set_target first.)")
+        return "\n".join(parts)
+
+    return _safe(_run)
+
+
+@mcp.tool()
+def platform_graph_link(
+    source: str,
+    target: str,
+    relation: str,
+    evidence: str,
+    evidence_grade: str = "inferred",
+    derived_from: str = "",
+) -> str:
+    """
+    Create an operator-named graph edge (cognition write-back).
+
+    source/target: 'host:erp.x.com' or bare hostname/IP/URL.
+    relation: free name (e.g. same_app_as, shares_auth_cookie).
+    evidence_grade: observed|inferred|unverified — non-observed becomes hypothesis_* edge
+    (not proof for COMPLETE/CRITICAL). evidence= required (why the link exists).
+    derived_from: optional comma-separated finding ids this link builds on.
+    """
+    def _run() -> str:
+        _require_bound_target()
+        body: dict[str, Any] = {
+            "engagement_id": _SESSION_ENGAGEMENT_ID,
+            "run_id": SESSION_RUN_ID,
+            "seed_target": _SESSION_TARGET,
+            "source": source,
+            "target": target,
+            "relation": relation,
+            "evidence": evidence,
+            "evidence_grade": evidence_grade,
+        }
+        if (derived_from or "").strip():
+            body["derived_from"] = derived_from.strip()
+        data = _post("/api/v1/hybrid/graph/link", body, timeout=30)
+        return "\n".join(
+            [
+                "### OPERATOR MIRROR — GRAPH LINK",
+                _session_header(),
+                f"**{data.get('source_id')}** --`{data.get('relationship')}`--> "
+                f"**{data.get('target_id')}**",
+                f"grade={data.get('evidence_grade')} hypothesis={data.get('hypothesis')} "
+                f"finding_id=`{data.get('finding_id')}` "
+                f"derived_from={data.get('derived_from') or []}",
+                data.get("hint") or "",
+            ]
+        )
+
+    return _safe(_run)
+
+
+@mcp.tool()
+def platform_tag_asset(
+    asset: str,
+    reason: str,
+    role: str = "operator_priority",
+    boost: int = 25,
+) -> str:
+    """
+    Tag an asset for crown-jewel ranking (runtime — no YAML edit).
+
+    asset= hostname or host:name. boost= -50..100. reason= why it matters.
+    Call platform_crown_jewels after to see updated ranking.
+    """
+    def _run() -> str:
+        _require_bound_target()
+        data = _post(
+            "/api/v1/hybrid/tag-asset",
+            {
+                "engagement_id": _SESSION_ENGAGEMENT_ID,
+                "run_id": SESSION_RUN_ID,
+                "seed_target": _SESSION_TARGET,
+                "asset": asset,
+                "role": role,
+                "boost": int(boost),
+                "reason": reason,
+            },
+            timeout=30,
+        )
+        return "\n".join(
+            [
+                "### OPERATOR MIRROR — ASSET TAG",
+                _session_header(),
+                f"**{data.get('asset')}** role=`{data.get('role')}` boost={data.get('boost')}",
+                f"finding_id=`{data.get('finding_id')}`",
+                data.get("hint") or "",
+            ]
+        )
+
+    return _safe(_run)
 
 
 @mcp.tool()
@@ -528,10 +750,122 @@ def platform_finalize_check(override: bool = False) -> str:
         if mode != "complete":
             parts.append(
                 "\nDo NOT write COMPLETE/FINAL with CRITICAL catalogs from chat alone. "
-                "Call platform_findings; if a banner you saw is missing, "
+                "Call platform_report_outline + platform_findings; if a banner you saw is missing, "
                 "platform_record_finding then re-check. Partial status updates are OK."
             )
+        else:
+            parts.append(
+                "\nBefore prose: platform_report_outline — Observed / Inferred / Hypotheses / Crown jewels."
+            )
         return "\n\n".join(parts)
+
+    return _safe(_run)
+
+
+@mcp.tool()
+def platform_report_outline() -> str:
+    """
+    Structure a trusted report from memory: Observed / Inferred / Hypotheses /
+    Crown jewels / open gaps + finalize gate. Call before COMPLETE or PARTIAL prose.
+    Does not invent findings — only organizes what is stored.
+    """
+    def _run() -> str:
+        _require_bound_target()
+        data = _get(
+            "/api/v1/hybrid/report-outline",
+            params=_memory_params(),
+            timeout=45,
+        )
+        return (
+            f"{_session_header()}\n\n"
+            f"{data.get('text') or ''}\n\n"
+            f"_{data.get('note') or ''}_"
+        )
+
+    return _safe(_run)
+
+
+@mcp.tool()
+def platform_memory_search(query: str, limit: int = 40) -> str:
+    """
+    Free-text search across engagement memory (findings, graph nodes, attempts).
+
+    Use when you need to find a host, path, CVE string, cookie domain, or past try
+    without dumping everything. You interpret hits — this is not a playbook.
+    """
+    if not (query or "").strip():
+        return "ERROR: query is required (e.g. 'erp', '/api', 'Set-Cookie', 'amass')"
+
+    def _run() -> str:
+        _require_bound_target()
+        data = _get(
+            "/api/v1/hybrid/memory-search",
+            params={**_memory_params(), "q": query.strip(), "limit": max(5, min(int(limit), 80))},
+            timeout=45,
+        )
+        return (
+            f"{_session_header()}\n\n"
+            f"{data.get('text') or ''}\n\n"
+            f"_{data.get('note') or ''}_"
+        )
+
+    return _safe(_run)
+
+
+@mcp.tool()
+def platform_evidence_chain(finding_id: str, depth: int = 4) -> str:
+    """
+    Walk derived_from parents and children for one finding id.
+
+    Use after graph_link/record_finding with derived_from=, or to explain how a
+    claim was built. Soft structure — not a severity upgrade.
+    """
+    if not (finding_id or "").strip():
+        return "ERROR: finding_id required"
+
+    def _run() -> str:
+        _require_bound_target()
+        data = _get(
+            "/api/v1/hybrid/evidence-chain",
+            params={
+                **_memory_params(),
+                "finding_id": finding_id.strip(),
+                "depth": max(1, min(int(depth), 8)),
+            },
+            timeout=30,
+        )
+        if not data.get("ok"):
+            return f"ERROR: {data.get('error') or data}"
+        return (
+            f"{_session_header()}\n\n"
+            f"{data.get('text') or ''}\n\n"
+            f"_{data.get('note') or ''}_"
+        )
+
+    return _safe(_run)
+
+
+@mcp.tool()
+def platform_attempts(asset: str = "", contains: str = "", limit: int = 40) -> str:
+    """
+    Advisory history of tools already tried near an asset (or engagement-wide).
+
+    Data only — not a ban. Re-run with new params, force_refresh, job, or script
+    whenever the experiment still makes sense.
+    """
+    def _run() -> str:
+        _require_bound_target()
+        params = {**_memory_params(), "limit": max(1, min(int(limit), 100))}
+        if (asset or "").strip():
+            params["asset"] = asset.strip()
+        if (contains or "").strip():
+            params["contains"] = contains.strip()
+        data = _get("/api/v1/hybrid/attempts", params=params, timeout=30)
+        return (
+            f"{_session_header()}\n\n"
+            f"{data.get('text') or ''}\n\n"
+            f"_{data.get('note') or ''}_"
+        )
 
     return _safe(_run)
 
@@ -545,6 +879,7 @@ def platform_record_finding(
     claim_severity: str = "none",
     description: str = "",
     source_tool: str = "operator_record",
+    derived_from: str = "",
 ) -> str:
     """
     Persist one observed fact into engagement memory (solves chat-vs-store drift).
@@ -553,9 +888,15 @@ def platform_record_finding(
     does not list it yet. evidence_grade: observed|inferred|unverified.
     finding_type: url|host|port|service|technology|observation|subdomain.
     claim_severity is clamped by evidence_grade (CRITICAL needs observed).
+    derived_from: optional comma-separated parent finding ids (evidence chain).
     """
     def _run() -> str:
         _require_bound_target()
+        meta: dict[str, Any] = {}
+        if (derived_from or "").strip():
+            meta["derived_from"] = [
+                x.strip() for x in derived_from.replace(";", ",").split(",") if x.strip()
+            ]
         body = {
             "engagement_id": _SESSION_ENGAGEMENT_ID,
             "run_id": SESSION_RUN_ID,
@@ -569,6 +910,7 @@ def platform_record_finding(
             "source_tool": source_tool or "operator_record",
             "target": _SESSION_TARGET,
             "tags": ["operator_recorded"],
+            "metadata": meta,
             "extra": {},
         }
         if not body["title"] or not body["evidence"]:
@@ -813,7 +1155,8 @@ def platform_job_start(
     tool + params_json: for kind=tool (same as platform_exec)
     command: for kind=shell
     code: for kind=script
-    Max 4 running jobs per engagement.
+    Max running jobs per engagement comes from config/parallelism.yaml (default 4).
+    Soft Parallel notes on long tools are optional — never auto-started.
     """
     kind_n = (kind or "tool").strip().lower()
     if kind_n not in ("tool", "shell", "script"):
@@ -863,7 +1206,7 @@ def platform_job_start(
             "",
             "Continue other work NOW. Later: platform_job_poll(job_id=…) "
             "then platform_job_result(job_id=…). Findings from the job are already ingested — "
-            "no need to call platform_findings until expansion pass ends.",
+            "read them when this branch matters to your next decision.",
         ]
         return "\n".join(parts)
 
@@ -983,6 +1326,9 @@ def platform_script(
       FINDING|observed|high|url|Title|raw evidence snippet
       PATH /backend/api/foo 401
       ENDPOINT https://host/rest/info 200
+      REL|host:a|same_app_as|host:b|shared JS hash
+      REL|inferred|host:erp|likely_origin_of|ip:1.2.3.4|CDN bypass candidate
+      HYPOTHESIS|erp shares auth with ess|same Set-Cookie domain
 
     language = python3 | bash | sh.
     packages = comma-separated pip names installed with --user BEFORE python runs
