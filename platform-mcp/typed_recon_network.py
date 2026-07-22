@@ -26,6 +26,8 @@ TYPED_RECON_NETWORK_TOOLS: tuple[str, ...] = (
     "tlsx_inspect",
     "crt_sh_query",
     "cdn_origin_probe",
+    "origin_ip_attribution",
+    "cdn_origin_ip",
     # network
     "nmap_syn_scan",
     "nmap_service_scan",
@@ -60,6 +62,8 @@ _TOOL_BLURBS: dict[str, str] = {
     "tlsx_inspect": "TLS cert / SAN inspection (target=).",
     "crt_sh_query": "Certificate Transparency via crt.sh (domain=).",
     "cdn_origin_probe": "Soft CDN/origin clues via dig+curl (domain=). Confirm before scanning edges.",
+    "origin_ip_attribution": "Full origin IP attribution pipeline — DNS, TLS, headers, CIDR classification, verification (domain=).",
+    "cdn_origin_ip": "CDN-agnostic origin IP finder — MX/SPF/subdomains/HTTP headers with confidence scoring (domain=).",
     "nmap_syn_scan": "TCP connect port scan (target=).",
     "nmap_service_scan": "Nmap service/version scan (target=, ports=).",
     "nmap_custom_scan": "Custom nmap (target=, flags= required).",

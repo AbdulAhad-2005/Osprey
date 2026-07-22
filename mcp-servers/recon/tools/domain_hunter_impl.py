@@ -310,6 +310,8 @@ def _extract_domains(text: str) -> list[str]:
 
 def _http_session() -> "requests.Session":
     import requests
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
 
     session = requests.Session()
     session.headers.update(
@@ -320,10 +322,15 @@ def _http_session() -> "requests.Session":
             )
         }
     )
+    # Aggressive retry + short connect/read timeouts to avoid hanging on dead hosts
+    retry = Retry(total=2, backoff_factor=0.5, status_forcelist=[429, 500, 502, 503])
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
     return session
 
 
-def _fetch(session: Any, url: str, timeout: int = 12) -> tuple[str, str]:
+def _fetch(session: Any, url: str, timeout: int = 8) -> tuple[str, str]:
     try:
         response = session.get(url, timeout=timeout, allow_redirects=True)
         if response.ok or response.status_code in {401, 403}:
@@ -333,7 +340,7 @@ def _fetch(session: Any, url: str, timeout: int = 12) -> tuple[str, str]:
     return "", url
 
 
-def _live_probe(session: Any, domain: str, timeout: int = 8) -> tuple[bool, str | None]:
+def _live_probe(session: Any, domain: str, timeout: int = 5) -> tuple[bool, str | None]:
     for scheme in ("https", "http"):
         url = f"{scheme}://{domain}"
         try:
@@ -364,8 +371,8 @@ def _resolve_dns_hosts(domain: str) -> list[str]:
         import dns.resolver  # type: ignore
 
         resolver = dns.resolver.Resolver()
-        resolver.lifetime = 6
-        resolver.timeout = 4
+        resolver.lifetime = 4
+        resolver.timeout = 3
         for rtype in ("NS", "MX"):
             try:
                 answers = resolver.resolve(domain, rtype)
@@ -381,7 +388,7 @@ def _resolve_dns_hosts(domain: str) -> list[str]:
     return hosts
 
 
-def _crtsh_query(session: Any, query: str, timeout: int = 15) -> list[dict[str, Any]]:
+def _crtsh_query(session: Any, query: str, timeout: int = 10) -> list[dict[str, Any]]:
     url = f"https://crt.sh/?q={quote_plus(query)}&output=json"
     try:
         response = session.get(url, timeout=timeout)
@@ -396,7 +403,7 @@ def _crtsh_query(session: Any, query: str, timeout: int = 15) -> list[dict[str, 
         return []
 
 
-def _reverse_ip_lookup(session: Any, ip: str, timeout: int = 15) -> list[str]:
+def _reverse_ip_lookup(session: Any, ip: str, timeout: int = 10) -> list[str]:
     urls = [
         f"https://api.hackertarget.com/reverseiplookup/?q={quote_plus(ip)}",
         f"https://dns.bufferover.run/dns?q={quote_plus(ip)}",
@@ -635,7 +642,7 @@ class DomainHunter:
     def _collect_rdap_signals(self) -> None:
         rdap_url = f"https://rdap.org/domain/{self.seed_root}"
         try:
-            response = self.session.get(rdap_url, timeout=12)
+            response = self.session.get(rdap_url, timeout=8)
             if not response.ok:
                 return
             payload = response.json()

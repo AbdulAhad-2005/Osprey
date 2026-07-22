@@ -27,19 +27,22 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from _core.runner import default_parse, run_tool
+from _core.runner import run_tool
 from _core.result import ToolResult
 
 TOOL_NAME = "tlsx_inspect"
 CATEGORY = "recon"
 
-# Known CDN/provider certificate patterns for origin detection
+# Known CDN-specific certificate issuer patterns for origin detection.
+# Only match issuers that uniquely identify a CDN — not generic CAs like
+# "Amazon" (issues certs for EC2/S3/etc, not just CloudFront) or "Azure"
+# (issues certs for VMs/App Service, not just Front Door).
 CDN_ISSUER_PATTERNS = {
     "cloudflare": ["cloudflare"],
     "akamai": ["akamai", "akamaized", "edgekey"],
     "fastly": ["fastly"],
-    "cloudfront": ["cloudfront", "amazon"],
-    "azure_fd": ["azure"],
+    "cloudfront": ["cloudfront"],  # "amazon" is the CA, not the CDN — too broad
+    "azure_fd": ["azure front door"],  # "azure" alone matches all Azure services
 }
 
 

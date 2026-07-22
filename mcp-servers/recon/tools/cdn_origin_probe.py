@@ -29,14 +29,20 @@ CDN_CNAME_PATTERNS = {
     "cloudfront": [".cloudfront.net"],
     "azure_fd": [".azureedge.net", ".azurefd.net", ".trafficmanager.net"],
     "google_cloud": [".googleusercontent.com", ".ghs.google.com"],
+    "incapsula": [".incapsula.com", ".imperva.com"],
+    "stackpath": [".stackpathcdn.com"],
+    "keycdn": [".kxcdn.com"],
+    "cachefly": [".cachefly.net"],
 }
 
 CDN_HEADER_SIGNATURES = {
     "cloudflare": ["cf-ray", "cf-cache-status"],
     "akamai": ["x-akamai-transformed", "x-cache-key"],
-    "fastly": ["x-fastly-request-id", "x-served-by"],
+    "fastly": ["x-fastly-request-id", "x-served-by", "x-cache", "x-s", "x-timer"],
     "cloudfront": ["x-amz-cf-id", "x-amz-cf-pop"],
     "azure_fd": ["x-azure-ref"],
+    "incapsula": ["x-iinfo", "x-cdn", "incapsula"],
+    "stackpath": ["x-stackpath"],
 }
 
 
@@ -46,33 +52,50 @@ def build_command(**params: Any) -> str:
     if not domain:
         raise ValueError("cdn_origin_probe requires domain or target")
 
-    # Simple dig/curl script — flexible; agent can also invent platform_script variants.
-    script = f"""
-DOMAIN={shlex.quote(domain)}
-TIMEOUT={timeout}
+    # Use explicit export so sub-commands see the value; avoid shlex.quote in
+    # raw f-strings to reduce quoting surprises inside bash -c.
+    script = """set -e
+DOM='""" + domain + """'
+TO=""" + str(timeout) + """
 echo "=== DNS ==="
-echo "CNAME: $(dig +short CNAME \"$DOMAIN\" 2>/dev/null)"
-echo "A: $(dig +short A \"$DOMAIN\" 2>/dev/null)"
-echo "AAAA: $(dig +short AAAA \"$DOMAIN\" 2>/dev/null)"
-echo "NS: $(dig +short NS \"$DOMAIN\" 2>/dev/null)"
-echo "MX: $(dig +short MX \"$DOMAIN\" 2>/dev/null)"
+echo "CNAME: $(dig +short CNAME "$DOM" 2>/dev/null | head -1)"
+echo "A: $(dig +short A "$DOM" 2>/dev/null)"
+echo "AAAA: $(dig +short AAAA "$DOM" 2>/dev/null)"
+echo "NS: $(dig +short NS "$DOM" 2>/dev/null)"
+echo "MX: $(dig +short MX "$DOM" 2>/dev/null)"
 echo "=== MX_IPS ==="
-for mx in $(dig +short MX \"$DOMAIN\" 2>/dev/null | awk '{{print $NF}}' | tr -d '.'); do
-  [ -z \"$mx\" ] && continue
-  echo \"MX_IP: $mx -> $(dig +short A \"$mx\" 2>/dev/null | head -1)\"
+for mx in $(dig +short MX "$DOM" 2>/dev/null | awk '{print $NF}' | sed 's/\\.$//' | sort -u); do
+  [ -z "$mx" ] && continue
+  echo "MX_IP: $mx -> $(dig +short A "$mx" 2>/dev/null | head -1)"
 done
 echo "=== SPF ==="
-dig +short TXT \"$DOMAIN\" 2>/dev/null | grep -i spf || true
+dig +short TXT "$DOM" 2>/dev/null | grep -i spf || true
 echo "=== SUBS ==="
 for sub in mail smtp pop imap webmail ftp vpn gateway direct origin owa autodiscover; do
-  ip=$(dig +short A \"$sub.$DOMAIN\" 2>/dev/null | head -1)
-  [ -n \"$ip\" ] && echo \"SUBDOMAIN_IP: $sub.$DOMAIN -> $ip\"
+  SUB_RAW=$(dig +short A "$sub.$DOM" 2>/dev/null | tail -1)
+  SUB_IP=""
+  if [ -n "$SUB_RAW" ] && echo "$SUB_RAW" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+    SUB_IP="$SUB_RAW"
+  elif [ -n "$SUB_RAW" ]; then
+    CNAME=$(echo "$SUB_RAW" | sed 's/\.$//')
+    SUB_IP=$(dig +short A "$CNAME" 2>/dev/null | grep -m1 -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
+  fi
+  if [ -n "$SUB_IP" ]; then
+    echo "SUBDOMAIN_IP: $sub.$DOM -> $SUB_IP"
+  fi
 done
 echo "=== HEADERS ==="
-curl -sI --max-time \"$TIMEOUT\" \"https://$DOMAIN\" 2>/dev/null | head -25 || true
-curl -sI --max-time \"$TIMEOUT\" \"http://$DOMAIN\" 2>/dev/null | head -15 || true
-""".strip()
-    return f"bash -c {shlex.quote(script)}"
+curl -sI --max-time "$TO" "https://$DOM" 2>/dev/null | head -25 || true
+curl -sI --max-time "$TO" "http://$DOM" 2>/dev/null | head -15 || true
+"""
+    return script.strip()
+
+
+IP_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
+
+def _extract_ips(text: str) -> list[str]:
+    """Extract all valid IPv4 addresses from a string."""
+    return list(dict.fromkeys(IP_RE.findall(text)))
 
 
 def parse(result: ToolResult) -> dict[str, Any]:
@@ -100,13 +123,14 @@ def parse(result: ToolResult) -> dict[str, Any]:
                         cdn_provider = provider
                         evidence.append(f"CNAME->{provider}: {cname}")
             elif line.startswith("A:"):
-                current_ips.extend(line.split(":", 1)[1].split())
+                # Extract only valid IPv4 addresses
+                current_ips.extend(_extract_ips(line.split(":", 1)[1]))
             elif line.startswith("AAAA:"):
-                current_ips.extend(line.split(":", 1)[1].split())
+                current_ips.extend(_extract_ips(line.split(":", 1)[1]))
         elif section.startswith("mx"):
             if "->" in line:
                 ip = line.split("->", 1)[1].strip()
-                if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", ip):
+                if IP_RE.match(ip):
                     mx_ips.append(ip)
                     evidence.append(line)
         elif section.startswith("spf"):
@@ -115,7 +139,7 @@ def parse(result: ToolResult) -> dict[str, Any]:
             if "->" in line:
                 left, ip = [x.strip() for x in line.split("->", 1)]
                 host = left.split(":", 1)[-1].strip()
-                if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", ip):
+                if IP_RE.match(ip):
                     subdomain_ips[host] = ip
                     evidence.append(line)
         elif section.startswith("header"):

@@ -2,68 +2,68 @@ Platform Architecture: Request Flow, Graph, and Flexibility Analysis
 1. REQUEST FLOW (end-to-end)
 ┌─────────────────────────────────────────────────────────────┐
 │ ① USER / LLM INPUT                                          │
-│   "probe morth.gov.in"                                       │
-│   → AGENTS.md (behavioral rules + tool table)                │
-│   → platform_skills (30 skill files, advisory only)          │
-│   → platform_playbook (optional workflow suggestions)        │
+│   "probe morth.gov.in"                                      │
+│   → AGENTS.md (behavioral rules + tool table)               │
+│   → platform_skills (30 skill files, advisory only)         │
+│   → platform_playbook (optional workflow suggestions)       │
 └────────────────────┬────────────────────────────────────────┘
                      ↓
 ┌────────────────────┬────────────────────────────────────────┐
 │ ② TOOL INVOCATION                                           │
 │   Typed: subfinder_scan, httpx_probe, nmap_syn_scan, ...    │
-│   Generic: platform_exec(tool="subfinder_scan", params=...)  │
+│   Generic: platform_exec(tool="subfinder_scan", params=...) │
 │   Custom: platform_script(code="...") / platform_shell()    │
 │   Background: platform_job_start(kind="tool", tool=...)     │
-│                                                              │
-│   * additional_args = any valid CLI flags                    │
-│   * params_json = domain/target/host/url auto-mapped         │
-│   * force_refresh = bypass cache                             │
+│                                                             │
+│   * additional_args = any valid CLI flags                   │
+│   * params_json = domain/target/host/url auto-mapped        │
+│   * force_refresh = bypass cache                            │
 └────────────────────┬────────────────────────────────────────┘
                      ↓
 ┌────────────────────┬────────────────────────────────────────┐
 │ ③ KALI BACKEND EXECUTION                                    │
 │   Tool binary runs (subfinder, httpx, nmap, python3, ...)   │
-│   STDOUT + STDERR captured                                   │
-│   Exit code, timeout, success/failure recorded               │
+│   STDOUT + STDERR captured                                  │
+│   Exit code, timeout, success/failure recorded              │
 └────────────────────┬────────────────────────────────────────┘
                      ↓
 ┌────────────────────┬────────────────────────────────────────┐
 │ ④ INGEST RULES (ingest_rules.json) — 7 regex patterns       │
-│                                                              │
-│   Rule types:                                                │
-│   ├─ subdomain_line    → subdomain finding                   │
-│   ├─ open_port_line    → port finding (port/protocol/service)│
-│   ├─ vendor_fingerprint_header → technology finding          │
-│   ├─ console_or_app_path → url finding                       │
-│   ├─ cors_star         → observation finding                 │
-│   ├─ spa_catchall_suspect → observation (unverified)         │
-│   └─ json_api_body     → observation (HIGH)                  │
-│                                                              │
-│   * Each rule: pattern, finding_type, evidence_grade,        │
-│     claim_severity, title_template, tags                     │
-│   * ONLY stdout matching these 7 patterns is "seen"          │
-│   * Everything else is stored as "observation" (raw_output)  │
+│                                                             │
+│   Rule types:                                               │
+│   ├─ subdomain_line    → subdomain finding                  │
+│   ├─ open_port_line   → port finding (port/protocol/service)│
+│   ├─ vendor_fingerprint_header → technology finding         │
+│   ├─ console_or_app_path → url finding                      │
+│   ├─ cors_star         → observation finding                │
+│   ├─ spa_catchall_suspect → observation (unverified)        │
+│   └─ json_api_body     → observation (HIGH)                 │
+│                                                             │
+│   * Each rule: pattern, finding_type, evidence_grade,       │
+│     claim_severity, title_template, tags                    │
+│   * ONLY stdout matching these 7 patterns is "seen"         │
+│   * Everything else is stored as "observation" (raw_output) │
 └────────────────────┬────────────────────────────────────────┘
                      ↓
 ┌────────────────────┬────────────────────────────────────────┐
 │ ⑤ FINDING STORAGE (platform_findings)                       │
-│                                                              │
-│   Each finding has:                                          │
-│   ├─ id (UUID)                                               │
-│   ├─ finding_type: subdomain|host|url|port|service|          │
-│   │                 technology|observation                    │
-│   ├─ evidence_grade: observed|inferred|unverified            │
-│   ├─ claim_severity: none|info|medium|high|critical          │
-│   ├─ confidence: hypothesis|likely|confirmed                  │
-│   ├─ title + evidence (raw snippet)                          │
-│   ├─ source_tool (which tool generated it)                    │
-│   └─ tags (auto_ingest, subdomain, port, ...)                │
-│                                                              │
-│   * platform_record_finding() adds manual findings            │
-│   * Raw tool stdout stored as "observation" even if unparsed │
+│                                                             │
+│   Each finding has:                                         │
+│   ├─ id (UUID)                                              │
+│   ├─ finding_type: subdomain|host|url|port|service|         │
+│   │                 technology|observation                  │
+│   ├─ evidence_grade: observed|inferred|unverified           │
+│   ├─ claim_severity: none|info|medium|high|critical         │
+│   ├─ confidence: hypothesis|likely|confirmed                │
+│   ├─ title + evidence (raw snippet)                         │
+│   ├─ source_tool (which tool generated it)                  │
+│   └─ tags (auto_ingest, subdomain, port, ...)               │
+│                                                             │
+│   * platform_record_finding() adds manual findings          │
+│   * Raw tool stdout stored as "observation" even if unparsed│
 └────────────────────┬────────────────────────────────────────┘
                      ↓
-┌────────────────────┬────────────────────────────────────────┐
+┌────────────────────┬─────────────────────────────────────────┐
 │ ⑥ GRAPH CONSTRUCTION (implicit, not visible as API)          │
 │                                                              │
 │   Nodes created from findings (typed by finding_type):       │
@@ -80,10 +80,10 @@ Platform Architecture: Request Flow, Graph, and Flexibility Analysis
 │   └─ seeds (from platform_set_target)                        │
 │                                                              │
 │   * Graph is queried via platform_graph_query()              │
-│   * Filterable by asset_type + contains substring             │
-└────────────────────┬────────────────────────────────────────┘
+│   * Filterable by asset_type + contains substring            │
+└────────────────────┬─────────────────────────────────────────┘
                      ↓
-┌────────────────────┬────────────────────────────────────────┐
+┌────────────────────┬─────────────────────────────────────────┐
 │ ⑦ CONTEXT GENERATION (platform_context)                      │
 │                                                              │
 │   A. Crown Jewels (scored)                                   │
@@ -93,9 +93,9 @@ Platform Architecture: Request Flow, Graph, and Flexibility Analysis
 │      + graph_edges count                                     │
 │                                                              │
 │   B. Open Loops (3 sources combined)                         │
-│      ├─ tech_dispatch.yaml signal matching                  │
+│      ├─ tech_dispatch.yaml signal matching                   │
 │      │   e.g. finding_type=url, min_count=3 →                │
-│      │   "run waybackurls"                                    │
+│      │   "run waybackurls"                                   │
 │      ├─ escalation_matrix.yaml fallback chains               │
 │      │   e.g. subfinder empty → try amass → fierce → dnsenum │
 │      └─ graph_pivots (structural gaps)                       │
@@ -105,17 +105,17 @@ Platform Architecture: Request Flow, Graph, and Flexibility Analysis
 │      surface_too_shallow, resolution_thin, etc.              │
 │                                                              │
 │   D. Attack Surface Tree (hierarchical)                      │
-│      seed → subs → hosts → IPs → ports → services           │
+│      seed → subs → hosts → IPs → ports → services            │
 │                                                              │
 │   E. Inferred Focus (advisory)                               │
 │      application_or_deeper, web_only_perimeter, etc.         │
-└────────────────────┬────────────────────────────────────────┘
+└────────────────────┬─────────────────────────────────────────┘
                      ↓
-┌────────────────────┬────────────────────────────────────────┐
+┌────────────────────┬─────────────────────────────────────────┐
 │ ⑧ OUTPUT TO LLM                                              │
-│   Tool stdout + parsed findings + open loops + context        │
-│   → LLM decides next action from open loops or invention      │
-└─────────────────────────────────────────────────────────────┘
+│   Tool stdout + parsed findings + open loops + context       │
+│   → LLM decides next action from open loops or invention     │
+└──────────────────────────────────────────────────────────────┘
 2. WHAT THE PLATFORM "SEES" (data model)
 Dimension	Sees	Doesn't See
 Tool output	Regex-matched patterns from 7 ingest rules	Full context, nuance, partial data, error messages

@@ -69,7 +69,7 @@ def run(
     additional_args: str = "",
     use_recovery: bool = True,
     use_cache: bool = True,
-    exec_timeout: int = 300,
+    exec_timeout: int = 180,
 ) -> dict[str, Any]:
     params = {
         "domain": domain,

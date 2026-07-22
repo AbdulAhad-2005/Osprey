@@ -79,7 +79,7 @@ tasks:
     phase: recon
     description: Soft CDN/origin clues (dig+curl). Advisory — confirm before scanning edge IPs.
     default_tool: cdn_origin_probe
-    alternatives: [dnsx_resolve, tlsx_inspect]
+    alternatives: [origin_ip_attribution, cloudflare_origin_ip, dnsx_resolve, tlsx_inspect]
     skill_file: recon/ip-attribution.md
     produces: [host, technology, observation]
 
@@ -269,6 +269,32 @@ tools:
     parameters:
       domain: { type: string, required: true }
       timeout: { type: string, default: "20" }
+
+  origin_ip_attribution:
+    task: cdn_origin_clues
+    phase: recon
+    freeform_args_field: additional_args
+    default_for_task: false
+    llm_hints: |
+      Full origin IP attribution pipeline. Uses CIDR-based CDN classification, HTTP header
+      detection, MX/SPF/subdomain probing, and direct IP verification. Best when you need
+      confirmed origin candidates with confidence scores. Slower than cdn_origin_probe.
+    parameters:
+      domain: { type: string, required: true }
+      live_hosts: { type: string, default: "" }
+      timeout: { type: int, default: 30 }
+
+  cloudflare_origin_ip:
+    task: cdn_origin_clues
+    phase: recon
+    freeform_args_field: additional_args
+    default_for_task: false
+    llm_hints: |
+      Multi-signal origin IP finder. Probes MX, SPF, common subdomains, and HTTP headers.
+      Good for Cloudflare-specific bypass. Returns candidates sorted by confidence.
+    parameters:
+      domain: { type: string, required: true }
+      timeout: { type: int, default: 30 }
 
   rustscan_fast_scan:
     task: port_discovery
