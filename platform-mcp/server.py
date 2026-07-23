@@ -1034,7 +1034,14 @@ def platform_findings(
                 params={"engagement_id": _SESSION_ENGAGEMENT_ID},
                 timeout=30,
             )
-            parts.append(_block("Findings summary (text)", summary.get("summary", summary)))
+            meta = summary if isinstance(summary, dict) else {}
+            parts.append(_block("Findings summary", meta.get("summary", summary)))
+            if meta.get("count") is not None:
+                parts.append(
+                    f"_count={meta.get('count')} | "
+                    f"truncated={meta.get('truncated')} | "
+                    f"generated_at={meta.get('generated_at', '')[:19]}_"
+                )
 
         data = _get("/api/v1/findings/", params=params, timeout=45)
         findings = data.get("findings") or []

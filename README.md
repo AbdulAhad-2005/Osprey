@@ -6,23 +6,38 @@ An autonomous AI penetration testing platform with a FastAPI backend and a Pytho
 
 - `backend/` — FastAPI control plane, API endpoints, database models, workflow logic
 - `cli/` — Python CLI tool (prompt_toolkit) for interacting with the platform
-- `mcp-servers/` — Capability-based tool adapters (planned)
-- `docker-compose.yml` — Local dev stack with Postgres
+- `mcp-servers/` — Capability-based tool adapters for network, recon, and web modules
+- `platform-mcp/` — MCP gateway server connecting AI clients to the platform
+- `docker-compose.yml` — Full stack: Postgres + Kali Linux (90+ tools) + FastAPI backend
 
 ## Quick start
 
-### 1. Start the backend (Docker or local)
+### 1. Start the stack (Docker — recommended)
 
-**Docker:**
+This brings up Postgres, a Kali Linux container with all pentest tools pre-installed, and the backend in one shot:
 
 ```bash
 cp .env.example .env
+# Edit .env with your LLM API key (see comments in the file)
 docker compose up --build
 ```
 
-Backend runs on port 9000.
+**What you get:**
+- `postgres` — database (port 5433 mapped to host)
+- `kali-tools` — Kali container with 90+ tools (nmap, metasploit, subfinder, httpx, rustscan, etc.)
+- `backend` — FastAPI control plane (port 9000)
 
-**Local:**
+> **No WSL / VirtualBox needed on Windows.** The `kali-tools` service builds a Kali image directly via Docker. All tools run inside the container, accessed by the backend via `docker exec`. This is the recommended approach.
+
+### 2. Run database migrations
+
+With the stack running, apply Alembic migrations to set up the schema:
+
+```bash
+docker compose exec backend alembic upgrade head
+```
+
+### 3. Start the backend locally (alternative)
 
 ```bash
 cd backend
@@ -33,9 +48,9 @@ pip install -e .
 uvicorn pentest_platform.main:app --host 0.0.0.0 --port 9000
 ```
 
-### 2. Run the CLI
+Requires Postgres running locally (or via `docker compose up postgres`).
 
-The CLI uses the same venv as the backend:
+### 4. Run the CLI
 
 ```bash
 cd cli
@@ -55,7 +70,7 @@ set API_BASE_URL=http://localhost:9000
 python -m cli
 ```
 
-### 3. CLI commands
+### 5. CLI commands
 
 | Command                  | Description                   |
 | ------------------------ | ----------------------------- |
@@ -73,6 +88,156 @@ python -m cli
 | `/exit`                | Exit the CLI                  |
 
 You can also type natural language prompts directly to interact with the agent pipeline.
+
+## MCP Client Configuration (Alternate Approach)
+
+Connect your AI client directly to the platform via MCP. All clients use the same MCP server at `platform-mcp/server.py`.
+
+### OpenCode (recommended)
+
+Edit `~/.config/opencode/opencode.json` (global config — works in any project):
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "pentest-platform": {
+      "type": "local",
+      "command": ["python", "C:\\path\\to\\AI-Pentesting-Tool\\platform-mcp\\server.py"],
+      "env": {
+        "PENTEST_API_BASE": "http://localhost:9000",
+        "PENTEST_QUICK_TIMEOUT": "30",
+        "PENTEST_HTTP_TIMEOUT": "900"
+      },
+      "enabled": true,
+      "timeout": 600000
+    }
+  }
+}
+```
+
+Replace `C:\\path\\to` with the absolute path to the project. The global config makes `pentest-platform` tools available in any repository you open with OpenCode. Verify with `/tools` in the chat — you should see all MCP tools listed.
+
+### Claude Desktop (native MCP support)
+
+In Claude Desktop app, go to Settings -> Developer -> Edit Config -> Edit `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "pentest-platform": {
+      "command": "python",
+      "args": [
+        "C:\\path\\to\\AI-Pentesting-Tool\\platform-mcp\\server.py"
+      ],
+      "cwd": "C:\\path\\to\\AI-Pentesting-Tool",
+      "env": {
+        "PENTEST_API_BASE": "http://localhost:9000",
+        "PENTEST_QUICK_TIMEOUT": "30",
+        "PENTEST_HTTP_TIMEOUT": "900"
+      }
+    }
+  }
+}
+```
+
+Replace `C:\\path\\to` with your actual project path. You should see `pentest-platform` listed as a running MCP server in Claude's settings.
+
+### ChatGPT Desktop
+
+You can configure your MCP server either from the graphical interface or directly through `config.toml`.
+
+#### Option 1 (Recommended): GUI Configuration
+
+Open:
+
+Settings → Plugins → MCPs → Add Server
+
+Configure the server as follows.
+
+##### Name
+
+```
+pentest-platform
+```
+
+##### Type
+
+```
+STDIO
+```
+
+##### Command
+
+System Python:
+
+```
+python
+```
+
+or preferably your virtual environment:
+
+```
+C:\path\to\AI-Pentesting-Tool\.venv\Scripts\python.exe
+```
+
+##### Arguments
+
+```
+C:\path\to\AI-Pentesting-Tool\platform-mcp\server.py
+```
+
+##### Environment Variables
+
+| Variable | Value |
+|----------|-------|
+| PENTEST_API_BASE | http://localhost:9000 |
+| PENTEST_QUICK_TIMEOUT | 30 |
+| PENTEST_HTTP_TIMEOUT | 900 |
+
+##### Working Directory
+
+```
+C:\path\to\AI-Pentesting-Tool
+```
+
+Click **Save**.
+
+If the configuration is valid, ChatGPT Desktop will automatically launch the MCP server whenever it is needed.
+
+---
+
+#### Option 2: config.toml
+
+Instead of using the GUI, you can edit ChatGPT Desktop's `config.toml`.
+
+Add:
+
+```toml
+[mcp_servers.pentest-platform]
+command = "python"
+
+args = [
+    "C:\\path\\to\\AI-Pentesting-Tool\\platform-mcp\\server.py"
+]
+
+cwd = "C:\\path\\to\\AI-Pentesting-Tool"
+
+[mcp_servers.pentest-platform.env]
+PENTEST_API_BASE = "http://localhost:9000"
+PENTEST_QUICK_TIMEOUT = "30"
+PENTEST_HTTP_TIMEOUT = "900"
+```
+
+If using a virtual environment, replace the command with:
+
+```toml
+command = "C:\\path\\to\\AI-Pentesting-Tool\\.venv\\Scripts\\python.exe"
+```
+
+Restart ChatGPT Desktop after editing `config.toml`.
+
+For the best integrated experience, use **OpenCode** or **Claude Desktop**.
 
 ## Backend API endpoints
 
@@ -101,11 +266,11 @@ python -m pytest tests/ -v
 
 ## Next steps
 
-1. Add the graph and audit models to the backend
-2. Introduce Temporal workflows when the orchestration layer is ready
-3. Build the first MCP server around recon and target expansion
-4. Wire the CLI to the agent pipeline for real-time scan interaction
+1. Add durable job cancellation and restart reconciliation (see `changes.md`)
+2. Implement structured evidence DAG traversal and correlation candidates
+3. Add safe shell flexibility via constrained command AST (pipeline, stderr modes)
+4. Integrate Temporal workflows for advanced orchestration
 
-## Tools Analyzed and Summary:
+## Tools Analyzed
 
 https://docs.google.com/document/d/1XqAMlZ9ErRywIHvR0FinwqmysCgSqYzIGtXoqmlsDGc/edit?usp=sharing

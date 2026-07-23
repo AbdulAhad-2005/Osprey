@@ -30,7 +30,12 @@ def register_nmap_tools(mcp: FastMCP) -> None:
         timing: Optional[str] = None,
         extra_args: Optional[str] = None,
     ) -> dict:
-        """TCP SYN scan (-sS). Full raw + XML output via NmapScanner."""
+        """TCP SYN scan (-sS). Full raw + XML output.
+
+        Requires root/NET_RAW for raw sockets. OS detection (-O) also needs
+        root — do not add -O unless the container has privileges. On failure
+        due to privileges, fall back to nmap_custom_scan with -sT (connect scan).
+        """
         try:
             evasion = EvasionOptions(timing=timing) if timing else None
             return _get_scanner().syn_scan(
