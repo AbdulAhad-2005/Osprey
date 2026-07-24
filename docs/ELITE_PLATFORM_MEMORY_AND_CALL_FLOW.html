@@ -1,0 +1,1534 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Elite Platform Memory, Graph, Tools, and Call Flow</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7fbff;
+      --surface: #ffffff;
+      --surface-2: #edf7ff;
+      --surface-3: #e4efff;
+      --text: #18314f;
+      --muted: #526a82;
+      --faint: #71869a;
+      --line: #c9dceb;
+      --accent: #008f7a;
+      --accent-2: #4d62d5;
+      --warning: #c87500;
+      --danger: #d33e61;
+      --success: #218c58;
+      --purple: #8848c7;
+      --orange: #df741d;
+      --code: #f1f6fc;
+      --max: 1460px;
+      --side: 270px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.65;
+    }
+    a { color: var(--accent-2); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, pre {
+      font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+    }
+    code {
+      background: var(--code);
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      padding: 0.12rem 0.34rem;
+      color: #365b89;
+      font-size: 0.9em;
+    }
+    pre {
+      margin: 1rem 0;
+      padding: 1rem 1.15rem;
+      overflow: auto;
+      background: var(--code);
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      color: #29496b;
+      line-height: 1.55;
+      white-space: pre;
+    }
+    h1, h2, h3, h4 { line-height: 1.25; letter-spacing: -0.02em; }
+    h1 { margin: 0; font-size: clamp(2rem, 5vw, 4rem); max-width: 980px; }
+    h2 {
+      margin: 0 0 1.2rem;
+      font-size: clamp(1.65rem, 3vw, 2.45rem);
+      padding-bottom: 0.65rem;
+      border-bottom: 1px solid var(--line);
+    }
+    h3 { margin: 1.8rem 0 0.7rem; font-size: 1.3rem; }
+    h4 { margin: 1.2rem 0 0.4rem; font-size: 1.05rem; }
+    p { margin: 0.65rem 0 1rem; }
+    ul, ol { padding-left: 1.35rem; }
+    li { margin: 0.35rem 0; }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      min-height: 56px;
+      padding: 0.6rem max(1rem, calc((100vw - var(--max)) / 2));
+      background: rgba(255, 255, 255, 0.96);
+      border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(10px);
+    }
+    .brand {
+      white-space: nowrap;
+      color: var(--text);
+      font-weight: 750;
+      letter-spacing: -0.02em;
+    }
+    .topbar input {
+      width: min(520px, 55vw);
+      margin-left: auto;
+      padding: 0.65rem 0.8rem;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #eef4ff;
+      color: var(--text);
+      outline: none;
+    }
+    .topbar input:focus { border-color: var(--accent); }
+    .search-count { min-width: 76px; color: var(--muted); font-size: 0.82rem; }
+
+    .shell {
+      display: grid;
+      grid-template-columns: var(--side) minmax(0, 1fr);
+      max-width: var(--max);
+      margin: 0 auto;
+    }
+    .sidebar {
+      position: sticky;
+      top: 57px;
+      height: calc(100vh - 57px);
+      overflow: auto;
+      padding: 1.4rem 1rem 2rem;
+      border-right: 1px solid var(--line);
+    }
+    .sidebar .label {
+      margin: 0.85rem 0 0.4rem;
+      color: var(--faint);
+      font-size: 0.72rem;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .sidebar a {
+      display: block;
+      margin: 0.12rem 0;
+      padding: 0.38rem 0.55rem;
+      border-radius: 5px;
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+    .sidebar a:hover, .sidebar a.active {
+      background: var(--surface-2);
+      color: var(--text);
+      text-decoration: none;
+    }
+    main { min-width: 0; }
+    .hero {
+      padding: clamp(3rem, 8vw, 7rem) clamp(1.25rem, 5vw, 5rem);
+      border-bottom: 1px solid var(--line);
+      background: #edf3ff;
+    }
+    .hero .eyebrow {
+      color: var(--accent);
+      font-weight: 800;
+      letter-spacing: 0.13em;
+      text-transform: uppercase;
+      font-size: 0.78rem;
+    }
+    .hero .lead {
+      max-width: 900px;
+      margin-top: 1.2rem;
+      color: var(--muted);
+      font-size: clamp(1rem, 2vw, 1.25rem);
+    }
+    .motto {
+      max-width: 960px;
+      margin-top: 2rem;
+      padding: 1rem 1.2rem;
+      border-left: 4px solid var(--accent);
+      background: var(--surface-2);
+      font-size: 1.03rem;
+    }
+    .hero-stats {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.7rem;
+      margin-top: 2rem;
+      max-width: 1000px;
+    }
+    .stat {
+      padding: 0.85rem 1rem;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+    }
+    .stat:nth-child(1) { border-top: 4px solid var(--accent); }
+    .stat:nth-child(2) { border-top: 4px solid var(--accent-2); }
+    .stat:nth-child(3) { border-top: 4px solid var(--orange); }
+    .stat:nth-child(4) { border-top: 4px solid var(--purple); }
+    .stat strong { display: block; color: var(--accent); font-size: 1.35rem; }
+    .stat span { color: var(--muted); font-size: 0.8rem; }
+
+    section {
+      padding: clamp(2.8rem, 6vw, 5.5rem) clamp(1.25rem, 5vw, 5rem);
+      border-bottom: 1px solid var(--line);
+      scroll-margin-top: 70px;
+    }
+    section:nth-of-type(3n + 1) { background: #f2fcf9; }
+    section:nth-of-type(3n + 2) { background: #fff9ef; }
+    section:nth-of-type(3n) { background: #f8f3ff; }
+    .section-lead {
+      max-width: 920px;
+      margin: -0.45rem 0 1.8rem;
+      color: var(--muted);
+      font-size: 1.04rem;
+    }
+    .grid-2, .grid-3, .grid-4 {
+      display: grid;
+      gap: 1rem;
+      align-items: stretch;
+    }
+    .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .card {
+      padding: 1.15rem 1.25rem;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--surface);
+    }
+    .card h3, .card h4 { margin-top: 0; }
+    .card p:last-child, .card ul:last-child { margin-bottom: 0; }
+    .card .kicker {
+      color: var(--accent);
+      font-size: 0.72rem;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+    .callout {
+      margin: 1.2rem 0;
+      padding: 1rem 1.15rem;
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--accent-2);
+      border-radius: 7px;
+      background: var(--surface-2);
+    }
+    .callout.warning { border-left-color: var(--warning); }
+    .callout.danger { border-left-color: var(--danger); }
+    .callout.success { border-left-color: var(--success); }
+    .callout strong { display: block; margin-bottom: 0.3rem; }
+
+    .diagram {
+      display: grid;
+      gap: 0.65rem;
+      margin: 1.3rem 0;
+      padding: 1.1rem;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--code);
+    }
+    .diagram.flow { grid-template-columns: repeat(7, minmax(110px, 1fr)); }
+    .node {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 72px;
+      padding: 0.65rem;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface-2);
+      text-align: center;
+      font-size: 0.83rem;
+    }
+    .diagram.flow .node:not(:last-child)::after {
+      content: "→";
+      position: absolute;
+      right: -0.63rem;
+      z-index: 2;
+      color: var(--accent);
+      font-size: 1.15rem;
+    }
+    .node.write { border-color: var(--accent); }
+    .node.read { border-color: var(--accent-2); }
+    .node.local { border-color: var(--warning); }
+
+    .table-wrap {
+      overflow-x: auto;
+      margin: 1rem 0 1.5rem;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 760px;
+      background: var(--surface);
+      font-size: 0.88rem;
+    }
+    th, td {
+      padding: 0.78rem 0.85rem;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: var(--surface-3);
+      color: var(--text);
+      font-size: 0.74rem;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+    }
+    tr:last-child td { border-bottom: 0; }
+    tr:hover td { background: rgba(77, 98, 213, 0.07); }
+    .pill {
+      display: inline-block;
+      margin: 0.08rem 0.16rem 0.08rem 0;
+      padding: 0.16rem 0.45rem;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      font-size: 0.72rem;
+      white-space: nowrap;
+    }
+    .pill.pg { border-color: var(--accent); color: var(--accent); }
+    .pill.read { border-color: var(--accent-2); color: var(--accent-2); }
+    .pill.local { border-color: var(--warning); color: var(--warning); }
+    .pill.mutate { border-color: var(--danger); color: var(--danger); }
+    .muted { color: var(--muted); }
+    .small { font-size: 0.82rem; }
+
+    .tool-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.85rem;
+    }
+    .tool {
+      padding: 1rem 1.1rem;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+    }
+    .tool:nth-child(4n + 1) { border-top: 3px solid var(--accent); }
+    .tool:nth-child(4n + 2) { border-top: 3px solid var(--accent-2); }
+    .tool:nth-child(4n + 3) { border-top: 3px solid var(--orange); }
+    .tool:nth-child(4n) { border-top: 3px solid var(--purple); }
+    .tool h3 {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.7rem;
+      margin: 0 0 0.55rem;
+      font-size: 1.03rem;
+    }
+    .tool h3 code { font-size: 0.9rem; }
+    .tool dl {
+      display: grid;
+      grid-template-columns: 88px 1fr;
+      gap: 0.32rem 0.65rem;
+      margin: 0.7rem 0 0;
+      font-size: 0.84rem;
+    }
+    .tool dt { color: var(--faint); font-weight: 700; }
+    .tool dd { margin: 0; color: var(--muted); }
+
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+      margin: 1rem 0;
+    }
+    .tabs button {
+      padding: 0.45rem 0.7rem;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .tabs button.active { border-color: var(--accent); color: var(--text); }
+    .search-hidden { display: none !important; }
+    details {
+      margin: 0.8rem 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+    }
+    summary {
+      padding: 0.85rem 1rem;
+      cursor: pointer;
+      color: var(--text);
+      font-weight: 700;
+    }
+    details > div { padding: 0 1rem 1rem; color: var(--muted); }
+    footer {
+      padding: 2rem clamp(1.25rem, 5vw, 5rem);
+      color: var(--faint);
+      font-size: 0.8rem;
+    }
+
+    @media (max-width: 1120px) {
+      :root { --side: 220px; }
+      .diagram.flow { grid-template-columns: 1fr; }
+      .diagram.flow .node:not(:last-child)::after {
+        content: "↓";
+        right: auto;
+        bottom: -1.1rem;
+      }
+      .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 820px) {
+      .shell { grid-template-columns: 1fr; }
+      .sidebar { display: none; }
+      .grid-2, .grid-3, .grid-4, .tool-grid, .hero-stats { grid-template-columns: 1fr; }
+      .topbar .brand { display: none; }
+      .topbar input { width: 100%; margin-left: 0; }
+      section, .hero { padding-left: 1.15rem; padding-right: 1.15rem; }
+    }
+    @media print {
+      :root { color-scheme: light; }
+      body { background: white; color: #17202b; }
+      .topbar, .sidebar { display: none; }
+      .shell { display: block; max-width: none; }
+      section, .hero { break-inside: avoid; padding: 1.2rem 0; }
+      .card, .tool, .diagram, .callout, table { background: white; color: #17202b; }
+      code, pre { background: #f1f4f7; color: #17202b; }
+      .muted, .section-lead, .tool dd { color: #4b5968; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Elite Platform Architecture</div>
+    <input id="search" type="search" placeholder="Search tools, tables, flows, evidence, graph…">
+    <div id="searchCount" class="search-count">All content</div>
+  </header>
+
+  <div class="shell">
+    <nav class="sidebar" aria-label="Report navigation">
+      <div class="label">Foundation</div>
+      <a href="#executive">Executive model</a>
+      <a href="#memory">Memory architecture</a>
+      <a href="#graph">Graph representation</a>
+      <a href="#unification">One graph or many?</a>
+      <div class="label">Capabilities</div>
+      <a href="#tools">All platform_* tools</a>
+      <a href="#llm-control">LLM vs platform control</a>
+      <div class="label">Walkthroughs</div>
+      <a href="#engagement">Engagement lifecycle</a>
+      <a href="#execution-flow">Catalog execution</a>
+      <a href="#write-flow">Writing memory</a>
+      <a href="#script-flow">Custom script flow</a>
+      <a href="#job-flow">Background jobs</a>
+      <a href="#report-flow">Recall and reporting</a>
+      <div class="label">Engineering</div>
+      <a href="#current-limits">Current limitations</a>
+      <a href="#target-plan">Target consolidation plan</a>
+      <a href="#source-map">Source map</a>
+    </nav>
+
+    <main>
+      <div class="hero" id="executive">
+        <div class="eyebrow">Source-verified current architecture</div>
+        <h1>Memory, graph, platform tools, and complete engagement call flow</h1>
+        <p class="lead">
+          A technical report explaining where the platform remembers information, how a relational
+          database represents the graph, what every <code>platform_*</code> function actually does,
+          what the LLM can author, what the platform computes, and how a call travels from OpenCode
+          through MCP and FastAPI into execution, findings, graph, recall, and reporting.
+        </p>
+        <div class="motto">
+          We do not hardcode the engagement. The platform supplies a lab, durable evidence, a shared
+          notebook, and a referee. The LLM chooses the question, experiment, interpretation, relation,
+          and stopping point.
+        </div>
+        <div class="hero-stats">
+          <div class="stat"><strong>30</strong><span>platform_* MCP functions</span></div>
+          <div class="stat"><strong>3</strong><span>primary durable graph/finding tables</span></div>
+          <div class="stat"><strong>4</strong><span>memory layers with different durability</span></div>
+          <div class="stat"><strong>1</strong><span>engagement isolation boundary per target</span></div>
+        </div>
+      </div>
+
+      <section id="memory" data-searchable>
+        <h2>1. How platform memory actually works</h2>
+        <p class="section-lead">
+          The answer is not “everything is in PostgreSQL.” Durable analytical memory is primarily
+          relational PostgreSQL, but execution output also lives in the Kali filesystem and several
+          operational features currently live only in backend process memory.
+        </p>
+
+        <div class="grid-4">
+          <article class="card">
+            <div class="kicker">Durable</div>
+            <h3>PostgreSQL</h3>
+            <p>Engagements, runs, findings, asset nodes, asset edges, and latest tool coverage.</p>
+            <p class="muted small">This is the strongest “fat memory” layer today.</p>
+          </article>
+          <article class="card">
+            <div class="kicker">Container filesystem</div>
+            <h3>Kali artifacts</h3>
+            <p>Script files, stdout/stderr files, and fallback output artifacts under an engagement workdir.</p>
+            <p class="muted small">Persistent only while the container or mounted volume survives.</p>
+          </article>
+          <article class="card">
+            <div class="kicker">Process-local</div>
+            <h3>Operational state</h3>
+            <p>Jobs, context snapshots, recent stdout index, execution cache, and audit events.</p>
+            <p class="muted small">A backend restart currently clears these.</p>
+          </article>
+          <article class="card">
+            <div class="kicker">Conversation</div>
+            <h3>LLM context</h3>
+            <p>Current reasoning and narrative that has not been explicitly written back.</p>
+            <p class="muted small">Not platform memory until a write API or parser persists it.</p>
+          </article>
+        </div>
+
+        <h3>1.1 PostgreSQL is tabular</h3>
+        <p>
+          PostgreSQL stores rows and columns. Flexible fields such as tags and metadata are currently
+          serialized into text columns containing JSON. The platform reconstructs typed Pydantic
+          objects when rows are read.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Table</th><th>Purpose</th><th>Important identity</th><th>Durability</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>engagements</code></td>
+                <td>Target, name, status, rules of engagement, counters, timestamps.</td>
+                <td>12-character engagement ID.</td>
+                <td><span class="pill pg">PostgreSQL</span></td>
+              </tr>
+              <tr>
+                <td><code>findings</code></td>
+                <td>Evidence, inferences, hypotheses, tags, graph-link audit findings, operator notes.</td>
+                <td>Random 12-character finding ID; every row has engagement and run IDs.</td>
+                <td><span class="pill pg">PostgreSQL</span></td>
+              </tr>
+              <tr>
+                <td><code>asset_nodes</code></td>
+                <td>Graph vertices such as host, URL, IP, port, service, and technology.</td>
+                <td>Composite key <code>(engagement_id, asset_type:lowercase_label)</code>.</td>
+                <td><span class="pill pg">PostgreSQL</span></td>
+              </tr>
+              <tr>
+                <td><code>asset_edges</code></td>
+                <td>Directed graph relationships.</td>
+                <td>Unique engagement + source + target + relationship.</td>
+                <td><span class="pill pg">PostgreSQL</span></td>
+              </tr>
+              <tr>
+                <td><code>tool_coverage</code></td>
+                <td>Latest success/finding count for one tool and asset; feeds gaps and attempts.</td>
+                <td>Unique engagement + tool + asset; repeats overwrite.</td>
+                <td><span class="pill pg">PostgreSQL</span></td>
+              </tr>
+              <tr>
+                <td>Artifact files</td>
+                <td>Large stdout/stderr and script output.</td>
+                <td>Path under <code>/tmp/pentest/&lt;engagement&gt;/</code>.</td>
+                <td><span class="pill local">Kali filesystem</span></td>
+              </tr>
+              <tr>
+                <td>Jobs/delta/index/cache</td>
+                <td>Parallel task state, last context counts, recent artifact paths, cached responses.</td>
+                <td>Python dictionaries/deques keyed by engagement or job.</td>
+                <td><span class="pill local">Process-local</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>1.2 A finding is the universal evidence record</h3>
+        <p>
+          Findings are not only vulnerabilities. A finding can represent a hostname, URL, port,
+          service, technology, raw observation, operator hypothesis, graph-link explanation, or asset
+          tag audit record. This is why the findings table acts as the platform’s shared notebook.
+        </p>
+        <pre>Finding
+├── identity: id, engagement_id, run_id, created_at
+├── classification: finding_type, confidence, evidence_grade, claim_severity
+├── narrative: title, description, evidence, raw_data, notes
+├── origin: source_tool, target
+└── flexible structure: metadata_json, tags_json, extra_json</pre>
+
+        <div class="callout warning">
+          <strong>Durability nuance</strong>
+          Evidence grade and claim severity are mirrored into <code>extra_json</code> rather than
+          dedicated SQL columns. The Pydantic model hydrates them on read and enforces the severity
+          ceiling.
+        </div>
+
+        <h3>1.3 Engagement scope is the memory boundary</h3>
+        <p>
+          MCP keeps an active <code>engagement_id</code>, <code>run_id</code>, and seed target.
+          Normal memory calls inject the engagement ID automatically. Findings and graph queries are
+          engagement-scoped, so the same hostname in two engagements creates separate graph records.
+          A run is an audit/session stamp; most recall intentionally reads engagement-wide memory.
+        </p>
+      </section>
+
+      <section id="graph" data-searchable>
+        <h2>2. How a graph is stored in tabular PostgreSQL</h2>
+        <p class="section-lead">
+          A graph does not require a graph database. This platform uses an adjacency-list pattern:
+          one table stores vertices and another stores directed edges. SQL reconstructs neighborhoods
+          by matching edge source and target IDs to node IDs.
+        </p>
+
+        <div class="grid-2">
+          <article class="card">
+            <div class="kicker">Vertices</div>
+            <h3><code>asset_nodes</code></h3>
+            <pre>engagement_id | id                  | type | label
+abc123...     | host:api.example    | host | api.example
+abc123...     | ip:192.0.2.10        | ip   | 192.0.2.10
+abc123...     | port:api.example:443 | port | api.example:443</pre>
+          </article>
+          <article class="card">
+            <div class="kicker">Directed links</div>
+            <h3><code>asset_edges</code></h3>
+            <pre>source_id             | relationship | target_id
+host:api.example      | resolves_to  | ip:192.0.2.10
+host:api.example      | has_port     | port:api.example:443
+url:https://api.../v1 | hosted_on    | host:api.example</pre>
+          </article>
+        </div>
+
+        <h3>2.1 Automatic graph projection</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Finding type</th><th>Nodes added/upserted</th><th>Edges added</th><th>Important limitation</th></tr></thead>
+            <tbody>
+              <tr><td>Subdomain</td><td>Subdomain; optional IP</td><td><code>resolves_to</code>, bidirectional <code>co_hosts</code></td><td>Not linked to parent domain by default.</td></tr>
+              <tr><td>Host</td><td>Host; optional IP; optional seed domain</td><td><code>resolves_to</code>, <code>co_hosts</code>, sister <code>affiliated_with</code></td><td>IP extraction can rely on simple evidence regex.</td></tr>
+              <tr><td>URL</td><td>URL and host</td><td>URL <code>hosted_on</code> host</td><td>Host extraction uses string splitting.</td></tr>
+              <tr><td>Port</td><td>Port and host</td><td>Host <code>has_port</code> port</td><td>Broad target can become the host if parser metadata is weak.</td></tr>
+              <tr><td>Service</td><td>Service only</td><td>None</td><td>Currently disconnected from port.</td></tr>
+              <tr><td>Technology</td><td>Technology only</td><td>None</td><td>Currently disconnected from host/URL.</td></tr>
+              <tr><td>Observation</td><td>None automatically</td><td>None automatically</td><td>Can still support operator-authored links through finding IDs.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>2.2 Operator-authored graph links</h3>
+        <p>
+          <code>platform_graph_link</code> lets the LLM supply a business relation that the generic
+          parser could not know. The platform normalizes syntax and decides whether the relation must
+          be marked as a hypothesis.
+        </p>
+        <pre>platform_graph_link(
+  source="host:portal.example.com",
+  target="host:api.example.com",
+  relation="calls_backend_api",
+  evidence="Observed API base in main.js and a matching JSON response",
+  evidence_grade="observed",
+  derived_from="routeFinding,responseFinding"
+)</pre>
+        <p>One call performs two related writes:</p>
+        <ol>
+          <li>Upsert source and target nodes, then add a directed edge.</li>
+          <li>Create a finding that stores evidence, grade, relation metadata, and parent IDs.</li>
+        </ol>
+        <pre>asset_edges:
+host:portal.example --calls_backend_api--> host:api.example
+
+findings:
+REL host:portal.example --calls_backend_api--> host:api.example
+metadata = {
+  source_id, target_id, relationship,
+  edge_kind: "asserted",
+  derived_from: ["routeFinding", "responseFinding"]
+}</pre>
+
+        <div class="callout">
+          <strong>Why the finding is necessary</strong>
+          The current edge table has only source, target, relationship, and engagement. Evidence and
+          grade therefore live in the companion finding rather than directly on the edge.
+        </div>
+      </section>
+
+      <section id="unification" data-searchable>
+        <h2>3. Asset tags, evidence chains, and graph links: one graph or separate?</h2>
+        <p class="section-lead">
+          They are not three independent graph databases. They are different views and write APIs
+          over one engagement memory model. The asset graph is a topology graph; evidence chains form
+          a second logical graph over findings; tags annotate assets and also leave finding records.
+        </p>
+
+        <div class="diagram flow" aria-label="Unified memory relationship">
+          <div class="node write">LLM write API</div>
+          <div class="node">Finding record</div>
+          <div class="node">Asset node metadata</div>
+          <div class="node">Asset edge</div>
+          <div class="node">derived_from IDs</div>
+          <div class="node read">Query/projection</div>
+          <div class="node read">Context/report</div>
+        </div>
+
+        <div class="grid-3">
+          <article class="card">
+            <div class="kicker">Topology graph</div>
+            <h3>Assets and relations</h3>
+            <p><code>asset_nodes</code> + <code>asset_edges</code>.</p>
+            <p>Answers: What exists? What points to what? Which URLs are hosted on this host? Which hosts share an IP?</p>
+          </article>
+          <article class="card">
+            <div class="kicker">Evidence DAG</div>
+            <h3>Findings and provenance</h3>
+            <p><code>findings.metadata_json.derived_from</code>.</p>
+            <p>Answers: Which observations support this claim? Which claims cite this finding?</p>
+          </article>
+          <article class="card">
+            <div class="kicker">Asset annotation</div>
+            <h3>Tags and priority</h3>
+            <p>Node metadata plus an <code>operator_tag_asset</code> finding.</p>
+            <p>Answers: Why does the operator consider this asset important? What role and boost were assigned?</p>
+          </article>
+        </div>
+
+        <h3>3.1 Exact storage relationship</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Capability</th><th>Writes graph?</th><th>Writes finding?</th><th>Storage</th><th>Same memory?</th></tr></thead>
+            <tbody>
+              <tr><td><code>platform_graph_link</code></td><td>Yes: nodes + edge</td><td>Yes: relation evidence</td><td>Asset tables + findings</td><td>Yes, same engagement</td></tr>
+              <tr><td><code>platform_tag_asset</code></td><td>Yes: upserts node metadata</td><td>Yes: tag audit record</td><td>Asset nodes + findings</td><td>Yes, same engagement</td></tr>
+              <tr><td><code>platform_record_finding</code></td><td>Sometimes: based on finding type</td><td>Yes</td><td>Findings, then graph projector</td><td>Yes, same engagement</td></tr>
+              <tr><td><code>platform_think</code></td><td>No</td><td>Yes: unverified hypothesis</td><td>Findings</td><td>Yes, same engagement</td></tr>
+              <tr><td><code>platform_evidence_chain</code></td><td>No write</td><td>No write</td><td>Reads <code>derived_from</code> in findings</td><td>Yes, logical evidence graph</td></tr>
+              <tr><td><code>platform_crown_jewels</code></td><td>No write</td><td>No write</td><td>Computes from findings + node metadata</td><td>Yes, derived projection</td></tr>
+              <tr><td><code>platform_memory_search</code></td><td>No write</td><td>No write</td><td>Searches findings, nodes, and coverage</td><td>One cross-memory query</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout success">
+          <strong>Best mental model</strong>
+          There is one engagement notebook with multiple relational projections. The asset graph,
+          finding evidence DAG, tags, attempts, and report outline are connected concepts, not
+          isolated applications. They are separate APIs because each operation has different
+          validation and meaning.
+        </div>
+      </section>
+
+      <section id="tools" data-searchable>
+        <h2>4. Actual function of every platform_* tool</h2>
+        <p class="section-lead">
+          These are MCP-facing capabilities exposed to OpenCode. A typed recon/network tool may bypass
+          the generic <code>platform_exec</code> name, but it still uses the same catalog execution
+          backend.
+        </p>
+
+        <div class="tabs" id="toolTabs">
+          <button class="active" data-kind="all">All</button>
+          <button data-kind="session">Session</button>
+          <button data-kind="read">Read memory</button>
+          <button data-kind="write">Write memory</button>
+          <button data-kind="execute">Execute</button>
+          <button data-kind="guidance">Guidance/config</button>
+          <button data-kind="report">Report</button>
+        </div>
+
+        <div class="tool-grid" id="toolGrid">
+          <article class="tool" data-kind="session">
+            <h3><code>platform_set_target</code><span class="pill mutate">session</span></h3>
+            <p>Analyzes a full or short target name, asks for clarification when ambiguous, then binds or creates an engagement and active run.</p>
+            <dl><dt>Reads</dt><dd>Target analysis, engagements.</dd><dt>Writes</dt><dd>Session binding; may create/reuse engagement and run.</dd><dt>LLM controls</dt><dd>Confirmed FQDN, force-new choice.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="session">
+            <h3><code>platform_health</code><span class="pill read">health</span></h3>
+            <p>Checks backend health. With a target, it also runs the target-analysis/binding path.</p>
+            <dl><dt>Reads</dt><dd><code>/health</code>; optional target/engagement state.</dd><dt>Writes</dt><dd>Only when target binding creates/reuses session state.</dd><dt>Use</dt><dd>Startup and connectivity diagnosis.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="read">
+            <h3><code>platform_context</code><span class="pill read">read</span></h3>
+            <p>Builds a compact commander briefing from findings, graph, gaps, jobs, crown jewels, artifacts, focus, delta, and finalize readiness.</p>
+            <dl><dt>Reads</dt><dd>Multiple memory services.</dd><dt>Writes</dt><dd>Advances process-local context snapshot.</dd><dt>Nature</dt><dd>Orientation, not a mandatory next-step engine.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="read">
+            <h3><code>platform_artifact</code><span class="pill local">filesystem</span></h3>
+            <p>With no path, lists recent indexed outputs and engagement files. With a path, reads an offset/limit slice.</p>
+            <dl><dt>Reads</dt><dd>Process-local stdout index and Kali files.</dd><dt>Writes</dt><dd>None.</dd><dt>Limit</dt><dd>Current framing/capture defects are documented below.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="write">
+            <h3><code>platform_think</code><span class="pill pg">PG write</span></h3>
+            <p>Persists an optional LLM hypothesis, plan, preliminary evidence, and next-tool idea as an unverified observation finding.</p>
+            <dl><dt>Writes</dt><dd><code>findings</code>.</dd><dt>Graph</dt><dd>No node or edge.</dd><dt>Safety</dt><dd>Always hypothesis/unverified/none severity.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="write">
+            <h3><code>platform_graph_link</code><span class="pill pg">PG write</span></h3>
+            <p>Creates an LLM-named directed asset relation and a companion evidence finding. Non-observed relations receive <code>hypothesis_</code>.</p>
+            <dl><dt>Writes</dt><dd>Nodes, edge, finding.</dd><dt>LLM controls</dt><dd>Assets, relation name, evidence, grade, parents.</dd><dt>Platform controls</dt><dd>Normalization and hypothesis state.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="write">
+            <h3><code>platform_tag_asset</code><span class="pill pg">PG write</span></h3>
+            <p>Assigns an operator role, bounded boost, and reason to an asset for crown-jewel prioritization.</p>
+            <dl><dt>Writes</dt><dd>Node metadata + inferred tag finding.</dd><dt>Range</dt><dd>Boost clamped to -50..100.</dd><dt>Known issue</dt><dd>Current ranking can count the boost twice.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="report">
+            <h3><code>platform_finalize_check</code><span class="pill read">gate</span></h3>
+            <p>Computes whether report mode is <code>complete</code> or <code>partial_only</code> from evidence, claims, gaps, SPA checks, and strong-impact waivers.</p>
+            <dl><dt>Reads</dt><dd>Findings, graph, coverage, config.</dd><dt>Writes</dt><dd>None currently; override is ephemeral.</dd><dt>Purpose</dt><dd>Report integrity referee.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="report">
+            <h3><code>platform_report_outline</code><span class="pill read">read</span></h3>
+            <p>Groups stored memory into observed, inferred, hypotheses/open gaps, crown jewels, and finalize state.</p>
+            <dl><dt>Reads</dt><dd>Findings and derived services.</dd><dt>Writes</dt><dd>None.</dd><dt>LLM controls</dt><dd>Final prose and interpretation.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="read">
+            <h3><code>platform_memory_search</code><span class="pill read">read</span></h3>
+            <p>Runs case-insensitive substring search across finding text, graph-node identity, and related tool coverage.</p>
+            <dl><dt>Reads</dt><dd>Findings, nodes, coverage.</dd><dt>Writes</dt><dd>None.</dd><dt>Limit</dt><dd>No relevance ranking or pagination yet.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="read">
+            <h3><code>platform_evidence_chain</code><span class="pill read">read</span></h3>
+            <p>Traverses <code>derived_from</code> parents and finds children citing one finding ID.</p>
+            <dl><dt>Reads</dt><dd>Finding metadata.</dd><dt>Writes</dt><dd>None.</dd><dt>Limit</dt><dd>Parents are recursive; children are direct only in current code.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="read">
+            <h3><code>platform_attempts</code><span class="pill read">read</span></h3>
+            <p>Shows latest tool coverage near an asset or tool name. It is advisory and does not prevent reruns.</p>
+            <dl><dt>Reads</dt><dd><code>tool_coverage</code>.</dd><dt>Writes</dt><dd>None.</dd><dt>Limit</dt><dd>Not append-only history; parameters are missing.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="write">
+            <h3><code>platform_record_finding</code><span class="pill pg">PG write</span></h3>
+            <p>Repairs chat-versus-store drift by explicitly storing one fact with evidence, type, grade, severity, and optional parent IDs.</p>
+            <dl><dt>Writes</dt><dd>Finding; endpoint graph-projects supported types.</dd><dt>Platform controls</dt><dd>Severity clamp.</dd><dt>LLM controls</dt><dd>Claim content and supplied evidence.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="guidance">
+            <h3><code>platform_tools</code><span class="pill read">catalog</span></h3>
+            <p>Lists registered tools, categories, descriptions, aliases, and detected Kali availability. Supports query/category filtering.</p>
+            <dl><dt>Reads</dt><dd>Tool registry/catalog.</dd><dt>Writes</dt><dd>None.</dd><dt>Nature</dt><dd>Capability discovery, not sequencing.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="read">
+            <h3><code>platform_findings</code><span class="pill read">read</span></h3>
+            <p>Returns the engagement finding summary and a filtered list by type, including grade, severity, confidence, source, and tags.</p>
+            <dl><dt>Reads</dt><dd><code>findings</code>.</dd><dt>Writes</dt><dd>None.</dd><dt>Use</dt><dd>Memory verification and report preparation.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="execute">
+            <h3><code>platform_exec</code><span class="pill mutate">execute</span></h3>
+            <p>Executes one registered catalog tool with typed/JSON parameters, flexible additional arguments, cache control, parsing, ingest, and memory updates.</p>
+            <dl><dt>Writes</dt><dd>Findings, graph, coverage, artifacts/index, counters, cache.</dd><dt>LLM controls</dt><dd>Tool, target params, flags, timeout, refresh.</dd><dt>Platform controls</dt><dd>Validation, budget, parsing, grade law.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="execute">
+            <h3><code>platform_job_start</code><span class="pill local">background</span></h3>
+            <p>Starts a tool, shell, or script branch as an asyncio background task and returns a job ID immediately.</p>
+            <dl><dt>Writes</dt><dd>Process-local job state; underlying execution writes normal memory.</dd><dt>Cap</dt><dd>Configurable running jobs, default four.</dd><dt>Limit</dt><dd>Not durable or cancellable yet.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="read">
+            <h3><code>platform_job_poll</code><span class="pill local">process read</span></h3>
+            <p>Polls one job or lists engagement jobs when no ID is supplied.</p>
+            <dl><dt>Reads</dt><dd>Process-local job store.</dd><dt>Writes</dt><dd>None.</dd><dt>States</dt><dd>Queued, running, completed, failed.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="read">
+            <h3><code>platform_job_result</code><span class="pill local">process read</span></h3>
+            <p>Returns a completed/failed job summary and its in-memory execution response, including stdout, stderr, and finding titles.</p>
+            <dl><dt>Reads</dt><dd>Process-local job result.</dd><dt>Writes</dt><dd>None; findings were already ingested.</dd><dt>Limit</dt><dd>Lost on backend restart.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="execute">
+            <h3><code>platform_shell</code><span class="pill mutate">execute</span></h3>
+            <p>Runs allowlisted Kali binaries and simple pipelines, then parses and persists output.</p>
+            <dl><dt>Writes</dt><dd>Normal execution findings, graph, coverage, artifacts.</dd><dt>Allows</dt><dd>One-line argv and simple allowlisted pipes.</dd><dt>Blocks</dt><dd>Redirects, substitutions, loops, and shell-control syntax.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="execute">
+            <h3><code>platform_script</code><span class="pill mutate">execute</span></h3>
+            <p>Runs custom Python/Bash/sh for product-specific experiments. Parses FINDING, REL, HYPOTHESIS, PATH, URL, port, and DNS markers.</p>
+            <dl><dt>Writes</dt><dd>Script/artifacts, findings, graph links, coverage.</dd><dt>LLM controls</dt><dd>Arbitrary experiment code and marker meaning.</dd><dt>Limit</dt><dd>Current script lane bypasses normal scan-budget checks.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="execute">
+            <h3><code>platform_install</code><span class="pill mutate">environment</span></h3>
+            <p>Installs validated pip packages or allowlisted apt packages inside Kali for upcoming scripts.</p>
+            <dl><dt>Writes</dt><dd>Kali environment; installation output may become an observation.</dd><dt>Controls</dt><dd>Feature flags and package validation.</dd><dt>Nature</dt><dd>Extensibility, not automatic tool selection.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="execute">
+            <h3><code>platform_fanout</code><span class="pill mutate">batch</span></h3>
+            <p>Dry-run-first helper that enumerates pending sister domains with a bounded tool choice.</p>
+            <dl><dt>Writes</dt><dd>Underlying normal tool memory.</dd><dt>Execution</dt><dd>Requires dry-run off and confirmation.</dd><dt>Limit</dt><dd>Specialized and currently sequential.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="guidance">
+            <h3><code>platform_playbook</code><span class="pill read">advisory</span></h3>
+            <p>Lists or renders configured suggested steps and fallbacks. Nothing executes.</p>
+            <dl><dt>Reads</dt><dd>Playbook config.</dd><dt>Writes</dt><dd>None.</dd><dt>LLM controls</dt><dd>Follow, reorder, edit, skip, or ignore.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="guidance">
+            <h3><code>platform_skills</code><span class="pill read">advisory</span></h3>
+            <p>Indexes or reads Markdown guidance by path, phase, or query.</p>
+            <dl><dt>Reads</dt><dd><code>skills/**/*.md</code>.</dd><dt>Writes</dt><dd>None.</dd><dt>Nature</dt><dd>Optional knowledge, not runtime policy.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="guidance">
+            <h3><code>platform_config</code><span class="pill read">config</span></h3>
+            <p>Lists or reads allowlisted platform configuration such as ingest, correlation, parallelism, thinking, and finalize rules.</p>
+            <dl><dt>Reads</dt><dd>Allowlisted YAML/JSON.</dd><dt>Writes</dt><dd>None.</dd><dt>Limit</dt><dd>Current source preference can differ from runtime for some files.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="read">
+            <h3><code>platform_graph_query</code><span class="pill read">read</span></h3>
+            <p>Filters asset nodes by type and case-insensitive substring, then returns incident edges.</p>
+            <dl><dt>Reads</dt><dd><code>asset_nodes</code> and <code>asset_edges</code>.</dd><dt>Writes</dt><dd>None.</dd><dt>Limit</dt><dd>No multi-hop traversal, relation filter, or ranking.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="read">
+            <h3><code>platform_crown_jewels</code><span class="pill read">computed</span></h3>
+            <p>Ranks assets using role regexes, evidence, severity, technical signals, node metadata, and operator tags.</p>
+            <dl><dt>Reads</dt><dd>Findings, graph nodes, thinking-model weights.</dd><dt>Writes</dt><dd>None.</dd><dt>Nature</dt><dd>Prioritization hint, not risk truth.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="guidance">
+            <h3><code>platform_thinking</code><span class="pill read">advisory</span></h3>
+            <p>Generates evidence-to-next-probe thinking cards from current findings and a universal reasoning model.</p>
+            <dl><dt>Reads</dt><dd>Findings and thinking configuration.</dd><dt>Writes</dt><dd>None.</dd><dt>Difference</dt><dd>Unlike <code>platform_think</code>, this does not persist LLM cognition.</dd></dl>
+          </article>
+
+          <article class="tool" data-kind="execute">
+            <h3><code>platform_fanout_assets</code><span class="pill mutate">batch</span></h3>
+            <p>Runs one allowed catalog tool across an explicit LLM-selected asset list after dry run and confirmation.</p>
+            <dl><dt>Writes</dt><dd>Normal execution memory for each asset.</dd><dt>LLM controls</dt><dd>Shortlist, tool, flags, refresh.</dd><dt>Limit</dt><dd>Current implementation loops sequentially.</dd></dl>
+          </article>
+        </div>
+      </section>
+
+      <section id="llm-control" data-searchable>
+        <h2>5. What the LLM can add, what is hardcoded, and what is assistive</h2>
+        <p class="section-lead">
+          The design separates cognition from invariants. “Config-driven” does not mean the LLM owns
+          safety. “Hardcoded” is acceptable for structural invariants and safety, but not for deciding
+          the next engagement step.
+        </p>
+
+        <div class="grid-3">
+          <article class="card">
+            <div class="kicker">LLM-authored</div>
+            <h3>Meaning and experiments</h3>
+            <ul>
+              <li>Which uncertainty matters next.</li>
+              <li>Tool and target parameters.</li>
+              <li>Additional valid CLI arguments.</li>
+              <li>Custom Python/Bash probes.</li>
+              <li>Finding markers and evidence snippets.</li>
+              <li>Relation names and source/target assets.</li>
+              <li>Asset roles, reasons, and bounded boost.</li>
+              <li>Hypotheses, plans, and confirmation strategy.</li>
+              <li><code>derived_from</code> evidence parents.</li>
+              <li>Explicit fanout shortlist.</li>
+              <li>Final narrative and stopping decision.</li>
+            </ul>
+          </article>
+          <article class="card">
+            <div class="kicker">Platform-enforced or structural</div>
+            <h3>Invariants and bounds</h3>
+            <ul>
+              <li>Engagement-scoped persistence.</li>
+              <li>Finding and asset type enums.</li>
+              <li>Evidence grade values.</li>
+              <li>Severity ceiling by grade.</li>
+              <li>Relation syntax normalization.</li>
+              <li><code>hypothesis_</code> for non-observed links.</li>
+              <li>Node/edge identity rules.</li>
+              <li>Shell binary allowlist and syntax restrictions.</li>
+              <li>Parameter and timeout bounds.</li>
+              <li>Fanout confirmation.</li>
+              <li>Finalize claim-integrity checks.</li>
+            </ul>
+          </article>
+          <article class="card">
+            <div class="kicker">Assistive only</div>
+            <h3>Signals, not orders</h3>
+            <ul>
+              <li>Open gaps.</li>
+              <li>Coverage gaps and inferred focus.</li>
+              <li>Technology dispatch signals.</li>
+              <li>Thinking cards.</li>
+              <li>Playbooks and skills.</li>
+              <li>Background-job suggestions.</li>
+              <li>Correlation hypotheses.</li>
+              <li>Crown-jewel scores.</li>
+              <li>Attempt state.</li>
+              <li>Report outline structure.</li>
+            </ul>
+          </article>
+        </div>
+
+        <h3>5.1 Configured logic versus code logic</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Behavior</th><th>Current source</th><th>Role</th><th>Does it choose a tool?</th></tr></thead>
+            <tbody>
+              <tr><td>Stdout recognition</td><td><code>ingest_rules.yaml</code> + parser code</td><td>Bootstrap perception</td><td>No</td></tr>
+              <tr><td>Correlation thresholds</td><td><code>correlation_rules.yaml</code> + three Python algorithms</td><td>Soft relationship hypotheses</td><td>No</td></tr>
+              <tr><td>Parallel hint/cap</td><td><code>parallelism.yaml</code></td><td>Resource and UX support</td><td>No auto-start</td></tr>
+              <tr><td>Evidence severity ceiling</td><td>Pydantic model code</td><td>Hard evidence law</td><td>No</td></tr>
+              <tr><td>Finalize thresholds</td><td><code>finalize_rules.yaml</code> + readiness code</td><td>Report referee</td><td>No</td></tr>
+              <tr><td>Crown weights</td><td><code>thinking_model.yaml</code> + ranking code</td><td>Prioritization hint</td><td>No</td></tr>
+              <tr><td>Open gaps</td><td>Python heuristics + parallel thresholds</td><td>Unfinished-work description</td><td>No</td></tr>
+              <tr><td>Catalog definitions</td><td><code>recon_network_tools.yaml</code> + registry</td><td>Capability and parameter schema</td><td>No sequence</td></tr>
+              <tr><td>Playbooks</td><td><code>playbooks.yaml/json</code></td><td>Optional suggested sequence</td><td>Never executes</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout danger">
+          <strong>Current policy reality</strong>
+          The intended model says governance enforces scope and gated tools. The current governance
+          service is permissive for registered tools, and the script lane does not pass through the
+          normal scan-budget guard. The new reliability plan treats this as a critical fix; do not
+          overstate current enforcement.
+        </div>
+      </section>
+
+      <section id="engagement" data-searchable>
+        <h2>6. Complete engagement lifecycle</h2>
+        <p class="section-lead">
+          An engagement is both the authorization/memory scope and the key injected into almost every
+          backend request. The LLM does not manually pass it after binding.
+        </p>
+
+        <div class="diagram flow">
+          <div class="node">User names target</div>
+          <div class="node">platform_set_target</div>
+          <div class="node">Target analysis</div>
+          <div class="node write">Engagement/run bind</div>
+          <div class="node read">platform_context</div>
+          <div class="node">LLM chooses experiment</div>
+          <div class="node">Adaptive loop</div>
+        </div>
+
+        <h3>6.1 Binding</h3>
+        <ol>
+          <li>User supplies a full domain or short name.</li>
+          <li><code>platform_set_target</code> calls target analysis with DNS probing.</li>
+          <li>Ambiguous short names return candidates; the LLM must ask the user.</li>
+          <li>A confirmed domain resolves or creates an engagement.</li>
+          <li>MCP stores active target, engagement ID, and run ID in its session process.</li>
+          <li>Switching target rotates the active session and warns that previous chat evidence belongs to another engagement.</li>
+        </ol>
+
+        <h3>6.2 Orientation</h3>
+        <p><code>platform_context</code> calls the adaptive context endpoint, which assembles:</p>
+        <pre>findings summary
++ graph summary and condensed attack-surface tree
++ network surface
++ coverage gaps and open loops
++ crown-jewel ranking
++ thinking cards
++ current process-local jobs
++ recent process-local artifact index
++ context count delta
++ finalize readiness</pre>
+        <p>
+          This packet informs the LLM. It does not execute a stage. The LLM may use a typed tool,
+          generic catalog execution, shell, script, job, or write API.
+        </p>
+      </section>
+
+      <section id="execution-flow" data-searchable>
+        <h2>7. Walkthrough: one catalog tool execution</h2>
+        <p class="section-lead">
+          This is the core path used by <code>platform_exec</code> and typed recon/network MCP tools.
+        </p>
+
+        <div class="diagram flow">
+          <div class="node">LLM call</div>
+          <div class="node">MCP wrapper</div>
+          <div class="node">FastAPI execute</div>
+          <div class="node">Validation/policy</div>
+          <div class="node">Kali process</div>
+          <div class="node write">Parse + persist</div>
+          <div class="node read">Operator result</div>
+        </div>
+
+        <h3>7.1 Example call</h3>
+        <pre>platform_exec(
+  tool="httpx_probe",
+  params_json={"target": "api.example.com"},
+  additional_args="-title -status-code -tech-detect",
+  timeout_seconds=90,
+  force_refresh=false
+)</pre>
+
+        <h3>7.2 MCP layer</h3>
+        <ol>
+          <li>Accepts <code>params_json</code> as an object or JSON string.</li>
+          <li>Requires an active engagement.</li>
+          <li>Clamps timeout.</li>
+          <li>Injects engagement ID, run ID, cache flags, recovery flag, and <code>record_findings=true</code>.</li>
+          <li>POSTs to <code>/api/v1/mcp/execute</code>.</li>
+        </ol>
+
+        <h3>7.3 Backend execution service</h3>
+        <ol>
+          <li>Resolve tool registry definition and aliases.</li>
+          <li>Resolve engagement/run and seed target.</li>
+          <li>Evaluate governance.</li>
+          <li>Merge typed parameters with <code>additional_args</code>.</li>
+          <li>Map aliases such as target/domain/host/url to the tool’s primary parameter.</li>
+          <li>Reject blocked shell-control characters in catalog string parameters.</li>
+          <li>Validate required values and scan-budget constraints.</li>
+          <li>Compute engagement-scoped cache key.</li>
+          <li>On cache miss, build command and execute inside Kali.</li>
+        </ol>
+
+        <h3>7.4 Memory promotion</h3>
+        <p>The returned stdout/stderr follows multiple paths:</p>
+        <pre>Kali stdout/stderr
+├── registered deterministic parser
+├── free-form parser when appropriate
+├── universal YAML ingest rules
+├── relation marker parser
+├── fallback raw observation when unparsed
+└── artifact/index recording</pre>
+        <ol>
+          <li>Findings are normalized and severity-clamped.</li>
+          <li>Findings are written to PostgreSQL.</li>
+          <li>Supported finding types are projected into nodes/edges.</li>
+          <li>Correlation scans current findings and may add hypothesis links/tags.</li>
+          <li>Latest tool coverage is upserted.</li>
+          <li>Engagement counters update.</li>
+          <li>Successful non-empty result may enter process-local cache.</li>
+        </ol>
+
+        <h3>7.5 Return to LLM</h3>
+        <p>
+          MCP formats success, return code, timeout, cache, command, bounded stdout/stderr previews,
+          top finding titles, artifact paths, and current open gaps. The LLM then interprets the
+          evidence and chooses whether to deepen, pivot, annotate, or stop.
+        </p>
+      </section>
+
+      <section id="write-flow" data-searchable>
+        <h2>8. Walkthrough: writing cognition and evidence</h2>
+        <p class="section-lead">
+          Chat reasoning is not durable by default. These calls move selected cognition into shared
+          engagement memory.
+        </p>
+
+        <h3>8.1 Store an observed fact</h3>
+        <pre>platform_record_finding(
+  title="https://api.example.com/v1/users returned user records",
+  evidence="HTTP/1.1 200 OK; Content-Type: application/json; {…}",
+  finding_type="url",
+  evidence_grade="observed",
+  claim_severity="high",
+  derived_from="routeDiscoveryFinding"
+)</pre>
+        <ol>
+          <li>MCP injects engagement and run IDs.</li>
+          <li>FastAPI validates the finding model.</li>
+          <li>Severity is clamped: observed permits up to critical, so high remains high.</li>
+          <li>Finding store writes PostgreSQL.</li>
+          <li>Finding endpoint graph-projects the URL, host, and <code>hosted_on</code> relation.</li>
+          <li>The returned finding ID can support later relations and claims.</li>
+        </ol>
+
+        <h3>8.2 Store a hypothesis</h3>
+        <pre>platform_think(
+  hypothesis="Portal and admin may share session validation",
+  evidence="Both set Domain=.example.com",
+  plan="Replay one valid session against both applications"
+)</pre>
+        <p>
+          This writes an unverified, hypothesis-confidence, severity-none observation. It does not
+          create a graph edge because the relation has not yet been asserted.
+        </p>
+
+        <h3>8.3 Store a semantic relation</h3>
+        <pre>platform_graph_link(
+  source="host:portal.example.com",
+  target="host:admin.example.com",
+  relation="shares_session_validation",
+  evidence="The same authenticated cookie was accepted by both hosts",
+  evidence_grade="observed",
+  derived_from="cookieFinding,replayFinding"
+)</pre>
+        <p>
+          The graph edge represents topology/meaning. The companion relation finding holds the
+          evidence and evidence-chain parents.
+        </p>
+
+        <h3>8.4 Tag priority</h3>
+        <pre>platform_tag_asset(
+  asset="host:api.example.com",
+  role="sensitive_data_backend",
+  boost=35,
+  reason="Observed endpoint returns customer account data"
+)</pre>
+        <p>
+          The node receives operator metadata and the findings table receives an inferred audit row.
+          Crown-jewel ranking reads both; the current double-counting bug is scheduled for repair.
+        </p>
+      </section>
+
+      <section id="script-flow" data-searchable>
+        <h2>9. Walkthrough: custom script becomes first-class memory</h2>
+        <p class="section-lead">
+          The script lane is how the LLM invents a product-specific experiment without waiting for a
+          new hardcoded tool or vendor agent.
+        </p>
+
+        <pre>platform_script(
+  language="python3",
+  packages="requests",
+  reason="Compare API and random-path response signatures",
+  code="..."
+)</pre>
+
+        <div class="diagram flow">
+          <div class="node">LLM writes script</div>
+          <div class="node">Save under engagement</div>
+          <div class="node">Run interpreter</div>
+          <div class="node local">Spool artifacts</div>
+          <div class="node">Parse markers</div>
+          <div class="node write">Findings + graph</div>
+          <div class="node read">Return evidence</div>
+        </div>
+
+        <h3>9.1 Marker examples</h3>
+        <pre>FINDING|observed|high|url|Unauthenticated account endpoint|HTTP 200 application/json {"accounts":[...]}
+REL|inferred|host:portal.example|calls_backend_api|host:api.example|Observed API base in main.js
+HYPOTHESIS|Portal and admin may share auth|Same cookie domain
+PATH /api/v1/accounts 200
+ENDPOINT https://api.example/v1/profile 401</pre>
+
+        <h3>9.2 Parser outcomes</h3>
+        <ul>
+          <li><code>FINDING</code> creates a typed finding and applies grade/severity law.</li>
+          <li><code>REL</code> invokes the graph-link path; inferred relation becomes <code>hypothesis_calls_backend_api</code>.</li>
+          <li><code>HYPOTHESIS</code> creates an unverified observation finding.</li>
+          <li><code>PATH</code>/<code>ENDPOINT</code> create URL/observation findings based on status.</li>
+          <li>Generic URL/status, host/port, and DNS lines may also be recognized.</li>
+          <li>YAML ingest independently examines output for common evidence patterns.</li>
+        </ul>
+
+        <div class="callout warning">
+          <strong>Current boundary</strong>
+          Script execution is intentionally flexible and uncached, but it currently bypasses the
+          standard scan-budget checker. The reliability plan moves safety to a common execution-policy
+          boundary instead of trying to hardcode every possible script.
+        </div>
+      </section>
+
+      <section id="job-flow" data-searchable>
+        <h2>10. Walkthrough: background jobs and parallel branches</h2>
+        <p class="section-lead">
+          Jobs let the LLM keep reasoning while a slow tool, shell command, or script runs. Today they
+          are real concurrent asyncio tasks but are not durable orchestration records.
+        </p>
+
+        <pre>platform_job_start(
+  kind="tool",
+  tool="amass_scan",
+  params_json={"domain": "example.com"},
+  label="Independent subdomain source",
+  timeout_seconds=900,
+  reason="Test whether initial inventory is source-biased"
+)</pre>
+
+        <ol>
+          <li>MCP validates kind and required payload.</li>
+          <li>Backend checks running count against <code>parallelism.yaml</code>.</li>
+          <li>It creates <code>job_&lt;12 hex&gt;</code> in a Python dictionary.</li>
+          <li><code>asyncio.create_task</code> starts the normal tool/shell/script service.</li>
+          <li>Underlying execution writes findings and graph automatically.</li>
+          <li>The LLM continues another branch.</li>
+          <li><code>platform_job_poll</code> reads state.</li>
+          <li><code>platform_job_result</code> reads the stored response after completion.</li>
+        </ol>
+
+        <div class="grid-2">
+          <article class="card">
+            <h3>What is already parallel</h3>
+            <p>Independently started jobs can run concurrently up to the configured per-engagement cap.</p>
+          </article>
+          <article class="card">
+            <h3>What is not parallel</h3>
+            <p><code>platform_fanout</code> and <code>platform_fanout_assets</code> currently await each asset sequentially.</p>
+          </article>
+        </div>
+
+        <div class="callout danger">
+          <strong>Restart and cancellation limitation</strong>
+          Job records, tasks, and result payloads are process-local. There is no cancellation endpoint,
+          heartbeat, durable lease, partial-output API, or startup reconciliation yet.
+        </div>
+      </section>
+
+      <section id="report-flow" data-searchable>
+        <h2>11. Walkthrough: recall, evidence chain, and final report</h2>
+
+        <h3>11.1 Search before repeating</h3>
+        <pre>platform_memory_search(query="Set-Cookie")
+platform_attempts(asset="api.example.com")
+platform_graph_query(asset_type="host", contains="api")</pre>
+        <p>
+          Search finds textual memory, attempts shows latest coverage state, and graph query returns
+          matching assets with incident relations. None of these calls writes or bans a rerun.
+        </p>
+
+        <h3>11.2 Trace one claim</h3>
+        <pre>platform_evidence_chain(finding_id="8ab314df90c2", depth=4)</pre>
+        <p>
+          The service loads engagement findings, walks <code>derived_from</code> parents recursively,
+          and finds direct children citing the root. It returns structure only; evidence grade does not
+          automatically propagate.
+        </p>
+
+        <h3>11.3 Verify stored findings</h3>
+        <pre>platform_findings(limit=200)
+platform_crown_jewels(limit=15)</pre>
+        <p>
+          The LLM should distinguish direct evidence from inference and use ranking only to prioritize
+          attention.
+        </p>
+
+        <h3>11.4 Finalize</h3>
+        <pre>platform_finalize_check()
+platform_report_outline()</pre>
+        <p>Finalize checks:</p>
+        <ul>
+          <li>HIGH/CRITICAL claims whose grade is not observed.</li>
+          <li>Weak critical/CVE evidence.</li>
+          <li>SPA/HTML false-API claims.</li>
+          <li>Optional hypothesis-only attack paths.</li>
+          <li>Thin structured memory and coverage gaps.</li>
+          <li>Cumulative port-flood signals.</li>
+        </ul>
+        <p>
+          Strong observed impact can waive infrastructure completeness noise, but claim-integrity
+          blockers remain. The outline then groups memory; the LLM authors the prose.
+        </p>
+      </section>
+
+      <section id="current-limits" data-searchable>
+        <h2>12. Important current limitations</h2>
+        <p class="section-lead">
+          These are implementation truths, not design aspirations. They explain where the current
+          platform behaves differently from the target architecture.
+        </p>
+
+        <div class="grid-2">
+          <article class="card">
+            <h3>Memory durability</h3>
+            <ul>
+              <li>Jobs, deltas, stdout index, cache, and audit are process-local.</li>
+              <li>Artifacts can disappear with Kali <code>/tmp</code>.</li>
+              <li>Tool coverage overwrites repeat attempts.</li>
+              <li>Finding duplicates can accumulate.</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>Graph fidelity</h3>
+            <ul>
+              <li>Service and technology nodes are disconnected.</li>
+              <li>URL/IP canonicalization is limited.</li>
+              <li>Edges do not directly store provenance.</li>
+              <li>Graph query is filtering, not traversal.</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>Execution reliability</h3>
+            <ul>
+              <li>Fallback artifacts can contain already-capped output.</li>
+              <li>Artifact framing can produce malformed reads.</li>
+              <li>Nmap custom ports can be silently ignored.</li>
+              <li>Fanout batching is sequential.</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>Intelligence and policy</h3>
+            <ul>
+              <li>Correlation lacks source finding IDs.</li>
+              <li>Operator boost can be counted twice.</li>
+              <li>SPA classification is whole-output scoped.</li>
+              <li>Registered-tool governance is currently permissive.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section id="target-plan" data-searchable>
+        <h2>13. Target consolidation plan</h2>
+        <p class="section-lead">
+          The repair plan does not replace the LLM with more workflow code. It makes every existing
+          capability durable, explainable, and safe.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Phase</th><th>Main repair</th><th>Memory/graph effect</th><th>LLM flexibility preserved</th></tr></thead>
+            <tbody>
+              <tr><td>0</td><td>Contracts and reproducible tracker</td><td>Defines execution, artifact, evidence, cursor, and policy identities.</td><td>No behavior change.</td></tr>
+              <tr><td>1</td><td>Truthful governance</td><td>Persists policy decisions and scoped approvals.</td><td>LLM still chooses any authorized experiment.</td></tr>
+              <tr><td>2</td><td>Artifacts, command identity, structured shell</td><td>Preserves exact argv and uncapped output.</td><td>Additional args and safe pipelines remain.</td></tr>
+              <tr><td>3</td><td>Durable executions/jobs</td><td>Adds append-only executions, durable jobs, cancellation, partial output.</td><td>Parallel branches remain operator-chosen.</td></tr>
+              <tr><td>4</td><td>Finding identity, counters, cursors, search</td><td>Separates canonical fact from occurrence; fixes recall truth.</td><td>Search remains retrieval, not recommendation.</td></tr>
+              <tr><td>5</td><td>Canonical graph and evidence DAG</td><td>Connects services/technologies and stores edge provenance.</td><td>LLM relation semantics remain open-ended.</td></tr>
+              <tr><td>6</td><td>Correlation candidates and ranking integrity</td><td>Candidate records precede accepted graph mutation.</td><td>LLM accepts, rejects, renames, or deepens.</td></tr>
+              <tr><td>7</td><td>Response-scoped HTTP classification</td><td>Stores independent response evidence and corroboration.</td><td>LLM can invent confirmation probes.</td></tr>
+              <tr><td>8</td><td>Layered policy and audited finalize decisions</td><td>Makes effective config and overrides durable.</td><td>Safe preferences are tunable; hard safety stays locked.</td></tr>
+              <tr><td>9</td><td>Version handshake and authorized dry run</td><td>Proves restart, route, artifact, job, graph, and report integrity.</td><td>No new mandatory engagement stages.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>
+          Full engineering tasks, migrations, acceptance criteria, and PR boundaries are in
+          <a href="ELITE_RELIABILITY_IMPLEMENTATION_PLAN.md">ELITE_RELIABILITY_IMPLEMENTATION_PLAN.md</a>.
+        </p>
+      </section>
+
+      <section id="source-map" data-searchable>
+        <h2>14. Source map and verification basis</h2>
+        <div class="grid-2">
+          <article class="card">
+            <h3>MCP surface</h3>
+            <ul>
+              <li><code>platform-mcp/server.py</code></li>
+              <li><code>platform-mcp/typed_recon_network.py</code></li>
+            </ul>
+            <h3>Database models</h3>
+            <ul>
+              <li><code>backend/src/pentest_platform/models/engagement.py</code></li>
+              <li><code>backend/src/pentest_platform/models/finding.py</code></li>
+              <li><code>backend/src/pentest_platform/models/tool_coverage.py</code></li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>Core services</h3>
+            <ul>
+              <li><code>findings_store.py</code>, <code>engagement_graph.py</code></li>
+              <li><code>operator_memory.py</code>, <code>operator_recall.py</code></li>
+              <li><code>tool_execution.py</code>, <code>job_store.py</code></li>
+              <li><code>ingest_promoter.py</code>, <code>finding_correlator.py</code></li>
+              <li><code>crown_jewels.py</code>, <code>open_loops.py</code></li>
+              <li><code>finalize_readiness.py</code>, <code>report_outline.py</code></li>
+              <li><code>artifacts.py</code>, <code>stdout_index.py</code>, <code>context_delta.py</code></li>
+            </ul>
+          </article>
+        </div>
+
+        <details>
+          <summary>Reading this report correctly</summary>
+          <div>
+            <p>
+              “Current” describes the code verified on July 21, 2026. “Target” describes the accepted
+              reliability plan and is not yet implemented. In particular, durable jobs, append-only
+              executions, complete governance enforcement, response-scoped SPA classification, and
+              direct edge provenance are planned improvements.
+            </p>
+          </div>
+        </details>
+      </section>
+
+      <footer>
+        Defensive, authorized security testing only. Generated from the repository’s MCP wrappers,
+        SQLAlchemy models, and backend services. No external runtime dependencies are required to open
+        this report.
+      </footer>
+    </main>
+  </div>
+
+  <script>
+    const search = document.getElementById("search");
+    const searchCount = document.getElementById("searchCount");
+    const searchable = [...document.querySelectorAll("[data-searchable]")];
+    const tools = [...document.querySelectorAll(".tool")];
+    const tabButtons = [...document.querySelectorAll("#toolTabs button")];
+    let activeKind = "all";
+
+    function applyFilters() {
+      const query = search.value.trim().toLowerCase();
+      let matches = 0;
+
+      searchable.forEach((section) => {
+        const sectionMatches = !query || section.textContent.toLowerCase().includes(query);
+        section.classList.toggle("search-hidden", !sectionMatches);
+        if (sectionMatches) matches += 1;
+      });
+
+      tools.forEach((tool) => {
+        const kindMatches = activeKind === "all" || tool.dataset.kind === activeKind;
+        const queryMatches = !query || tool.textContent.toLowerCase().includes(query);
+        tool.classList.toggle("search-hidden", !(kindMatches && queryMatches));
+      });
+
+      searchCount.textContent = query ? `${matches} sections` : "All content";
+    }
+
+    search.addEventListener("input", applyFilters);
+
+    tabButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        activeKind = button.dataset.kind;
+        tabButtons.forEach((item) => item.classList.toggle("active", item === button));
+        applyFilters();
+      });
+    });
+
+    const navLinks = [...document.querySelectorAll(".sidebar a")];
+    const observedSections = [...document.querySelectorAll("main section, .hero")];
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+      if (!visible) return;
+      navLinks.forEach((link) => {
+        link.classList.toggle("active", link.getAttribute("href") === `#${visible.target.id}`);
+      });
+    }, { rootMargin: "-20% 0px -65% 0px", threshold: [0.05, 0.2, 0.5] });
+    observedSections.forEach((section) => observer.observe(section));
+  </script>
+</body>
+</html>

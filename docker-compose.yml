@@ -22,6 +22,10 @@ services:
       context: ./kali-tools
     container_name: ai-pentest-kali
     restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      SHODAN_API_KEY: ${SHODAN_API_KEY:-}
     cap_add:
       - NET_RAW
       - NET_ADMIN
@@ -55,6 +59,7 @@ services:
       LLM_REQUEST_TIMEOUT: ${LLM_REQUEST_TIMEOUT:-300}
       LLM_MAX_AGENT_TURNS: ${LLM_MAX_AGENT_TURNS:-40}
       LLM_TOOL_TIMEOUT: ${LLM_TOOL_TIMEOUT:-900}
+      SHODAN_API_KEY: ${SHODAN_API_KEY:-}
     volumes:
       - ./backend:/app
       - ./config:/config

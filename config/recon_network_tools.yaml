@@ -83,11 +83,27 @@ tasks:
     skill_file: recon/ip-attribution.md
     produces: [host, technology, observation]
 
+  passive_internet_osint:
+    phase: recon
+    description: Passive internet-wide OSINT via Shodan (search + host detail). Needs SHODAN_API_KEY.
+    default_tool: shodan_search
+    alternatives: [shodan_host_info]
+    skill_file: recon/passive-osint-shodan.md
+    produces: [host, port, subdomain, observation]
+
+  subdomain_takeover:
+    phase: recon
+    description: Check discovered hosts for dangling CNAME / unclaimed SaaS takeover fingerprints.
+    default_tool: subdomain_takeover_check
+    alternatives: [dnsx_resolve]
+    skill_file: recon/subdomain-takeover.md
+    produces: [observation]
+
   port_discovery:
     phase: network
     description: Fast discovery of open TCP ports on a host.
-    default_tool: rustscan_fast_scan
-    alternatives: [masscan_high_speed, nmap_syn_scan]
+    default_tool: naabu_port_scan
+    alternatives: [rustscan_fast_scan, masscan_high_speed, nmap_syn_scan]
     skill_file: network/port-scan-strategy.md
     produces: [port, host]
 
@@ -270,17 +286,69 @@ tools:
       domain: { type: string, required: true }
       timeout: { type: string, default: "20" }
 
+  shodan_search:
+    task: passive_internet_osint
+    phase: recon
+    freeform_args_field: additional_args
+    default_for_task: true
+    llm_hints: |
+      Passive only. Prefer hostname:<domain>, ssl:<domain>, org:"Name". Not a live port scan —
+      verify interesting ports with naabu/nmap. Needs SHODAN_API_KEY.
+    parameters:
+      query: { type: string, required: false }
+      domain: { type: string, required: false }
+      limit: { type: int, default: 20 }
+
+  shodan_host_info:
+    task: passive_internet_osint
+    phase: recon
+    freeform_args_field: additional_args
+    default_for_task: false
+    llm_hints: |
+      Deepen a specific IP from Shodan/search/dnsx. Vuln tags are leads — verify before claiming.
+    parameters:
+      ip: { type: string, required: false }
+      target: { type: string, required: false }
+
+  subdomain_takeover_check:
+    task: subdomain_takeover
+    phase: recon
+    freeform_args_field: additional_args
+    default_for_task: true
+    llm_hints: |
+      After subdomain inventory: mode=list with subdomains= host list. Fingerprint match ≠
+      proven takeover — confirm claimability before HIGH severity. Chunk >50 hosts via jobs.
+    parameters:
+      target: { type: string, required: false }
+      mode: { type: string, default: "single" }
+      subdomains: { type: string, required: false }
+      max_hosts: { type: int, default: 50 }
+
   rustscan_fast_scan:
     task: port_discovery
     phase: network
     freeform_args_field: additional_args
     default_for_task: false
     llm_hints: |
-      Not installed in this environment. Use nmap_custom_scan or masscan_high_speed instead.
+      Fast alternative when naabu missing. Use additional_args for batch/ulimit.
     parameters:
       target: { type: string, required: true }
       ports: { type: string, default: "" }
       batch_size: { type: int, default: 4500 }
+
+  naabu_port_scan:
+    task: port_discovery
+    phase: network
+    freeform_args_field: additional_args
+    default_for_task: true
+    llm_hints: |
+      Preferred fast discovery. Default top_ports=1000. Prefer known opens / top ports over
+      full-range. Full 1-65535 — ask human first (same budget discipline as masscan).
+    parameters:
+      target: { type: string, required: true }
+      ports: { type: string, default: "" }
+      top_ports: { type: string, default: "1000" }
+      rate: { type: int, default: 1000 }
 
   masscan_high_speed:
     task: port_discovery
