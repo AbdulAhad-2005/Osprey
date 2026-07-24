@@ -32,6 +32,18 @@ techniques:
         from_tool: amass_scan
         tool_name: dnsenum_scan
         reason: "Zone transfer and DNS intel"
+      - action: alternate_tool
+        from_tool: subfinder_scan
+        tool_name: crt_sh_query
+        reason: "CT gap-fill when passive enum is thin"
+      - action: alternate_tool
+        from_tool: subfinder_scan
+        tool_name: shodan_search
+        reason: "Passive internet OSINT when API key available"
+      - action: alternate_tool
+        from_tool: amass_scan
+        tool_name: subdomain_takeover_check
+        reason: "After host inventory — check dangling CNAME / SaaS fingerprints"
       - action: adjust_params
         tool_name: subfinder_scan
         additional_args: "-all -recursive"
@@ -56,6 +68,15 @@ techniques:
     blocked_signals: [timeout, rate_limit, filtered]
     escalations:
       - action: alternate_tool
+        from_tool: naabu_port_scan
+        tool_name: rustscan_fast_scan
+        reason: "Fallback fast scanner when naabu thin/fails"
+      - action: alternate_tool
+        from_tool: naabu_port_scan
+        tool_name: masscan_high_speed
+        additional_args: "--rate 1000"
+        reason: "Wide sweep when naabu filtered"
+      - action: alternate_tool
         from_tool: rustscan_fast_scan
         tool_name: masscan_high_speed
         additional_args: "--rate 1000"
@@ -65,6 +86,10 @@ techniques:
         tool_name: nmap_syn_scan
         additional_args: "-Pn -T3"
         reason: "Stealth SYN when masscan noisy"
+      - action: adjust_params
+        tool_name: naabu_port_scan
+        additional_args: "-rate 500"
+        reason: "Reduce rate on resource errors"
       - action: adjust_params
         tool_name: rustscan_fast_scan
         additional_args: "--batch-size 1000"
@@ -109,6 +134,6 @@ techniques:
         reason: "Modern netexec enum"
 
 fallback_chains:
-  subdomain_enumeration: [subfinder_scan, amass_scan, fierce_scan, dnsenum_scan]
-  port_discovery: [rustscan_fast_scan, masscan_high_speed, nmap_syn_scan]
+  subdomain_enumeration: [subfinder_scan, amass_scan, fierce_scan, dnsenum_scan, crt_sh_query, shodan_search]
+  port_discovery: [naabu_port_scan, rustscan_fast_scan, masscan_high_speed, nmap_syn_scan]
   service_enumeration: [nmap_service_scan, nmap_syn_scan, nmap_custom_scan]

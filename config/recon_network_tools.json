@@ -133,11 +133,39 @@
         "observation"
       ]
     },
+    "passive_internet_osint": {
+      "phase": "recon",
+      "description": "Passive internet-wide OSINT via Shodan (search + host detail). Needs SHODAN_API_KEY.",
+      "default_tool": "shodan_search",
+      "alternatives": [
+        "shodan_host_info"
+      ],
+      "skill_file": "recon/passive-osint-shodan.md",
+      "produces": [
+        "host",
+        "port",
+        "subdomain",
+        "observation"
+      ]
+    },
+    "subdomain_takeover": {
+      "phase": "recon",
+      "description": "Check discovered hosts for dangling CNAME / unclaimed SaaS takeover fingerprints.",
+      "default_tool": "subdomain_takeover_check",
+      "alternatives": [
+        "dnsx_resolve"
+      ],
+      "skill_file": "recon/subdomain-takeover.md",
+      "produces": [
+        "observation"
+      ]
+    },
     "port_discovery": {
       "phase": "network",
       "description": "Fast discovery of open TCP ports on a host.",
-      "default_tool": "rustscan_fast_scan",
+      "default_tool": "naabu_port_scan",
       "alternatives": [
+        "rustscan_fast_scan",
         "masscan_high_speed",
         "nmap_syn_scan"
       ],
@@ -458,12 +486,75 @@
         }
       }
     },
+    "shodan_search": {
+      "task": "passive_internet_osint",
+      "phase": "recon",
+      "freeform_args_field": "additional_args",
+      "default_for_task": true,
+      "llm_hints": "Passive only. Prefer hostname:<domain>, ssl:<domain>, org:\"Name\". Not a live port scan \u2014\nverify interesting ports with naabu/nmap. Needs SHODAN_API_KEY.\n",
+      "parameters": {
+        "query": {
+          "type": "string",
+          "required": false
+        },
+        "domain": {
+          "type": "string",
+          "required": false
+        },
+        "limit": {
+          "type": "int",
+          "default": 20
+        }
+      }
+    },
+    "shodan_host_info": {
+      "task": "passive_internet_osint",
+      "phase": "recon",
+      "freeform_args_field": "additional_args",
+      "default_for_task": false,
+      "llm_hints": "Deepen a specific IP from Shodan/search/dnsx. Vuln tags are leads \u2014 verify before claiming.\n",
+      "parameters": {
+        "ip": {
+          "type": "string",
+          "required": false
+        },
+        "target": {
+          "type": "string",
+          "required": false
+        }
+      }
+    },
+    "subdomain_takeover_check": {
+      "task": "subdomain_takeover",
+      "phase": "recon",
+      "freeform_args_field": "additional_args",
+      "default_for_task": true,
+      "llm_hints": "After subdomain inventory: mode=list with subdomains= host list. Fingerprint match \u2260\nproven takeover \u2014 confirm claimability before HIGH severity. Chunk >50 hosts via jobs.\n",
+      "parameters": {
+        "target": {
+          "type": "string",
+          "required": false
+        },
+        "mode": {
+          "type": "string",
+          "default": "single"
+        },
+        "subdomains": {
+          "type": "string",
+          "required": false
+        },
+        "max_hosts": {
+          "type": "int",
+          "default": 50
+        }
+      }
+    },
     "rustscan_fast_scan": {
       "task": "port_discovery",
       "phase": "network",
       "freeform_args_field": "additional_args",
       "default_for_task": false,
-      "llm_hints": "Not installed in this environment. Use nmap_custom_scan or masscan_high_speed instead.\n",
+      "llm_hints": "Fast alternative when naabu missing. Use additional_args for batch/ulimit.\n",
       "parameters": {
         "target": {
           "type": "string",
@@ -479,11 +570,12 @@
         }
       }
     },
-    "masscan_high_speed": {
+    "naabu_port_scan": {
       "task": "port_discovery",
       "phase": "network",
       "freeform_args_field": "additional_args",
-      "default_for_task": false,
+      "default_for_task": true,
+      "llm_hints": "Preferred fast discovery. Default top_ports=1000. Prefer known opens / top ports over\nfull-range. Full 1-65535 \u2014 ask human first (same budget discipline as masscan).\n",
       "parameters": {
         "target": {
           "type": "string",
@@ -491,13 +583,42 @@
         },
         "ports": {
           "type": "string",
-          "default": "1-65535"
+          "default": ""
+        },
+        "top_ports": {
+          "type": "string",
+          "default": "1000"
+        },
+        "rate": {
+          "type": "int",
+          "default": 1000
+        }
+      }
+    },
+    "masscan_high_speed": {
+      "task": "port_discovery",
+      "phase": "network",
+      "freeform_args_field": "additional_args",
+      "default_for_task": false,
+      "llm_hints": "Default ports=1-1000. Full 1-65535 blocked unless human OK + confirm_expensive=true.\n",
+      "parameters": {
+        "target": {
+          "type": "string",
+          "required": true
+        },
+        "ports": {
+          "type": "string",
+          "default": "1-1000"
         },
         "rate": {
           "type": "int",
           "default": 1000
         },
         "banners": {
+          "type": "bool",
+          "default": false
+        },
+        "confirm_expensive": {
           "type": "bool",
           "default": false
         }
@@ -508,7 +629,7 @@
       "phase": "network",
       "freeform_args_field": "extra_args",
       "default_for_task": false,
-      "llm_hints": "Runs as unprivileged TCP connect scan (-sT -Pn) in this environment unless privileged=true.\nEmpty ports = nmap defaults (NOT a full -p-). For real coverage use ports=1-1000 or\nports=1-65535, or masscan_high_speed, or additional_args with -p--top-ports 1000.\nDo NOT stop after a hand-picked 40-port list unless the user scoped that.\nPrefer one IP per call (or platform_script to loop IPs).\n",
+      "llm_hints": "Runs as unprivileged TCP connect scan (-sT -Pn) in this environment unless privileged=true.\nEmpty ports = nmap defaults (top ~1000) \u2014 preferred. Prefer --top-ports 1000 or ports=1-1000.\nNEVER use ports=1-65535 / -p- unless the human operator explicitly approved; then pass\nconfirm_expensive=true. On timeout: shrink to one IP + known/web ports, use jobs \u2014 do not widen.\nPrefer one IP per call (or platform_script / jobs to chunk IPs).\n",
       "parameters": {
         "target": {
           "type": "string",
@@ -521,6 +642,10 @@
         "timing": {
           "type": "string",
           "default": ""
+        },
+        "confirm_expensive": {
+          "type": "bool",
+          "default": false
         }
       }
     },
