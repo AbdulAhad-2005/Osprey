@@ -85,3 +85,27 @@ signal_classes:
     next_probes:
       - service enum on that port
       - version-confirm before CVE claims
+
+  - id: technology_stack_detected
+    pattern: '(?i)(?:CMS|Framework|JavaScript|Web Server|Programming Language|Analytics|CDN)\s*[:=]\s*\S+'
+    think:
+      - "Technology detected — categorize by security relevance (CMS > framework > library > analytics)."
+      - "CMS detections (WordPress/Joomla/Drupal) are high-priority — they have large attack surfaces."
+      - "Server/language version is actionable — research CVEs for exact version."
+      - "JS frameworks in SPA mode — verify API endpoints are authenticated, check client-side state."
+    next_probes:
+      - whatweb_scan for deeper fingerprint
+      - tech_stack_analyze for comprehensive report
+      - targeted probe based on CMS/server type
+
+  - id: tech_version_match
+    # [ \t] (not \s) so this can't cross a newline and misread a table
+    # header (e.g. nmap's "PORT STATE SERVICE VERSION") as a version string.
+    pattern: '(?i)([a-zA-Z][a-zA-Z0-9._-]{2,30})[ \t]*(?:version|v)[ \t]*[:=]?[ \t]*([\d.]{2,20})'
+    think:
+      - "Version detected — this is the most actionable tech finding."
+      - "Search for CVEs specific to this version (NVD, nuclei templates)."
+      - "Compare version against latest stable — outdated versions are common vulnerabilities."
+    next_probes:
+      - nuclei_scan with technology-specific tags
+      - version-specific CVE research

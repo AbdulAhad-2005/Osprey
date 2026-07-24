@@ -153,3 +153,81 @@ signals:
       alternatives: [ffuf_scan, gobuster_scan]
       reason: "Apache live — light content discovery / interesting paths"
       priority: 6
+
+  # --- Technology Identification follow-ups ---
+
+  - id: technology_joomla
+    match:
+      metadata_key: technology
+      metadata_contains: joomla
+    dispatch:
+      task_id: live_host_probing
+      default_tool: httpx_probe
+      additional_args: "-path /administrator/ -status-code"
+      reason: "Joomla detected — probe admin panel and check for known CVEs"
+      priority: 7
+
+  - id: technology_drupal
+    match:
+      metadata_key: technology
+      metadata_contains: drupal
+    dispatch:
+      task_id: live_host_probing
+      default_tool: httpx_probe
+      additional_args: "-path /CHANGELOG.txt -status-code"
+      reason: "Drupal detected — check changelog exposure and Drupalgeddon"
+      priority: 7
+
+  - id: technology_laravel
+    match:
+      metadata_key: technology
+      metadata_contains: laravel
+    dispatch:
+      task_id: live_host_probing
+      default_tool: httpx_probe
+      additional_args: "-path /.env -status-code"
+      reason: "Laravel detected — check .env exposure and Ignition RCE"
+      priority: 8
+
+  - id: technology_react_or_vue
+    match:
+      metadata_key: technology
+      metadata_contains_any: [react, vue, angular]
+    dispatch:
+      task_id: live_host_probing
+      default_tool: httpx_probe
+      reason: "SPA framework detected — probe API endpoints, check __NEXT_DATA__"
+      priority: 5
+
+  - id: technology_iis_old
+    match:
+      metadata_key: technology
+      metadata_contains: microsoft-iis
+    dispatch:
+      task_id: live_host_probing
+      default_tool: httpx_probe
+      additional_args: "-path /web.config -status-code"
+      reason: "IIS detected — check for web.config exposure and known IIS CVEs"
+      priority: 7
+
+  - id: technology_cloudflare_cdn
+    match:
+      metadata_key: technology
+      metadata_contains: cloudflare
+    dispatch:
+      task_id: cdn_origin_clues
+      default_tool: cdn_origin_probe
+      alternatives: [origin_ip_attribution]
+      skill_file: recon/ip-attribution.md
+      reason: "Cloudflare CDN detected — look for origin IP bypass"
+      priority: 7
+
+  - id: technology_analytics_detected
+    match:
+      metadata_key: technology
+      metadata_contains_any: [google-analytics, google-tag-manager, hotjar]
+    dispatch:
+      task_id: technology_identification
+      default_tool: whatweb_scan
+      reason: "Analytics detected — run deeper tech fingerprinting for full stack"
+      priority: 4

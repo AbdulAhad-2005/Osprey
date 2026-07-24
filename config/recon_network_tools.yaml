@@ -83,6 +83,13 @@ tasks:
     skill_file: recon/ip-attribution.md
     produces: [host, technology, observation]
 
+  technology_identification:
+    phase: recon
+    description: Identify web technologies (CMS, frameworks, servers, JS libs, analytics) via fingerprinting tools.
+    default_tool: whatweb_scan
+    alternatives: [wappalyzer_scan, tech_stack_analyze, httpx_probe]
+    skill_file: recon/technology-identification.md
+    produces: [technology, observation]
   passive_internet_osint:
     phase: recon
     description: Passive internet-wide OSINT via Shodan (search + host detail). Needs SHODAN_API_KEY.
@@ -526,3 +533,53 @@ tools:
     parameters:
       interface: { type: string, default: eth0 }
       analyze: { type: bool, default: false }
+
+  # ---- Technology Identification ----
+
+  whatweb_scan:
+    task: technology_identification
+    phase: recon
+    freeform_args_field: additional_args
+    default_for_task: true
+    llm_hints: |
+      Comprehensive web fingerprinting via WhatWeb. Identifies CMS, frameworks, JS libraries,
+      web servers, and 1800+ plugins. aggression=1 (passive, default) is safe; 2-4 are aggressive.
+      Output is JSON — parse for technology names and versions. Combine with wappalyzer_scan for
+      cross-validation. After detection, use tech_dispatch signals for follow-up probes.
+    parameters:
+      target: { type: string, required: true, description: "Target URL or domain" }
+      aggression: { type: string, default: "1", description: "Detection level (1-4)" }
+      verbose: { type: bool, default: false }
+    example_calls:
+      - { target: "https://example.com" }
+      - { target: "example.com", aggression: "2" }
+
+  wappalyzer_scan:
+    task: technology_identification
+    phase: recon
+    freeform_args_field: additional_args
+    default_for_task: false
+    llm_hints: |
+      Python-Wappalyzer based detection. Categorizes technologies by type (CMS, framework,
+      JS library, analytics, CDN, etc.). Good for version detection. Use as alternative or
+      complement to whatweb_scan. Cross-validate findings from both tools.
+    parameters:
+      target: { type: string, required: true, description: "Target URL or domain" }
+    example_calls:
+      - { target: "https://example.com" }
+
+  tech_stack_analyze:
+    task: technology_identification
+    phase: recon
+    freeform_args_field: additional_args
+    default_for_task: false
+    llm_hints: |
+      All-in-one analysis: runs WhatWeb + Wappalyzer + HTTP header analysis. Produces unified
+      technology stack with security concerns and follow-up recommendations. Slower than
+      individual tools. Use when you want a comprehensive report in one call.
+    parameters:
+      target: { type: string, required: true, description: "Target URL or domain" }
+      aggression: { type: string, default: "1" }
+      verbose: { type: bool, default: false }
+    example_calls:
+      - { target: "https://example.com" }
