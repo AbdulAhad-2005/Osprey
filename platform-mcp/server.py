@@ -19,6 +19,7 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 
 from typed_recon_network import register_typed_recon_network_tools
+from typed_tech_identification import register_typed_tech_identification_tools
 
 API_BASE = os.environ.get("PENTEST_API_BASE", "http://localhost:9000").rstrip("/")
 QUICK_TIMEOUT = float(os.environ.get("PENTEST_QUICK_TIMEOUT", "60"))
@@ -1759,6 +1760,9 @@ def _typed_execute(
 
 _TYPED_COUNT = register_typed_recon_network_tools(mcp, execute=_typed_execute)
 _log(f"registered {_TYPED_COUNT} typed recon/network tools")
+
+_TYPED_TECH_COUNT = register_typed_tech_identification_tools(mcp, execute=_typed_execute)
+_log(f"registered {_TYPED_TECH_COUNT} typed tech-identification tools")
 
 
 if __name__ == "__main__":

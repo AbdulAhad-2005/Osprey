@@ -159,3 +159,52 @@ rules:
     claim_severity: info
     title_template: "JS route hint: {g1}"
     tags: [auto_ingest, js_route, app_depth]
+
+  # --- Technology Identification (WhatWeb/Wappalyzer/tech_stack) ---
+
+  - id: whatweb_technology
+    pattern: '(?i)"technology"\s*:\s*"([^"]+)".*?"version"\s*:\s*"([^"]*)"'
+    finding_type: technology
+    evidence_grade: observed
+    claim_severity: info
+    title_template: "Technology detected: {g1} {g2}"
+    tags: [auto_ingest, technology, fingerprint]
+    multiline: true
+
+  - id: wappalyzer_category
+    pattern: '(?i)"categories"\s*:\s*\[([^\]]{3,120})\]'
+    finding_type: technology
+    evidence_grade: inferred
+    claim_severity: info
+    title_template: "Tech category: {g1}"
+    tags: [auto_ingest, technology, wappalyzer]
+    multiline: true
+
+  - id: whatweb_plugin_name
+    pattern: '(?i)"plugins"\s*:\s*\{[^}]*"([A-Z][a-zA-Z0-9]+)"\s*:\s*\{'
+    finding_type: technology
+    evidence_grade: observed
+    claim_severity: info
+    title_template: "WhatWeb plugin: {g1}"
+    tags: [auto_ingest, technology, whatweb]
+    multiline: true
+
+  - id: security_concern_line
+    pattern: '(?i)(?:security_concern|concern|follow_up)[^:]*:\s*(.{10,200})'
+    finding_type: observation
+    evidence_grade: inferred
+    claim_severity: medium
+    title_template: "Security concern: {g1}"
+    tags: [auto_ingest, security_concern, tech_analysis]
+
+  - id: tech_version_line
+    # [ \t] (not \s) between tokens so the match can't cross a newline —
+    # \s matches \n, which previously let this rule read a table header
+    # like nmap's "PORT STATE SERVICE VERSION" on one line and the port
+    # number on the next as a fake "SERVICE 80" technology finding.
+    pattern: '(?i)([a-zA-Z][a-zA-Z0-9._-]{2,30})[ \t]*(?:version|v)[ \t]*[:=]?[ \t]*([\d.]{2,20})'
+    finding_type: technology
+    evidence_grade: inferred
+    claim_severity: info
+    title_template: "Version detected: {g1} {g2}"
+    tags: [auto_ingest, technology, version]

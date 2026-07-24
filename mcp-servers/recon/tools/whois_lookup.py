@@ -27,9 +27,13 @@ _DOMAIN_RE = re.compile(
     r"^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$"
 )
 
-# Known multi-part TLDs where the registrable domain has 3+ labels.
+# Fallback only (used when tldextract is unavailable). Known multi-part TLDs
+# where the registrable domain has 3+ labels.
 _MULTI_PART_TLDS = {"co.uk", "com.au", "co.nz", "co.za", "com.br", "co.in",
-                    "co.jp", "ne.jp", "or.jp", "co.kr", "com.sg", "co.nz"}
+                    "co.jp", "ne.jp", "or.jp", "co.kr", "com.sg",
+                    "gov.in", "net.in", "org.in", "ac.in", "edu.in",
+                    "res.in", "mil.in", "nic.in", "gov.uk", "ac.uk",
+                    "org.uk", "gov.au", "edu.au"}
 
 
 def _strip_to_apex(target: str) -> str:
@@ -37,11 +41,24 @@ def _strip_to_apex(target: str) -> str:
 
     ``sub.scanme.nmap.org``  -> ``nmap.org``
     ``foo.example.co.uk``    -> ``example.co.uk``
+    ``foo.morth.gov.in``     -> ``morth.gov.in``
     ``example.com``          -> ``example.com``
     """
     target = target.strip().rstrip(".")
     if not target or not _DOMAIN_RE.match(target):
         return target
+
+    # Prefer the public suffix list (via tldextract) so multi-part ccTLDs
+    # like .gov.in / .co.uk are handled correctly without a hand-maintained
+    # list going stale.
+    try:
+        import tldextract  # type: ignore
+
+        extracted = tldextract.extract(target)
+        if extracted.domain and extracted.suffix:
+            return f"{extracted.domain}.{extracted.suffix}".lower()
+    except Exception:
+        pass
 
     parts = target.split(".")
     if len(parts) <= 2:

@@ -55,14 +55,15 @@ def build_command(**params: Any) -> str:
 
     # curl --retry handles transient failures and 5xx from the public crt.sh
     # service (which is shared infrastructure and frequently returns 429/503).
-    # --retry-connretry: retry even on connection errors (not just HTTP codes).
+    # --retry-connrefused: also retry when the connection is refused, not
+    # just on HTTP error codes.
     parts = [
         "curl", "-s", "-sS",
         "--max-time", str(timeout),
         "--retry", "3",
         "--retry-delay", "5",
         "--retry-max-time", str(int(timeout) + 30),
-        "--retry-connretry",
+        "--retry-connrefused",
     ]
 
     if additional_args:
