@@ -60,6 +60,7 @@ RUN go install github.com/hahwul/dalfox/v2@latest
 RUN go install github.com/tomnomnom/qsreplace@latest
 RUN go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest
 RUN go install github.com/projectdiscovery/tlsx/cmd/tlsx@latest
+RUN go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest
 
 # ─── 4. Python pip tools ──────────────────────────────────────────────────────
 RUN pip3 install --break-system-packages --no-cache-dir --ignore-installed \

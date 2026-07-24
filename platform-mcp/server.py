@@ -73,6 +73,17 @@ def _post(path: str, body: dict[str, Any], *, timeout: float = QUICK_TIMEOUT) ->
         return resp.json()
 
 
+def _delete(path: str, *, params: dict[str, Any] | None = None, timeout: float = QUICK_TIMEOUT) -> dict[str, Any]:
+    timeout = min(float(timeout), HTTP_TIMEOUT)
+    with httpx.Client(base_url=API_BASE, timeout=timeout) as client:
+        resp = client.delete(path, params=params or {})
+        resp.raise_for_status()
+        if resp.status_code == 204 or not resp.content:
+            return {"status": "deleted"}
+        return resp.json()
+
+
+
 def _new_run_id() -> str:
     global SESSION_RUN_ID
     SESSION_RUN_ID = uuid.uuid4().hex[:12]
@@ -276,6 +287,52 @@ def platform_set_target(target: str, force_new: bool = False, pick: str = "") ->
 
 
 @mcp.tool()
+def platform_delete_engagement(target: str = "", engagement_id: str = "") -> str:
+    """
+    Delete all engagements and stored memory/findings/graph for a target domain or specific engagement_id.
+
+    Use this when you want to wipe prior engagement state for a target and start fresh.
+
+    Params:
+    - target: Domain name (e.g. 'example.com'). Deletes all engagements and associated data for this domain.
+    - engagement_id: Specific engagement ID (e.g. 'eng_123'). Deletes that single engagement.
+    - If both are empty, deletes data for the currently active target bound in session.
+    """
+    def _run() -> str:
+        global _SESSION_TARGET, _SESSION_ENGAGEMENT_ID, _SESSION_SWITCH_NOTICE
+
+        t_raw = (target or "").strip()
+        e_id = (engagement_id or "").strip()
+
+        if not t_raw and not e_id:
+            if _SESSION_TARGET:
+                t_raw = _SESSION_TARGET
+            else:
+                return "ERROR: Provide target='domain.tld' or engagement_id='...' to delete."
+
+        if e_id:
+            res = _delete(f"/api/v1/engagements/{e_id}", timeout=15)
+            if e_id == _SESSION_ENGAGEMENT_ID:
+                _SESSION_TARGET = ""
+                _SESSION_ENGAGEMENT_ID = ""
+                _SESSION_SWITCH_NOTICE = ""
+            return f"Deleted engagement '{e_id}'.\n\n{_block('Deletion Result', res)}"
+
+        norm = _normalize_target(t_raw)
+        res = _delete("/api/v1/engagements/by-target", params={"target": norm}, timeout=15)
+
+        if norm == _SESSION_TARGET:
+            _SESSION_TARGET = ""
+            _SESSION_ENGAGEMENT_ID = ""
+            _SESSION_SWITCH_NOTICE = ""
+
+        return f"Successfully deleted engagements and stored memory for target domain '{norm}'.\n\n{_block('Deletion Result', res)}"
+
+    return _safe(_run)
+
+
+
+@mcp.tool()
 def platform_health(target: str = "") -> str:
     """
     Check backend health. Pass target= when the user names scope (may be short name).
@@ -307,9 +364,11 @@ def _fetch_context() -> str:
         params=_memory_params(),
     )
     readiness = data.get("finalize_readiness") or {}
+    lb = readiness.get("look_back") or {}
     finalize_banner = (
-        f"can_finalize={readiness.get('can_finalize')} | "
-        f"blocked_by={readiness.get('blocked_by') or []} | "
+        f"look_back: {lb.get('orphan_count', 0)} unlinked, "
+        f"{lb.get('unexplored_count', 0)} unexplored, "
+        f"{lb.get('untested_hypothesis_count', 0)} untested hypothesis(es) | "
         f"{(readiness.get('guidance') or '')[:400]}"
     )
 
@@ -390,7 +449,8 @@ def _fetch_context() -> str:
         "You decide the next probe. Gaps are data, not orders. "
         "Use platform_tools / platform_skills / platform_findings / platform_artifact "
         "only when you need detail. "
-        "platform_graph_link / platform_tag_asset / platform_script when inventing."
+        "platform_graph_link_many (bulk — one call for a whole tool run's relationships) "
+        "/ platform_graph_link / platform_tag_asset / platform_script when inventing."
     )
     return "\n\n---\n\n".join(parts)
 
@@ -398,7 +458,14 @@ def _fetch_context() -> str:
 @mcp.tool()
 def platform_context(target: str = "") -> str:
     """
-    Compact briefing from evidence: gaps, crown jewels, jobs, delta.
+    Compact briefing from evidence: gaps, crown jewels, jobs, delta, look-back.
+
+    Call this not just to plan the next probe, but whenever you're stuck — a
+    tool keeps failing, you're unsure what to try next, or you're about to ask
+    the user a question. Memory may already hold the answer (an unexplored
+    asset, an untested hypothesis) you reasoned about earlier and forgot to
+    chase. If it doesn't, that's useful too — it means you're genuinely at a
+    new edge, not repeating past work blind.
 
     No phase argument. Pass target= only to analyze/switch.
     Pull details on demand: platform_tools, platform_skills, platform_findings.
@@ -671,6 +738,93 @@ def platform_graph_link(
 
 
 @mcp.tool()
+def platform_graph_link_many(
+    evidence: str = "",
+    evidence_grade: str = "inferred",
+    source: str = "",
+    relation: str = "",
+    targets_json: Any = "[]",
+    links_json: Any = "[]",
+    derived_from: str = "",
+) -> str:
+    """
+    Persist MANY operator-named graph edges in ONE call — the bulk sibling of
+    platform_graph_link.
+
+    Use this instead of calling platform_graph_link N times (e.g. after subfinder
+    returns 35 subdomains, or dnsx resolves 30 IPs). The platform does not
+    hardcode which relations exist — you still name every relation — this only
+    removes the per-edge round-trip so persisting an entire tool run's findings
+    is cheap enough to actually do, every time, not just when told to.
+
+    Two ways to pass edges (combine freely):
+      - Fan form: source= + relation= + targets_json=[...] — one source, many
+        targets sharing the same relation/evidence/evidence_grade. Example:
+        source="domain:example.com", relation="has_subdomain",
+        targets_json=["subdomain:a.example.com","subdomain:b.example.com"]
+      - List form: links_json=[{"source":..,"target":..,"relation":..,
+        "evidence":.. (optional, else shared evidence=),
+        "evidence_grade":.. (optional, else shared evidence_grade=)}, ...] —
+        independent edges with different relations in one call (e.g. a mixed
+        batch of resolves_to + runs_tech + co_hosts from one recon pass).
+
+    evidence_grade: observed|inferred|unverified — non-observed becomes
+    hypothesis_* edges (not proof for COMPLETE/CRITICAL) per edge, same as the
+    single-edge tool. evidence= required unless every links_json item supplies
+    its own. derived_from: optional comma-separated finding ids shared by all
+    edges in this call.
+    """
+    def _parse_list(raw: Any) -> list:
+        if isinstance(raw, list):
+            return raw
+        if isinstance(raw, str):
+            s = raw.strip()
+            if not s:
+                return []
+            try:
+                data = json.loads(s)
+                return data if isinstance(data, list) else []
+            except json.JSONDecodeError:
+                return [x.strip() for x in s.replace(",", "\n").splitlines() if x.strip()]
+        return []
+
+    def _run() -> str:
+        _require_bound_target()
+        targets = _parse_list(targets_json)
+        links = _parse_list(links_json)
+        body: dict[str, Any] = {
+            "engagement_id": _SESSION_ENGAGEMENT_ID,
+            "run_id": SESSION_RUN_ID,
+            "seed_target": _SESSION_TARGET,
+            "evidence": evidence,
+            "evidence_grade": evidence_grade,
+            "source": source,
+            "relation": relation,
+            "targets": [str(t).strip() for t in targets if str(t).strip()],
+            "links": [x for x in links if isinstance(x, dict)],
+        }
+        if (derived_from or "").strip():
+            body["derived_from"] = derived_from.strip()
+        data = _post("/api/v1/hybrid/graph/link-many", body, timeout=45)
+        lines = [
+            "### OPERATOR MIRROR — BULK GRAPH LINK",
+            _session_header(),
+            f"Persisted {data.get('count', 0)} edge(s): "
+            f"{data.get('observed_count', 0)} asserted, "
+            f"{data.get('hypothesis_count', 0)} hypothesis.",
+        ]
+        for e in (data.get("edges") or [])[:8]:
+            lines.append(f"  {e.get('source')} --`{e.get('relationship')}`--> {e.get('target')}")
+        if data.get("count", 0) > 8:
+            lines.append(f"  …(+{data['count'] - 8} more)")
+        lines.append(f"finding_id=`{data.get('finding_id')}`")
+        lines.append(data.get("hint") or "")
+        return "\n".join(lines)
+
+    return _safe(_run)
+
+
+@mcp.tool()
 def platform_tag_asset(
     asset: str,
     reason: str,
@@ -714,15 +868,27 @@ def platform_tag_asset(
 @mcp.tool()
 def platform_finalize_check(override: bool = False) -> str:
     """
-    Gate before any COMPLETE engagement report.
+    Look back over memory before you stop — not a gate you need to argue past.
 
-    Returns report_mode=complete|partial_only. If partial_only: you may write a
-    status update, but must NOT ship COMPLETE/CRITICAL theater from chat memory.
-    Persist observed facts with platform_record_finding first, then re-check.
+    Call this when you think you're finishing, AND when you're stuck (a tool
+    keeps failing, you're circling, unsure what's left) — either way, memory
+    might already hold the next move.
 
-    Infra noise (port flood / honeypot inventory gaps) is waived when strong
-    observed proof exists — claim integrity (unverified HIGH/CVE, SPA false API)
-    still hard-blocks. override=true only when the operator explicitly allows it.
+    Surfaces what's still open in the graph: assets stored but never linked
+    (call platform_graph_link_many on them), assets discovered but never
+    followed up with a tool, and platform_think hypotheses nothing has tested
+    yet. Deepen the highest-value one, or explicitly decide the rest don't
+    matter, before writing a report — the platform never forces which.
+
+    A clean result does NOT mean nothing is missing — it means nothing STORED
+    is missing. This can't see your own reasoning: if you concluded something
+    this session (a pattern, a relation, a suspicion) and never wrote it down,
+    that's on you to persist now, then re-check. Context + memory together —
+    neither replaces the other.
+
+    Also returns the same report-quality notes as before (weak CRITICAL/CVE
+    claims, SPA-false-API, port floods, hypothesis-only paths) as advisory —
+    useful for honest labeling, never a reason to refuse writing the report.
     """
     def _run() -> str:
         _require_bound_target()
@@ -734,25 +900,29 @@ def platform_finalize_check(override: bool = False) -> str:
             },
             timeout=45,
         )
-        mode = data.get("report_mode") or (
-            "complete" if data.get("can_finalize") else "partial_only"
+        lb = data.get("look_back") or {}
+        lb_total = (
+            int(lb.get("orphan_count") or 0)
+            + int(lb.get("unexplored_count") or 0)
+            + int(lb.get("untested_hypothesis_count") or 0)
         )
-        status = "COMPLETE ALLOWED" if mode == "complete" else "PARTIAL ONLY"
         parts = [
-            "### OPERATOR MIRROR — FINALIZE CHECK",
+            "### OPERATOR MIRROR — LOOK-BACK",
             _session_header(),
-            f"**Status: {status}** (report_mode={mode})",
-            _block("blocked_by", data.get("blocked_by") or []),
+            f"**{lb_total} open item(s) in memory**"
+            if lb_total
+            else "**Look-back clean** — nothing unlinked/unexplored/untested",
+            _block("look_back", lb),
+            _block("report_quality_notes (advisory)", data.get("blocked_by") or []),
             _block("checks", data.get("checks") or {}),
             _block("guidance", data.get("guidance") or ""),
         ]
         if data.get("inferred_focus"):
             parts.append(_block("inferred_focus", data["inferred_focus"]))
-        if mode != "complete":
+        if lb_total:
             parts.append(
-                "\nDo NOT write COMPLETE/FINAL with CRITICAL catalogs from chat alone. "
-                "Call platform_report_outline + platform_findings; if a banner you saw is missing, "
-                "platform_record_finding then re-check. Partial status updates are OK."
+                "\nPick the highest-value item above and deepen it — or explicitly "
+                "note why the rest don't matter — before platform_report_outline."
             )
         else:
             parts.append(
@@ -885,8 +1055,15 @@ def platform_record_finding(
     """
     Persist one observed fact into engagement memory (solves chat-vs-store drift).
 
-    Use when a script/shell showed a real banner/title/port but platform_findings
-    does not list it yet. evidence_grade: observed|inferred|unverified.
+    Use for ANYTHING you noticed and are about to explain in chat instead of
+    storing — not just typed-tool banners. WHOIS facts (registrar, DNSSEC
+    status, nameservers), a path pattern you spotted in GAU/wayback output,
+    an IP-cluster grouping you worked out by hand, a suspicious artifact in
+    historical data — all of it belongs here (or in platform_graph_link_many
+    if it's a relationship between assets). If you typed it into your answer
+    to the user, it should also be here — chat is not memory.
+
+    evidence_grade: observed|inferred|unverified.
     finding_type: url|host|port|service|technology|observation|subdomain.
     claim_severity is clamped by evidence_grade (CRITICAL needs observed).
     derived_from: optional comma-separated parent finding ids (evidence chain).
