@@ -264,13 +264,22 @@ cd backend
 python -m pytest tests/ -v
 ```
 
+## Documentation
+
+Full docs live in [`docs/`](docs/README.md). Quick links:
+
+- [Architecture & workflow](docs/ARCHITECTURE.md) — how it works and why
+- [Operator guide](docs/PLATFORM_GUIDE.md) — running and driving the platform
+- [Developer guide](docs/DEVELOPER_GUIDE.md) — code map and pipeline trace
+- [Capability reference](docs/CAPABILITY_REFERENCE.md) — per-tool + memory model
+- [Integration contract](docs/INTEGRATION_CONTRACT.md) — MCP + HTTP APIs
+- [Status & roadmap](docs/STATUS_AND_ROADMAP.md) — what's built vs planned
+
 ## Next steps
 
-1. Add durable job cancellation and restart reconciliation (see `changes.md`)
-2. Implement structured evidence DAG traversal and correlation candidates
-3. Add safe shell flexibility via constrained command AST (pipeline, stderr modes)
-4. Integrate Temporal workflows for advanced orchestration
+See [`docs/STATUS_AND_ROADMAP.md`](docs/STATUS_AND_ROADMAP.md) for the current status and the active reliability plan. Near-term focus: real scope/ROE governance, durable jobs + attempt history, graph/evidence provenance hardening, then phase expansion (web/vuln) and the killchain engine.
 
 ## Tools Analyzed
 
+Reference-tool deep dives live in [`Comparative Analysis/`](Comparative%20Analysis/). Summary document:
 https://docs.google.com/document/d/1XqAMlZ9ErRywIHvR0FinwqmysCgSqYzIGtXoqmlsDGc/edit?usp=sharing

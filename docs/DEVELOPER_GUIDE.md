@@ -1,9 +1,9 @@
-# Pipeline Analysis Guide — How to Explore & Optimize the System
+# Developer Guide — Explore & Optimize the System
 
-> **Purpose:** A practical map for reviewing the entire recon→network pipeline: how OpenCode connects, how data flows, which files to read, and in what order — so you can optimize with confidence.
+> **Purpose:** A practical map for reviewing the recon→network pipeline: how OpenCode connects, how data flows, which files to read, and in what order — so you can optimize with confidence.
 >
-> **Work tree:** `llmwork/AI-Pentesting-Tool`
-> **Related:** [`PHASE_A_ATTACK_SURFACE_SPINE.md`](./PHASE_A_ATTACK_SURFACE_SPINE.md), [`AGENTS.md`](../AGENTS.md)
+> **Audience:** Developers modifying the platform (vs [`PLATFORM_GUIDE.md`](./PLATFORM_GUIDE.md) for operators).
+> **Related:** [`ARCHITECTURE.md`](./ARCHITECTURE.md), [`INTEGRATION_CONTRACT.md`](./INTEGRATION_CONTRACT.md), [`../AGENTS.md`](../AGENTS.md)
 
 ---
 
@@ -36,27 +36,29 @@ FastAPI backend :9000
 
 | Item            | Path / value                                                        |
 | --------------- | ------------------------------------------------------------------- |
-| OpenCode config | Workspace root:`AI-Pentesting-Tool/opencode.json`                 |
-| Instructions    | `llmwork/AI-Pentesting-Tool/AGENTS.md`                            |
+| OpenCode config | Workspace root: `opencode.json` (or global `~/.config/opencode/opencode.json`) |
+| Instructions    | `AGENTS.md` (repo root)                                           |
 | MCP server name | `pentest-platform`                                                |
-| MCP command     | `python` → `llmwork/AI-Pentesting-Tool/platform-mcp/server.py` |
+| MCP command     | `python` → `platform-mcp/server.py`                             |
 | API base        | `PENTEST_API_BASE=http://localhost:9000`                          |
 
 OpenCode starts the MCP process locally (not Docker). The MCP process talks to the Dockerized backend.
 
 ### 2.2 What OpenCode is allowed to call
 
-Only these MCP tools (defined in `platform-mcp/server.py`):
+OpenCode sees ~50 MCP tools defined in `platform-mcp/` (full list in [`CAPABILITY_REFERENCE.md`](./CAPABILITY_REFERENCE.md); families in [`INTEGRATION_CONTRACT.md`](./INTEGRATION_CONTRACT.md)). The backbone few and where they land:
 
 | MCP tool                              | Job                                   | Backend                                                             |
 | ------------------------------------- | ------------------------------------- | ------------------------------------------------------------------- |
 | `platform_set_target(target)`       | Bind/switch root domain → engagement | `POST /api/v1/engagements/resolve` + `.../runs/ensure`          |
 | `platform_health(target=?)`         | Health + optional bind                | `GET /health`                                                     |
-| `platform_context(phase, target=?)` | Brain packet (gaps, tree, skills)     | `GET /api/v1/hybrid/context/{phase}`                              |
-| `platform_exec(tool, params…)`     | Run one Kali tool                     | `POST /api/v1/mcp/execute`                                        |
+| `platform_context(phase, target=?)` | Brain packet (gaps, crown jewels, delta) | `GET /api/v1/hybrid/context[/{phase}]`                        |
+| typed `*_scan`/`*_probe`, `platform_exec` | Run one Kali tool                 | `POST /api/v1/mcp/execute`                                        |
+| `platform_shell` / `platform_script` | Allowlisted binary / sandboxed code | `POST /api/v1/mcp/{shell,script}`                                 |
 | `platform_fanout(...)`              | Explicit sister subfinder batch       | `POST /api/v1/engagements/{id}/actions/enumerate-pending-sisters` |
+| memory tools (`platform_graph_link`, `platform_memory_search`, …) | Read/write the notebook | `/api/v1/hybrid/*`                                    |
 
-**Rule:** Never wire OpenCode to raw `mcp-servers/recon` or `network` servers. Those are Kali-side only.
+**Rule:** Never wire OpenCode to raw `mcp-servers/recon` or `network` servers. Those are Kali-side only, reached through the backend.
 
 ### 2.3 Session binding (dynamic targets)
 
@@ -70,7 +72,7 @@ When the user names a **new** domain → `platform_set_target` → resolve/creat
 
 ### 2.4 Docker stack (must be up)
 
-From `llmwork/AI-Pentesting-Tool`:
+From the repo root:
 
 ```powershell
 docker compose up -d
@@ -98,7 +100,7 @@ Trace this path when debugging or optimizing:
 5. tool_execution.execute_tool_request:
      a. tool_registry — is tool known?
      b. session_context — bind engagement_id + run_id
-     c. governance — ROE / safety / scope
+     c. governance — permissive pass-through today (scope/ROE enforcement is on the roadmap)
      d. param_validator — normalize params
      e. command_builder — preview CLI
      f. mcp_client — docker exec into Kali → mcp-servers/<cat>/server.py
@@ -119,43 +121,36 @@ Trace this path when debugging or optimizing:
 ## 4. Directory map (what lives where)
 
 ```
-llmwork/AI-Pentesting-Tool/
-├── AGENTS.md                 # OpenCode rules + loop
+AI-Pentesting-Tool/           # repo root
+├── AGENTS.md                 # OpenCode operator prompt
 ├── docker-compose.yml
 ├── .env
-├── opencode.json             # (may live at workspace root above llmwork)
+├── opencode.json             # MCP wiring (or use global ~/.config/opencode/opencode.json)
 ├── platform-mcp/
-│   └── server.py             # MCP façade
+│   ├── server.py             # MCP façade (~50 tools)
+│   ├── typed_recon_network.py
+│   └── typed_tech_identification.py
 ├── config/                   # YAML levers
 │   ├── recon_network_tools.yaml
 │   ├── escalation_matrix.yaml
 │   ├── tech_dispatch.yaml
+│   ├── ingest_rules.yaml
+│   ├── thinking_model.yaml
 │   └── workflows.yaml
 ├── skills/                   # Markdown playbooks
-│   ├── commander/
-│   ├── recon/
-│   ├── network/
-│   ├── pipeline/
-│   └── shared/
+│   ├── commander/  recon/  network/  summary/  shared/  …
 ├── backend/src/pentest_platform/
 │   ├── main.py
 │   ├── api/v1/               # HTTP routes
-│   ├── services/             # Core logic
+│   ├── services/             # Core logic (tool_execution, engagement_graph, …)
 │   ├── models/               # SQLAlchemy tables
 │   ├── schemas/              # Pydantic
-│   └── parsers/ or services/parsers/
+│   └── services/parsers/     # parser registry
 ├── mcp-servers/              # Kali-side tool adapters
-│   ├── recon/
-│   ├── network/
-│   └── …
+│   ├── recon/  network/  web/  vuln/  cloud/  …
 └── docs/
-    ├── PHASE_A_ATTACK_SURFACE_SPINE.md
-    └── PIPELINE_ANALYSIS_GUIDE.md   ← this file
+    └── DEVELOPER_GUIDE.md    ← this file
 ```
-
-Workspace OpenCode config (typical):
-
-`D:\personal work\AI-Pentesting-Tool\opencode.json`
 
 ---
 
@@ -171,7 +166,7 @@ Read in this order. Do **not** start randomly in `mcp-servers/` or Alembic.
 | 2 | `skills/pipeline/full-attack-surface-pipeline.md` | 8-stage methodology         |
 | 3 | `skills/commander/planning-rules.md`              | When to reopen recon / skip |
 | 4 | `platform-mcp/server.py`                          | Exact MCP ↔ HTTP mapping   |
-| 5 | `docs/PHASE_A_ATTACK_SURFACE_SPINE.md`            | Intent of M0–M7            |
+| 5 | `docs/ARCHITECTURE.md`                            | How the pieces fit + why    |
 
 **Ask yourself:** Is the Commander loop clear? Where do skills over-promise vs what backend actually enforces?
 
@@ -268,10 +263,13 @@ When optimizing for OpenCode, focus on **platform-mcp + tool_execution + context
 
 - Engagement bind for findings persistence
 - Multi-target isolation by `engagement_id`
-- Governance / ROE / gated tools
-- Param validation
+- Param validation (shell-metacharacter ban)
+- Scan budget (blocks full-range `-p-` / `1-65535` without `confirm_expensive`)
+- Evidence-grade severity clamp + finalize gate on weak claims
 - Fan-out only with `dry_run=false` **and** `confirm=true`
 - No silent auto-chain after `domain_hunter`
+
+> **Not yet hard:** scope/ROE **governance is permissive today** (approves all tools). Real enforcement is reliability-plan Phase 1 — see [`STATUS_AND_ROADMAP.md`](./STATUS_AND_ROADMAP.md).
 
 ### Soft (advice only)
 

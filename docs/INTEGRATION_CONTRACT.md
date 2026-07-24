@@ -1,178 +1,97 @@
-# Integration Contract — Platform Kernel ↔ Multi-Agent Layer
+# Integration Contract — MCP & HTTP API surface
 
-This document defines the **stable surfaces** between execution/platform work (you) and LLM orchestration work (friend). Both sides should code against these APIs — not against recon/network-specific internals.
+> **Purpose:** The stable surfaces between the LLM (OpenCode / any MCP client), the `platform-mcp` gateway, and the FastAPI backend. Code against these — not against recon/network-specific internals.
+> **Related:** [`ARCHITECTURE.md`](./ARCHITECTURE.md) · [`CAPABILITY_REFERENCE.md`](./CAPABILITY_REFERENCE.md) · [`DEVELOPER_GUIDE.md`](./DEVELOPER_GUIDE.md)
 
-## Philosophy
+## Principles
 
-- **Assist the LLM, don't script it** — YAML, skills, and hints are suggestions; governance blocks unsafe execution only.
-- **One pipeline for all phases** — adaptation, parsing, and handoff live in `platform/`; new phases register parsers/hints instead of forking agent logic.
-- **Failures are platform events** — timeout, privilege, wrong target shape, repeat calls → same `enrich_tool_result()` path for every tool.
+- **Assist the LLM, don't script it** — YAML, skills, and hints are suggestions; only safety is hard-enforced.
+- **One kernel for all phases** — execution, parsing, and memory live in the backend; new phases register parsers/hints instead of forking driver logic.
+- **The LLM never sends raw shell** — it sends structured tool calls, an allowlisted single binary (`platform_shell`), or a sandboxed script (`platform_script`). The platform builds the CLI.
 
 ---
 
-## 1. Tool execution
+## 1. MCP surface (what the LLM calls)
 
-```python
-from pentest_platform.services.tool_execution import execute_tool_request
-from pentest_platform.schemas.tools import ToolExecutionRequest
+The LLM talks only to `platform-mcp/server.py` over stdio. It never touches `mcp-servers/*` directly — those are Kali-side, reached through the backend. Tool families:
 
-response = await execute_tool_request(
-    ToolExecutionRequest(
-        tool_name="nmap_syn_scan",
-        params={"target": "45.33.32.156"},
-        additional_args="-sT -Pn --top-ports 1000",
-        engagement_id=engagement_id,
-        run_id=run_id,
-        record_findings=True,
-        use_recovery=False,  # Commander path: deterministic only
-    )
-)
+| Family | Tools |
+|--------|-------|
+| **Session** | `platform_set_target`, `platform_delete_engagement`, `platform_health` |
+| **Memory / notebook** | `platform_context`, `platform_think`, `platform_thinking`, `platform_graph_link[_many]`, `platform_graph_query`, `platform_tag_asset`, `platform_crown_jewels`, `platform_findings`, `platform_record_finding`, `platform_memory_search`, `platform_evidence_chain`, `platform_attempts`, `platform_artifact` |
+| **Report** | `platform_finalize_check`, `platform_report_outline` |
+| **Execution** | 36 typed `*_scan` / `*_probe` tools, `platform_exec`, `platform_shell`, `platform_script`, `platform_install` |
+| **Async / batch** | `platform_job_start`, `platform_job_poll`, `platform_job_result`, `platform_fanout`, `platform_fanout_assets` |
+| **Advisory / config** | `platform_tools`, `platform_skills`, `platform_config`, `platform_playbook` |
+
+Per-tool semantics are documented in [`CAPABILITY_REFERENCE.md`](./CAPABILITY_REFERENCE.md). Client wiring (OpenCode / Claude Desktop / ChatGPT) is in the root [`README.md`](../README.md).
+
+### Free-form flags (first-class)
+
+- **`additional_args` is unrestricted** — any valid CLI flags the model knows. Catalog/YAML examples are suggestions, not an allowlist.
+- The platform blocks only shell metacharacters: `` ; | & ` $ ( ) < > ``.
+- Flags may also arrive inside `params.additional_args`, `params.extra_args`, or `params.flags` (nmap) — they are merged automatically.
+- Pipes / loops / compound shell → use `platform_script`, not shell metacharacters.
+
+---
+
+## 2. Backend HTTP surface (what platform-mcp calls)
+
+Base: `http://localhost:9000`. Registered under `/api/v1` (`api/v1/router.py`).
+
+### Execution — `/api/v1/mcp/*`
+| Route | Body → | Purpose |
+|-------|--------|---------|
+| `POST /mcp/execute` | `ToolExecutionRequest` | Run a catalog tool through the kernel |
+| `POST /mcp/shell` | `{command, engagement_id, run_id, reason, timeout}` | One allowlisted binary + argv |
+| `POST /mcp/script` | `{code, language, engagement_id, packages, timeout}` | Write + run a script in the engagement workspace |
+| `POST /mcp/install` | `{manager, packages, engagement_id}` | Gated pip/apt install for script deps |
+
+`ToolExecutionRequest` (`schemas/tools.py`):
+```json
+{
+  "tool_name": "subfinder_scan",
+  "params": { "domain": "example.com" },
+  "additional_args": "-all -recursive",
+  "engagement_id": "eng-123",
+  "run_id": "run-456",
+  "record_findings": true,
+  "use_recovery": true,
+  "use_cache": true,
+  "force_refresh": false,
+  "timeout": 300
+}
 ```
+`ToolExecutionResponse` returns: `tool_name`, `success`, `stdout`, `stderr`, `command`, `returncode`, `duration_seconds`, `timed_out`, `error`, `finding_titles`, `governance_decision`, `cache_hit`, `cache_key`, `next_hint`, `fallback_tools`, `hybrid` (escalation/dispatch/graph pivots + artifact paths). Successful runs auto-parse stdout into findings; raw stdout/stderr is always preserved (parse miss ≠ nothing found).
 
-**Returns:** `ToolExecutionResponse` with `success`, `stdout`, `stderr`, `command`, `timed_out`, `error`.
+### Memory / notebook — `/api/v1/hybrid/*`
+The backing routes for the `platform_*` memory tools. Key ones: `GET /hybrid/context[/{phase}]`, `GET /hybrid/coverage/{phase}`, `GET /hybrid/open-loops`, `POST /hybrid/correlate`, `GET /hybrid/graph/{summary,siblings,query}`, `POST /hybrid/graph/{link,link-many}`, `POST /hybrid/tag-asset`, `POST /hybrid/think`, `GET /hybrid/crown-jewels`, `GET /hybrid/finalize-readiness`, `GET /hybrid/report-outline`, `GET /hybrid/memory-search`, `GET /hybrid/evidence-chain`, `GET /hybrid/attempts`.
 
----
+### Engagements & jobs
+- `POST /api/v1/engagements/resolve` (bind/create by target), `POST /{id}/runs/ensure`, `POST /{id}/actions/enumerate-pending-sisters`, `POST /{id}/actions/fanout-assets`, `DELETE /by-target`, `DELETE /{id}`.
+- `POST /api/v1/jobs/start`, `GET /api/v1/jobs`, `GET /api/v1/jobs/{id}`, `GET /api/v1/jobs/{id}/result`.
 
-## 2. Result adaptation (all agents)
-
-After every tool run, pass raw output through the kernel:
-
-```python
-from pentest_platform.platform.adaptation import AdaptationContext, enrich_tool_result
-from pentest_platform.platform.run_context import RunAssistState, tool_call_signature
-
-signature = tool_call_signature(tool_name, params, additional_args=additional_args)
-enriched = enrich_tool_result(
-    base_text,  # SUCCESS/FAILED + STDOUT/STDERR
-    AdaptationContext(
-        tool_response=response,
-        assist_state=assist_state,
-        signature=signature,
-        engagement_id=engagement_id,
-        run_id=run_id,
-        target=target,
-        run_phase=phase,
-        params=params,
-    ),
-)
-```
-
-**Adds (when applicable):** parsed digest, repeat-failure warning, cross-cutting hints, escalation/dispatch suggestions, findings snapshot.
+### Deprecated routes (do not use for new callers)
+Use `platform_context` / `platform_attempts` / catalog instead:
+`GET /api/v1/tools/{name}`, `GET /api/v1/tools/by-server/{server}`, `GET /api/v1/engagements/{id}/tree`, `GET /api/v1/engagements/{id}/network-surface`, `GET /api/v1/engagements/{id}/tool-coverage`. Services stay; only the HTTP routes are legacy.
 
 ---
 
-## 3. Phase handoff
+## 3. Extending the platform (registration points)
 
-```python
-from pentest_platform.platform import build_phase_handoff, handoff_to_prompt
+New capability = data + registration, not driver forks.
 
-packet = build_phase_handoff(
-    from_phase="recon",
-    to_phase="network",
-    engagement_id=engagement_id,
-    run_id=run_id,
-    target=target,
-    resolved_ip=resolved_ip,
-)
-prompt_block = handoff_to_prompt(packet)
-# or: packet.to_prompt()
-```
-
-**HTTP:** `GET /api/v1/findings/structured?engagement_id=&run_id=&target=&from_phase=recon`
-
-**Schema:** `StructuredFindingsExport`, `PhaseHandoff` in `schemas/agent_run.py`.
+- **New parser** — `register_output_parser(tool, fn)` / `register_output_digester(...)` in a module imported by `services/parsers/__init__.py`.
+- **New failure hint** — `register_hint_provider(fn, priority=…)` in `platform/hint_providers.py`.
+- **New tool** — add the `build_command()` wrapper under `mcp-servers/<category>/tools/`, register it in the catalog, and (optionally) expose a typed MCP tool in `platform-mcp/`.
+- **New ingest pattern** — add a regex to `config/ingest_rules.yaml` (no code, no AGENTS bullet).
 
 ---
 
-## 4. Situational context (context-dependent flow)
+## 4. Demoted internal surface (path ②)
 
-The LLM should not brute-force the tool catalog. Before each turn and after each tool run, build a brief from evidence:
-
-```python
-from pentest_platform.platform import build_situational_brief
-
-brief = build_situational_brief(
-    engagement_id=engagement_id,
-    run_id=run_id,
-    target=target,
-    resolved_ip=resolved_ip,
-    phase=phase,
-    assist_state=assist_state,
-    user_goal=user_message,
-)
-```
-
-**`RunAssistState` tracks:** `successful_tools`, `tools_attempted`, `failure_counts`, `skip_categories` (e.g. SMB after enum4linux failure).
-
-Inject `brief` into the system prompt; `enrich_tool_result()` appends an updated brief after each tool run.
+The built-in agent path (`agent_loop.py`, `orchestrator.py`, `POST /api/v1/agent/chat[/stream]`, SSE events, `platform/adaptation.enrich_tool_result`, `build_phase_handoff`, `build_situational_brief`) is **off by default** (`ENABLE_BUILTIN_AGENT=false`). It reuses the same execution kernel. Documented here only so it is not mistaken for the primary contract; prefer the MCP + HTTP surfaces above.
 
 ---
 
-## 5. Parser registration (new phases)
-
-Do **not** edit `adaptation.py` for a new phase. Register in a phase module:
-
-```python
-from pentest_platform.services.parsers.registry import (
-    register_output_parser,
-    register_output_digester,
-)
-
-register_output_parser("nikto_scan", parse_nikto)
-register_output_digester("nikto_scan", lambda stdout: digest_nikto(stdout))
-```
-
-Import the module from `services/parsers/__init__.py` so it self-registers.
-
----
-
-## 6. Hint registration (new failure modes)
-
-```python
-from pentest_platform.platform.hint_providers import HintContext, register_hint_provider
-
-def _hints_waf(ctx: HintContext) -> list[str]:
-    if "403" in ctx.stdout and ctx.phase == "webapp":
-        return ["HINT: Possible WAF — try different User-Agent or path normalization."]
-    return []
-
-register_hint_provider(_hints_waf, priority=35)
-```
-
----
-
-## 7. Tools exposed to LLM per phase
-
-```python
-from pentest_platform.services.tool_discovery import get_agent_tools, get_tools_for_llm_phase
-
-tools = get_tools_for_llm_phase("network")  # friend should use this in phase agents
-```
-
----
-
-## 8. SSE events (agent chat)
-
-`POST /api/v1/agent/chat/stream` emits:
-
-| Event | Purpose |
-|-------|---------|
-| `run_start` | phase, target, run_id, model |
-| `status` | LLM thinking |
-| `tool_start` / `tool_end` | tool name, success, preview |
-| `assistant` | final text |
-| `done` | full `AgentResponse` payload |
-| `error` | unrecoverable loop error |
-
-Friend's Commander should wrap phase agents and emit `phase_start` / `phase_end` using the same transport.
-
----
-
-## Branch split
-
-| Owner | Branch | Owns |
-|-------|--------|------|
-| Platform / execution | `feature/execution-hardening` | `platform/`, `tool_execution`, parsers registry, YAML matrices |
-| Multi-agent LLM | `feature/multi-agent` | `orchestrator.py`, `commander_agent.py`, `phase_agent.py`, skills wiring |
-
-Merge when: structured findings endpoint works, `enrich_tool_result` is the only post-tool path, and handoff prompt renders from real session data.
+*Surfaces above are the join points. The MCP + `/mcp/*` + `/hybrid/*` routes are the current product contract; everything under path ② is optional.*

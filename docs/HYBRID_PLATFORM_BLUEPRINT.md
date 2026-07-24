@@ -1,8 +1,10 @@
 # Hybrid Autonomous Pentest Platform — Blueprint
 
+> ⚠️ **This is the forward-looking north-star vision** (full lifecycle: business logic, token/WAF bypass, exploit dev, kill chains). For what is actually **built today** (recon + network), see [`ARCHITECTURE.md`](./ARCHITECTURE.md) and [`STATUS_AND_ROADMAP.md`](./STATUS_AND_ROADMAP.md). Inline citations to `Tool_architecture.md` / `analysis.md` are historical research notes now absorbed here and into the [`../Comparative Analysis/`](../Comparative%20Analysis/) HTML analyses.
+
 > **Purpose:** Synthesize **Shannon (core)**, **Shannon OpenCode Plugin**, **Dark-Moon**, and **HexStrike** into a single architecture that exceeds each individually — with full LLM freedom to chain tools, test business logic, bypass tokens/WAFs, and develop exploits under governance.  
-> **Audience:** Platform builders (execution layer + Commander/LLM layer split).  
-> **Related:** [`TOOLS_LAYER_ANALYSIS.md`](./TOOLS_LAYER_ANALYSIS.md) · [`LLM_INTEGRATION.md`](./LLM_INTEGRATION.md) · [`../Tool_architecture.md`](../Tool_architecture.md) · [`../analysis.md`](../analysis.md)
+> **Audience:** Platform builders.  
+> **Related:** [`ARCHITECTURE.md`](./ARCHITECTURE.md) · [`STATUS_AND_ROADMAP.md`](./STATUS_AND_ROADMAP.md) · [`CAPABILITY_REFERENCE.md`](./CAPABILITY_REFERENCE.md) · [`../Comparative Analysis/`](../Comparative%20Analysis/)
 
 ---
 
@@ -26,7 +28,7 @@
 16. [Tool Surface Design — Not 90 Functions At Once](#16-tool-surface-design--not-90-functions-at-once)
 17. [End-to-End Flow — Hybrid Campaign Example](#17-end-to-end-flow--hybrid-campaign-example)
 18. [Implementation Roadmap](#18-implementation-roadmap)
-19. [Division of Labor (You vs Friend)](#19-division-of-labor-you-vs-friend)
+19. [Component status](#19-component-status)
 20. [Appendix: Source Locations In This Workspace](#20-appendix-source-locations-in-this-workspace)
 
 ---
@@ -371,7 +373,7 @@ Real parameter intelligence = **external Commander LLM + `additional_args`**, no
 - `scripts/harvest_hexstrike_tools.py` — generator
 - `mcp-servers/_core/error_handler.py` — recovery
 - `mcp-servers/_core/runner.py` — run loop
-- `new work/.../services/command_builder.py` — GAE bridge
+- `backend/src/pentest_platform/services/command_builder.py` — command-build bridge
 
 ---
 
@@ -466,7 +468,7 @@ Borrowed from `Tool_architecture.md`, instantiated with components from all four
 
 ## 6. The Commander Model — LLM Chain Freedom
 
-**Friend builds this.** It must exceed Dark-Moon’s flexibility while exceeding Dark-Moon’s safety.
+The Commander is **OpenCode** (external MCP client). It must exceed Dark-Moon’s flexibility while exceeding Dark-Moon’s safety.
 
 ### 6.1 What the LLM controls (full freedom)
 
@@ -541,7 +543,7 @@ This is **not** in any reference tool today — it’s the hybrid differentiator
 
 ## 7. Execution Layer — HexStrike + Governed Bridge
 
-**You built the foundation** (`docs/TOOLS_LAYER_ANALYSIS.md`). Extend it:
+The recon/network execution foundation is built (see [`ARCHITECTURE.md`](./ARCHITECTURE.md)). Extend it:
 
 ### 7.1 Current GAE pipeline (keep)
 
@@ -1002,7 +1004,7 @@ Output: CVSS + MITRE + exploitation evidence + rollback log
 - [x] Findings store + basic parsers
 - [x] Capabilities + mcp + findings APIs
 
-### Phase 1 — Commander foundation (friend)
+### Phase 1 — Commander foundation (OpenCode)
 
 - [ ] LiteLLM router + structured ToolCallProposal output
 - [ ] `POST /api/v1/agent/chat` loop
@@ -1057,22 +1059,24 @@ Output: CVSS + MITRE + exploitation evidence + rollback log
 
 ---
 
-## 19. Division of Labor (You vs Friend)
+## 19. Component status
 
-| Component | Owner | Status |
-|-----------|-------|--------|
-| HexStrike harvest + MCP servers | You | Done |
-| command_builder, validator, governance hooks | You | Done |
-| task_registry, skills (recon/network) | You | Done |
-| findings_store, parsers (partial) | You | Done |
-| Capabilities + mcp execute API | You | Done |
-| Session vault, browser, IDOR ports | You | Next |
-| Escalation matrix config | You | Next |
-| Engagement graph | Shared | Next |
-| Commander + LiteLLM + agent chat | Friend | Todo |
-| Planner + Critic | Friend | Todo |
-| 5s override UI | Friend | Todo |
-| Temporal (if whitebox) | Shared | Later |
+> Historical note: this section once split work between two developers ("you vs friend"). That split is obsolete — **the Commander/brain is OpenCode** (an external MCP client), not a bespoke LiteLLM agent. The built-in agent loop still exists but is demoted. Current status:
+
+| Component | Status |
+|-----------|--------|
+| HexStrike harvest + MCP servers | Done |
+| command_builder, validator, governance hooks | Done (governance permissive — enforcement pending) |
+| task_registry, skills (recon/network) | Done |
+| findings_store, parsers | Done |
+| MCP execute + hybrid memory APIs | Done |
+| Engagement graph + evidence law + finalize | Done |
+| Commander (OpenCode) driving via MCP | Done (primary path) |
+| Built-in LiteLLM agent chat / Planner-Critic | Demoted (flag-off) |
+| Session vault, browser/IDOR, escalation depth | Next |
+| Killchain engine · exploit phase · Temporal durability | Later |
+
+See [`STATUS_AND_ROADMAP.md`](./STATUS_AND_ROADMAP.md) for the authoritative status.
 
 ---
 
@@ -1080,16 +1084,16 @@ Output: CVSS + MITRE + exploitation evidence + rollback log
 
 | System | Path | Notes |
 |--------|------|-------|
-| Shannon core | `shannon/shannon/` | Temporal, agents, collectors |
-| Shannon plugin | `shannon_plugin/opencode-shannon-plugin/` | OpenCode, 20 tools |
-| Dark-Moon | *Not cloned* | See `Comparative Analysis/darkmoon_comp_analysis.html` |
-| HexStrike harvest | `mcp-servers/` | 90 tools, `_core/` |
-| Your GAE platform | `new work/AI-Pentesting-Tool/` | Backend + config + skills |
-| Architecture blueprint | `Tool_architecture.md` | Four-plane design |
-| Tools layer doc | `new work/.../docs/TOOLS_LAYER_ANALYSIS.md` | Execution deep dive |
-| LLM handoff | `new work/.../docs/LLM_INTEGRATION.md` | Friend integration |
-| Comparative reports | `Comparative Analysis/*.html` | samaa.tv evidence |
-| Pentest reports | `Pentest-Reports/*.html` | Campaign outputs |
+| Shannon core | `shannon/` (reference clone) | Temporal, agents, collectors |
+| Shannon plugin | reference (see comparative analysis) | OpenCode, 20 tools |
+| Dark-Moon | reference | See `Comparative Analysis/darkmoon_comp_analysis.html` |
+| HexStrike harvest | `mcp-servers/` | ~90 tools |
+| Our platform | repo root (`backend/`, `config/`, `skills/`, `platform-mcp/`) | Current build |
+| Architecture (current) | `docs/ARCHITECTURE.md` | How it works today |
+| Capability reference | `docs/CAPABILITY_REFERENCE.md` | Per-tool + memory model |
+| Integration surface | `docs/INTEGRATION_CONTRACT.md` | MCP + HTTP APIs |
+| Comparative analyses | `Comparative Analysis/*.html` | Reference-tool deep dives |
+| Pentest reports | `Pentest-Reports/*.html` | Reference-tool outputs |
 
 ---
 

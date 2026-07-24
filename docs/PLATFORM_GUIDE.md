@@ -1,8 +1,8 @@
 # Pentest Platform — Operator Guide (Current Architecture)
 
-This guide describes the **repollished** platform as it works today: how pieces connect, how tools are listed and run, how memory/graph/findings work, how skills assist the LLM, and where flexibility lives.
+This guide describes the platform as it works today: how pieces connect, how tools are listed and run, how memory/graph/findings work, how skills assist the LLM, and where flexibility lives.
 
-Root: `llmwork/AI-Pentesting-Tool/`
+> **Related:** [`ARCHITECTURE.md`](./ARCHITECTURE.md) (concepts) · [`DEVELOPER_GUIDE.md`](./DEVELOPER_GUIDE.md) (code map) · [`CAPABILITY_REFERENCE.md`](./CAPABILITY_REFERENCE.md) (per-tool reference). Client setup (OpenCode / Claude Desktop) is in the root [`README.md`](../README.md).
 
 ---
 
@@ -45,7 +45,6 @@ The platform is an **AI-assisted pentest lab**, not a fixed stage machine.
 Start stack:
 
 ```bash
-cd llmwork/AI-Pentesting-Tool
 docker compose up -d
 ```
 
@@ -101,8 +100,8 @@ Shell is an **escape hatch**, not the default. Aliases are fixed: `target|domain
 
 - **`platform_tools(query=, category=)`** → `GET /api/v1/tools/catalog`  
   Shows registered names, category, **OK / MISSING** vs Kali binaries.
-- Typed tools also appear **directly** in OpenCode’s MCP tool list (~26 recon+network).
-- Full wrapper surface (~90) lives under `mcp-servers/` (web, vuln, cloud, …) — reachable via `platform_exec` when registered in the backend catalog.
+- Typed tools also appear **directly** in OpenCode’s MCP tool list (36 recon+network + technology identification).
+- Full wrapper surface (~90) lives under `mcp-servers/` (web, vuln, cloud, …). The recon/network + tech-id sets are wired as typed tools today; the other categories are harvested but not yet exposed (see [`STATUS_AND_ROADMAP.md`](./STATUS_AND_ROADMAP.md)).
 
 ### 4.3 Execution pipeline (catalog tools)
 
@@ -365,15 +364,21 @@ python scripts/smoke_recon_network.py --api http://127.0.0.1:9000
 
 ## 11. MCP tool cheat sheet
 
-**Session:** `platform_set_target`, `platform_health`, `platform_think`, `platform_context`  
+**Session:** `platform_set_target`, `platform_delete_engagement`, `platform_health`, `platform_think`, `platform_context`  
 
 **Catalog:** `platform_tools`, typed `*_scan` / `*_probe`, `platform_exec`  
 
-**Invent:** `platform_shell`, `platform_script`, `platform_install`, `platform_fanout`  
+**Invent:** `platform_shell`, `platform_script`, `platform_install`, `platform_fanout`, `platform_fanout_assets`  
 
-**Advise:** `platform_playbook`  
+**Parallel:** `platform_job_start`, `platform_job_poll`, `platform_job_result`  
 
-**Memory / report:** `platform_findings`, `platform_record_finding`, `platform_finalize_check`
+**Advise:** `platform_playbook`, `platform_skills`, `platform_config`  
+
+**Author memory:** `platform_graph_link`, `platform_graph_link_many`, `platform_tag_asset`, `platform_record_finding`  
+
+**Query memory:** `platform_findings`, `platform_graph_query`, `platform_crown_jewels`, `platform_thinking`, `platform_memory_search`, `platform_evidence_chain`, `platform_attempts`, `platform_artifact`  
+
+**Report:** `platform_finalize_check`, `platform_report_outline`
 
 ---
 
