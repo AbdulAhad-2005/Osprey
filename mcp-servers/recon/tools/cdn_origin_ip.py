@@ -1,12 +1,11 @@
 """
-CDN detection and origin IP discovery — find real IPs behind Cloudflare/Akamai/etc.
+CDN-agnostic origin IP discovery — find real IPs behind Cloudflare/Akamai/Fastly/etc.
 
 Uses multiple passive signals to attribute origin IPs:
 1. DNS history and subdomain analysis
 2. MX/SPF records (mail servers often share origin)
-3. Certificate transparency SANs
-4. Reverse DNS and ASN correlation
-5. Common origin IP patterns
+3. Reverse DNS and ASN correlation
+4. Common origin IP patterns
 
 Args:
     domain: Target domain to find origin IP for
@@ -37,7 +36,7 @@ if str(_ROOT) not in sys.path:
 from _core.runner import run_tool
 from _core.result import ToolResult
 
-TOOL_NAME = "cloudflare_origin_ip"
+TOOL_NAME = "cdn_origin_ip"
 CATEGORY = "recon"
 
 # Known CDN IP ranges and ASN patterns
@@ -56,83 +55,21 @@ CDN_CNAME_PATTERNS = {
     "cloudfront": [".cloudfront.net"],
     "azure_fd": [".azureedge.net", ".trafficmanager.net", ".azurefd.net"],
     "google_cloud": [".googleusercontent.com", ".ghs.google.com"],
+    "incapsula": [".incapsula.com", ".imperva.com"],
+    "stackpath": [".stackpathcdn.com"],
+    "keycdn": [".kxcdn.com"],
+    "cachefly": [".cachefly.net"],
 }
 
 CDN_HEADER_SIGNATURES = {
     "cloudflare": ["cf-ray", "cf-cache-status"],
     "akamai": ["x-akamai-transformed", "x-cache-key"],
-    "fastly": ["x-fastly-request-id", "x-served-by"],
+    "fastly": ["x-fastly-request-id", "x-served-by", "x-cache", "x-s", "x-timer"],
     "cloudfront": ["x-amz-cf-id", "x-amz-cf-pop"],
     "azure_fd": ["x-azure-ref", "x-fd-healthprobe"],
+    "incapsula": ["x-iinfo", "x-cdn", "incapsula"],
+    "stackpath": ["x-stackpath"],
 }
-
-
-def _check_cname_patterns(domain: str) -> tuple[str | None, str]:
-    """Check if domain CNAME points to known CDN."""
-    try:
-        cname = socket.getaddrinfo(domain, None, socket.AF_INET, socket.SOCK_STREAM)
-        if cname:
-            ip = cname[0][4][0]
-            for provider, patterns in CDN_CNAME_PATTERNS.items():
-                for pattern in patterns:
-                    if pattern in domain.lower():
-                        return provider, f"CNAME pattern: {pattern}"
-            return None, ip
-    except OSError:
-        pass
-    return None, ""
-
-
-def _resolve_mx_records(domain: str) -> list[str]:
-    """Resolve MX records to find mail server IPs."""
-    try:
-        import subprocess
-        result = subprocess.run(
-            ["dig", "+short", "MX", domain],
-            capture_output=True, text=True, timeout=10
-        )
-        mx_hosts = []
-        for line in result.stdout.splitlines():
-            parts = line.strip().split()
-            if len(parts) >= 2:
-                mx_hosts.append(parts[1].rstrip("."))
-            elif parts:
-                mx_hosts.append(parts[0].rstrip("."))
-
-        mx_ips = []
-        for host in mx_hosts:
-            try:
-                ips = socket.getaddrinfo(host, None, socket.AF_INET, socket.SOCK_STREAM)
-                for info in ips:
-                    mx_ips.append(info[4][0])
-            except OSError:
-                continue
-        return mx_ips
-    except Exception:
-        return []
-
-
-def _resolve_spf_ips(domain: str) -> list[str]:
-    """Extract IP addresses from SPF record."""
-    try:
-        import subprocess
-        result = subprocess.run(
-            ["dig", "+short", "TXT", domain],
-            capture_output=True, text=True, timeout=10
-        )
-        ips = []
-        for line in result.stdout.splitlines():
-            if "v=spf1" in line:
-                ip_pattern = re.compile(r'ip[46]:(\d{1,3}(?:\.\d{1,3}){3})')
-                ips.extend(ip_pattern.findall(line))
-                include_pattern = re.compile(r'include:(\S+)')
-                for match in include_pattern.finditer(line):
-                    sub_domain = match.group(1)
-                    sub_ips = _resolve_spf_ips(sub_domain)
-                    ips.extend(sub_ips)
-        return ips
-    except Exception:
-        return []
 
 
 def _get_reverse_dns(ip: str) -> str:
@@ -144,87 +81,57 @@ def _get_reverse_dns(ip: str) -> str:
         return ""
 
 
-def _detect_cdn_provider(domain: str) -> str | None:
-    """Detect CDN provider from DNS and HTTP signals."""
-    for provider, patterns in CDN_CNAME_PATTERNS.items():
-        for pattern in patterns:
-            if pattern in domain.lower():
-                return provider
-
-    try:
-        import subprocess
-        result = subprocess.run(
-            ["dig", "+short", "CNAME", domain],
-            capture_output=True, text=True, timeout=10
-        )
-        cname = result.stdout.strip().lower()
-        for provider, patterns in CDN_CNAME_PATTERNS.items():
-            for pattern in patterns:
-                if pattern in cname:
-                    return provider
-    except Exception:
-        pass
-
-    return None
-
-
 def build_command(**params: Any) -> str:
     """Build origin IP discovery command (multi-signal approach)."""
     domain = str(params.get("domain", "")).strip()
     timeout = params.get("timeout", 30)
 
     if not domain:
-        raise ValueError("cloudflare_origin_ip requires domain")
+        raise ValueError("cdn_origin_ip requires domain")
 
-    parts = ["bash", "-c"]
+    script = """set -e
+DOM='""" + domain + """'
+TO=""" + str(timeout) + """
+echo "=== CDN Detection ==="
+echo "CNAME: $(dig +short CNAME "$DOM" 2>/dev/null | head -1)"
+echo "A: $(dig +short A "$DOM" 2>/dev/null)"
+echo "AAAA: $(dig +short AAAA "$DOM" 2>/dev/null)"
+echo "NS: $(dig +short NS "$DOM" 2>/dev/null)"
+echo "MX: $(dig +short MX "$DOM" 2>/dev/null)"
 
-    script = f"""
-    DOMAIN="{domain}"
-    echo "=== CDN Detection ==="
-    DIG_CNAME=$(dig +short CNAME "$DOMAIN" 2>/dev/null)
-    DIG_A=$(dig +short A "$DOMAIN" 2>/dev/null)
-    DIG_AAAA=$(dig +short AAAA "$DOMAIN" 2>/dev/null)
-    DIG_NS=$(dig +short NS "$DOMAIN" 2>/dev/null)
-    DIG_MX=$(dig +short MX "$DOMAIN" 2>/dev/null)
+echo ""
+echo "=== MX Server IPs ==="
+for mx in $(dig +short MX "$DOM" 2>/dev/null | awk '{print $NF}' | sed 's/\\.$//' | sort -u); do
+    [ -z "$mx" ] && continue
+    MX_IP=$(dig +short A "$mx" 2>/dev/null | head -1)
+    echo "MX_IP: $mx -> $MX_IP"
+done
 
-    echo "CNAME: $DIG_CNAME"
-    echo "A: $DIG_A"
-    echo "AAAA: $DIG_AAAA"
-    echo "NS: $DIG_NS"
-    echo "MX: $DIG_MX"
+echo ""
+echo "=== SPF Records ==="
+dig +short TXT "$DOM" 2>/dev/null | grep -i spf || true
 
-    echo ""
-    echo "=== MX Server IPs ==="
-    for mx in $DIG_MX; do
-        MX_HOST=$(echo "$mx" | awk '{{print $2}}' | tr -d '.')
-        if [ -n "$MX_HOST" ]; then
-            MX_IP=$(dig +short A "$MX_HOST" 2>/dev/null | head -1)
-            echo "MX_IP: $MX_HOST -> $MX_IP"
-        fi
-    done
+echo ""
+echo "=== Common Subdomains for Origin Detection ==="
+for sub in mail smtp pop imap webmail ftp vpn gateway direct origin; do
+    SUB_RAW=$(dig +short A "$sub.$DOM" 2>/dev/null | tail -1)
+    SUB_IP=""
+    if [ -n "$SUB_RAW" ] && echo "$SUB_RAW" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+        SUB_IP="$SUB_RAW"
+    elif [ -n "$SUB_RAW" ]; then
+        CNAME=$(echo "$SUB_RAW" | sed 's/\.$//')
+        SUB_IP=$(dig +short A "$CNAME" 2>/dev/null | grep -m1 -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
+    fi
+    if [ -n "$SUB_IP" ]; then
+        echo "SUBDOMAIN_IP: $sub.$DOM -> $SUB_IP"
+    fi
+done
 
-    echo ""
-    echo "=== SPF Records ==="
-    dig +short TXT "$DOMAIN" 2>/dev/null | grep -i spf
-
-    echo ""
-    echo "=== Common Subdomains for Origin Detection ==="
-    for sub in mail smtp pop imap webmail ftp vpn gateway direct origin; do
-        SUB_IP=$(dig +short A "$sub.$DOMAIN" 2>/dev/null | head -1)
-        if [ -n "$SUB_IP" ]; then
-            echo "SUBDOMAIN_IP: $sub.$DOMAIN -> $SUB_IP"
-        fi
-    done
-
-    echo ""
-    echo "=== HTTP Headers for CDN Detection ==="
-    curl -sI --max-time {timeout} "http://$DOMAIN" 2>/dev/null | head -20
-    """.strip()
-
-    script_lines = script.replace("\n", " &&\n")
-    parts.append(shlex.quote(script))
-
-    return " ".join(parts)
+echo ""
+echo "=== HTTP Headers for CDN Detection ==="
+curl -sI --max-time "$TO" "http://$DOM" 2>/dev/null | head -20 || true
+"""
+    return script.strip()
 
 
 def parse(result: ToolResult) -> dict[str, Any]:

@@ -26,6 +26,8 @@ TYPED_RECON_NETWORK_TOOLS: tuple[str, ...] = (
     "tlsx_inspect",
     "crt_sh_query",
     "cdn_origin_probe",
+    "origin_ip_attribution",
+    "cdn_origin_ip",
     "shodan_search",
     "shodan_host_info",
     "subdomain_takeover_check",
@@ -56,19 +58,21 @@ _TOOL_BLURBS: dict[str, str] = {
     "hakrawler_crawl": "Crawl links from a URL (url= or target=).",
     "dnsenum_scan": "DNS enumeration (domain=).",
     "fierce_scan": "DNS brute / fierce (domain=).",
-    "whois_lookup": "WHOIS lookup (domain=).",
+    "whois_lookup": "WHOIS lookup (domain=). Auto-strips subdomains to apex domain.",
     "gau_discovery": "GetAllUrls historical URLs (domain=).",
     "anew_data_processing": "Deduplicate line-based tool output (input_data=).",
     "domain_hunter": "Sister/affiliate root domains (domain=).",
     "dnsx_resolve": "Bulk DNS resolve to IPs/CNAMEs (target= host list).",
     "tlsx_inspect": "TLS cert / SAN inspection (target=).",
-    "crt_sh_query": "Certificate Transparency via crt.sh (domain=).",
+    "crt_sh_query": "Certificate Transparency via crt.sh (domain=). Retries on timeout.",
     "cdn_origin_probe": "Soft CDN/origin clues via dig+curl (domain=). Confirm before scanning edges.",
     "shodan_search": "Passive Shodan search (query= or domain= → hostname:). Needs SHODAN_API_KEY.",
     "shodan_host_info": "Passive Shodan host detail (ip=/target= IP). Needs SHODAN_API_KEY.",
     "subdomain_takeover_check": "Dangling CNAME / SaaS takeover fingerprints (target= or mode=list + subdomains=).",
-    "nmap_syn_scan": "TCP connect port scan (target=).",
-    "nmap_service_scan": "Nmap service/version scan (target=, ports=).",
+    "origin_ip_attribution": "Full origin IP attribution pipeline — DNS, TLS, headers, CIDR classification, verification (domain=).",
+    "cdn_origin_ip": "CDN-agnostic origin IP finder — MX/SPF/subdomains/HTTP headers with confidence scoring (domain=).",
+    "nmap_syn_scan": "TCP SYN scan (-sS, target=). Requires root/NET_RAW for raw sockets; falls back to connect scan if unprivileged. OS detection (-O) needs root — skip -O unless privileged.",
+    "nmap_service_scan": "Nmap service/version scan (-sV -sC, target=, ports=).",
     "nmap_custom_scan": "Custom nmap (target=, flags= required).",
     "rustscan_fast_scan": "Fast port discovery (target=).",
     "naabu_port_scan": "Naabu fast port discovery (target=, optional ports=/top_ports=).",
@@ -84,6 +88,23 @@ _TOOL_BLURBS: dict[str, str] = {
     "autorecon_scan": "AutoRecon (target=).",
     "autorecon_comprehensive": "AutoRecon comprehensive (target=).",
 }
+
+
+def _normalize_ports_flag(ports: str) -> str:
+    """Convert raw ports string to CLI -p flag (e.g. '22,443' → '-p 22,443').
+
+    Strips any mistaken -p/--ports prefix the LLM may include.
+    Returns '' when ports is empty.
+    """
+    import re
+
+    cleaned = (ports or "").strip()
+    if not cleaned:
+        return ""
+    cleaned = re.sub(r"^--?p(?:orts?)?\s*", "", cleaned, flags=re.I).strip()
+    if not cleaned:
+        return ""
+    return f"-p {cleaned}"
 
 
 def _build_params(
@@ -106,8 +127,6 @@ def _build_params(
         params["host"] = host.strip()
     if url.strip():
         params["url"] = url.strip()
-    if ports.strip():
-        params["ports"] = ports.strip()
     if flags.strip():
         params["flags"] = flags.strip()
     if input_data.strip():
@@ -144,12 +163,15 @@ def register_typed_recon_network_tools(
                 additional_args: str = "",
                 timeout_seconds: int = 300,
             ) -> str:
+                ports_flag = _normalize_ports_flag(ports)
+                extra = (additional_args or "").strip()
+                if ports_flag:
+                    extra = f"{ports_flag} {extra}".strip() if extra else ports_flag
                 params = _build_params(
                     domain=domain,
                     target=target,
                     host=host,
                     url=url,
-                    ports=ports,
                     flags=flags,
                     input_data=input_data,
                     additional_args="",
@@ -157,7 +179,7 @@ def register_typed_recon_network_tools(
                 return execute(
                     name,
                     params,
-                    additional_args=additional_args,
+                    additional_args=extra,
                     timeout_seconds=timeout_seconds,
                 )
 

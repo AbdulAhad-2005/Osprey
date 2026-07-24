@@ -47,7 +47,7 @@ def build_command(**params: Any) -> str:
     threads = params.get("threads", 50)
     additional_args = params.get("additional_args", "")
 
-    suffix = f"-t {threads}"
+    suffix = "-no-color -t " + str(threads)
     if probe:
         suffix += " -probe"
     if tech_detect:

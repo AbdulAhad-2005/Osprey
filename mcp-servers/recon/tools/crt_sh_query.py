@@ -9,7 +9,7 @@ Args:
     additional_args: Additional curl arguments
 
 Returns:
-    Certificate entries from CT logs including domains, SANs, issuer, and dates
+    Certificate entries from ct.sh including domains, SANs, issuer, and dates
 
 Harvested: crt.sh Certificate Transparency API for passive subdomain discovery.
 Category: recon
@@ -37,10 +37,10 @@ CRTSH_URL = "https://crt.sh/?q={domain}&output=json"
 
 
 def build_command(**params: Any) -> str:
-    """Build curl command to query crt.sh API."""
+    """Build curl command to query crt.sh API with built-in retry."""
     domain = str(params.get("domain", "")).strip()
     include_subdomains = params.get("include_subdomains", True)
-    timeout = params.get("timeout", 30)
+    timeout = params.get("timeout", 45)
     additional_args = str(params.get("additional_args", "")).strip()
 
     if not domain:
@@ -53,7 +53,17 @@ def build_command(**params: Any) -> str:
 
     url = CRTSH_URL.format(domain=query)
 
-    parts = ["curl", "-s", "-sS", "--max-time", str(timeout)]
+    # curl --retry handles transient failures and 5xx from the public crt.sh
+    # service (which is shared infrastructure and frequently returns 429/503).
+    # --retry-connretry: retry even on connection errors (not just HTTP codes).
+    parts = [
+        "curl", "-s", "-sS",
+        "--max-time", str(timeout),
+        "--retry", "3",
+        "--retry-delay", "5",
+        "--retry-max-time", str(int(timeout) + 30),
+        "--retry-connretry",
+    ]
 
     if additional_args:
         parts.append(additional_args)
@@ -71,7 +81,11 @@ def parse(result: ToolResult) -> dict[str, Any]:
     try:
         certs = json.loads(stdout)
     except (json.JSONDecodeError, ValueError):
-        return {"certificates": [], "count": 0, "error": "Invalid JSON response from crt.sh"}
+        return {
+            "certificates": [],
+            "count": 0,
+            "error": "Invalid JSON response from crt.sh — the service may be overloaded or blocking. Retry later or use an alternative CT log (Censys, Certspotter).",
+        }
 
     if not isinstance(certs, list):
         return {"certificates": [], "count": 0, "error": "Unexpected response format"}
@@ -107,7 +121,7 @@ def run(
     domain: str = "",
     include_subdomains: bool = True,
     match_type: str = "subdomains",
-    timeout: int = 30,
+    timeout: int = 45,
     additional_args: str = "",
     use_recovery: bool = True,
     use_cache: bool = True,
