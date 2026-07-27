@@ -367,7 +367,7 @@ def build_command(**params: Any) -> str:
             f'    SUB_IP="$SUB_RAW"',
             f'  elif [ -n "$SUB_RAW" ]; then',
             f'    CNAME=$(echo "$SUB_RAW" | sed \'s/\\.$//\')',
-            f'    SUB_IP=$(dig +short A "$CNAME" 2>/dev/null | grep -m1 -E \'^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$\')',
+            f'    SUB_IP=$(dig +short A "$CNAME" 2>/dev/null | grep -m1 -E \'^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$\' || true)',
             f'  fi',
             f'  if [ -n "$SUB_IP" ]; then',
             f'    echo "SUBDOMAIN_IP: $sub.{target} -> $SUB_IP"',

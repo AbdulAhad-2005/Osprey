@@ -21,7 +21,7 @@ All **real CLI pentest tools** from HexStrike are lifted — not AI helpers, das
 | **binary** | 15 | gdb, ghidra, angr, radare2, ropgadget, checksec |
 | **forensics** | 6 | volatility, foremost, exiftool, steghide, hashpump |
 
-**Hero nmap (3):** `nmap_syn_scan`, `nmap_service_scan`, `nmap_custom_scan` via [`network/nmap_wrapper.py`](network/nmap_wrapper.py) — replaces harvested HexStrike nmap.
+**Hero nmap (3):** `nmap_syn_scan`, `nmap_service_scan`, `nmap_custom_scan` — command building is special-cased in the backend's `command_builder.py::_build_nmap_command` (handles unprivileged-container flag rewriting), not routed through a per-tool `tools/*.py` adapter here.
 
 **Total MCP-exposed tools: 90** (87 harvested + 3 nmap).
 
@@ -32,7 +32,7 @@ All **real CLI pentest tools** from HexStrike are lifted — not AI helpers, das
 | ~60 MCP entries | AI wrappers, bug-bounty workflows, telemetry, `execute_command`, file/process ops |
 | `jwt_analyzer` | Pure Python logic in Flask — no CLI binary |
 | `comprehensive_api_audit` | MCP wrapper with no server route |
-| `nmap_scan`, `nmap_advanced_scan` | Superseded by `nmap_wrapper.py` |
+| `nmap_scan`, `nmap_advanced_scan` | Superseded by the `command_builder.py` nmap special-case |
 
 ## Layout
 
@@ -40,7 +40,7 @@ All **real CLI pentest tools** from HexStrike are lifted — not AI helpers, das
 mcp-servers/
   _core/           # executor, cache, error_handler, runner, result
   recon/           tools/*.py  server.py
-  network/         tools/*.py  server.py  nmap_wrapper.py  nmap_tools.py
+  network/         tools/*.py  server.py
   web/
   vuln/
   cloud/

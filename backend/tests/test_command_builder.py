@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from pentest_platform.services.command_builder import (
-    _build_nmap_command,
-    _normalize_ports_value,
-)
+from pentest_platform.services.command_builder import _build_nmap_command
+from pentest_platform.services.target_utils import normalize_ports_value as _normalize_ports_value
 
 
 class TestNormalizePortsValue:

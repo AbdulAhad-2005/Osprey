@@ -45,6 +45,7 @@ def build_command(**params: Any) -> str:
         command += f" -I {interface}"
     if local_network:
         command += " -l"
+    elif target:
         command += f" {target}"
     if additional_args:
         command += f" {additional_args}"

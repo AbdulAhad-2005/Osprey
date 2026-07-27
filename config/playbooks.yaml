@@ -100,3 +100,34 @@ playbooks:
         suggested_params:
           target: "{{target}}"
         fallback: [netexec_scan]
+
+  web_depth_before_vuln:
+    phase: recon
+    description: >
+      Exhaust app depth on crown-jewel live hosts BEFORE mass nuclei/vuln scanning.
+      Clear js_surface_unanalyzed / content_discovery_thin / web_surface_no_app_depth.
+      Advisory only — adapt to evidence; do not treat as a rigid stage machine.
+    input: domain
+    steps:
+      - tool: platform_context
+        why: Read coverage gaps + crown jewels; list what is still shallow.
+        fallback: [platform_crown_jewels]
+      - tool: gau_discovery
+        why: Historical paths (helps but does not replace JS/dir depth).
+        suggested_params:
+          domain: "{{target}}"
+        fallback: [waybackurls_discovery]
+      - tool: platform_script
+        why: >
+          On SPA/Angular/React hosts — fetch HTML, collect script src, download
+          chunk/main bundles, extract /api routes and embedded keys; record
+          findings with tags js_bundle / embedded_api_key.
+        fallback: [katana_crawl, hakrawler_crawl]
+      - tool: ffuf_scan
+        why: Light directory discovery on 3–5 crown jewels only (not whole inventory).
+        suggested_params:
+          target: "{{crown_jewel_https}}"
+        fallback: [gobuster_scan, platform_script]
+      - tool: platform_finalize_check
+        why: Confirm app-depth gaps cleared before COMPLETE or broad vuln scan.
+        fallback: [platform_findings]
