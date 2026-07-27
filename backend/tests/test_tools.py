@@ -133,31 +133,12 @@ def test_delete_engagement() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Governance tests
+# Execution smoke test (no governance gate — execution is always attempted;
+# tool-level failures surface as 200/500, never a policy 403)
 # ---------------------------------------------------------------------------
 
-def test_governance_denies_gated_tool_without_exploitation() -> None:
-    """sqlmap (GATED) should be denied when exploitation is disabled."""
-    # Create engagement with exploitation disabled
-    response = client.post("/api/v1/engagements/", json={
-        "target": "10.0.0.1",
-        "rules_of_engagement": {
-            "allow_exploitation": False,
-        },
-    })
-    eng_id = response.json()["id"]
-
-    # Try to execute a GATED tool
-    response = client.post("/api/v1/mcp/execute", json={
-        "tool_name": "sqlmap_scan",
-        "params": {"url": "http://10.0.0.1/vuln?id=1"},
-        "engagement_id": eng_id,
-    })
-    assert response.status_code == 403
-
-
-def test_governance_allows_passive_tool() -> None:
-    """subfinder (PASSIVE) should always be allowed."""
+def test_execute_passive_tool_does_not_error_unexpectedly() -> None:
+    """subfinder call is attempted regardless of ROE/scope; MCP server may not be running in test env."""
     response = client.post("/api/v1/engagements/", json={
         "target": "example.com",
         "rules_of_engagement": {
@@ -168,59 +149,11 @@ def test_governance_allows_passive_tool() -> None:
     })
     eng_id = response.json()["id"]
 
-    # subfinder is PASSIVE — governance allows it, but MCP server may not be running
-    # We just test that governance passes (the MCP call itself may fail)
     response = client.post("/api/v1/mcp/execute", json={
         "tool_name": "subfinder_scan",
         "params": {"domain": "example.com"},
         "engagement_id": eng_id,
     })
-    # 500 = MCP server not running (expected in test env)
-    # 403 = governance denied (would mean governance is broken)
+    # 500 = MCP server not running (expected in test env); execution is
+    # never blocked by a policy layer, so no 403 can occur here.
     assert response.status_code != 403
-
-
-def test_governance_denies_out_of_scope_target() -> None:
-    response = client.post("/api/v1/engagements/", json={
-        "target": "10.0.0.1",
-        "rules_of_engagement": {
-            "scope": {
-                "out_of_scope": ["10.0.0.99"],
-            },
-        },
-    })
-    eng_id = response.json()["id"]
-
-    response = client.post("/api/v1/mcp/execute", json={
-        "tool_name": "subfinder_scan",
-        "params": {"domain": "10.0.0.99"},
-        "engagement_id": eng_id,
-    })
-    assert response.status_code == 403
-
-
-# ---------------------------------------------------------------------------
-# Audit log tests
-# ---------------------------------------------------------------------------
-
-def test_audit_log_records_denied_action() -> None:
-    # Create engagement with exploitation disabled
-    response = client.post("/api/v1/engagements/", json={
-        "target": "10.0.0.1",
-        "rules_of_engagement": {"allow_exploitation": False},
-    })
-    eng_id = response.json()["id"]
-
-    # Attempt gated tool
-    client.post("/api/v1/mcp/execute", json={
-        "tool_name": "sqlmap_scan",
-        "params": {"url": "http://10.0.0.1/vuln"},
-        "engagement_id": eng_id,
-    })
-
-    # Check audit log
-    response = client.get("/api/v1/audit/", params={"engagement_id": eng_id})
-    assert response.status_code == 200
-    entries = response.json()
-    assert len(entries) >= 1
-    assert entries[-1]["action"]["governance_decision"] == "denied"

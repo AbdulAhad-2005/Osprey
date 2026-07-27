@@ -4,7 +4,7 @@ Full integration test script for the tool feature.
 Tests the complete pipeline:
   1. Tool catalog (90 tools, categories, safety levels)
   2. Engagement CRUD with scope config
-  3. Governance enforcement (scope, safety, time windows)
+  3. Execution is never policy-gated (ROE/scope are persisted + shown to the agent only)
   4. MCP tool execution (with mock MCP server)
   5. Audit log recording
 
@@ -31,7 +31,6 @@ from pentest_platform.services.tool_registry import (
     get_tools_by_mcp_server,
     list_registered_tools,
 )
-from pentest_platform.services.governance import GovernanceEngine
 from pentest_platform.services.audit_log import AuditLog
 
 client = TestClient(app)
@@ -164,10 +163,11 @@ resp = client.get(f"/api/v1/engagements/{eng_id}")
 check("Deleted engagement returns 404", resp.status_code == 404)
 
 # =========================================================================
-section("5. GOVERNANCE — Scope enforcement")
+section("5. EXECUTION — no policy gate blocks tool calls")
 # =========================================================================
 
-# Create engagement with specific scope
+# Create engagement with ROE/scope set (still persisted + shown to the
+# agent, but no longer consulted before execution — see docs/ENGINEERING_REFERENCE.md)
 resp = client.post("/api/v1/engagements/", json={
     "target": "10.0.0.1",
     "rules_of_engagement": {
@@ -180,89 +180,16 @@ resp = client.post("/api/v1/engagements/", json={
 })
 eng_id = resp.json()["id"]
 
-# 5a. GATED tool denied (exploitation disabled)
-resp = client.post("/api/v1/mcp/execute", json={
-    "tool_name": "sqlmap_scan",
-    "params": {"url": "http://10.0.0.1/vuln?id=1"},
-    "engagement_id": eng_id,
-})
-check("GATED tool denied when exploitation=false", resp.status_code == 403,
-      resp.json().get("detail", ""))
-
-# 5b. GATED tool denied (requires approval)
-resp = client.post("/api/v1/mcp/execute", json={
-    "tool_name": "metasploit_run",
-    "params": {"module": "exploit/test", "options": "{}"},
-    "engagement_id": eng_id,
-})
-check("Metasploit denied (requires approval)", resp.status_code == 403)
-
-# 5c. Out-of-scope target denied
-resp = client.post("/api/v1/mcp/execute", json={
-    "tool_name": "subfinder_scan",
-    "params": {"domain": "10.0.0.99"},
-    "engagement_id": eng_id,
-})
-check("Out-of-scope target denied", resp.status_code == 403,
-      resp.json().get("detail", ""))
-
-# 5d. Blocked category denied
-resp = client.post("/api/v1/mcp/execute", json={
-    "tool_name": "hydra_attack",
-    "params": {"target": "10.0.0.1", "service": "ssh"},
-    "engagement_id": eng_id,
-})
-check("Blocked category (creds) denied", resp.status_code == 403,
-      resp.json().get("detail", ""))
-
-# 5e. PASSIVE tool on in-scope target allowed (MCP may fail but governance passes)
+# Any tool call is attempted regardless of ROE/scope; execution is never
+# blocked by a policy layer, so a 403 here would indicate a regression.
 resp = client.post("/api/v1/mcp/execute", json={
     "tool_name": "subfinder_scan",
     "params": {"domain": "lab.example.com"},
     "engagement_id": eng_id,
 })
-check("PASSIVE tool on in-scope target not governance-denied",
+check("Tool execution is never policy-denied (no 403)",
       resp.status_code != 403,
       f"got {resp.status_code}: {resp.json().get('detail', '')}")
-
-# =========================================================================
-section("6. GOVERNANCE — Direct unit tests")
-# =========================================================================
-
-ge = GovernanceEngine()
-
-from pentest_platform.schemas.engagement import Engagement, RulesOfEngagement, ScopeConfig
-
-# Create a mock engagement
-engagement = Engagement(
-    target="10.0.0.1",
-    rules_of_engagement=RulesOfEngagement(
-        allow_exploitation=False,
-        scope=ScopeConfig(
-            in_scope_targets=["10.0.0.0/24", "lab.example.com"],
-            out_of_scope=["10.0.0.50"],
-        ),
-    ),
-)
-
-# Test PASSIVE tool — always allowed
-tool_subfinder = get_tool_definition("subfinder_scan")
-decision = ge.check(tool_subfinder, engagement, target="10.0.0.1")
-check("PASSIVE tool always approved", decision.approved)
-
-# Governance is permissive — GATED / out-of-scope no longer block execution
-tool_sqlmap = get_tool_definition("sqlmap_scan")
-decision = ge.check(tool_sqlmap, engagement, target="10.0.0.1")
-check("GATED tool approved (permissive governance)", decision.approved)
-
-decision = ge.check(tool_subfinder, engagement, target="10.0.0.50")
-check("Out-of-scope target approved (permissive governance)", decision.approved)
-
-decision = ge.check(tool_subfinder, engagement, target="10.0.0.42")
-check("In-scope CIDR match allowed", decision.approved)
-
-decision = ge.check(tool_subfinder, None, target="anything")
-check("No engagement = permissive mode", decision.approved)
 
 # =========================================================================
 section("7. AUDIT LOG")
@@ -275,7 +202,6 @@ entry = audit.record(AuditAction(
     tool_name="test_tool",
     target="10.0.0.1",
     success=True,
-    governance_decision="approved",
 ))
 check("Audit log records entry", entry.id)
 check("Audit log has timestamp", entry.timestamp is not None)

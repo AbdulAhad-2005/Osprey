@@ -120,7 +120,7 @@ for sub in mail smtp pop imap webmail ftp vpn gateway direct origin; do
         SUB_IP="$SUB_RAW"
     elif [ -n "$SUB_RAW" ]; then
         CNAME=$(echo "$SUB_RAW" | sed 's/\.$//')
-        SUB_IP=$(dig +short A "$CNAME" 2>/dev/null | grep -m1 -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
+        SUB_IP=$(dig +short A "$CNAME" 2>/dev/null | grep -m1 -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || true)
     fi
     if [ -n "$SUB_IP" ]; then
         echo "SUBDOMAIN_IP: $sub.$DOM -> $SUB_IP"

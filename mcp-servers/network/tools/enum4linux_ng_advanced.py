@@ -53,17 +53,22 @@ def build_command(**params: Any) -> str:
         command += f" -p {password}"
     if domain:
         command += f" -d {domain}"
-    enum_options = []
+    # enum4linux-ng has no "-A <list>" syntax — -A is a standalone "do all
+    # simple enumeration" flag; individual categories are separate real
+    # flags (-S/-U/-G/-P). Emit -A only when all four are requested.
+    enum_flags = []
     if shares:
-        enum_options.append("S")
+        enum_flags.append("-S")
     if users:
-        enum_options.append("U")
+        enum_flags.append("-U")
     if groups:
-        enum_options.append("G")
+        enum_flags.append("-G")
     if policy:
-        enum_options.append("P")
-    if enum_options:
-        command += f" -A {','.join(enum_options)}"
+        enum_flags.append("-P")
+    if len(enum_flags) == 4:
+        command += " -A"
+    elif enum_flags:
+        command += " " + " ".join(enum_flags)
     if additional_args:
         command += f" {additional_args}"
     return command.strip()

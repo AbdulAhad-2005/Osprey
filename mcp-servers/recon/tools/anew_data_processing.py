@@ -36,6 +36,7 @@ def build_command(**params: Any) -> str:
     additional_args = params.get("additional_args", "")
     if output_file:
         command = f"echo '{input_data}' | anew {output_file}"
+    else:
         command = f"echo '{input_data}' | anew"
     if additional_args:
         command += f" {additional_args}"

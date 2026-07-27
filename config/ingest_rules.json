@@ -1,1 +1,0 @@
-{"_deprecated": "Use ingest_rules.yaml — YAML is the source of truth. This file is ignored by the loader when YAML exists.", "rules": []}

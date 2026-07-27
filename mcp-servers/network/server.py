@@ -39,12 +39,9 @@ def _register_harvested_tools() -> None:
 
 _register_harvested_tools()
 
-_NET_DIR = _CATEGORY_DIR
-if str(_NET_DIR) not in sys.path:
-    sys.path.insert(0, str(_NET_DIR))
-from nmap_tools import register_nmap_tools
-
-register_nmap_tools(mcp)
+# nmap tools are special-cased in the backend's command_builder.py (container
+# privilege handling) rather than routed through a per-tool build_command
+# module, so there is nothing to harvest/register here for them.
 
 
 if __name__ == "__main__":

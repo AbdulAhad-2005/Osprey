@@ -1635,21 +1635,20 @@ def platform_fanout(
 def _load_playbooks() -> dict[str, Any]:
     from pathlib import Path
 
+    # YAML is the source of truth for config/ (see config/README.md); JSON is
+    # only a legacy fallback if the yaml file is ever missing.
     root = Path(__file__).resolve().parents[1] / "config"
-    json_path = root / "playbooks.json"
     yaml_path = root / "playbooks.yaml"
+    json_path = root / "playbooks.json"
     try:
+        if yaml_path.exists():
+            import yaml  # type: ignore
+
+            data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+            return data.get("playbooks") or {}
         if json_path.exists():
             data = json.loads(json_path.read_text(encoding="utf-8"))
             return data.get("playbooks") or {}
-        if yaml_path.exists():
-            try:
-                import yaml  # type: ignore
-
-                data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
-                return data.get("playbooks") or {}
-            except Exception as exc:  # noqa: BLE001
-                _log(f"playbooks yaml load failed: {exc}")
     except Exception as exc:  # noqa: BLE001
         _log(f"playbooks load failed: {exc}")
     return {}
@@ -1661,7 +1660,7 @@ def platform_playbook(name: str = "", target: str = "") -> str:
     Advisory playbook only — does NOT auto-run tools.
 
     Returns a suggested tool sequence you may follow, edit, or ignore.
-    Names: web_recon_light | network_crown_jewels | dns_deep | smb_followup
+    Names: web_recon_light | network_crown_jewels | dns_deep | smb_followup | web_depth_before_vuln
     Pass empty name to list available playbooks.
     """
     books = _load_playbooks()
