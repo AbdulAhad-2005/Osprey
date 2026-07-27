@@ -586,6 +586,11 @@ def _format_exec_result(data: dict[str, Any]) -> str:
         parts.append(f"**Note:** {parallel_note}")
     elif data.get("next_hint") and "Parallel note" in str(data.get("next_hint")):
         parts.append(f"**Note:** {data['next_hint']}")
+    # Active-memory awareness — drift / unexplored / unread jobs (advisory, shows on
+    # success too, because that's exactly when the agent keeps going without re-syncing).
+    mem_note = hybrid.get("memory_awareness") if isinstance(hybrid, dict) else None
+    if mem_note:
+        parts.append(f"**Memory:** {mem_note}")
     if arts:
         parts.append(_block("Full output on disk (Kali)", arts))
     # Gaps from memory — data, not orders
@@ -1041,6 +1046,63 @@ def platform_attempts(asset: str = "", contains: str = "", limit: int = 40) -> s
     return _safe(_run)
 
 
+def _build_finding_body(
+    *,
+    title: str,
+    evidence: str,
+    finding_type: str = "observation",
+    evidence_grade: str = "observed",
+    claim_severity: str = "none",
+    description: str = "",
+    source_tool: str = "operator_record",
+    derived_from: str = "",
+    tags: str = "",
+    metadata_json: Any = "",
+    confidence: str = "",
+) -> dict[str, Any] | str:
+    """Assemble a Finding POST body from operator input, or return an ERROR string."""
+    title = (title or "").strip()
+    evidence = (evidence or "").strip()
+    if not title or not evidence:
+        return "ERROR: title and evidence are required"
+
+    meta = _coerce_params(metadata_json) if metadata_json not in ("", None) else {}
+    if isinstance(meta, str):  # _coerce_params returned an error
+        return f"ERROR: metadata_json invalid — {meta}"
+    if (derived_from or "").strip():
+        meta["derived_from"] = [
+            x.strip() for x in derived_from.replace(";", ",").split(",") if x.strip()
+        ]
+
+    tag_list = ["operator_recorded"]
+    for t in re.split(r"[,\s]+", tags or ""):
+        t = t.strip()
+        if t and t not in tag_list:
+            tag_list.append(t)
+
+    grade = (evidence_grade or "observed").strip().lower()
+    conf = (confidence or "").strip().lower()
+    if conf not in ("confirmed", "likely", "hypothesis"):
+        conf = "confirmed" if grade == "observed" else "likely"
+
+    return {
+        "engagement_id": _SESSION_ENGAGEMENT_ID,
+        "run_id": SESSION_RUN_ID,
+        "finding_type": (finding_type or "observation").strip().lower(),
+        "title": title,
+        "description": (description or "").strip(),
+        "evidence": evidence,
+        "evidence_grade": grade,
+        "claim_severity": (claim_severity or "none").strip().lower(),
+        "confidence": conf,
+        "source_tool": source_tool or "operator_record",
+        "target": _SESSION_TARGET,
+        "tags": tag_list,
+        "metadata": meta,
+        "extra": {},
+    }
+
+
 @mcp.tool()
 def platform_record_finding(
     title: str,
@@ -1051,6 +1113,9 @@ def platform_record_finding(
     description: str = "",
     source_tool: str = "operator_record",
     derived_from: str = "",
+    tags: str = "",
+    metadata_json: Any = "",
+    confidence: str = "",
 ) -> str:
     """
     Persist one observed fact into engagement memory (solves chat-vs-store drift).
@@ -1064,35 +1129,37 @@ def platform_record_finding(
     to the user, it should also be here — chat is not memory.
 
     evidence_grade: observed|inferred|unverified.
-    finding_type: url|host|port|service|technology|observation|subdomain.
+    finding_type: url|host|port|service|technology|observation|subdomain
+      (use observation for anything that doesn't fit — it's the catch-all).
     claim_severity is clamped by evidence_grade (CRITICAL needs observed).
     derived_from: optional comma-separated parent finding ids (evidence chain).
+
+    Flexibility (structure it your way — the platform stores whatever you give):
+    - tags: comma/space list of your own labels (e.g. "oracle,weblogic,login-portal").
+    - metadata_json: an object of arbitrary structured fields you choose
+      (e.g. {"kind":"jwt","alg":"none","endpoint":"/api/v1/auth"}). Use this to
+      record shapes the 7 finding types don't capture — the platform does not
+      constrain the keys.
+    - confidence: confirmed|likely|hypothesis (defaults from evidence_grade).
+    For many facts at once, prefer platform_record_findings (one call).
     """
     def _run() -> str:
         _require_bound_target()
-        meta: dict[str, Any] = {}
-        if (derived_from or "").strip():
-            meta["derived_from"] = [
-                x.strip() for x in derived_from.replace(";", ",").split(",") if x.strip()
-            ]
-        body = {
-            "engagement_id": _SESSION_ENGAGEMENT_ID,
-            "run_id": SESSION_RUN_ID,
-            "finding_type": (finding_type or "observation").strip().lower(),
-            "title": title.strip(),
-            "description": description.strip(),
-            "evidence": evidence.strip(),
-            "evidence_grade": (evidence_grade or "observed").strip().lower(),
-            "claim_severity": (claim_severity or "none").strip().lower(),
-            "confidence": "confirmed" if evidence_grade.strip().lower() == "observed" else "likely",
-            "source_tool": source_tool or "operator_record",
-            "target": _SESSION_TARGET,
-            "tags": ["operator_recorded"],
-            "metadata": meta,
-            "extra": {},
-        }
-        if not body["title"] or not body["evidence"]:
-            return "ERROR: title and evidence are required"
+        body = _build_finding_body(
+            title=title,
+            evidence=evidence,
+            finding_type=finding_type,
+            evidence_grade=evidence_grade,
+            claim_severity=claim_severity,
+            description=description,
+            source_tool=source_tool,
+            derived_from=derived_from,
+            tags=tags,
+            metadata_json=metadata_json,
+            confidence=confidence,
+        )
+        if isinstance(body, str):
+            return body
         data = _post("/api/v1/findings/", body, timeout=30)
         return (
             "### OPERATOR MIRROR — RECORDED FINDING\n"
@@ -1102,6 +1169,86 @@ def platform_record_finding(
             f"title: {data.get('title')}\n"
             "Call platform_findings to verify; then platform_finalize_check again."
         )
+
+    return _safe(_run)
+
+
+@mcp.tool()
+def platform_record_findings(items_json: Any) -> str:
+    """
+    Persist MANY operator-authored facts in one call (bulk platform_record_finding).
+
+    Use this after reading a large raw output (GAU/wayback dumps, a JS bundle, a
+    cert SAN list, a page of banners) so everything you noticed lands in memory
+    in a single round-trip instead of one call per fact — chat is not memory,
+    and this makes storing-everything cheap.
+
+    items_json: a JSON array (or JSON string of one). Each item accepts the same
+    fields as platform_record_finding — at minimum title + evidence:
+      [
+        {"title":"...","evidence":"...","finding_type":"url","evidence_grade":"observed",
+         "tags":"oracle,api","metadata_json":{"status":401}},
+        {"title":"...","evidence":"...","finding_type":"observation"}
+      ]
+    Each item is stored with the same evidence-law clamping and graph ingest as a
+    single write; duplicates are de-duped by content.
+    """
+    def _run() -> str:
+        _require_bound_target()
+        raw = items_json
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                return f"ERROR: items_json is not valid JSON: {exc}"
+        if isinstance(raw, dict):
+            raw = [raw]
+        if not isinstance(raw, list) or not raw:
+            return "ERROR: items_json must be a non-empty JSON array of finding objects"
+        if len(raw) > 200:
+            return "ERROR: too many items (max 200 per call — split into batches)"
+
+        bodies: list[dict[str, Any]] = []
+        errors: list[str] = []
+        for i, item in enumerate(raw):
+            if not isinstance(item, dict):
+                errors.append(f"item {i}: not an object")
+                continue
+            body = _build_finding_body(
+                title=str(item.get("title") or ""),
+                evidence=str(item.get("evidence") or ""),
+                finding_type=str(item.get("finding_type") or "observation"),
+                evidence_grade=str(item.get("evidence_grade") or "observed"),
+                claim_severity=str(item.get("claim_severity") or "none"),
+                description=str(item.get("description") or ""),
+                source_tool=str(item.get("source_tool") or "operator_record"),
+                derived_from=str(item.get("derived_from") or ""),
+                tags=str(item.get("tags") or "") if not isinstance(item.get("tags"), list)
+                else ",".join(str(x) for x in item.get("tags")),
+                metadata_json=item.get("metadata_json") or item.get("metadata") or "",
+                confidence=str(item.get("confidence") or ""),
+            )
+            if isinstance(body, str):
+                errors.append(f"item {i}: {body}")
+            else:
+                bodies.append(body)
+
+        if not bodies:
+            return "ERROR: no valid findings.\n" + "\n".join(errors[:20])
+
+        data = _post("/api/v1/findings/bulk", bodies, timeout=60)
+        stored = data.get("findings") or []
+        parts = [
+            "### OPERATOR MIRROR — RECORDED FINDINGS (bulk)",
+            _session_header(),
+            f"Stored {len(stored)} finding(s) (of {len(raw)} submitted"
+            + (f"; {len(bodies) - len(stored)} deduped" if len(bodies) > len(stored) else "")
+            + ").",
+        ]
+        if errors:
+            parts.append(_block(f"Skipped {len(errors)}", errors[:20]))
+        parts.append("Call platform_findings to verify.")
+        return "\n".join(parts)
 
     return _safe(_run)
 

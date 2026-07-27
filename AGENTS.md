@@ -71,6 +71,10 @@ each naturally comes to mind:
   relationship). Typed-tool findings auto-ingest; anything you noticed by reading raw output
   yourself does not — that's on you to persist. Structural relations (subdomain→domain,
   host→port→service) build themselves; everything else needs you to say it.
+  Persist many facts from one raw read in a single call with `platform_record_finding(s)`
+  (bulk) — tags/metadata are yours to shape. When a tool card shows a **Memory:** note
+  (drift / unexplored assets / unread jobs), re-sync before pressing on — don't stop with
+  discovered assets left unexplored.
 - Tools auto-ingest findings. Call `platform_findings` only at the operator's request or before a final report — not after every tool.
 - Don't pause the engagement to grade/mirror/dump. Hack first; report when the surface story is coherent.
 
