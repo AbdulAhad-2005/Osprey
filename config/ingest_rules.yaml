@@ -147,7 +147,14 @@ rules:
     tags: [auto_ingest, banner, version]
 
   - id: nmap_service_version
-    pattern: '(?i)(\d{1,5})/(tcp|udp)\s+open\s+(\S+)\s+([^\n]{3,100})'
+    # [ \t] (not \s) between every token so the 4th group can never cross a
+    # newline — \s matches \n, and when nmap has no inline version (a plain
+    # "80/tcp open  http" line, common whenever -sV didn't fingerprint it)
+    # this rule was grabbing the *next line* instead — usually an NSE script
+    # result like "|_http-title: ..." — producing a garbage "service" finding
+    # whose title was really two unrelated lines concatenated. Same bug class
+    # already fixed once below for tech_version_line; never applied here.
+    pattern: '(?i)(\d{1,5})/(tcp|udp)[ \t]+open[ \t]+(\S+)[ \t]+([^\n]{3,100})'
     finding_type: service
     evidence_grade: observed
     claim_severity: info
