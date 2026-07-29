@@ -13,6 +13,7 @@ surface_expansion:
   - "PORTS - top-ports/1-1000/known opens on worth-time IPs; NEVER full 1-65535 unless human OK + confirm_expensive; on fail shrink don't widen."
   - "FOOTPRINT - OS/service banners, tech, emails/creds only when observed; web stack + interesting paths/URLs on live apps."
   - "INVENT - custom paths, JS route extract, API trees → platform_script (+ FINDING markers); use platform_job_start for long branches."
+  - "IDENTITY (passive) - as the org/site is mapped, harvest the public people surface (web_contact_harvest on the site, theHarvester, metagoofil) and RECURSE each lead: name→email_permute+maigret, email→holehe, username→maigret/sherlock, phone→phoneinfoga. Public sources only — no breach data, no logins."
   - "DEEPEN - crown jewels / confirmed roles get app depth; then finalize grades."
 
 # Product/fingerprint loop — runs *on assets you already reached*, not instead of expansion.
@@ -97,6 +98,18 @@ signal_classes:
       - whatweb_scan for deeper fingerprint
       - tech_stack_analyze for comprehensive report
       - targeted probe based on CMS/server type
+
+  - id: osint_identity_pivot
+    pattern: '(?i)([a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}|\bosint\b|\blinkedin\b)'
+    think:
+      - "An identity lead (email / name / username / phone) is a PIVOT, not a place to stop — recurse on it."
+      - "Name → email_permute + maigret; email → holehe; username → maigret/sherlock; phone → phoneinfoga; document → exiftool_extract for author."
+      - "Grade as inferred/unverified: public-source matches are leads. Do not assert a person owns an account without corroboration (name collision + username reuse are real)."
+      - "Passive only — public sources and the target's own website. No breach/leak data, no login attempts."
+    next_probes:
+      - web_contact_harvest on the seed site
+      - theharvester on the domain
+      - holehe / maigret / email_permute on each discovered identity
 
   - id: tech_version_match
     # [ \t] (not \s) so this can't cross a newline and misread a table

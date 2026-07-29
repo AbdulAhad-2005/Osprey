@@ -54,6 +54,38 @@ if not target.startswith(("http://", "https://")):
 
 results = {"target": target, "methods": {}}
 
+def emit():
+    # Merge whatever methods have completed so far and print ONE JSON line,
+    # flushed immediately. Called after every method (not just at the end) so
+    # that if the outer exec_timeout kills this process mid-run, stdout still
+    # has the last printed line — parse() below reads the LAST JSON line, so
+    # a mid-run kill yields a partial-but-usable result instead of nothing.
+    all_techs = {}
+    for method_name, method_data in results["methods"].items():
+        if "error" in method_data:
+            continue
+        for tech in method_data.get("technologies", []):
+            name = tech.get("name", "")
+            if not name:
+                continue
+            key = name.lower()
+            if key not in all_techs:
+                all_techs[key] = {
+                    "name": name,
+                    "version": tech.get("version", ""),
+                    "categories": tech.get("categories", []),
+                    "detected_by": [],
+                }
+            if method_name not in all_techs[key]["detected_by"]:
+                all_techs[key]["detected_by"].append(method_name)
+            if tech.get("version") and not all_techs[key]["version"]:
+                all_techs[key]["version"] = tech.get("version")
+    out = dict(results)
+    out["unified_stack"] = list(all_techs.values())
+    out["total_technologies"] = len(all_techs)
+    print(json.dumps(out))
+    sys.stdout.flush()
+
 # Method 1: WhatWeb
 try:
     verbose_flag = "-v " if verbose else ""
@@ -85,6 +117,7 @@ try:
         results["methods"]["whatweb"] = {"technologies": whatweb_techs, "raw_plugins": all_plugins}
 except Exception as e:
     results["methods"]["whatweb"] = {"error": str(e)}
+emit()
 
 # Method 2: Wappalyzer
 try:
@@ -106,6 +139,7 @@ try:
     results["methods"]["wappalyzer"] = {"technologies": wapp_techs, "categories": wapp_categories}
 except Exception as e:
     results["methods"]["wappalyzer"] = {"error": str(e)}
+emit()
 
 # Method 3: HTTP Header Analysis
 try:
@@ -124,33 +158,7 @@ try:
     }
 except Exception as e:
     results["methods"]["headers"] = {"error": str(e)}
-
-# Merge all findings
-all_techs = {}
-for method_name, method_data in results["methods"].items():
-    if "error" in method_data:
-        continue
-    for tech in method_data.get("technologies", []):
-        name = tech.get("name", "")
-        if not name:
-            continue
-        key = name.lower()
-        if key not in all_techs:
-            all_techs[key] = {
-                "name": name,
-                "version": tech.get("version", ""),
-                "categories": tech.get("categories", []),
-                "detected_by": [],
-            }
-        if method_name not in all_techs[key]["detected_by"]:
-            all_techs[key]["detected_by"].append(method_name)
-        if tech.get("version") and not all_techs[key]["version"]:
-            all_techs[key]["version"] = tech.get("version")
-
-results["unified_stack"] = list(all_techs.values())
-results["total_technologies"] = len(all_techs)
-
-print(json.dumps(results))
+emit()
 '''
 
 
@@ -178,17 +186,35 @@ def build_command(**params: Any) -> str:
 
 
 def parse(result: ToolResult) -> dict[str, Any]:
-    """Parse comprehensive analysis output."""
+    """Parse comprehensive analysis output.
+
+    The script prints one JSON line after EACH method (see emit() in
+    ANALYSIS_SCRIPT) so a mid-run timeout still leaves usable output — take
+    the LAST valid JSON line, which is always the most complete snapshot
+    (full merge if all methods finished, partial merge if killed early).
+    """
     stdout = result.raw_stdout or ""
 
-    try:
-        data = json.loads(stdout)
-    except json.JSONDecodeError:
+    data: dict[str, Any] | None = None
+    partial = True
+    for line in stdout.strip().splitlines():
+        line = line.strip()
+        if not line or not line.startswith("{"):
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict) and "methods" in parsed:
+            data = parsed
+    if data is None:
         return {
             "findings": [],
             "raw_output": stdout,
-            "error": "Failed to parse analysis output",
+            "error": "Failed to parse analysis output"
+            + (" — process likely timed out before any method completed" if result.timed_out else ""),
         }
+    partial = result.timed_out and len(data.get("methods", {})) < 3
 
     unified_stack = data.get("unified_stack", [])
     findings = []
@@ -265,6 +291,12 @@ def parse(result: ToolResult) -> dict[str, Any]:
         "methods_used": list(methods.keys()),
         "methods_succeeded": methods_succeeded,
     }
+    if partial:
+        result["partial"] = True
+        result["note"] = (
+            f"Timed out after {len(methods)}/3 methods completed — "
+            "results above are from what finished before the kill, not a full run."
+        )
     if method_errors:
         result["method_errors"] = method_errors
     if methods and not methods_succeeded:

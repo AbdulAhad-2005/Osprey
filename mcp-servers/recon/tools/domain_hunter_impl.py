@@ -13,6 +13,7 @@ import json
 import logging
 import re
 import socket
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -52,6 +53,43 @@ _COMMON_MULTI_SUFFIXES = {
     "co.in",
     "nic.in",
 }
+
+# Shared CDN/cloud/hosting infrastructure — a target proxied through one of
+# these (Cloudflare, Akamai, etc.) shares its edge IP with millions of
+# unrelated domains. Reverse-IP/ASN co-location on these roots is not an
+# organizational-affiliation signal, so candidates rooted here are rejected
+# outright regardless of score (a shared CDN edge trivially resolves + is
+# "live", which otherwise crosses the medium-confidence threshold on ASN
+# points alone).
+_KNOWN_SHARED_INFRA_ROOTS = frozenset(
+    {
+        "cloudflare.com",
+        "cloudflare.net",
+        "cloudflareinsights.com",
+        "cloudflarestream.com",
+        "akamai.com",
+        "akamaized.net",
+        "akamaitechnologies.com",
+        "akamaiedge.net",
+        "fastly.com",
+        "fastlylb.net",
+        "fastly.net",
+        "amazonaws.com",
+        "cloudfront.net",
+        "googleusercontent.com",
+        "google.com",
+        "googleapis.com",
+        "azureedge.net",
+        "azurewebsites.net",
+        "azure.com",
+        "incapsula.com",
+        "imperva.com",
+        "sucuri.net",
+        "stackpathcdn.com",
+        "edgekey.net",
+        "edgesuite.net",
+    }
+)
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})")
 _DOMAIN_RE = re.compile(r"(?:https?://)?(?:www\.)?([A-Za-z0-9.-]+\.[A-Za-z]{2,})", re.IGNORECASE)
@@ -477,23 +515,44 @@ class DomainHunter:
         }
         return {aliases.get(part, part) for part in normalized}
 
+    def _emit_progress(self, stage: str) -> None:
+        # Discovery can run long (site fetch + cert transparency + DNS brute +
+        # ASN + RDAP), and the whole thing only printed once at the very end —
+        # if the outer exec_timeout killed the process mid-run, stdout was
+        # empty. Print a snapshot after every module so a mid-run kill still
+        # leaves a usable partial result on stdout instead of nothing. Reuses
+        # format_rows()'s exact "=== Findings ===" layout so parse_stdout can
+        # read it the same way as the final block; a leading comment line (not
+        # matched by row_re/the "===" checks) marks it as in-progress.
+        print(f"# domain_hunter progress: completed={stage!r} candidates_so_far={len(self.candidates)}")
+        block = format_rows(list(self.candidates.values()))
+        if block:
+            print(block)
+        sys.stdout.flush()
+
     def discover(self) -> list[Candidate]:
         if not self.seed_root:
             return []
 
         if "site_scrape" in self.modules:
             self._collect_site_signals()
+            self._emit_progress("site_scrape")
         if "certs" in self.modules:
             self._collect_cert_signals(self.seed_root)
+            self._emit_progress("certs")
         if "knowledge_recon" in self.modules:
             for token in self._brand_tokens[:3]:
                 self._collect_cert_signals(token, token_search=True)
+            self._emit_progress("knowledge_recon")
         if "dns" in self.modules:
             self._collect_dns_signals()
+            self._emit_progress("dns")
         if "asn" in self.modules:
             self._collect_reverse_ip_signals()
+            self._emit_progress("asn")
         if "whois" in self.modules:
             self._collect_rdap_signals()
+            self._emit_progress("whois")
 
         self._resolve_live_status()
         filtered = [c for c in self.candidates.values() if self._passes_confidence_floor(c)]
@@ -507,6 +566,8 @@ class DomainHunter:
         if not _is_likely_domain_or_none(domain):
             return
         if is_same_root(domain, self.seed_root):
+            return
+        if root_domain(domain) in _KNOWN_SHARED_INFRA_ROOTS:
             return
         candidate = self.candidates.get(domain)
         if candidate is None:
@@ -759,25 +820,36 @@ def write_output_file(path: str, candidates: list[Candidate]) -> Path | None:
 
 
 def parse_stdout(stdout: str) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    in_findings = False
+    """Extract candidate rows from stdout.
+
+    DomainHunter now prints a "=== Findings ===" block after EVERY module (see
+    DomainHunter._emit_progress), not just once at the end — so a timed-out,
+    killed-mid-run process still has a usable partial block on stdout. Collect
+    ALL such blocks and return the LAST one: on a normal completed run that's
+    the final full result (unchanged behavior from before); on a timeout kill
+    it's the latest progress snapshot instead of nothing.
+    """
     row_re = re.compile(r"^(?P<domain>\S+\.\S+)\s+(?P<method>.+?)\s+(?P<conf>low|medium|high)\s+(?P<live>Yes|No)\s*$")
+    blocks: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] | None = None
     for line in stdout.splitlines():
         stripped = line.strip()
-        if stripped.startswith("=== Findings ==="):
-            in_findings = True
+        if stripped.startswith("=== Findings"):
+            if current is not None:
+                blocks.append(current)
+            current = []
             continue
-        if not in_findings:
+        if current is None:
             continue
-        if not stripped or stripped.startswith("Wrote ") or stripped.startswith("==="):
-            if stripped.startswith("Wrote ") or stripped.startswith("==="):
-                break
+        if stripped.startswith("Wrote ") or stripped.startswith("==="):
+            blocks.append(current)
+            current = None
             continue
-        if stripped.startswith("Domain ") or stripped.startswith("Domain") or stripped == "(none)":
+        if not stripped or stripped.startswith("Domain ") or stripped.startswith("Domain") or stripped == "(none)":
             continue
         match = row_re.match(stripped)
         if match:
-            rows.append(
+            current.append(
                 {
                     "domain": match.group("domain").lower(),
                     "method": match.group("method").strip(),
@@ -785,7 +857,9 @@ def parse_stdout(stdout: str) -> list[dict[str, Any]]:
                     "live": match.group("live") == "Yes",
                 }
             )
-    return rows
+    if current is not None:
+        blocks.append(current)
+    return blocks[-1] if blocks else []
 
 
 def run_hunter(domain: str, *, modules: str = "", confidence_min: str = "low", output: str = "") -> tuple[list[Candidate], Path | None]:

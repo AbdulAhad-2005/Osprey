@@ -200,6 +200,19 @@ def parse(result: ToolResult) -> dict[str, Any]:
     }
     if connect_error and not findings:
         result_dict["error"] = f"WhatWeb could not connect: {connect_error}"
+    # WhatWeb has a known quirk (some installs/versions) of exiting non-zero
+    # after already writing valid --log-json=- output to stdout — e.g. a Ruby
+    # logging error on stream close that fires AFTER the JSON was flushed.
+    # The response's top-level `success` flag is set purely from returncode
+    # (see mcp_client.py) and stays as reported by the platform — this note
+    # exists so an operator seeing success:false doesn't discard genuinely
+    # valid findings below it as "the scan produced nothing."
+    if result.returncode not in (0, None) and findings:
+        result_dict["note"] = (
+            f"WhatWeb exited with code {result.returncode} but stdout contained valid "
+            "JSON — the findings below were successfully parsed regardless of the "
+            "overall success flag."
+        )
     return result_dict
 
 

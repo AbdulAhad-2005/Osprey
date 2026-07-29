@@ -1,0 +1,189 @@
+# Passive-OSINT phase — people/identity recon from public sources only.
+# Skills live in skills/osint/. Merged into the recon/network catalog by
+# task_registry._load_config. Everything here is PASSIVE (public sources; the
+# only host touched is the target's own website via web_contact_harvest).
+#
+# The intended flow is RECURSIVE: seed from the website, then pivot every name /
+# email / username / phone the tools surface (see tech_dispatch.yaml osint rules).
+
+tasks:
+  website_contact_harvest:
+    phase: osint
+    description: Passive SEED — crawl the target site and extract emails, phones, social links and names. Start OSINT here.
+    default_tool: web_contact_harvest
+    alternatives: [theharvester]
+    skill_file: osint/passive-osint-methodology.md
+    produces: [email, phone, person, social_account, username, observation]
+
+  public_source_harvest:
+    phase: osint
+    description: Harvest emails, names, subdomains and hosts for a domain from public search engines / OSINT sources.
+    default_tool: theharvester
+    alternatives: [web_contact_harvest]
+    skill_file: osint/email-people-harvest.md
+    produces: [email, person, subdomain, observation]
+
+  document_metadata_discovery:
+    phase: osint
+    description: Find public documents for a domain, then extract author/software/GPS metadata (via exiftool_extract).
+    default_tool: metagoofil
+    alternatives: []
+    skill_file: osint/document-metadata.md
+    produces: [document, observation]
+
+  username_enumeration:
+    phase: osint
+    description: Given a username/handle, find matching accounts across social/web sites.
+    default_tool: maigret
+    alternatives: [sherlock, social_analyzer]
+    skill_file: osint/username-pivot.md
+    produces: [username, social_account, observation]
+
+  email_account_discovery:
+    phase: osint
+    description: Given an email, discover which sites have an account for it (existence only, no breach data).
+    default_tool: holehe
+    alternatives: []
+    skill_file: osint/email-people-harvest.md
+    produces: [email, observation]
+
+  email_pattern_generation:
+    phase: osint
+    description: Turn a discovered person name + domain into likely corporate email candidates (feed to holehe).
+    default_tool: email_permute
+    alternatives: []
+    skill_file: osint/email-people-harvest.md
+    produces: [email]
+
+  phone_number_osint:
+    phase: osint
+    description: Profile a phone number — country, carrier, line type, public footprint.
+    default_tool: phoneinfoga
+    alternatives: []
+    skill_file: osint/passive-osint-methodology.md
+    produces: [phone, observation]
+
+  lookalike_domain_discovery:
+    phase: osint
+    description: Enumerate registered typosquat / look-alike domains (phishing, brand abuse).
+    default_tool: dnstwist
+    alternatives: [domain_hunter]
+    skill_file: osint/passive-osint-methodology.md
+    produces: [observation]
+
+tools:
+  web_contact_harvest:
+    task: website_contact_harvest
+    phase: osint
+    freeform_args_field: additional_args
+    default_for_task: true
+    llm_hints: |
+      START HERE. Passive crawl of the target's own site. Returns emails, phones,
+      social profile links (with handles) and person names. Then pivot: names →
+      email_permute + maigret; emails → holehe; usernames → maigret/sherlock.
+    parameters:
+      # url is the primary param but domain=/target= are accepted aliases (the
+      # adapter resolves any of them), so none is individually "required".
+      url: { type: string, required: false, description: "Target URL or bare domain" }
+      domain: { type: string, required: false, description: "Alias for url" }
+      target: { type: string, required: false, description: "Alias for url" }
+      depth: { type: int, default: 1, description: "Crawl depth (0=landing only)" }
+      max_pages: { type: int, default: 25 }
+    example_calls:
+      - { url: "example.com" }
+      - { url: "https://example.com", depth: 1, max_pages: 40 }
+
+  theharvester:
+    task: public_source_harvest
+    phase: osint
+    freeform_args_field: additional_args
+    default_for_task: true
+    llm_hints: |
+      Passive harvest from search engines / CT / OSINT. Keyless sources by default;
+      sources="all" adds keyed engines (they warn + skip without a key).
+    parameters:
+      domain: { type: string, required: true }
+      sources: { type: string, default: "", description: "Comma list; default keyless set" }
+      limit: { type: int, default: 200 }
+    example_calls:
+      - { domain: "example.com" }
+
+  metagoofil:
+    task: document_metadata_discovery
+    phase: osint
+    freeform_args_field: additional_args
+    default_for_task: true
+    llm_hints: |
+      Enumerate public documents for the domain. Follow up with exiftool_extract on
+      any downloaded file to pull author names / software / GPS (feeds PERSON nodes).
+    parameters:
+      domain: { type: string, required: true }
+      file_types: { type: string, default: "pdf,doc,docx,xls,xlsx,ppt,pptx" }
+      limit: { type: int, default: 50 }
+
+  dnstwist:
+    task: lookalike_domain_discovery
+    phase: osint
+    freeform_args_field: additional_args
+    default_for_task: true
+    parameters:
+      domain: { type: string, required: true }
+      registered_only: { type: bool, default: true }
+
+  sherlock:
+    task: username_enumeration
+    phase: osint
+    freeform_args_field: additional_args
+    default_for_task: false
+    llm_hints: "Fast username sweep. Use maigret for depth + extracted profile data."
+    parameters:
+      username: { type: string, required: true }
+      timeout: { type: int, default: 10 }
+
+  maigret:
+    task: username_enumeration
+    phase: osint
+    freeform_args_field: additional_args
+    default_for_task: true
+    llm_hints: "Deep username search + profile-data extraction across 3000+ sites."
+    parameters:
+      username: { type: string, required: true }
+      timeout: { type: int, default: 10 }
+      top_sites: { type: int, default: 500 }
+
+  social_analyzer:
+    task: username_enumeration
+    phase: osint
+    freeform_args_field: additional_args
+    default_for_task: false
+    parameters:
+      username: { type: string, required: true }
+      filter_level: { type: string, default: good }
+
+  holehe:
+    task: email_account_discovery
+    phase: osint
+    freeform_args_field: additional_args
+    default_for_task: true
+    llm_hints: "Account EXISTENCE per email (no passwords, no breach data)."
+    parameters:
+      email: { type: string, required: true }
+      only_used: { type: bool, default: true }
+
+  email_permute:
+    task: email_pattern_generation
+    phase: osint
+    freeform_args_field: additional_args
+    default_for_task: true
+    llm_hints: "Name + domain → candidate emails (unverified). Confirm each with holehe."
+    parameters:
+      name: { type: string, required: true }
+      domain: { type: string, required: true }
+
+  phoneinfoga:
+    task: phone_number_osint
+    phase: osint
+    freeform_args_field: additional_args
+    default_for_task: true
+    parameters:
+      phone: { type: string, required: true, description: "E.164, e.g. +14155552671" }

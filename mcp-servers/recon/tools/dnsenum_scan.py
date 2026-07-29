@@ -29,7 +29,15 @@ def build_command(**params: Any) -> str:
     wordlist = params.get("wordlist", "")
     additional_args = str(params.get("additional_args", "") or "").strip()
 
-    parts = ["dnsenum", "--enum", domain]
+    # dnsenum brute-forces its bundled ~1000-entry wordlist against the target,
+    # which routinely runs past the exec timeout on a real domain. Perl block-
+    # buffers stdout once it's a pipe (not a tty) rather than line-buffering —
+    # without stdbuf, a killed-on-timeout run can leave the OS pipe buffer
+    # empty even though dnsenum found records, so the platform's partial-
+    # output-on-timeout recovery (mcp_client.py's _drain_partial) has nothing
+    # to read. stdbuf forces line buffering so partial results are actually
+    # flushed into the pipe as they're found.
+    parts = ["stdbuf", "-oL", "-eL", "dnsenum", "--enum", domain]
     if dns_server:
         parts.extend(["--dnsserver", dns_server])
     if wordlist:

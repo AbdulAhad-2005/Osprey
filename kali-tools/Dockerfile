@@ -2,7 +2,10 @@ FROM kalilinux/kali-rolling
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV GOPATH=/opt/go
-ENV PATH="${GOPATH}/bin:/usr/local/go/bin:${PATH}"
+# Keep /home/mcpuser/.local/bin on PATH so pipx shims and any runtime
+# `pip install --user` OSINT tools resolve in non-login `docker exec` shells.
+# Mirrors _KALI_EXEC_PATH in backend services/mcp_client.py.
+ENV PATH="/home/mcpuser/.local/bin:${GOPATH}/bin:/usr/local/go/bin:${PATH}"
 
 # ─── System base ───────────────────────────────────────────────────────────────
 RUN apt-get update \
@@ -20,12 +23,14 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
     # ── Recon ──
     amass dnsenum fierce whois \
+    # ── OSINT (passive) — real Kali packages, not the pip dummies ──
+    metagoofil theharvester dnstwist sherlock pipx \
     # ── Network ──
-    nmap masscan enum4linux enum4linux-ng smbmap \
+    nmap masscan naabu enum4linux enum4linux-ng smbmap \
     netexec nbtscan arp-scan responder samba-common-bin \
     net-tools iputils-ping dnsutils \
     # ── Web ──
-    nikto sqlmap wafw00f wfuzz ffuf dirb dirsearch \
+    nikto whatweb sqlmap wafw00f wfuzz ffuf dirb dirsearch \
     wpscan xsser feroxbuster gobuster \
     dotdotpwn zaproxy \
     # ── Vulnerability ──
@@ -60,7 +65,10 @@ RUN go install github.com/hahwul/dalfox/v2@latest
 RUN go install github.com/tomnomnom/qsreplace@latest
 RUN go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest
 RUN go install github.com/projectdiscovery/tlsx/cmd/tlsx@latest
-RUN go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest
+# naabu is installed via apt above (the Go build needs libpcap headers and was
+# unreliable); apt ships a working 2.6.x binary on the system PATH.
+# PhoneInfoga (passive phone-number OSINT)
+RUN go install github.com/sundowndev/phoneinfoga/v2@latest
 
 # ─── 4. Python pip tools ──────────────────────────────────────────────────────
 RUN pip3 install --break-system-packages --no-cache-dir --ignore-installed \
@@ -77,6 +85,18 @@ RUN pip3 install --break-system-packages --no-cache-dir --ignore-installed \
 # ─── 4b. domain-hunter deps (mcp-servers/recon/tools/domain-hunter) ──────────
 RUN pip3 install --break-system-packages --no-cache-dir \
        requests pyyaml openpyxl dnspython tldextract beautifulsoup4
+
+# ─── 4b2. Passive-OSINT python tools NOT packaged in Kali apt ─────────────────
+# theHarvester/dnstwist/sherlock/metagoofil come from apt above (the PyPI
+# "theHarvester" is a 0.0.1 placeholder — do NOT pip it). Only maigret, holehe
+# and social-analyzer are unpackaged; install each in its OWN pipx venv so their
+# heavy/pinned deps cannot conflict with netexec/pacu/awscli/checkov/etc. pipx
+# symlinks the CLI into /usr/local/bin (on PATH for every exec path).
+# web_contact_harvest / email_permute are bundled scripts using the 4b deps.
+ENV PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin
+RUN pipx install maigret \
+    && pipx install holehe \
+    && pipx install social-analyzer
 
 # ─── 4c. Ruby gem tools ──────────────────────────────────────────────────────
 RUN gem install one_gadget
@@ -180,7 +200,11 @@ RUN find /opt/go/bin -type f -executable -exec bash -c \
     && command -v subfinder \
     && command -v whois \
     && command -v rustscan \
-    && command -v nmap
+    && command -v nmap \
+    && command -v naabu \
+    && command -v httpx \
+    && command -v dnsx \
+    && command -v tlsx
 
 # ─── 7. User setup ────────────────────────────────────────────────────────────
 RUN useradd -m -s /bin/bash mcpuser \

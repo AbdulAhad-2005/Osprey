@@ -78,7 +78,17 @@
     "impacket-GetUserSPNs",
     "impacket-GetNPUsers",
     "respond",
-    "responder"
+    "responder",
+    "theHarvester",
+    "theharvester",
+    "sherlock",
+    "maigret",
+    "holehe",
+    "phoneinfoga",
+    "dnstwist",
+    "metagoofil",
+    "social-analyzer",
+    "exiftool"
   ],
   "parse_modes": {
     "raw": "Return stdout as-is (default)",
