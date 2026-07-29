@@ -20,6 +20,7 @@ from mcp.server.fastmcp import FastMCP
 
 from typed_recon_network import register_typed_recon_network_tools
 from typed_tech_identification import register_typed_tech_identification_tools
+from typed_osint import register_typed_osint_tools
 
 API_BASE = os.environ.get("PENTEST_API_BASE", "http://localhost:9000").rstrip("/")
 QUICK_TIMEOUT = float(os.environ.get("PENTEST_QUICK_TIMEOUT", "60"))
@@ -169,14 +170,45 @@ def _require_bound_target() -> str:
     return _SESSION_TARGET
 
 
-def _session_header() -> str:
+def _resolve_engagement(engagement_id_override: str = "") -> tuple[str, str]:
+    """Resolve (engagement_id, target_label) for one call, preferring an explicit pin.
+
+    This MCP process holds ONE ambient session (_SESSION_TARGET /
+    _SESSION_ENGAGEMENT_ID). If the host reuses this same server process for
+    multiple concurrent chats (common — hosts typically spawn one MCP
+    subprocess per app/workspace, not one per chat), a platform_set_target
+    call from a DIFFERENT chat overwrites that ambient state out from under
+    this one. Passing engagement_id_override (the id platform_set_target
+    returned earlier in THIS chat) pins the call to that exact engagement
+    regardless of what the shared ambient session currently holds. Empty
+    override = existing single-chat behavior (unchanged).
+    """
+    eid = (engagement_id_override or "").strip()
+    if eid:
+        label = _SESSION_TARGET if eid == _SESSION_ENGAGEMENT_ID else f"(pinned engagement_id={eid})"
+        return eid, label
     _require_bound_target()
+    return _SESSION_ENGAGEMENT_ID, _SESSION_TARGET
+
+
+def _session_header(engagement_id: str = "", target: str = "") -> str:
+    pinned = bool(engagement_id and engagement_id != _SESSION_ENGAGEMENT_ID)
+    if not engagement_id:
+        _require_bound_target()
+    eid = engagement_id or _SESSION_ENGAGEMENT_ID
+    tgt = target or _SESSION_TARGET
     lines = [
-        f"target: {_SESSION_TARGET}",
-        f"engagement_id: {_SESSION_ENGAGEMENT_ID}",
+        f"target: {tgt}",
+        f"engagement_id: {eid}",
         f"run_id: {SESSION_RUN_ID}",
     ]
-    if _SESSION_SWITCH_NOTICE:
+    if pinned:
+        lines.append(
+            "notice: PINNED via explicit engagement_id= — this call bypassed the "
+            f"shared ambient session (ambient session is currently bound to "
+            f"target={_SESSION_TARGET!r} engagement_id={_SESSION_ENGAGEMENT_ID!r})."
+        )
+    elif _SESSION_SWITCH_NOTICE:
         lines.append(f"notice: {_SESSION_SWITCH_NOTICE}")
     return "\n".join(lines)
 
@@ -358,10 +390,12 @@ def platform_health(target: str = "") -> str:
     return result
 
 
-def _fetch_context() -> str:
+def _fetch_context(engagement_id: str = "", target: str = "") -> str:
+    eid = engagement_id or _SESSION_ENGAGEMENT_ID
+    tgt = target or _SESSION_TARGET
     data = _get(
         "/api/v1/hybrid/context/auto",
-        params=_memory_params(),
+        params={"engagement_id": eid, "seed_target": tgt},
     )
     readiness = data.get("finalize_readiness") or {}
     lb = readiness.get("look_back") or {}
@@ -418,7 +452,7 @@ def _fetch_context() -> str:
     idx_text = (idx.get("text") if isinstance(idx, dict) else "") or ""
 
     parts = [
-        _session_header(),
+        _session_header(eid, tgt),
         f"**Jobs:** {jobs_line}",
         "### OPEN GAPS (memory — you choose how to close)",
         str(gaps_text or "(none)"),
@@ -456,7 +490,7 @@ def _fetch_context() -> str:
 
 
 @mcp.tool()
-def platform_context(target: str = "") -> str:
+def platform_context(target: str = "", engagement_id: str = "") -> str:
     """
     Compact briefing from evidence: gaps, crown jewels, jobs, delta, look-back.
 
@@ -469,14 +503,19 @@ def platform_context(target: str = "") -> str:
 
     No phase argument. Pass target= only to analyze/switch.
     Pull details on demand: platform_tools, platform_skills, platform_findings.
+
+    engagement_id: optional pin to a specific engagement (bypasses the shared
+    ambient session without switching it) — see platform_exec. Ignored if
+    target= is set, since target= always switches/binds first.
     """
     def _run() -> str:
         if target.strip():
             clarified = _analyze_or_bind(target)
             if clarified.startswith("## Target needs clarification"):
                 return clarified
-        _require_bound_target()
-        return _fetch_context()
+            return _fetch_context()
+        eid, tgt = _resolve_engagement(engagement_id)
+        return _fetch_context(engagement_id=eid, target=tgt)
 
     return _safe(_run)
 
@@ -524,7 +563,7 @@ def platform_artifact(path: str = "", offset: int = 0, limit: int = 80000) -> st
     return _safe(_run)
 
 
-def _format_exec_result(data: dict[str, Any]) -> str:
+def _format_exec_result(data: dict[str, Any], *, engagement_id: str = "", target: str = "") -> str:
     stdout = data.get("stdout") or ""
     stderr = data.get("stderr") or ""
     # Trim: status + top findings + gaps; full stdout via artifact path
@@ -547,7 +586,7 @@ def _format_exec_result(data: dict[str, Any]) -> str:
 
     parts = [
         "### OPERATOR MIRROR — EXECUTION",
-        _session_header(),
+        _session_header(engagement_id, target),
         f"success: {data.get('success')} | returncode: {data.get('returncode')} | "
         f"timed_out: {data.get('timed_out')} | cache_hit: {data.get('cache_hit')}"
         + (f" | cache_key: `{data.get('cache_key')}`" if data.get("cache_key") else "")
@@ -557,10 +596,14 @@ def _format_exec_result(data: dict[str, Any]) -> str:
     if data.get("tool_name"):
         parts.append(f"**TOOL:** `{data['tool_name']}`")
     if data.get("cache_hit"):
+        age = data.get("cache_age_seconds")
+        age_note = f" (cached {age:.0f}s ago)" if isinstance(age, (int, float)) and age else ""
         parts.append(
-            "**CACHE HIT** — identical tool+params already ran this engagement. "
+            f"**CACHE HIT**{age_note} — identical tool+params already ran this engagement. "
             "Reuse, change params, or force_refresh=true."
         )
+    elif data.get("force_refresh_applied"):
+        parts.append("**force_refresh=true applied** — cache was bypassed, this is a fresh run.")
     if stdout_show:
         parts.append(f"**STDOUT** ({len(stdout)} chars):\n```\n{stdout_show}\n```")
     elif not stdout:
@@ -594,11 +637,12 @@ def _format_exec_result(data: dict[str, Any]) -> str:
     if arts:
         parts.append(_block("Full output on disk (Kali)", arts))
     # Gaps from memory — data, not orders
-    if _SESSION_ENGAGEMENT_ID:
+    eid_for_loops = engagement_id or _SESSION_ENGAGEMENT_ID
+    if eid_for_loops:
         try:
             loops = _get(
                 "/api/v1/hybrid/open-loops",
-                params={"engagement_id": _SESSION_ENGAGEMENT_ID},
+                params={"engagement_id": eid_for_loops},
                 timeout=12,
             )
             text = (loops or {}).get("text") or ""
@@ -619,15 +663,16 @@ def _execute_catalog_tool(
     additional_args: str = "",
     timeout_seconds: int = 300,
     force_refresh: bool = False,
+    engagement_id: str = "",
 ) -> str:
     """Shared execute path for platform_exec and typed recon/network tools."""
     timeout_seconds = max(30, min(int(timeout_seconds), 900))
-    _require_bound_target()
+    eid, tgt = _resolve_engagement(engagement_id)
     body: dict[str, Any] = {
         "tool_name": tool,
         "params": params,
         "additional_args": additional_args,
-        "engagement_id": _SESSION_ENGAGEMENT_ID,
+        "engagement_id": eid,
         "run_id": SESSION_RUN_ID,
         "record_findings": True,
         "use_recovery": True,
@@ -636,11 +681,11 @@ def _execute_catalog_tool(
         "timeout": timeout_seconds,
     }
     _log(
-        f"exec {tool} target={_SESSION_TARGET} engagement={_SESSION_ENGAGEMENT_ID} "
+        f"exec {tool} target={tgt} engagement={eid} "
         f"run={SESSION_RUN_ID} force_refresh={force_refresh}"
     )
     data = _post("/api/v1/mcp/execute", body, timeout=timeout_seconds + 15)
-    return _format_exec_result(data)
+    return _format_exec_result(data, engagement_id=eid, target=tgt)
 
 
 @mcp.tool()
@@ -1332,18 +1377,24 @@ def platform_findings(
     limit: int = 120,
     finding_type: str = "",
     include_summary: bool = True,
+    engagement_id: str = "",
 ) -> str:
     """
     Dump stored findings. Optional mid-engagement — use when the operator asks
     or before a final report. Tools already ingest into memory automatically.
     Optional finding_type: subdomain | host | url | port | service | technology | observation.
+
+    engagement_id: optional pin to a specific engagement — see platform_exec.
+    Use this if findings for a different target start showing up here; it
+    usually means another chat sharing this MCP process switched the shared
+    session with platform_set_target after you bound yours.
     """
     limit = max(10, min(int(limit), 500))
 
     def _run() -> str:
-        _require_bound_target()
+        eid, tgt = _resolve_engagement(engagement_id)
         params: dict[str, Any] = {
-            "engagement_id": _SESSION_ENGAGEMENT_ID,
+            "engagement_id": eid,
             "limit": limit,
         }
         if finding_type.strip():
@@ -1351,12 +1402,12 @@ def platform_findings(
 
         parts = [
             "### OPERATOR MIRROR — FINDINGS",
-            _session_header(),
+            _session_header(eid, tgt),
         ]
         if include_summary:
             summary = _get(
                 "/api/v1/findings/summary",
-                params={"engagement_id": _SESSION_ENGAGEMENT_ID},
+                params={"engagement_id": eid},
                 timeout=30,
             )
             meta = summary if isinstance(summary, dict) else {}
@@ -1429,6 +1480,7 @@ def platform_exec(
     additional_args: str = "",
     timeout_seconds: int = 90,
     force_refresh: bool = False,
+    engagement_id: str = "",
 ) -> str:
     """
     Execute one registered pentest tool. Uses the active engagement automatically.
@@ -1443,6 +1495,14 @@ def platform_exec(
     Pass any valid CLI flags via additional_args.
     force_refresh=true bypasses engagement exec cache.
     Keep timeout_seconds ≤ 90 for port scans unless you already chunked the work.
+
+    engagement_id: optional — pin this call to the exact engagement returned by
+    an earlier platform_set_target, instead of the shared session binding. Use
+    this whenever another chat might be running a DIFFERENT engagement through
+    this same MCP process at the same time (hosts commonly share one MCP
+    subprocess across chats/tabs) — the shared session can be silently switched
+    by that other chat's platform_set_target between your calls, which would
+    otherwise redirect this execution to the wrong target.
     """
     params = _coerce_params(params_json)
     if isinstance(params, str):
@@ -1457,6 +1517,7 @@ def platform_exec(
             additional_args=additional_args,
             timeout_seconds=timeout_seconds,
             force_refresh=force_refresh,
+            engagement_id=engagement_id,
         )
 
     return _safe(_run)
@@ -1476,6 +1537,7 @@ def platform_job_start(
     timeout_seconds: int = 300,
     force_refresh: bool = False,
     reason: str = "",
+    engagement_id: str = "",
 ) -> str:
     """
     Start a PARALLEL background branch. Returns job_id immediately — do NOT wait.
@@ -1489,6 +1551,8 @@ def platform_job_start(
     code: for kind=script
     Max running jobs per engagement comes from config/parallelism.yaml (default 4).
     Soft Parallel notes on long tools are optional — never auto-started.
+
+    engagement_id: optional pin to a specific engagement — see platform_exec.
     """
     kind_n = (kind or "tool").strip().lower()
     if kind_n not in ("tool", "shell", "script"):
@@ -1496,10 +1560,10 @@ def platform_job_start(
     timeout_seconds = max(30, min(int(timeout_seconds), 3600))
 
     def _run() -> str:
-        _require_bound_target()
+        eid, tgt = _resolve_engagement(engagement_id)
         body: dict[str, Any] = {
             "kind": kind_n,
-            "engagement_id": _SESSION_ENGAGEMENT_ID,
+            "engagement_id": eid,
             "run_id": SESSION_RUN_ID,
             "label": label,
             "timeout": timeout_seconds,
@@ -1530,7 +1594,7 @@ def platform_job_start(
         data = _post("/api/v1/jobs/start", body, timeout=30)
         parts = [
             "### OPERATOR MIRROR — JOB STARTED (parallel branch)",
-            _session_header(),
+            _session_header(eid, tgt),
             f"**job_id:** `{data.get('job_id')}`",
             f"**status:** {data.get('status')} | **label:** {data.get('label')}",
             f"**kind:** {data.get('kind')} | **tool:** {data.get('tool_name')}",
@@ -1546,24 +1610,27 @@ def platform_job_start(
 
 
 @mcp.tool()
-def platform_job_poll(job_id: str = "") -> str:
+def platform_job_poll(job_id: str = "", engagement_id: str = "") -> str:
     """
     Poll one job (job_id=…) or list all jobs for this engagement (empty job_id).
 
     Status: queued | running | completed | failed.
     When completed: findings already in memory — then platform_job_result for full stdout.
+
+    engagement_id: optional pin — only matters for the "list all jobs" mode
+    (empty job_id). A specific job_id is already unambiguous. See platform_exec.
     """
     def _run() -> str:
-        _require_bound_target()
+        eid, tgt = _resolve_engagement(engagement_id)
         jid = (job_id or "").strip()
         if not jid:
             data = _get(
                 "/api/v1/jobs",
-                params={"engagement_id": _SESSION_ENGAGEMENT_ID, "limit": "20"},
+                params={"engagement_id": eid, "limit": "20"},
             )
-            return "\n\n".join([_session_header(), _block("Jobs (this engagement)", data)])
+            return "\n\n".join([_session_header(eid, tgt), _block("Jobs (this engagement)", data)])
         data = _get(f"/api/v1/jobs/{jid}")
-        return "\n\n".join([_session_header(), _block(f"Job {jid}", data)])
+        return "\n\n".join([_session_header(eid, tgt), _block(f"Job {jid}", data)])
 
     return _safe(_run)
 
@@ -1616,28 +1683,31 @@ def platform_shell(
     command: str,
     reason: str = "",
     timeout_seconds: int = 180,
+    engagement_id: str = "",
 ) -> str:
     """
     Allowlisted binary argv in Kali. Simple pipes OK when EVERY stage is allowlisted
     (e.g. 'curl -sI https://x | grep -i server'). Still blocked: ; & ` $ () <> && ||.
     Example: 'nmap -sV -p 80,443 1.2.3.4'. Prefer platform_exec for catalog tools.
     Loops, redirects, complex logic → platform_script.
+
+    engagement_id: optional pin to a specific engagement — see platform_exec.
     """
     timeout_seconds = max(30, min(int(timeout_seconds), 900))
 
     def _run() -> str:
-        _require_bound_target()
+        eid, tgt = _resolve_engagement(engagement_id)
         body = {
             "command": command,
-            "engagement_id": _SESSION_ENGAGEMENT_ID,
+            "engagement_id": eid,
             "run_id": SESSION_RUN_ID,
             "reason": reason,
             "timeout": timeout_seconds,
             "record_findings": True,
         }
-        _log(f"shell engagement={_SESSION_ENGAGEMENT_ID} cmd={command[:200]}")
+        _log(f"shell engagement={eid} cmd={command[:200]}")
         data = _post("/api/v1/mcp/shell", body, timeout=timeout_seconds + 15)
-        return _format_exec_result(data)
+        return _format_exec_result(data, engagement_id=eid, target=tgt)
 
     return _safe(_run)
 
@@ -1650,6 +1720,7 @@ def platform_script(
     filename: str = "",
     packages: str = "",
     timeout_seconds: int = 300,
+    engagement_id: str = "",
 ) -> str:
     """
     Custom app probing lane: write a full script and run it in Kali.
@@ -1665,9 +1736,12 @@ def platform_script(
     language = python3 | bash | sh.
     packages = comma-separated pip names installed with --user BEFORE python runs
     (e.g. packages='requests,beautifulsoup4'). Prefer stdlib when possible.
+    (apt packages are NOT installable here — use platform_install(manager='apt') first.)
 
     Full stdout/stderr saved under /tmp/pentest/<engagement_id>/ — not catalog-cached;
     re-run freely. Prefer platform_exec for registered tools; platform_shell for one-liners.
+
+    engagement_id: optional pin to a specific engagement — see platform_exec.
     """
     if not (code or "").strip():
         return "ERROR: code is empty"
@@ -1675,11 +1749,11 @@ def platform_script(
     timeout_seconds = max(30, min(int(timeout_seconds), 900))
 
     def _run() -> str:
-        _require_bound_target()
+        eid, tgt = _resolve_engagement(engagement_id)
         body = {
             "code": code,
             "language": language,
-            "engagement_id": _SESSION_ENGAGEMENT_ID,
+            "engagement_id": eid,
             "run_id": SESSION_RUN_ID,
             "reason": reason,
             "filename": filename,
@@ -1688,11 +1762,11 @@ def platform_script(
             "record_findings": True,
         }
         _log(
-            f"script lang={language} engagement={_SESSION_ENGAGEMENT_ID} "
+            f"script lang={language} engagement={eid} "
             f"bytes={len(code.encode('utf-8', errors='replace'))} pkgs={packages!r}"
         )
         data = _post("/api/v1/mcp/script", body, timeout=timeout_seconds + 120)
-        return _format_exec_result(data)
+        return _format_exec_result(data, engagement_id=eid, target=tgt)
 
     return _safe(_run)
 
@@ -2086,6 +2160,9 @@ _log(f"registered {_TYPED_COUNT} typed recon/network tools")
 
 _TYPED_TECH_COUNT = register_typed_tech_identification_tools(mcp, execute=_typed_execute)
 _log(f"registered {_TYPED_TECH_COUNT} typed tech-identification tools")
+
+_TYPED_OSINT_COUNT = register_typed_osint_tools(mcp, execute=_typed_execute)
+_log(f"registered {_TYPED_OSINT_COUNT} typed passive-OSINT tools")
 
 
 if __name__ == "__main__":

@@ -231,3 +231,74 @@ signals:
       default_tool: whatweb_scan
       reason: "Analytics detected — run deeper tech fingerprinting for full stack"
       priority: 4
+
+  # --- Passive OSINT recursive pivots (the "dig into what you find" loop) ---
+  # Each identity finding suggests the next passive lookup. All public-source only.
+
+  - id: osint_person_found
+    match:
+      finding_type: person
+      min_count: 1
+    dispatch:
+      task_id: email_pattern_generation
+      default_tool: email_permute
+      alternatives: [maigret, theharvester]
+      skill_file: osint/email-people-harvest.md
+      reason: "Person discovered — generate candidate emails (email_permute) and search their username (maigret)"
+      priority: 7
+
+  - id: osint_email_found
+    match:
+      finding_type: email
+      min_count: 1
+    dispatch:
+      task_id: email_account_discovery
+      default_tool: holehe
+      skill_file: osint/email-people-harvest.md
+      reason: "Email discovered — enumerate account existence with holehe (no breach data)"
+      priority: 7
+
+  - id: osint_username_found
+    match:
+      finding_type: username
+      min_count: 1
+    dispatch:
+      task_id: username_enumeration
+      default_tool: maigret
+      alternatives: [sherlock, social_analyzer]
+      skill_file: osint/username-pivot.md
+      reason: "Username discovered — sweep social/web sites for matching accounts"
+      priority: 6
+
+  - id: osint_phone_found
+    match:
+      finding_type: phone
+      min_count: 1
+    dispatch:
+      task_id: phone_number_osint
+      default_tool: phoneinfoga
+      reason: "Phone number discovered — profile carrier/country/footprint"
+      priority: 5
+
+  - id: osint_document_found
+    match:
+      finding_type: document
+      min_count: 1
+    dispatch:
+      task_id: document_metadata_discovery
+      default_tool: exiftool_extract
+      skill_file: osint/document-metadata.md
+      reason: "Public document found — extract author/software/GPS metadata (feeds PERSON leads)"
+      priority: 5
+
+  - id: osint_social_account_found
+    match:
+      finding_type: social_account
+      min_count: 1
+    dispatch:
+      task_id: username_enumeration
+      default_tool: maigret
+      alternatives: [social_analyzer]
+      skill_file: osint/username-pivot.md
+      reason: "Social account found — pivot its handle across other platforms"
+      priority: 5

@@ -53,6 +53,16 @@ rules:
     title_template: "Console/app path indicator: {match}"
     tags: [auto_ingest, console_path, product_hint]
 
+  # Passive OSINT: any tool that surfaces an email (whois registrant, TLS cert
+  # contact, theHarvester, crawl) promotes it to an EMAIL entity in the graph.
+  - id: osint_email_address
+    pattern: '(?i)([a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,})'
+    finding_type: email
+    evidence_grade: inferred
+    claim_severity: info
+    title_template: "{match}"
+    tags: [auto_ingest, osint, email]
+
   - id: subdomain_line
     pattern: '(?i)^(?:\*\.)?([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)\s*$'
     finding_type: subdomain

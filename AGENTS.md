@@ -95,6 +95,23 @@ Finalize may block COMPLETE on weak claims — deepen or ask for override.
 
 OpenCode aborts long MCP calls. Keep single calls short (≤90s when you can); chunk work; use jobs. Cache hits → change params or `force_refresh=true`.
 
+## Concurrent engagements (multiple chats, same MCP process)
+
+This MCP server holds ONE shared session (`target`/`engagement_id`) per running process. If the
+host reuses one MCP subprocess across multiple chats/tabs — which is the common case — a
+`platform_set_target` call in a DIFFERENT chat working a different domain **overwrites that shared
+session out from under you**, silently redirecting your next `platform_exec`/`platform_shell`/
+`platform_findings` call to the wrong engagement. Symptoms: the target "keeps switching", or
+findings from another domain show up mixed into yours.
+
+Workaround: every `platform_set_target` response includes `engagement_id`. Once you have it, pass
+`engagement_id=<that id>` explicitly on `platform_exec`, `platform_shell`, `platform_script`,
+`platform_job_start`, `platform_job_poll`, `platform_context`, and `platform_findings` — this pins
+the call to your engagement regardless of what the shared session currently holds. If you notice
+the target has drifted (the `## Target Bind` you saved no longer matches what `platform_context`
+reports), re-pin with `engagement_id=` rather than re-running `platform_set_target` (which would
+itself clobber the shared session again).
+
 ## Safety
 
 Authorized targets only. Destructive / exploit work needs explicit user permission.

@@ -131,3 +131,54 @@ playbooks:
       - tool: platform_finalize_check
         why: Confirm app-depth gaps cleared before COMPLETE or broad vuln scan.
         fallback: [platform_findings]
+
+  osint_passive_footprint:
+    phase: osint
+    description: >
+      Passive people/identity footprint. Seed from the target website, harvest
+      public sources, then RECURSIVELY pivot every name/email/username/phone found.
+      Public sources only — no breach data, no active probing.
+    input: domain
+    steps:
+      - tool: web_contact_harvest
+        why: Seed — pull emails, phones, social links and names straight off the site.
+        suggested_params:
+          url: "{{target}}"
+          depth: 1
+        fallback: [theharvester]
+      - tool: theharvester
+        why: Widen with search-engine / CT / OSINT harvest (emails, names, hosts).
+        suggested_params:
+          domain: "{{target}}"
+        fallback: [web_contact_harvest]
+      - tool: metagoofil
+        why: Public documents → run exiftool_extract for author/software/GPS (more names).
+        suggested_params:
+          domain: "{{target}}"
+        fallback: [platform_script]
+      - tool: email_permute
+        why: For each discovered PERSON, generate candidate emails to confirm.
+        suggested_params:
+          name: "{{from_prior_person}}"
+          domain: "{{target}}"
+        fallback: [theharvester]
+      - tool: holehe
+        why: For each email (found or candidate) — which sites hold an account (existence only).
+        suggested_params:
+          email: "{{from_prior_email}}"
+        fallback: [platform_script]
+      - tool: maigret
+        why: For each username/handle — sweep social/web sites; extract linked profiles.
+        suggested_params:
+          username: "{{from_prior_username}}"
+        fallback: [sherlock, social_analyzer]
+      - tool: phoneinfoga
+        why: For each phone number — carrier/country/footprint.
+        suggested_params:
+          phone: "{{from_prior_phone}}"
+        fallback: [platform_script]
+      - tool: dnstwist
+        why: Look-alike / typosquat domains (brand abuse, phishing infra).
+        suggested_params:
+          domain: "{{target}}"
+        fallback: [domain_hunter]
