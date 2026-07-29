@@ -32,6 +32,13 @@ _SESSION_TARGET = ""
 _SESSION_ENGAGEMENT_ID = ""
 _SESSION_SWITCH_NOTICE = ""
 
+# OPEN GAPS dedup — collapses the memory-gaps block to one line across
+# consecutive tool calls while its content signature is unchanged, so a
+# growing engagement doesn't re-teach the operator LLM the same paragraph on
+# every single tool response. Reset whenever the bound engagement changes.
+_LAST_OPEN_LOOPS_SIG = ""
+_OPEN_LOOPS_REPEAT_COUNT = 0
+
 _DOMAIN_RE = re.compile(
     r"^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$"
 )
@@ -104,6 +111,7 @@ def _ensure_run_registered(engagement_id: str) -> None:
 def _bind_target(target: str, *, force_new: bool = False) -> dict[str, Any]:
     """Bind session to a root FQDN. Incomplete names must be clarified first."""
     global _SESSION_TARGET, _SESSION_ENGAGEMENT_ID, _SESSION_SWITCH_NOTICE
+    global _LAST_OPEN_LOOPS_SIG, _OPEN_LOOPS_REPEAT_COUNT
 
     normalized = _normalize_target(target)
     if not _valid_domain(normalized):
@@ -115,6 +123,8 @@ def _bind_target(target: str, *, force_new: bool = False) -> dict[str, Any]:
     previous_target = _SESSION_TARGET
     previous_engagement = _SESSION_ENGAGEMENT_ID
     switched = bool(previous_target and previous_target != normalized)
+    _LAST_OPEN_LOOPS_SIG = ""
+    _OPEN_LOOPS_REPEAT_COUNT = 0
 
     if switched:
         _new_run_id()
@@ -417,11 +427,31 @@ def _fetch_context() -> str:
     idx = data.get("stdout_index") or {}
     idx_text = (idx.get("text") if isinstance(idx, dict) else "") or ""
 
+    # Thinking cards / universal loop — the LLM's "what's likely still unexplored" signal.
+    # Computed by the backend on every context call; was previously dropped here entirely.
+    hyp_lines = [str(h)[:180] for h in (data.get("product_hypotheses") or [])[:8] if str(h).strip()]
+
+    # Signal-based dispatch (e.g. "port 445 open -> smb enum") — likewise computed, was dropped.
+    dispatch_lines: list[str] = []
+    for d_ in (data.get("dispatch_rules") or [])[:6]:
+        if isinstance(d_, dict):
+            sig = d_.get("signal") or ""
+            tool = d_.get("default_tool") or ""
+            reason = (d_.get("reason") or "")[:100]
+            bit = f"[{sig}] → {tool}"
+            if reason:
+                bit += f" — {reason}"
+            dispatch_lines.append(bit)
+
     parts = [
         _session_header(),
         f"**Jobs:** {jobs_line}",
         "### OPEN GAPS (memory — you choose how to close)",
         str(gaps_text or "(none)"),
+        "**Thinking (what's likely still unexplored — instinct, not orders):**\n"
+        + ("\n".join(hyp_lines) if hyp_lines else "(none yet)"),
+        "**Dispatch signals (from detected tech/ports):**\n"
+        + ("\n".join(dispatch_lines) if dispatch_lines else "(none yet)"),
         _block("Context delta", data.get("context_delta") or {}),
         "**Crown jewels (top):**\n" + ("\n".join(jewel_lines) if jewel_lines else "(none yet)"),
         "**Recent artifacts:**\n" + (idx_text if idx_text else "(none — run a tool first)"),
@@ -443,6 +473,14 @@ def _fetch_context() -> str:
     fs = data.get("findings_summary") or ""
     if fs:
         parts.append(_block("Findings (brief)", fs[:1200] + ("…" if len(fs) > 1200 else "")))
+    # Role guidance: short operator-mindset reminder — full skill text on demand via platform_skills
+    rg = (data.get("role_guidance") or "").strip()
+    if rg:
+        parts.append(_block("Role guidance", rg[:700] + ("…" if len(rg) > 700 else "")))
+    # Skills index: names + paths only — call platform_skills(path=...) to read one in full
+    si = (data.get("skills_index") or "").strip()
+    if si:
+        parts.append(_block("Skills available", si[:900] + ("…" if len(si) > 900 else "")))
 
     parts.append(
         "---\n"
@@ -528,20 +566,34 @@ def _format_exec_result(data: dict[str, Any]) -> str:
     stdout = data.get("stdout") or ""
     stderr = data.get("stderr") or ""
     # Trim: status + top findings + gaps; full stdout via artifact path
-    arts = (data.get("hybrid") or {}).get("artifacts") or (data.get("parsed") or {}).get("artifacts") or {}
+    hybrid_meta = data.get("hybrid") or {}
+    arts = hybrid_meta.get("artifacts") or (data.get("parsed") or {}).get("artifacts") or {}
     stdout_path = ""
     if isinstance(arts, dict):
         stdout_path = str(arts.get("stdout_path") or "")
 
-    if len(stdout) <= 12000:
+    # A registered per-tool digest (registry.digest_tool_output, computed
+    # server-side) already carries the compact "what happened" signal —
+    # structured findings capture the rest. When one exists, the raw stdout
+    # preview only needs to cover what the digest and structured findings
+    # might have missed, not mirror the whole (sometimes 10k+ line) dump —
+    # that's what repeatedly filled OpenCode's context on long sessions.
+    # Without a digest (tool has no registered parser), keep the generous cap
+    # since raw stdout is the only signal available for that tool.
+    digest = str(hybrid_meta.get("digest") or "")
+    stdout_cap = 2500 if digest else 12000
+    head_cap = 1800 if digest else 6000
+    tail_cap = 700 if digest else 3000
+
+    if len(stdout) <= stdout_cap:
         stdout_show = stdout
     else:
         stdout_show = (
-            stdout[:6000]
+            stdout[:head_cap]
             + "\n\n…[trimmed — full stdout on Kali"
             + (f" `{stdout_path}`" if stdout_path else "")
             + " — platform_artifact]…\n\n"
-            + stdout[-3000:]
+            + stdout[-tail_cap:]
         )
     stderr_show = stderr if len(stderr) <= 8000 else stderr[:8000] + "\n…[stderr truncated]…"
 
@@ -556,6 +608,8 @@ def _format_exec_result(data: dict[str, Any]) -> str:
         parts.append(f"**COMMAND:** `{data['command']}`")
     if data.get("tool_name"):
         parts.append(f"**TOOL:** `{data['tool_name']}`")
+    if digest:
+        parts.append(f"**PARSED SUMMARY:** {digest}")
     if data.get("cache_hit"):
         parts.append(
             "**CACHE HIT** — identical tool+params already ran this engagement. "
@@ -575,8 +629,7 @@ def _format_exec_result(data: dict[str, Any]) -> str:
         if len(titles) > 15:
             parts.append(f"… +{len(titles) - 15} more — platform_findings / platform_report_outline")
     # Soft notes — failure gaps + optional parallel branch hint (never orders)
-    hybrid = data.get("hybrid") or {}
-    parallel_note = hybrid.get("parallel_note") if isinstance(hybrid, dict) else None
+    parallel_note = hybrid_meta.get("parallel_note") if isinstance(hybrid_meta, dict) else None
     if data.get("timed_out") or not data.get("success") or (
         data.get("next_hint") and "EMPTY" in str(data.get("next_hint"))
     ):
@@ -588,22 +641,52 @@ def _format_exec_result(data: dict[str, Any]) -> str:
         parts.append(f"**Note:** {data['next_hint']}")
     # Active-memory awareness — drift / unexplored / unread jobs (advisory, shows on
     # success too, because that's exactly when the agent keeps going without re-syncing).
-    mem_note = hybrid.get("memory_awareness") if isinstance(hybrid, dict) else None
+    mem_note = hybrid_meta.get("memory_awareness") if isinstance(hybrid_meta, dict) else None
     if mem_note:
         parts.append(f"**Memory:** {mem_note}")
     if arts:
         parts.append(_block("Full output on disk (Kali)", arts))
-    # Gaps from memory — data, not orders
-    if _SESSION_ENGAGEMENT_ID:
+    # Gaps from memory — data, not orders. Delta-aware: collapse to one line
+    # while the content signature is unchanged since it was last shown in
+    # full, so a growing engagement doesn't re-send the same paragraph on
+    # every tool call — full detail resurfaces the moment anything changes,
+    # or periodically anyway (refresh_every) so it can't drift out of context.
+    # Skipped entirely on failed/empty/cache-hit calls — a 404 or an empty
+    # result has nothing to do with overall engagement progress, and is
+    # exactly the turn where the reply should be one short sentence
+    # (AGENTS.md), not a nudge riding along on top of it.
+    is_trivial_result = (
+        not data.get("success")
+        or bool(data.get("cache_hit"))
+        or not (data.get("stdout") or "").strip()
+    )
+    if _SESSION_ENGAGEMENT_ID and not is_trivial_result:
         try:
+            global _LAST_OPEN_LOOPS_SIG, _OPEN_LOOPS_REPEAT_COUNT
             loops = _get(
                 "/api/v1/hybrid/open-loops",
                 params={"engagement_id": _SESSION_ENGAGEMENT_ID},
                 timeout=12,
             )
-            text = (loops or {}).get("text") or ""
-            if text and (loops or {}).get("count"):
-                parts.append(f"\n**OPEN GAPS** (you choose):\n{text}")
+            loops = loops or {}
+            text = loops.get("text") or ""
+            count = loops.get("count") or 0
+            sig = str(loops.get("signature") or "")
+            refresh_every = int(loops.get("refresh_every") or 4)
+            if text and count:
+                unchanged = bool(sig) and sig == _LAST_OPEN_LOOPS_SIG
+                if unchanged and _OPEN_LOOPS_REPEAT_COUNT < refresh_every:
+                    _OPEN_LOOPS_REPEAT_COUNT += 1
+                    urgent = "⚠ still true — " if loops.get("strongly_recommend_continue") else ""
+                    parts.append(
+                        f"\n**OPEN GAPS:** {urgent}unchanged since last shown "
+                        f"({count} item(s) still open) — platform_context / "
+                        "platform_finalize_check for the full list."
+                    )
+                else:
+                    _LAST_OPEN_LOOPS_SIG = sig
+                    _OPEN_LOOPS_REPEAT_COUNT = 0
+                    parts.append(f"\n**OPEN GAPS** (you choose):\n{text}")
         except Exception:
             pass
     parts.append(
@@ -894,6 +977,11 @@ def platform_finalize_check(override: bool = False) -> str:
     Also returns the same report-quality notes as before (weak CRITICAL/CVE
     claims, SPA-false-API, port floods, hypothesis-only paths) as advisory —
     useful for honest labeling, never a reason to refuse writing the report.
+
+    When the look-back total, missing service-scan coverage, or an unresolved
+    HIGH/CRITICAL claim crosses a real threshold, the response leads with a
+    "STRONGLY RECOMMEND CONTINUING" banner — still your call, but designed to
+    not be skimmable past on the way to a summary.
     """
     def _run() -> str:
         _require_bound_target()
@@ -911,8 +999,14 @@ def platform_finalize_check(override: bool = False) -> str:
             + int(lb.get("unexplored_count") or 0)
             + int(lb.get("untested_hypothesis_count") or 0)
         )
-        parts = [
-            "### OPERATOR MIRROR — LOOK-BACK",
+        parts = ["### OPERATOR MIRROR — LOOK-BACK"]
+        if data.get("strongly_recommend_continue"):
+            reasons = data.get("strong_continue_reasons") or []
+            parts.append(
+                "## ⚠ STRONGLY RECOMMEND CONTINUING — not a block, but read this first\n"
+                + "\n".join(f"- {r}" for r in reasons)
+            )
+        parts.extend([
             _session_header(),
             f"**{lb_total} open item(s) in memory**"
             if lb_total
@@ -921,7 +1015,7 @@ def platform_finalize_check(override: bool = False) -> str:
             _block("report_quality_notes (advisory)", data.get("blocked_by") or []),
             _block("checks", data.get("checks") or {}),
             _block("guidance", data.get("guidance") or ""),
-        ]
+        ])
         if data.get("inferred_focus"):
             parts.append(_block("inferred_focus", data["inferred_focus"]))
         if lb_total:
@@ -1940,14 +2034,24 @@ def platform_graph_query(
     asset_type: str = "",
     contains: str = "",
     limit: int = 80,
+    from_asset: str = "",
+    max_hops: int = 0,
 ) -> str:
     """
     Query the engagement asset graph (not just the summary dump).
 
-    asset_type: subdomain|host|url|port|ip|technology|service|domain
-    contains: substring filter (e.g. vpn, oracle, api)
+    Two modes:
+    - Type/label filter (default): asset_type=subdomain|host|url|port|ip|technology|
+      service|domain, contains=substring (e.g. vpn, oracle, api).
+    - Multi-hop traversal: set from_asset (a hostname/IP/label, or 'type:label')
+      + max_hops (1-6) instead. Walks the graph outward from that asset, undirected
+      — the same way a human pentester follows relationships regardless of which
+      way an edge was written — and returns everything reachable within max_hops,
+      sorted closest first. Use this to answer "what's actually connected to X"
+      beyond the 1-hop siblings you'd get from reading edges directly.
     """
     limit = max(1, min(int(limit), 500))
+    max_hops = max(0, min(int(max_hops), 6))
 
     def _run() -> str:
         _require_bound_target()
@@ -1958,6 +2062,8 @@ def platform_graph_query(
                 "asset_type": asset_type,
                 "contains": contains,
                 "limit": str(limit),
+                "from_asset": from_asset,
+                "max_hops": str(max_hops),
             },
         )
         return "\n\n".join([_session_header(), _block("Graph query", data)])

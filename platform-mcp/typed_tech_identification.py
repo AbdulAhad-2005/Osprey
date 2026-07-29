@@ -2,7 +2,7 @@
 
 Same pattern as typed_recon_network.py: each tool calls the same backend
 execute API as platform_exec, with explicit Python parameters so the LLM
-does not have to reverse-engineer params_json for these three tools.
+does not have to reverse-engineer params_json for these four tools.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ def register_typed_tech_identification_tools(
     execute: Callable[..., str],
 ) -> int:
     """
-    Register whatweb_scan, wappalyzer_scan, tech_stack_analyze as typed tools.
+    Register whatweb_scan, wappalyzer_scan, tech_stack_analyze, wafw00f_scan as typed tools.
 
     ``execute(tool_name, params, additional_args, timeout_seconds) -> str``
     must bind engagement and POST /api/v1/mcp/execute (same as platform_exec).
@@ -75,7 +75,21 @@ def register_typed_tech_identification_tools(
             timeout_seconds=timeout_seconds,
         )
 
+    def wafw00f_scan(
+        target: str,
+        additional_args: str = "",
+        timeout_seconds: int = 120,
+    ) -> str:
+        """WAF/CDN product fingerprinting via wafw00f (target=). Names the actual WAF product, unlike generic CDN hints."""
+        return execute(
+            "wafw00f_scan",
+            {"target": target},
+            additional_args=additional_args,
+            timeout_seconds=timeout_seconds,
+        )
+
     mcp.tool(name="whatweb_scan")(whatweb_scan)
     mcp.tool(name="wappalyzer_scan")(wappalyzer_scan)
     mcp.tool(name="tech_stack_analyze")(tech_stack_analyze)
-    return 3
+    mcp.tool(name="wafw00f_scan")(wafw00f_scan)
+    return 4
