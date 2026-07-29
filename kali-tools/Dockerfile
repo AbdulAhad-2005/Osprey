@@ -67,8 +67,16 @@ RUN go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest
 RUN go install github.com/projectdiscovery/tlsx/cmd/tlsx@latest
 # naabu is installed via apt above (the Go build needs libpcap headers and was
 # unreliable); apt ships a working 2.6.x binary on the system PATH.
-# PhoneInfoga (passive phone-number OSINT)
-RUN go install github.com/sundowndev/phoneinfoga/v2@latest
+# PhoneInfoga (passive phone-number OSINT) — installed from the prebuilt release.
+# `go install` fails: phoneinfoga v2 embeds its web UI via go:embed (client/dist/*),
+# which is not present in the Go module, so the build errors out.
+RUN set -eux; \
+    PIF_VER="2.11.0"; \
+    wget -q "https://github.com/sundowndev/phoneinfoga/releases/download/v${PIF_VER}/phoneinfoga_Linux_x86_64.tar.gz" -O /tmp/phoneinfoga.tar.gz; \
+    tar -xzf /tmp/phoneinfoga.tar.gz -C /tmp phoneinfoga; \
+    install -m 0755 /tmp/phoneinfoga /usr/local/bin/phoneinfoga; \
+    rm -f /tmp/phoneinfoga.tar.gz /tmp/phoneinfoga; \
+    phoneinfoga version
 
 # ─── 4. Python pip tools ──────────────────────────────────────────────────────
 RUN pip3 install --break-system-packages --no-cache-dir --ignore-installed \
