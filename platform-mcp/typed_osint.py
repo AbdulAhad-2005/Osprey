@@ -87,6 +87,7 @@ def register_typed_osint_tools(mcp: Any, *, execute: Callable[..., str]) -> int:
                 input_data: str = "",
                 additional_args: str = "",
                 timeout_seconds: int = 300,
+                engagement_id: str = "",
             ) -> str:
                 params = _build_params(
                     domain=domain,
@@ -104,6 +105,7 @@ def register_typed_osint_tools(mcp: Any, *, execute: Callable[..., str]) -> int:
                     params,
                     additional_args=(additional_args or "").strip(),
                     timeout_seconds=timeout_seconds,
+                    engagement_id=engagement_id,
                 )
 
             _tool.__name__ = name
@@ -111,7 +113,10 @@ def register_typed_osint_tools(mcp: Any, *, execute: Callable[..., str]) -> int:
                 f"{doc}\n\n"
                 "PASSIVE OSINT — public sources only. Typed tool; prefer over "
                 "platform_exec JSON. Aliases domain|url|target|email|username|phone|"
-                "name_arg are accepted. Escape hatch: platform_shell / platform_script."
+                "name_arg are accepted. engagement_id= pins this call to a specific "
+                "engagement (from platform_set_target) so a concurrent chat switching "
+                "the ambient target cannot misroute it; omit for the current session. "
+                "Escape hatch: platform_shell / platform_script."
             )
             return _tool
 

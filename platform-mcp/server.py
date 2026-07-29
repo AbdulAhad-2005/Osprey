@@ -2251,6 +2251,7 @@ def _typed_execute(
     *,
     additional_args: str = "",
     timeout_seconds: int = 300,
+    engagement_id: str = "",
 ) -> str:
     return _safe(
         lambda: _execute_catalog_tool(
@@ -2258,6 +2259,7 @@ def _typed_execute(
             params,
             additional_args=additional_args,
             timeout_seconds=timeout_seconds,
+            engagement_id=engagement_id,
         )
     )
 

@@ -28,8 +28,9 @@ def register_typed_tech_identification_tools(
         verbose: bool = False,
         additional_args: str = "",
         timeout_seconds: int = 300,
+        engagement_id: str = "",
     ) -> str:
-        """Technology fingerprinting via WhatWeb (target=). aggression 1=passive (default) to 4=aggressive."""
+        """Technology fingerprinting via WhatWeb (target=). aggression 1=passive (default) to 4=aggressive. engagement_id= pins the call to a specific engagement."""
         params: dict[str, Any] = {"target": target}
         if aggression and str(aggression) != "1":
             params["aggression"] = aggression
@@ -40,19 +41,22 @@ def register_typed_tech_identification_tools(
             params,
             additional_args=additional_args,
             timeout_seconds=timeout_seconds,
+            engagement_id=engagement_id,
         )
 
     def wappalyzer_scan(
         target: str,
         additional_args: str = "",
         timeout_seconds: int = 300,
+        engagement_id: str = "",
     ) -> str:
-        """Categorized technology detection via Wappalyzer Python library (target=)."""
+        """Categorized technology detection via Wappalyzer Python library (target=). engagement_id= pins the call to a specific engagement."""
         return execute(
             "wappalyzer_scan",
             {"target": target},
             additional_args=additional_args,
             timeout_seconds=timeout_seconds,
+            engagement_id=engagement_id,
         )
 
     def tech_stack_analyze(
@@ -61,8 +65,9 @@ def register_typed_tech_identification_tools(
         verbose: bool = False,
         additional_args: str = "",
         timeout_seconds: int = 300,
+        engagement_id: str = "",
     ) -> str:
-        """All-in-one: WhatWeb + Wappalyzer + HTTP headers + security-concern assessment (target=). Slower — use for a comprehensive report."""
+        """All-in-one: WhatWeb + Wappalyzer + HTTP headers + security-concern assessment (target=). Slower — use for a comprehensive report. engagement_id= pins the call to a specific engagement."""
         params: dict[str, Any] = {"target": target}
         if aggression and str(aggression) != "1":
             params["aggression"] = aggression
@@ -73,19 +78,22 @@ def register_typed_tech_identification_tools(
             params,
             additional_args=additional_args,
             timeout_seconds=timeout_seconds,
+            engagement_id=engagement_id,
         )
 
     def wafw00f_scan(
         target: str,
         additional_args: str = "",
         timeout_seconds: int = 120,
+        engagement_id: str = "",
     ) -> str:
-        """WAF/CDN product fingerprinting via wafw00f (target=). Names the actual WAF product, unlike generic CDN hints."""
+        """WAF/CDN product fingerprinting via wafw00f (target=). Names the actual WAF product, unlike generic CDN hints. engagement_id= pins the call to a specific engagement."""
         return execute(
             "wafw00f_scan",
             {"target": target},
             additional_args=additional_args,
             timeout_seconds=timeout_seconds,
+            engagement_id=engagement_id,
         )
 
     mcp.tool(name="whatweb_scan")(whatweb_scan)

@@ -162,6 +162,7 @@ def register_typed_recon_network_tools(
                 input_data: str = "",
                 additional_args: str = "",
                 timeout_seconds: int = 300,
+                engagement_id: str = "",
             ) -> str:
                 ports_flag = _normalize_ports_flag(ports)
                 extra = (additional_args or "").strip()
@@ -181,6 +182,7 @@ def register_typed_recon_network_tools(
                     params,
                     additional_args=extra,
                     timeout_seconds=timeout_seconds,
+                    engagement_id=engagement_id,
                 )
 
             _tool.__name__ = name
@@ -188,6 +190,9 @@ def register_typed_recon_network_tools(
                 f"{doc}\n\n"
                 "Typed recon/network tool — prefer this over platform_exec JSON. "
                 "Aliases: domain|target|host|url are accepted; backend remaps. "
+                "engagement_id= pins this call to a specific engagement (the id "
+                "platform_set_target returned) so it is not affected if another "
+                "chat switches the ambient target; omit for the current session. "
                 "Escape hatch: platform_shell / platform_script."
             )
             return _tool
