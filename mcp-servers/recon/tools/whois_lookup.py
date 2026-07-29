@@ -33,7 +33,12 @@ _MULTI_PART_TLDS = {"co.uk", "com.au", "co.nz", "co.za", "com.br", "co.in",
                     "co.jp", "ne.jp", "or.jp", "co.kr", "com.sg",
                     "gov.in", "net.in", "org.in", "ac.in", "edu.in",
                     "res.in", "mil.in", "nic.in", "gov.uk", "ac.uk",
-                    "org.uk", "gov.au", "edu.au"}
+                    "org.uk", "gov.au", "edu.au",
+                    "gov.pk", "com.pk", "net.pk", "org.pk", "edu.pk"}
+
+# Common second-level labels under a 2-char ccTLD (heuristic for the fallback).
+_SLD_KEYWORDS = {"gov", "edu", "ac", "co", "com", "net", "org", "mil", "nic",
+                 "res", "gob", "gouv", "go", "or", "ne", "gen", "ltd", "plc"}
 
 
 def _strip_to_apex(target: str) -> str:
@@ -64,9 +69,15 @@ def _strip_to_apex(target: str) -> str:
     if len(parts) <= 2:
         return target
 
-    # Check for multi-part TLD (e.g. co.uk).
-    tld_2 = ".".join(parts[-2:])
-    if tld_2 in _MULTI_PART_TLDS and len(parts) >= 3:
+    # Fallback heuristic (tldextract unavailable): keep 3 labels when the last is
+    # a 2-char ccTLD AND the second-to-last is a common second-level label
+    # (gov/edu/ac/co/com/net/org/mil/…). This covers gov.pk, com.pk, gov.ng,
+    # co.uk, com.au, etc. without an exhaustive hand-list — the bug that made
+    # `nadra.gov.pk` collapse to the restricted SLD `gov.pk`.
+    tld = parts[-1].lower()
+    sld = parts[-2].lower()
+    tld_2 = f"{sld}.{tld}"
+    if tld_2 in _MULTI_PART_TLDS or (len(tld) == 2 and sld in _SLD_KEYWORDS):
         return ".".join(parts[-3:])
 
     # Standard case: last two labels = apex domain.

@@ -63,8 +63,11 @@ def build_command(**params: Any) -> str:
 
     parts = ["whatweb"]
 
-    # JSON output to stdout for parsing
-    parts.append("--log-json=-")
+    # JSON to a temp FILE, not stdout. `--log-json=-` intermittently triggers a
+    # Ruby "closed stream (IOError)" in whatweb's logging and makes it exit 1
+    # even after emitting valid JSON (false failure). Logging to a file and
+    # cat-ing it gives a stable, meaningful exit code and complete JSON.
+    parts.append('--log-json="$WW_TMP"')
 
     # Aggression level (1=passive, 2-4=increasingly aggressive)
     if aggression and str(aggression) != "1":
@@ -88,7 +91,11 @@ def build_command(**params: Any) -> str:
         target_str = f"https://{target_str}"
     parts.append(shlex.quote(target_str))
 
-    return " ".join(parts)
+    core = " ".join(parts)
+    return (
+        'WW_TMP="$(mktemp /tmp/whatweb.XXXXXX.json)"; '
+        f"{core}; ec=$?; cat \"$WW_TMP\" 2>/dev/null; rm -f \"$WW_TMP\"; exit $ec"
+    )
 
 
 def _extract_tech_findings(data: list[dict[str, Any]]) -> list[dict[str, Any]]:

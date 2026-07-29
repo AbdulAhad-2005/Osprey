@@ -32,10 +32,14 @@ from _core.result import ToolResult
 TOOL_NAME = "theharvester"
 CATEGORY = "osint"
 
-# Sources that work without an API key. "all" is available via sources=all.
+# Keyless sources VALID in theHarvester 4.11.x. Names drift between releases —
+# `bing`, `anubis`, `threatminer`, `sitedossier`, `urlscan` were removed/renamed
+# and any unknown source makes theHarvester abort the whole run ("Invalid
+# source"), so only ship names the installed version accepts. `sources=all` is
+# still available to the caller for the full (partly keyed) set.
 _DEFAULT_SOURCES = (
-    "crtsh,duckduckgo,bing,otx,hackertarget,rapiddns,anubis,"
-    "threatminer,urlscan,certspotter,dnsdumpster,sitedossier"
+    "crtsh,hackertarget,rapiddns,certspotter,dnsdumpster,otx,"
+    "duckduckgo,threatcrowd"
 )
 
 

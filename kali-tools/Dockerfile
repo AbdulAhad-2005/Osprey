@@ -106,6 +106,12 @@ RUN pipx install maigret \
     && pipx install holehe \
     && pipx install social-analyzer
 
+# ─── 4b3. Wappalyzer python lib ───────────────────────────────────────────────
+# wappalyzer_scan.py and tech_stack_analyze.py run `python3 -c "from Wappalyzer
+# import Wappalyzer, WebPage"`, so the lib must be importable by the SYSTEM
+# python3 (NOT a pipx venv). Without it both tools raise ModuleNotFoundError.
+RUN pip3 install --break-system-packages --no-cache-dir python-Wappalyzer
+
 # ─── 4c. Ruby gem tools ──────────────────────────────────────────────────────
 RUN gem install one_gadget
 

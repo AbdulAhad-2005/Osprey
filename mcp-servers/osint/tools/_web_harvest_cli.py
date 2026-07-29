@@ -155,6 +155,7 @@ def harvest(seed: str, depth: int, max_pages: int, timeout: int) -> dict:
     names: set[str] = set()
 
     seen: set[str] = set()
+    seed_status: object = None  # HTTP status (or error string) of the first fetch
     queue: deque[tuple[str, int]] = deque([(seed, 0)])
     # Realistic desktop-browser UA — reduces trivial 403s from WAFs that block
     # obvious bot user-agents. Still fully passive (GET only, no auth).
@@ -174,8 +175,12 @@ def harvest(seed: str, depth: int, max_pages: int, timeout: int) -> dict:
         seen.add(url)
         try:
             resp = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
-        except requests.RequestException:
+        except requests.RequestException as exc:
+            if seed_status is None:
+                seed_status = f"error:{type(exc).__name__}"
             continue
+        if seed_status is None:
+            seed_status = resp.status_code
         ctype = resp.headers.get("Content-Type", "")
         if "html" not in ctype and "text" not in ctype:
             continue
@@ -224,10 +229,20 @@ def harvest(seed: str, depth: int, max_pages: int, timeout: int) -> dict:
                 except ValueError:
                     pass
 
+    # Surface WHY a crawl was empty: a 401/403/429 seed status means a WAF/CDN
+    # (Akamai/Cloudflare) blocked us, not that the site has no contacts.
+    blocked = isinstance(seed_status, int) and seed_status in (401, 403, 429)
     return {
         "seed": seed,
         "domain": base_domain,
         "pages_crawled": len(seen),
+        "seed_status": seed_status,
+        "blocked": blocked,
+        "note": (
+            f"Seed returned HTTP {seed_status} — likely WAF/CDN blocked; "
+            "results may be incomplete. Try theharvester / crt.sh / gau for this domain."
+            if blocked else ""
+        ),
         "emails": sorted(emails),
         "phones": sorted(phones),
         "social": list(social.values()),
