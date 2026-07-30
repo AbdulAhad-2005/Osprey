@@ -14,7 +14,6 @@ Use when evidence suggests a CDN or you need real IPs before network scanning.
 |------|------|
 | Quick soft clues (dig+curl) | `cdn_origin_probe` |
 | Full attribution with CIDR classification + verification | `origin_ip_attribution` |
-| Cloudflare-specific multi-signal finder | `cloudflare_origin_ip` |
 | Bulk resolve hosts -> IPs/CNAMEs | `dnsx_resolve` |
 | TLS SANs / issuer hints | `tlsx_inspect` |
 | More hostnames from CT | `crt_sh_query` |

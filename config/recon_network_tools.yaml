@@ -79,7 +79,7 @@ tasks:
     phase: recon
     description: Soft CDN/origin clues (dig+curl). Advisory — confirm before scanning edge IPs.
     default_tool: cdn_origin_probe
-    alternatives: [origin_ip_attribution, cloudflare_origin_ip, dnsx_resolve, tlsx_inspect]
+    alternatives: [origin_ip_attribution, dnsx_resolve, tlsx_inspect]
     skill_file: recon/ip-attribution.md
     produces: [host, technology, observation]
 
@@ -105,6 +105,54 @@ tasks:
     alternatives: [dnsx_resolve]
     skill_file: recon/subdomain-takeover.md
     produces: [observation]
+
+  content_discovery:
+    phase: recon
+    description: Brute-force / fuzz for hidden paths, files and directories on a live host.
+    default_tool: feroxbuster_scan
+    alternatives: [ffuf_scan, gobuster_scan]
+    skill_file: recon/content-and-js-recon.md
+    produces: [url, observation]
+
+  parameter_discovery:
+    phase: recon
+    description: Find hidden HTTP parameters (injection-point candidates) on live endpoints.
+    default_tool: arjun_scan
+    alternatives: [katana_crawl]
+    skill_file: recon/content-and-js-recon.md
+    produces: [observation]
+
+  javascript_analysis:
+    phase: recon
+    description: Mine a page's JavaScript for endpoints, hardcoded secrets and cloud storage refs.
+    default_tool: js_recon
+    alternatives: [katana_crawl]
+    skill_file: recon/content-and-js-recon.md
+    produces: [url, observation]
+
+  web_crawling_deep:
+    phase: recon
+    description: JS-aware crawl to enumerate endpoints and forms across an app.
+    default_tool: katana_crawl
+    alternatives: [hakrawler_crawl]
+    skill_file: recon/content-and-js-recon.md
+    produces: [url, observation]
+
+  email_security_posture:
+    phase: recon
+    description: Assess SPF / DKIM / DMARC / MX anti-spoofing posture for a domain.
+    default_tool: email_security_probe
+    alternatives: []
+    skill_file: recon/content-and-js-recon.md
+    produces: [observation]
+
+  policy_file_discovery:
+    phase: recon
+    description: Fetch robots.txt / sitemap.xml / .well-known/* and extract disallowed paths and endpoints.
+    default_tool: well_known_probe
+    alternatives: []
+    skill_file: recon/content-and-js-recon.md
+    produces: [url, observation]
 
   port_discovery:
     phase: network
@@ -307,17 +355,8 @@ tools:
       live_hosts: { type: string, default: "" }
       timeout: { type: int, default: 30 }
 
-  cloudflare_origin_ip:
-    task: cdn_origin_clues
-    phase: recon
-    freeform_args_field: additional_args
-    default_for_task: false
-    llm_hints: |
-      Multi-signal origin IP finder. Probes MX, SPF, common subdomains, and HTTP headers.
-      Good for Cloudflare-specific bypass. Returns candidates sorted by confidence.
-    parameters:
-      domain: { type: string, required: true }
-      timeout: { type: int, default: 30 }
+  # cloudflare_origin_ip / cdn_origin_ip removed as duplicates of cdn_origin_probe.
+  # Fast clue-gathering: cdn_origin_probe. Deep pipeline: origin_ip_attribution.
 
   shodan_search:
     task: passive_internet_osint
@@ -583,3 +622,106 @@ tools:
       verbose: { type: bool, default: false }
     example_calls:
       - { target: "https://example.com" }
+
+  # ---- Active recon: content / parameter / JS / policy ----
+
+  feroxbuster_scan:
+    task: content_discovery
+    phase: recon
+    freeform_args_field: additional_args
+    default_for_task: true
+    llm_hints: |
+      Recursive content discovery on a LIVE host (url=). Auto-tunes away soft-404 noise.
+      Raise depth= for recursion; add extensions with additional_args "-x php,txt,bak,zip".
+      Run after httpx confirms the host is live. Chunk big wordlists via jobs.
+    parameters:
+      url: { type: string, required: true, description: "Target URL (http/https)" }
+      wordlist: { type: string, default: "" }
+      threads: { type: int, default: 40 }
+      depth: { type: int, default: 1 }
+
+  ffuf_scan:
+    task: content_discovery
+    phase: recon
+    freeform_args_field: additional_args
+    default_for_task: false
+    llm_hints: |
+      One coherent fuzz per call. mode=directory (paths), mode=vhost (Host-header virtual hosts —
+      use when many names share one IP), mode=parameter (hidden query params). Emits NDJSON.
+    parameters:
+      url: { type: string, required: true }
+      mode: { type: string, default: "directory", description: "directory|vhost|parameter" }
+      wordlist: { type: string, default: "" }
+      match_codes: { type: string, default: "200,204,301,302,307,401,403,405" }
+
+  gobuster_scan:
+    task: content_discovery
+    phase: recon
+    freeform_args_field: additional_args
+    default_for_task: false
+    llm_hints: "Alternative to feroxbuster. mode=dir|dns|vhost. url= required (dir/vhost)."
+    parameters:
+      url: { type: string, required: true }
+      mode: { type: string, default: "dir" }
+      wordlist: { type: string, default: "" }
+
+  arjun_scan:
+    task: parameter_discovery
+    phase: recon
+    freeform_args_field: additional_args
+    default_for_task: true
+    llm_hints: |
+      Active hidden-parameter discovery on ONE live endpoint (url=, method=GET/POST). Found
+      params are injection-point candidates — feed them to the vuln phase, don't test here.
+    parameters:
+      url: { type: string, required: true }
+      method: { type: string, default: "GET" }
+      threads: { type: int, default: 25 }
+
+  katana_crawl:
+    task: web_crawling_deep
+    phase: recon
+    freeform_args_field: additional_args
+    default_for_task: true
+    llm_hints: |
+      JS-aware crawler (url=). Follows links AND parses JavaScript for endpoints; the parser
+      also mines query parameters from every crawled URL. Prefer over hakrawler for SPA/API apps.
+    parameters:
+      url: { type: string, required: true }
+      depth: { type: int, default: 3 }
+
+  js_recon:
+    task: javascript_analysis
+    phase: recon
+    freeform_args_field: additional_args
+    default_for_task: true
+    llm_hints: |
+      Point at a page or a JS URL (target=). Extracts endpoints/API paths, hardcoded secrets
+      (API keys, tokens, JWTs, private keys) and exposed cloud storage. On SPA/API targets the
+      real surface lives in the JS bundles — run this on every live app host. Secrets are
+      exposure-observed but validity-UNVERIFIED: confirm before any HIGH claim.
+    parameters:
+      target: { type: string, required: true, description: "Page URL, JS URL, or list" }
+      max_files: { type: int, default: 40 }
+      timeout: { type: int, default: 15 }
+
+  email_security_probe:
+    task: email_security_posture
+    phase: recon
+    freeform_args_field: additional_args
+    default_for_task: true
+    llm_hints: "Passive DNS: SPF/DKIM/DMARC/MX (domain=). Missing SPF/DMARC = spoofing exposure."
+    parameters:
+      domain: { type: string, required: true }
+
+  well_known_probe:
+    task: policy_file_discovery
+    phase: recon
+    freeform_args_field: additional_args
+    default_for_task: true
+    llm_hints: |
+      Fetch robots.txt / sitemap.xml / .well-known/* (url=/domain=). Extracts Disallow paths
+      (often-sensitive), sitemap URLs, security.txt and OIDC/SSO endpoints as leads.
+    parameters:
+      url: { type: string, required: true, description: "Target URL or domain" }
+      timeout: { type: int, default: 12 }

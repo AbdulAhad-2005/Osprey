@@ -27,9 +27,17 @@ tasks:
     phase: osint
     description: Find public documents for a domain, then extract author/software/GPS metadata (via exiftool_extract).
     default_tool: metagoofil
-    alternatives: []
+    alternatives: [exiftool_extract]
     skill_file: osint/document-metadata.md
     produces: [document, observation]
+
+  document_metadata_extraction:
+    phase: osint
+    description: Extract author/software/GPS metadata from a downloaded document (file_path=). Author/creator tags become PERSON leads.
+    default_tool: exiftool_extract
+    alternatives: []
+    skill_file: osint/document-metadata.md
+    produces: [person, observation]
 
   username_enumeration:
     phase: osint
@@ -187,3 +195,15 @@ tools:
     default_for_task: true
     parameters:
       phone: { type: string, required: true, description: "E.164, e.g. +14155552671" }
+
+  exiftool_extract:
+    task: document_metadata_extraction
+    phase: osint
+    freeform_args_field: additional_args
+    default_for_task: true
+    llm_hints: |
+      Run on a document already on Kali (file_path=), e.g. one metagoofil downloaded
+      under /tmp. Author / Creator / Last-Modified-By tags become PERSON leads — pivot
+      each with email_permute (name+domain) and maigret. GPS/software tags are context.
+    parameters:
+      file_path: { type: string, required: true, description: "Path to a file on the Kali host" }

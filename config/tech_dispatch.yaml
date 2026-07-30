@@ -28,6 +28,62 @@ signals:
       reason: "Live hosts found — mine historical URLs"
       priority: 5
 
+  - id: live_host_content_discovery
+    match:
+      finding_type: url
+      min_count: 1
+    dispatch:
+      task_id: content_discovery
+      default_tool: feroxbuster_scan
+      alternatives: [ffuf_scan, gobuster_scan]
+      skill_file: recon/content-and-js-recon.md
+      reason: "Live host — brute-force hidden paths/files (content discovery)"
+      priority: 6
+
+  - id: live_host_js_recon
+    match:
+      finding_type: url
+      min_count: 1
+    dispatch:
+      task_id: javascript_analysis
+      default_tool: js_recon
+      alternatives: [katana_crawl]
+      skill_file: recon/content-and-js-recon.md
+      reason: "Live app host — mine its JavaScript for endpoints, secrets and cloud refs"
+      priority: 6
+
+  - id: live_host_policy_files
+    match:
+      finding_type: url
+      min_count: 1
+    dispatch:
+      task_id: policy_file_discovery
+      default_tool: well_known_probe
+      reason: "Live host — check robots.txt / sitemap / .well-known for surface + policy leads"
+      priority: 4
+
+  - id: domain_email_posture
+    match:
+      finding_type: subdomain
+      min_count: 1
+    dispatch:
+      task_id: email_security_posture
+      default_tool: email_security_probe
+      reason: "Domain in scope — assess SPF/DKIM/DMARC anti-spoofing posture"
+      priority: 3
+
+  - id: params_found_probe_hidden
+    match:
+      finding_type: url
+      min_count: 3
+    dispatch:
+      task_id: parameter_discovery
+      default_tool: arjun_scan
+      alternatives: [katana_crawl]
+      skill_file: recon/content-and-js-recon.md
+      reason: "URLs/endpoints known — discover hidden parameters (injection-point candidates)"
+      priority: 5
+
   - id: technology_wordpress
     match:
       metadata_key: technology
@@ -192,12 +248,14 @@ signals:
   - id: technology_react_or_vue
     match:
       metadata_key: technology
-      metadata_contains_any: [react, vue, angular]
+      metadata_contains_any: [react, vue, angular, next, nuxt, svelte]
     dispatch:
-      task_id: live_host_probing
-      default_tool: httpx_probe
-      reason: "SPA framework detected — probe API endpoints, check __NEXT_DATA__"
-      priority: 5
+      task_id: javascript_analysis
+      default_tool: js_recon
+      alternatives: [katana_crawl]
+      skill_file: recon/content-and-js-recon.md
+      reason: "SPA framework — the real API surface is in the JS bundles; run js_recon"
+      priority: 7
 
   - id: technology_iis_old
     match:

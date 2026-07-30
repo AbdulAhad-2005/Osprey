@@ -21,6 +21,7 @@ from mcp.server.fastmcp import FastMCP
 from typed_recon_network import register_typed_recon_network_tools
 from typed_tech_identification import register_typed_tech_identification_tools
 from typed_osint import register_typed_osint_tools
+from typed_recon_content import register_typed_recon_content_tools
 
 API_BASE = os.environ.get("PENTEST_API_BASE", "http://localhost:9000").rstrip("/")
 QUICK_TIMEOUT = float(os.environ.get("PENTEST_QUICK_TIMEOUT", "60"))
@@ -2272,6 +2273,9 @@ _log(f"registered {_TYPED_TECH_COUNT} typed tech-identification tools")
 
 _TYPED_OSINT_COUNT = register_typed_osint_tools(mcp, execute=_typed_execute)
 _log(f"registered {_TYPED_OSINT_COUNT} typed passive-OSINT tools")
+
+_TYPED_CONTENT_COUNT = register_typed_recon_content_tools(mcp, execute=_typed_execute)
+_log(f"registered {_TYPED_CONTENT_COUNT} typed recon-content tools")
 
 
 if __name__ == "__main__":

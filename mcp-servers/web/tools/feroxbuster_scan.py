@@ -31,15 +31,38 @@ TOOL_NAME = "feroxbuster_scan"
 CATEGORY = "web"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
-    url = params.get("url", "")
-    wordlist = params.get("wordlist", "/usr/share/wordlists/dirb/common.txt")
-    threads = params.get("threads", 10)
-    additional_args = params.get("additional_args", "")
-    command = f"feroxbuster -u {url} -w {wordlist} -t {threads}"
+    """Build a feroxbuster content-discovery command.
+
+    Emits NDJSON (``--json``) so the parser gets status/size/url per hit, runs
+    stateless (``--no-state`` — the resume-state file otherwise accumulates in
+    the container and can wedge re-runs), and auto-filters wildcard/soft-404
+    responses (``--auto-tune`` + ``--filter-status 404``). Recursion is bounded
+    by default so a single call cannot fan out forever; raise it via
+    ``additional_args`` (e.g. ``-d 3 -x php,txt,bak``).
+    """
+    url = str(params.get("url") or params.get("target") or "").strip()
+    wordlist = params.get("wordlist") or "/usr/share/wordlists/seclists/Discovery/Web-Content/common.txt"
+    threads = int(params.get("threads") or 40)
+    depth = int(params.get("depth") or 1)
+    additional_args = str(params.get("additional_args") or "").strip()
+    if not url:
+        raise ValueError("feroxbuster_scan requires url=")
+
+    parts = [
+        "feroxbuster",
+        f"-u {url}",
+        f"-w {wordlist}",
+        f"-t {threads}",
+        f"-d {depth}",
+        "--no-state",
+        "--auto-tune",
+        "--filter-status 404",
+        "--json",
+        "--silent",
+    ]
     if additional_args:
-        command += f" {additional_args}"
-    return command.strip()
+        parts.append(additional_args)
+    return " ".join(parts)
 
 def parse(result: ToolResult) -> dict[str, Any]:
     return default_parse(result)
