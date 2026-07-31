@@ -9,14 +9,15 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+# sherlock (maigret is a superset) and social_analyzer (flaky, heavy deps,
+# redundant with maigret) are intentionally not typed — maigret is the one
+# username tool. Both remain reachable via platform_exec if ever needed.
 TYPED_OSINT_TOOLS: tuple[str, ...] = (
     "web_contact_harvest",
     "theharvester",
     "metagoofil",
     "dnstwist",
-    "sherlock",
     "maigret",
-    "social_analyzer",
     "holehe",
     "phoneinfoga",
     "email_permute",

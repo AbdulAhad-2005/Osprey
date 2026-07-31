@@ -45,7 +45,14 @@ def _strip_ansi(text: str) -> str:
 
 def build_command(**params: Any) -> str:
     """Build dnsx CLI command for bulk DNS resolution."""
-    target = str(params.get("target", "")).strip()
+    # input_data / host are documented bulk-list aliases — read them too so a
+    # many-host list isn't silently dropped when passed under those names.
+    target = str(
+        params.get("target")
+        or params.get("input_data")
+        or params.get("host")
+        or ""
+    ).strip()
     target_file = str(params.get("target_file", "")).strip()
     record_types = str(params.get("record_types", "a,cname,ns,mx")).strip()
     resolvers = str(params.get("resolvers", "")).strip()

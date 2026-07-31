@@ -37,7 +37,15 @@ CATEGORY = "recon"
 
 def build_command(**params: Any) -> str:
     """Build CLI command (harvested from HexStrike server route)."""
-    target = str(params.get("target", "")).strip()
+    # Accept the documented bulk-list aliases too — agents pass input_data= / host=
+    # for many-host runs; only reading `target` silently dropped those lists.
+    target = str(
+        params.get("target")
+        or params.get("input_data")
+        or params.get("host")
+        or params.get("url")
+        or ""
+    ).strip()
     probe = params.get("probe", True)
     tech_detect = params.get("tech_detect", False)
     status_code = params.get("status_code", False)

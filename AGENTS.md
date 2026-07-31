@@ -90,16 +90,23 @@ each naturally comes to mind:
 
 `subfinder_scan`, `amass_scan`, `crt_sh_query`, `domain_hunter` — subs
 `shodan_search`, `shodan_host_info` — passive intel
-`dnsx_resolve`, `whois_lookup`, `tlsx_inspect` — dns / cert intel
+`dnsx_resolve`, `whois_lookup`, `tlsx_inspect`, `dnsenum_scan` — dns / cert intel
 `httpx_probe` — live host probing
 `naabu_port_scan`, `nmap_syn_scan`, `nmap_service_scan`, `nmap_custom_scan`, `masscan_high_speed`, `rustscan_fast_scan` — ports
-`cdn_origin_probe`, `subdomain_takeover_check` — infra mapping
-`gau_discovery`, `waybackurls_discovery`, `hakrawler_crawl` — web history
-`dnsenum_scan`, `fierce_scan` — dns brute
-`enum4linux_scan`, `enum4linux_ng_advanced`, `smbmap_scan`, `netexec_scan`, `nbtscan_netbios`, `rpcclient_enumeration`, `arp_scan_discovery` — internal/AD
-`responder_credential_harvest` — gated, lab only
-`autorecon_scan`, `autorecon_comprehensive` — heavy wrappers
+`cdn_origin_probe`, `origin_ip_attribution`, `subdomain_takeover_check` — infra mapping
+`gau_discovery`, `waybackurls_discovery`, `hakrawler_crawl`, `katana_crawl` — web history / crawl
+`feroxbuster_scan`, `ffuf_scan`, `gobuster_scan` — content/dir discovery (live hosts)
+`arjun_scan` — hidden HTTP parameter discovery (injection-point candidates)
+`js_recon` — JS endpoints + hardcoded secrets + cloud-storage exposure (SPA/API targets)
+`well_known_probe` — robots/sitemap/.well-known leads · `email_security_probe` — SPF/DKIM/DMARC posture
 `anew_data_processing` — dedup tool output
+
+Internal/AD & LAN-only tools (`enum4linux_scan`, `enum4linux_ng_advanced`, `smbmap_scan`,
+`netexec_scan`, `nbtscan_netbios`, `rpcclient_enumeration`, `arp_scan_discovery`,
+`responder_credential_harvest`) are NOT in the default belt — they only work on internal
+network segments, not remote/internet targets. On a genuine internal engagement, run them
+with `platform_exec`. Same for the heavy
+`autorecon_*` bundles and `fierce_scan`.
 
 ## Keep it light (no rituals)
 

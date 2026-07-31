@@ -91,7 +91,8 @@ def test_js_recon_endpoints_secrets_cloud():
         "target": "https://t", "js_file_count": 1, "endpoint_count": 2,
         "endpoints": ["/api/v1/admin", "/health"],
         "secrets": [
-            {"type": "aws_access_key_id", "match": "AKIA...", "secret": "AKIAZ7QW4RTY8UVBNMLK", "high_signal": True, "source": "a.js"},
+            {"type": "sendgrid_api_key", "match": "SG.", "secret": <SENDGRID_API_KEY>, "high_signal": True, "source": "a.js"},
+            {"type": "aws_access_key_id", "match": "AKIA...", "secret": <AWS_ACCESS_KEY_ID>, "high_signal": True, "source": "a.js"},
             {"type": "jwt", "match": "eyJ...", "secret": "eyJ...", "high_signal": False, "source": "a.js"},
         ],
         "cloud_assets": [{"type": "s3_bucket_url", "bucket": "prod", "match": "prod.s3.amazonaws.com", "source": "a.js"}],
@@ -112,7 +113,21 @@ def test_email_security_flags_missing_spf_dmarc():
     fs = _parse("email_security_probe", out, target="example.com")
     weak = next(f for f in fs if "anti-spoofing" in f.title)
     assert weak.claim_severity == ClaimSeverity.LOW
-    assert "SPF" in weak.metadata["missing"] and "DMARC" in weak.metadata["missing"]
+    assert "no SPF record" in weak.metadata["weaknesses"]
+    assert "no DMARC record" in weak.metadata["weaknesses"]
+
+
+def test_email_security_flags_weak_policy_not_just_missing():
+    # Present-but-weak: SPF softfail + DMARC p=none must still be flagged.
+    out = (
+        "=== MX ===\nmail.x.\n=== SPF ===\nv=spf1 include:_spf ~all\n"
+        "=== DMARC ===\nv=DMARC1; p=none; rua=mailto:x\n=== DKIM ===\n=== DONE ==="
+    )
+    fs = _parse("email_security_probe", out, target="example.com")
+    weak = next(f for f in fs if "anti-spoofing" in f.title)
+    w = weak.metadata["weaknesses"]
+    assert "softfail" in w and "p=none" in w
+    assert weak.metadata["dmarc_policy"] == "none"
 
 
 def test_well_known_extracts_robots_disallow_as_leads():

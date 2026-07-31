@@ -31,6 +31,9 @@ from _core.result import ToolResult
 TOOL_NAME = "ffuf_scan"
 CATEGORY = "web"
 
+# Bundled wordlist (Kali image ships none); mcp-servers is mounted at this path.
+_DEFAULT_WORDLIST = "/home/mcpuser/mcp-servers/recon/tools/_wordlists/common-web.txt"
+
 def _base_and_host(url: str) -> tuple[str, str]:
     """Return (normalized base url without trailing slash, hostname)."""
     u = (url or "").strip()
@@ -54,7 +57,7 @@ def build_command(**params: Any) -> str:
     the wildcard/soft-404 noise that makes raw content discovery unusable).
     """
     url = str(params.get("url") or params.get("target") or "").strip()
-    wordlist = params.get("wordlist") or "/usr/share/wordlists/seclists/Discovery/Web-Content/common.txt"
+    wordlist = params.get("wordlist") or _DEFAULT_WORDLIST
     mode = str(params.get("mode") or "directory").lower()
     match_codes = str(params.get("match_codes") or "200,204,301,302,307,401,403,405")
     threads = int(params.get("threads") or 40)
@@ -85,6 +88,7 @@ def build_command(**params: Any) -> str:
         f"-mc {match_codes}",
         f"-t {threads}",
         "-ac",
+        "-k",  # ignore TLS cert errors (expired/self-signed targets)
         "-noninteractive",
         "-json",
     ]

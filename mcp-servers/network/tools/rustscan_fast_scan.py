@@ -37,9 +37,13 @@ def build_command(**params: Any) -> str:
     """Build CLI command (harvested from HexStrike server route)."""
     target = params.get("target", "")
     ports = params.get("ports", "")
-    ulimit = params.get("ulimit", 5000)
-    batch_size = params.get("batch_size", 4500)
-    timeout = params.get("timeout", 1500)
+    # Gentler defaults: the harvested 4500-batch / 5000-ulimit floods shared
+    # hosts and gets the scanning source IP-banned mid-engagement. 1000/2000 is
+    # still fast but survives rate-limited / shared-hosting targets. Override via
+    # batch_size= / ulimit= when the target can take it.
+    ulimit = params.get("ulimit", 2000)
+    batch_size = params.get("batch_size", 1000)
+    timeout = params.get("timeout", 2000)
     scripts = params.get("scripts", "")
     additional_args = params.get("additional_args", "")
     command = f"rustscan -a {target} --ulimit {ulimit} -b {batch_size} -t {timeout}"

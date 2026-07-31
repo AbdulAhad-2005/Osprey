@@ -9,6 +9,14 @@ from __future__ import annotations
 from typing import Any, Callable
 
 # Keep in sync with agent_arg_normalizer primary sets (recon + network only).
+#
+# This is the EXTERNAL-recon toolbelt the Commander sees by default. Internal/AD
+# tools (enum4linux, smbmap, netexec, rpcclient, nbtscan, arp_scan, responder) and
+# low-value/heavy or redundant tools (autorecon*, fierce) are intentionally NOT
+# typed here — they cannot work against remote/internet targets and only wasted
+# turns in the default toolbelt. They remain fully executable via platform_exec
+# (backend registry + parsers unchanged) for genuine internal engagements, and
+# tech_dispatch still names them when a signal (e.g. port 445 open) warrants.
 TYPED_RECON_NETWORK_TOOLS: tuple[str, ...] = (
     # recon
     "subfinder_scan",
@@ -17,7 +25,6 @@ TYPED_RECON_NETWORK_TOOLS: tuple[str, ...] = (
     "waybackurls_discovery",
     "hakrawler_crawl",
     "dnsenum_scan",
-    "fierce_scan",
     "whois_lookup",
     "gau_discovery",
     "anew_data_processing",
@@ -37,16 +44,6 @@ TYPED_RECON_NETWORK_TOOLS: tuple[str, ...] = (
     "rustscan_fast_scan",
     "naabu_port_scan",
     "masscan_high_speed",
-    "netexec_scan",
-    "smbmap_scan",
-    "enum4linux_scan",
-    "enum4linux_ng_advanced",
-    "responder_credential_harvest",
-    "rpcclient_enumeration",
-    "arp_scan_discovery",
-    "nbtscan_netbios",
-    "autorecon_scan",
-    "autorecon_comprehensive",
 )
 
 _TOOL_BLURBS: dict[str, str] = {
@@ -113,6 +110,8 @@ def _build_params(
     url: str = "",
     ports: str = "",
     flags: str = "",
+    mode: str = "",
+    subdomains: str = "",
     input_data: str = "",
     additional_args: str = "",
 ) -> dict[str, Any]:
@@ -127,6 +126,10 @@ def _build_params(
         params["url"] = url.strip()
     if flags.strip():
         params["flags"] = flags.strip()
+    if mode.strip():
+        params["mode"] = mode.strip()
+    if subdomains.strip():
+        params["subdomains"] = subdomains.strip()
     if input_data.strip():
         params["input_data"] = input_data.strip()
     if additional_args.strip():
@@ -157,6 +160,8 @@ def register_typed_recon_network_tools(
                 url: str = "",
                 ports: str = "",
                 flags: str = "",
+                mode: str = "",
+                subdomains: str = "",
                 input_data: str = "",
                 additional_args: str = "",
                 timeout_seconds: int = 300,
@@ -172,6 +177,8 @@ def register_typed_recon_network_tools(
                     host=host,
                     url=url,
                     flags=flags,
+                    mode=mode,
+                    subdomains=subdomains,
                     input_data=input_data,
                     additional_args="",
                 )

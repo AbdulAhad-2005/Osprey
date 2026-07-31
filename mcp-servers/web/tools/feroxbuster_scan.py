@@ -30,6 +30,9 @@ from _core.result import ToolResult
 TOOL_NAME = "feroxbuster_scan"
 CATEGORY = "web"
 
+# Bundled wordlist path inside the Kali container (mcp-servers is mounted here).
+_DEFAULT_WORDLIST = "/home/mcpuser/mcp-servers/recon/tools/_wordlists/common-web.txt"
+
 def build_command(**params: Any) -> str:
     """Build a feroxbuster content-discovery command.
 
@@ -41,7 +44,9 @@ def build_command(**params: Any) -> str:
     ``additional_args`` (e.g. ``-d 3 -x php,txt,bak``).
     """
     url = str(params.get("url") or params.get("target") or "").strip()
-    wordlist = params.get("wordlist") or "/usr/share/wordlists/seclists/Discovery/Web-Content/common.txt"
+    # Ship our own wordlist (the Kali image has none at /usr/share/wordlists);
+    # the mcp-servers tree is mounted into the container at this path.
+    wordlist = params.get("wordlist") or _DEFAULT_WORDLIST
     threads = int(params.get("threads") or 40)
     depth = int(params.get("depth") or 1)
     additional_args = str(params.get("additional_args") or "").strip()
@@ -54,6 +59,7 @@ def build_command(**params: Any) -> str:
         f"-w {wordlist}",
         f"-t {threads}",
         f"-d {depth}",
+        "-k",  # skip TLS verification (targets with expired/self-signed certs)
         "--no-state",
         "--auto-tune",
         "--filter-status 404",

@@ -30,13 +30,23 @@ from _core.result import ToolResult
 TOOL_NAME = "gobuster_scan"
 CATEGORY = "web"
 
+# Bundled wordlist (Kali image ships none); mcp-servers is mounted at this path.
+_DEFAULT_WORDLIST = "/home/mcpuser/mcp-servers/recon/tools/_wordlists/common-web.txt"
+
+
 def build_command(**params: Any) -> str:
     """Build CLI command (harvested from HexStrike server route)."""
-    url = params.get("url", "")
-    mode = params.get("mode", "dir")
-    wordlist = params.get("wordlist", "/usr/share/wordlists/dirb/common.txt")
-    additional_args = params.get("additional_args", "")
-    command = f"gobuster {mode} -u {url} -w {wordlist}"
+    url = str(params.get("url") or params.get("target") or "").strip()
+    mode = str(params.get("mode") or "dir").strip()
+    wordlist = params.get("wordlist") or _DEFAULT_WORDLIST
+    additional_args = str(params.get("additional_args") or "").strip()
+    if not url:
+        raise ValueError("gobuster_scan requires url=")
+    # dns mode uses -d (domain) not -u; dir/vhost use -u and can skip TLS verify.
+    if mode == "dns":
+        command = f"gobuster dns -d {url} -w {wordlist}"
+    else:
+        command = f"gobuster {mode} -u {url} -w {wordlist} -k"
     if additional_args:
         command += f" {additional_args}"
     return command.strip()

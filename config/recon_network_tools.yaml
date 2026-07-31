@@ -406,7 +406,7 @@ tools:
     parameters:
       target: { type: string, required: true }
       ports: { type: string, default: "" }
-      batch_size: { type: int, default: 4500 }
+      batch_size: { type: int, default: 1000 }
 
   naabu_port_scan:
     task: port_discovery
