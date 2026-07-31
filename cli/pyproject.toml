@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "pentest-cli"
 version = "0.1.0"
 description = "CLI interface for the Autonomous AI Pentesting Platform"
+license = {text = "AGPL-3.0-or-later"}
 requires-python = ">=3.12"
 dependencies = [
     "prompt_toolkit>=3.0,<4.0",

@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "pentest-platform-backend"
 version = "0.1.0"
 description = "Backend services for the autonomous AI pentesting platform"
+license = {text = "AGPL-3.0-or-later"}
 requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.13,<2.0",
