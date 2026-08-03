@@ -114,6 +114,7 @@ def _build_params(
     subdomains: str = "",
     input_data: str = "",
     additional_args: str = "",
+    confirm_expensive: str = "",
 ) -> dict[str, Any]:
     params: dict[str, Any] = {}
     if domain.strip():
@@ -134,6 +135,8 @@ def _build_params(
         params["input_data"] = input_data.strip()
     if additional_args.strip():
         params["additional_args"] = additional_args.strip()
+    if confirm_expensive.strip():
+        params["confirm_expensive"] = confirm_expensive.strip()
     return params
 
 
@@ -164,6 +167,7 @@ def register_typed_recon_network_tools(
                 subdomains: str = "",
                 input_data: str = "",
                 additional_args: str = "",
+                confirm_expensive: str = "",
                 timeout_seconds: int = 300,
                 engagement_id: str = "",
             ) -> str:
@@ -181,6 +185,7 @@ def register_typed_recon_network_tools(
                     subdomains=subdomains,
                     input_data=input_data,
                     additional_args="",
+                    confirm_expensive=confirm_expensive,
                 )
                 return execute(
                     name,

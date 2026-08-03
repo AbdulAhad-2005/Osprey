@@ -2245,6 +2245,79 @@ def platform_fanout_assets(
     return _safe(_run)
 
 
+@mcp.tool()
+def platform_visualization(
+    engagement_id: str = "",
+    format: str = "mermaid",
+    max_nodes: int = 200,
+    max_edges: int = 400,
+    node_type: str = "",
+    exclude_urls: bool = True,
+) -> str:
+    """
+    Attack-surface visualization: Mermaid (renders in markdown), Cytoscape JSON, or attack tree.
+
+    Returns structured graph DATA — not rendered images. Use the data as you like:
+    embed the Mermaid block in markdown, feed Cytoscape JSON to a web dashboard,
+    or read the attack-tree hierarchy for a structured summary.
+
+    format='mermaid' — styled graph TD with severity-coloured nodes (renders natively in
+    OpenCode/Claude/IDE markdown previews). format='json' — Cytoscape-compatible {nodes,edges}
+    for web dashboards. format='tree' — hierarchical domain→subdomain→IP→port→service tree.
+    max_nodes/max_edges control output size. node_type filters to one asset type (host, subdomain…).
+    exclude_urls=True filters static-asset URL noise (/assets/uploads/…).
+
+    Note: graph data reflects what ingestion tools stored — third-party trackers
+    (doubleclick.net etc.), parse artifacts ("Console" from js_recon), and duplicate
+    type entries (domain+host for same name) come from the ingestion layer.
+    Use node_type/host/domain to focus on the real target surface.
+    """
+    max_nodes = max(10, min(int(max_nodes), 1000))
+    max_edges = max(10, min(int(max_edges), 2000))
+
+    def _run() -> str:
+        eid, _ = _resolve_engagement(engagement_id)
+        data = _get(
+            f"/api/v1/engagements/{eid}/visualization",
+            params={
+                "format": format,
+                "max_nodes": str(max_nodes),
+                "max_edges": str(max_edges),
+                "node_type": node_type,
+                "exclude_urls": str(exclude_urls).lower(),
+            },
+            timeout=30,
+        )
+        fmt = data.get("format", format)
+        body = data.get("data", "")
+        if fmt == "mermaid" and isinstance(body, str):
+            return f"{_session_header()}\n\n## Attack Surface (Mermaid)\n\n```mermaid\n{body}\n```"
+        return "\n\n".join([_session_header(), _block(f"Visualization ({fmt})", body)])
+
+    return _safe(_run)
+
+
+@mcp.tool()
+def platform_report_data(engagement_id: str = "") -> str:
+    """
+    Structured report data: metrics, severity breakdown, findings by severity,
+    infrastructure notes, and Mermaid topology — everything an LLM needs to
+    write a pentest report without guessing.
+
+    Use platform_report_outline for the Observed/Inferred/Hypotheses scaffold.
+    Use this tool for the quantitative payload (counts, grades, infra posture).
+    """
+    def _run() -> str:
+        eid, _ = _resolve_engagement(engagement_id)
+        data = _get(
+            f"/api/v1/engagements/{eid}/report-data",
+            timeout=30,
+        )
+        return "\n\n".join([_session_header(), _block("Report data", data)])
+
+    return _safe(_run)
+
+
 # Typed recon/network catalog tools (HexStrike-style schemas for the LLM).
 def _typed_execute(
     tool_name: str,

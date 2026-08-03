@@ -124,16 +124,24 @@ def run(
     match_type: str = "subdomains",
     timeout: int = 45,
     additional_args: str = "",
+    flags: str = "",
     use_recovery: bool = True,
     use_cache: bool = True,
     exec_timeout: int = 120,
 ) -> dict[str, Any]:
+    # Merge flags into additional_args so they reach the curl command.
+    # The typed tool layer and backend command_builder both treat 'flags' as
+    # a freeform CLI-flag bucket; build_command() only reads 'additional_args'.
+    extra = (additional_args or "").strip()
+    flag_val = (flags or "").strip()
+    if flag_val and flag_val not in extra:
+        extra = f"{extra} {flag_val}".strip() if extra else flag_val
     params = {
         "domain": domain,
         "include_subdomains": include_subdomains,
         "match_type": match_type,
         "timeout": timeout,
-        "additional_args": additional_args,
+        "additional_args": extra,
     }
     command = build_command(**params)
     return run_tool(
