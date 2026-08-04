@@ -41,6 +41,43 @@ _SESSION_SWITCH_NOTICE = ""
 _LAST_OPEN_LOOPS_SIG = ""
 _OPEN_LOOPS_REPEAT_COUNT = 0
 
+# Section-level context delta — collapse LARGE, slow-changing context sections to
+# a one-line placeholder when their rendered content is byte-identical to the
+# previous platform_context call for the same engagement. Without this, a mode-1
+# MCP-client agent re-reads ~1.5k tokens of unchanged network-surface / attack-
+# tree / findings / role-guidance / skills text on every single context call.
+# Short decision-driving blocks (gaps, thinking, dispatch, coverage, delta, jobs)
+# are always shown in full. Pass full=true to platform_context to expand all.
+_CTX_SECTION_CACHE: dict[str, dict[str, str]] = {}
+_CTX_COLLAPSIBLE = frozenset(
+    {
+        "crown_jewels",
+        "recent_artifacts",
+        "inferred_focus",
+        "finalize",
+        "network_surface",
+        "attack_surface_tree",
+        "findings_brief",
+        "role_guidance",
+        "skills_index",
+    }
+)
+
+
+def _ctx_delta(eid: str, name: str, text: str, *, full: bool, label: str = "") -> str:
+    """Return text, or a one-line placeholder if this collapsible section is
+    unchanged since the previous context call for this engagement."""
+    if not eid or full or name not in _CTX_COLLAPSIBLE:
+        if eid:
+            _CTX_SECTION_CACHE.setdefault(eid, {})[name] = text
+        return text
+    cache = _CTX_SECTION_CACHE.setdefault(eid, {})
+    prev = cache.get(name)
+    cache[name] = text
+    if prev is not None and prev == text:
+        return f"_{label or name}: unchanged since last context — pass full=true to expand_"
+    return text
+
 _DOMAIN_RE = re.compile(
     r"^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$"
 )
@@ -401,7 +438,7 @@ def platform_health(target: str = "") -> str:
     return result
 
 
-def _fetch_context(engagement_id: str = "", target: str = "") -> str:
+def _fetch_context(engagement_id: str = "", target: str = "", *, full: bool = False) -> str:
     eid = engagement_id or _SESSION_ENGAGEMENT_ID
     tgt = target or _SESSION_TARGET
     data = _get(
@@ -488,34 +525,84 @@ def _fetch_context(engagement_id: str = "", target: str = "") -> str:
         "**Dispatch signals (from detected tech/ports):**\n"
         + ("\n".join(dispatch_lines) if dispatch_lines else "(none yet)"),
         _block("Context delta", data.get("context_delta") or {}),
-        "**Crown jewels (top):**\n" + ("\n".join(jewel_lines) if jewel_lines else "(none yet)"),
-        "**Recent artifacts:**\n" + (idx_text if idx_text else "(none — run a tool first)"),
+        _ctx_delta(
+            eid,
+            "crown_jewels",
+            "**Crown jewels (top):**\n" + ("\n".join(jewel_lines) if jewel_lines else "(none yet)"),
+            full=full,
+            label="Crown jewels",
+        ),
+        _ctx_delta(
+            eid,
+            "recent_artifacts",
+            "**Recent artifacts:**\n" + (idx_text if idx_text else "(none — run a tool first)"),
+            full=full,
+            label="Recent artifacts",
+        ),
         "**Coverage gaps:**\n" + ("\n".join(gap_lines) if gap_lines else "(none)"),
-        _block("Inferred focus", data.get("inferred_focus", {})),
-        _block("Finalize", finalize_banner),
+        _ctx_delta(eid, "inferred_focus", _block("Inferred focus", data.get("inferred_focus", {})), full=full, label="Inferred focus"),
+        _ctx_delta(eid, "finalize", _block("Finalize", finalize_banner), full=full, label="Finalize"),
     ]
     # Network surface: short only
     ns = data.get("network_surface_text") or ""
     if ns:
-        parts.append(_block("Network surface", ns[:1500] + ("…" if len(ns) > 1500 else "")))
+        parts.append(
+            _ctx_delta(
+                eid,
+                "network_surface",
+                _block("Network surface", ns[:1500] + ("…" if len(ns) > 1500 else "")),
+                full=full,
+                label="Network surface",
+            )
+        )
     # Tree: condensed, capped
     tree = data.get("attack_surface_tree_text") or ""
     if tree:
         parts.append(
-            _block("Attack surface (condensed)", tree[:2000] + ("…" if len(tree) > 2000 else ""))
+            _ctx_delta(
+                eid,
+                "attack_surface_tree",
+                _block("Attack surface (condensed)", tree[:2000] + ("…" if len(tree) > 2000 else "")),
+                full=full,
+                label="Attack surface (condensed)",
+            )
         )
     # Findings: short summary only — full dump on demand via platform_findings
     fs = data.get("findings_summary") or ""
     if fs:
-        parts.append(_block("Findings (brief)", fs[:1200] + ("…" if len(fs) > 1200 else "")))
+        parts.append(
+            _ctx_delta(
+                eid,
+                "findings_brief",
+                _block("Findings (brief)", fs[:1200] + ("…" if len(fs) > 1200 else "")),
+                full=full,
+                label="Findings (brief)",
+            )
+        )
     # Role guidance: short operator-mindset reminder — full skill text on demand via platform_skills
     rg = (data.get("role_guidance") or "").strip()
     if rg:
-        parts.append(_block("Role guidance", rg[:700] + ("…" if len(rg) > 700 else "")))
+        parts.append(
+            _ctx_delta(
+                eid,
+                "role_guidance",
+                _block("Role guidance", rg[:700] + ("…" if len(rg) > 700 else "")),
+                full=full,
+                label="Role guidance",
+            )
+        )
     # Skills index: names + paths only — call platform_skills(path=...) to read one in full
     si = (data.get("skills_index") or "").strip()
     if si:
-        parts.append(_block("Skills available", si[:900] + ("…" if len(si) > 900 else "")))
+        parts.append(
+            _ctx_delta(
+                eid,
+                "skills_index",
+                _block("Skills available", si[:900] + ("…" if len(si) > 900 else "")),
+                full=full,
+                label="Skills available",
+            )
+        )
 
     parts.append(
         "---\n"
@@ -529,9 +616,14 @@ def _fetch_context(engagement_id: str = "", target: str = "") -> str:
 
 
 @mcp.tool()
-def platform_context(target: str = "", engagement_id: str = "") -> str:
+def platform_context(target: str = "", engagement_id: str = "", full: bool = False) -> str:
     """
     Compact briefing from evidence: gaps, crown jewels, jobs, delta, look-back.
+
+    Large, slow-changing sections (network surface, attack-surface tree, findings
+    brief, role guidance, skills index, crown jewels) collapse to a one-line
+    "unchanged" placeholder when identical to your previous context call, to save
+    context. Pass full=true to expand every section.
 
     Call this not just to plan the next probe, but whenever you're stuck — a
     tool keeps failing, you're unsure what to try next, or you're about to ask
@@ -552,9 +644,10 @@ def platform_context(target: str = "", engagement_id: str = "") -> str:
             clarified = _analyze_or_bind(target)
             if clarified.startswith("## Target needs clarification"):
                 return clarified
-            return _fetch_context()
+            # A fresh target bind is a first look — always render in full.
+            return _fetch_context(full=True)
         eid, tgt = _resolve_engagement(engagement_id)
-        return _fetch_context(engagement_id=eid, target=tgt)
+        return _fetch_context(engagement_id=eid, target=tgt, full=full)
 
     return _safe(_run)
 

@@ -13,6 +13,12 @@ Goal: map the external attack surface before intrusive network testing.
 8. DNS / shared-infra pivots when the graph shows `co_hosts`
 9. Technology identification (`whatweb_scan` / `tech_stack_analyze`) on live hosts — informs targeted vuln research
 
+**Breadth before depth:** Probe EVERY live host at least shallowly (httpx + fast port
+sweep) before deep-diving ANY single one — the win is usually a host you never looked at,
+not a fifth tool run on one you already own. Keep enumerating until a full pass adds no
+new assets; every new name/SAN/PTR/CNAME is a fresh seed. Offload the host inventory to
+the graph so a full context window never forces you to stop. See `asset-discovery-breadth`.
+
 **Next step:** Prefer `platform_context` coverage gaps + thinking expansion cards + tree
 over a fixed checklist — but do not treat "advisory" as "ignore."
 

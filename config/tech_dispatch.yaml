@@ -165,6 +165,32 @@ signals:
       reason: "CDN provider metadata present — resolve carefully; avoid scanning edges first"
       priority: 6
 
+  - id: ips_resolved_reverse_dns
+    match:
+      finding_type: host
+      metadata_key: ip
+      min_count: 1
+    dispatch:
+      task_id: reverse_dns_lookup
+      default_tool: dnsx_reverse
+      alternatives: [dnsx_resolve]
+      skill_file: recon/asset-discovery-breadth.md
+      reason: "IPs resolved — reverse-DNS (PTR) to surface co-located vhosts as new seeds"
+      priority: 5
+
+  - id: ips_resolved_asn_scope
+    match:
+      finding_type: host
+      metadata_key: ip
+      min_count: 1
+    dispatch:
+      task_id: asn_netblock_enumeration
+      default_tool: asn_enum
+      alternatives: [whois_lookup]
+      skill_file: recon/asset-discovery-breadth.md
+      reason: "IPs known — map ASN/netblock to expand scope to the org's IP range (skip cloud-provider ranges)"
+      priority: 4
+
   - id: recon_complete_handoff
     match:
       phases_complete: [subdomain_enumeration, live_host_probing]

@@ -59,6 +59,22 @@ tasks:
     skill_file: recon/dns-intelligence.md
     produces: [host, observation]
 
+  reverse_dns_lookup:
+    phase: recon
+    description: Reverse-resolve IPs (PTR) to surface co-located hostnames / virtual hosts. Each PTR name is a new seed.
+    default_tool: dnsx_reverse
+    alternatives: [dnsx_resolve]
+    skill_file: recon/asset-discovery-breadth.md
+    produces: [subdomain, observation]
+
+  asn_netblock_enumeration:
+    phase: recon
+    description: Map an IP to its ASN + BGP prefix (Team Cymru), or list an ASN's announced prefixes (RADb). Expands scope to the org's full IP footprint.
+    default_tool: asn_enum
+    alternatives: [whois_lookup]
+    skill_file: recon/asset-discovery-breadth.md
+    produces: [observation]
+
   tls_certificate_intel:
     phase: recon
     description: Inspect TLS certs / SANs (optional CDN hints). Use when HTTPS hosts matter.
