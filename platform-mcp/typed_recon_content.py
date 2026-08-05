@@ -47,6 +47,23 @@ _TOOL_BLURBS: dict[str, str] = {
 }
 
 
+# Per-tool default foreground timeouts (seconds). These tools routinely run
+# past a flat 300s on real targets (recursive content discovery, JS fetch,
+# active param probing), forcing needless background re-runs. 0 from the caller
+# means "use this default"; an explicit value still overrides.
+_CONTENT_TIMEOUTS: dict[str, int] = {
+    "feroxbuster_scan": 600,
+    "ffuf_scan": 600,
+    "gobuster_scan": 600,
+    "arjun_scan": 600,
+    "katana_crawl": 600,
+    "js_recon": 480,
+    "email_security_probe": 120,
+    "well_known_probe": 120,
+}
+_DEFAULT_CONTENT_TIMEOUT = 300
+
+
 def _build_params(
     *,
     url: str = "",
@@ -91,18 +108,21 @@ def register_typed_recon_content_tools(mcp: Any, *, execute: Callable[..., str])
                 depth: str = "",
                 max_files: str = "",
                 additional_args: str = "",
-                timeout_seconds: int = 300,
+                timeout_seconds: int = 0,
                 engagement_id: str = "",
             ) -> str:
                 params = _build_params(
                     url=url, target=target, domain=domain, mode=mode,
                     wordlist=wordlist, method=method, depth=depth, max_files=max_files,
                 )
+                effective_timeout = timeout_seconds or _CONTENT_TIMEOUTS.get(
+                    name, _DEFAULT_CONTENT_TIMEOUT
+                )
                 return execute(
                     name,
                     params,
                     additional_args=(additional_args or "").strip(),
-                    timeout_seconds=timeout_seconds,
+                    timeout_seconds=effective_timeout,
                     engagement_id=engagement_id,
                 )
 

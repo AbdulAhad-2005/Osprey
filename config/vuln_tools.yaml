@@ -1,0 +1,45 @@
+# Vulnerability-analysis phase capabilities for the Commander LLM.
+# Skills live in skills/vuln/. The LLM may pass ANY flags via additional_args.
+# These are ACTIVE/GATED scanners — run them on the surface recon mapped
+# (live hosts, detected tech, injection-point candidates), not blindly.
+
+tasks:
+  vulnerability_scan:
+    phase: vuln
+    description: Template/signature-based vulnerability scan of a live host once tech is known. Bridges recon → vuln.
+    default_tool: nuclei_scan
+    alternatives: [jaeles_vulnerability_scan, nikto_scan]
+    skill_file: vuln/nuclei-scanning.md
+    produces: [vulnerability, observation]
+
+  web_server_scan:
+    phase: vuln
+    description: Web-server misconfiguration / dated-software / dangerous-file scan.
+    default_tool: nikto_scan
+    alternatives: [nuclei_scan]
+    skill_file: vuln/cms-and-server-scanning.md
+    produces: [vulnerability, observation]
+
+  cms_vulnerability_scan:
+    phase: vuln
+    description: CMS (WordPress) core/plugin/theme vulnerability enumeration. Use when tech fingerprinting flags WordPress.
+    default_tool: wpscan_analyze
+    alternatives: [nuclei_scan]
+    skill_file: vuln/cms-and-server-scanning.md
+    produces: [vulnerability, observation]
+
+  sql_injection_test:
+    phase: vuln
+    description: Confirm/exploit SQL injection on an injection-point candidate from recon.
+    default_tool: sqlmap_scan
+    alternatives: []
+    skill_file: vuln/injection-testing.md
+    produces: [vulnerability]
+
+  xss_test:
+    phase: vuln
+    description: Detect and verify cross-site scripting on parameters from recon.
+    default_tool: dalfox_xss_scan
+    alternatives: [xsser_scan]
+    skill_file: vuln/injection-testing.md
+    produces: [vulnerability]

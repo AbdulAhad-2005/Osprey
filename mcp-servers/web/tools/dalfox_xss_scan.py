@@ -41,10 +41,8 @@ def build_command(**params: Any) -> str:
     mining_dom = params.get("mining_dom", True)
     mining_dict = params.get("mining_dict", True)
     custom_payload = params.get("custom_payload", "")
-    additional_args = params.get("additional_args", "")
-    if pipe_mode:
-        command = "dalfox pipe"
-        command = f"dalfox url {url}"
+    additional_args = str(params.get("additional_args", "") or "")
+    command = "dalfox pipe" if pipe_mode else f"dalfox url {url}"
     if blind:
         command += " --blind"
     if mining_dom:
@@ -53,6 +51,9 @@ def build_command(**params: Any) -> str:
         command += " --mining-dict"
     if custom_payload:
         command += f" --custom-payload '{custom_payload}'"
+    # JSON output so the backend parser gets structured PoC/param/severity data.
+    if "--format" not in additional_args and "-F " not in additional_args:
+        command += " --format json --silence"
     if additional_args:
         command += f" {additional_args}"
     return command.strip()

@@ -13,6 +13,7 @@ RUN apt-get update \
        wget curl git ca-certificates gnupg unzip \
        python3 python3-pip python3-venv python3-dev python3-setuptools python3-wheel \
        build-essential libssl-dev libffi-dev \
+       libcap2-bin \
        ruby ruby-dev \
        golang-go \
     && rm -rf /var/lib/apt/lists/*
@@ -56,12 +57,14 @@ RUN mkdir -p /opt/go
 RUN go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
 RUN go install github.com/projectdiscovery/httpx/cmd/httpx@latest
 RUN go install github.com/projectdiscovery/katana/cmd/katana@latest
-RUN go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
 RUN go install github.com/lc/gau/v2/cmd/gau@latest
 RUN go install github.com/tomnomnom/waybackurls@latest
 RUN go install github.com/tomnomnom/anew@latest
 RUN go install github.com/hakluke/hakrawler@latest
 RUN go install github.com/hahwul/dalfox/v2@latest
+# jaeles — signature-based web vuln scanner (jaeles_vulnerability_scan). Was
+# registered in the platform but missing from the image ("jaeles: command not found").
+RUN go install github.com/jaeles-project/jaeles@latest
 RUN go install github.com/tomnomnom/qsreplace@latest
 RUN go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest
 RUN go install github.com/projectdiscovery/tlsx/cmd/tlsx@latest
@@ -220,11 +223,26 @@ RUN find /opt/go/bin -type f -executable -exec bash -c \
     && command -v dnsx \
     && command -v tlsx
 
+# ─── 6b. Raw-socket capabilities (unprivileged SYN / OS detection) ────────────
+# The container runs as non-root mcpuser, so nmap -sS/-O and masscan/naabu
+# otherwise fall back to slow connect scans (or fail -O entirely). File
+# capabilities grant just the raw-socket rights they need without root. Docker's
+# default capability bounding set keeps CAP_NET_RAW, so these take effect at
+# runtime. `|| true` keeps the build resilient on filesystems without xattrs.
+RUN setcap cap_net_raw,cap_net_admin,cap_net_bind_service+eip "$(command -v nmap)" || true \
+    && setcap cap_net_raw,cap_net_admin+eip "$(command -v masscan)" 2>/dev/null || true \
+    && setcap cap_net_raw,cap_net_admin+eip "$(command -v naabu)" 2>/dev/null || true
+
 # ─── 7. User setup ────────────────────────────────────────────────────────────
 RUN useradd -m -s /bin/bash mcpuser \
     && chown -R mcpuser:mcpuser /opt/go/bin
 USER mcpuser
 WORKDIR /home/mcpuser
+
+# Pre-fetch nuclei templates at build so the first scan doesn't block on a
+# multi-minute download (and severity filters aren't silently empty until the
+# template set exists). Runs as mcpuser so templates land in its HOME.
+RUN nuclei -update-templates || true
 
 # MCP servers are mounted at /home/mcpuser/mcp-servers via docker-compose volume.
 # The container stays alive; backend runs tools via:

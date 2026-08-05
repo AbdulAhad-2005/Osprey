@@ -37,7 +37,7 @@ def build_command(**params: Any) -> str:
     severity = params.get("severity", "")
     tags = params.get("tags", "")
     template = params.get("template", "")
-    additional_args = params.get("additional_args", "")
+    additional_args = str(params.get("additional_args", "") or "")
     command = f"nuclei -u {target}"
     if severity:
         command += f" -severity {severity}"
@@ -45,6 +45,10 @@ def build_command(**params: Any) -> str:
         command += f" -tags {tags}"
     if template:
         command += f" -t {template}"
+    # Structured JSONL output so the backend parser gets template-id / severity /
+    # CVE / matched-at reliably. -silent suppresses the banner/progress noise.
+    if not any(f in additional_args for f in ("-jsonl", "-json", "-j ", "-je", "-jsone")):
+        command += " -jsonl -silent"
     if additional_args:
         command += f" {additional_args}"
     return command.strip()

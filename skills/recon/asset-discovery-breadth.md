@@ -45,14 +45,15 @@ Cross-source: CT + subfinder + amass together beat any single source. Never trus
   (api + admin + internal + marketing). **Every SAN is a new seed.** Internal-looking SANs
   (`*.internal`, `*.svc.cluster.local`, staging names, RFC1918-style names on a public
   cert) are the highest-signal leads in the whole engagement.
-- **Reverse DNS (PTR)** — not yet a typed tool. Do it via `platform_script` / `platform_shell`:
-  `dig -x <IP>` or `host <IP>` on each resolved IP. Co-located hostnames on a shared IP
-  surface here and nowhere else.
-- **ASN / netblock** — not yet a typed tool. Via `platform_script`:
-  `whois -h whois.cymru.com " -v <IP>"` maps an IP to its ASN + announced prefix. If the
-  org runs its own ASN, treat every announced prefix as candidate assets and sweep them.
-  (For cloud-hosted targets the IP belongs to AWS/Azure/GCP, not the org — pivot via
-  cert/vhost instead of netblock; don't scan the provider's range.)
+- **Reverse DNS (PTR)** — `dnsx_reverse` (target= IP list). Maps each resolved IP back to
+  its PTR hostname; co-located hostnames on a shared IP surface here and nowhere else, and
+  every one is a fresh seed. (Escape hatch for one-off checks: `dig -x <IP>` via
+  `platform_script`.)
+- **ASN / netblock** — `asn_enum`. Pass `target=<IP>` for Team Cymru IP→ASN + announced
+  prefix, or `target=AS####` for the full RADb prefix list. If the org runs its own ASN,
+  treat every announced prefix as candidate assets and sweep them. (For cloud-hosted
+  targets the IP belongs to AWS/Azure/GCP, not the org — pivot via cert/vhost instead of
+  netblock; don't scan the provider's range.)
 - `cdn_origin_probe` / `origin_ip_attribution` — separate edge from origin before you scan,
   so you don't burn budget on CDN edges. See `ip-attribution`.
 

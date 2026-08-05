@@ -48,7 +48,7 @@ signals:
       task_id: javascript_analysis
       default_tool: js_recon
       alternatives: [katana_crawl]
-      skill_file: recon/content-and-js-recon.md
+      skill_file: recon/javascript-recon.md
       reason: "Live app host — mine its JavaScript for endpoints, secrets and cloud refs"
       priority: 6
 
@@ -189,6 +189,67 @@ signals:
       alternatives: [whois_lookup]
       skill_file: recon/asset-discovery-breadth.md
       reason: "IPs known — map ASN/netblock to expand scope to the org's IP range (skip cloud-provider ranges)"
+      priority: 4
+
+  # --- Recon → Vulnerability-analysis handoff (advisory) ---
+  - id: tech_known_nuclei_scan
+    match:
+      finding_type: technology
+      min_count: 1
+    dispatch:
+      task_id: vulnerability_scan
+      default_tool: nuclei_scan
+      alternatives: [jaeles_vulnerability_scan, nikto_scan]
+      skill_file: vuln/nuclei-scanning.md
+      reason: "Tech fingerprinted on live hosts — nuclei can now scan for version/CVE-specific issues"
+      priority: 5
+
+  - id: wordpress_cms_vuln
+    match:
+      metadata_key: technology
+      metadata_contains: wordpress
+    dispatch:
+      task_id: cms_vulnerability_scan
+      default_tool: wpscan_analyze
+      alternatives: [nuclei_scan]
+      skill_file: vuln/cms-and-server-scanning.md
+      reason: "WordPress detected — enumerate core/plugin/theme CVEs with wpscan"
+      priority: 7
+
+  - id: server_misconfig_nikto
+    match:
+      finding_type: technology
+      min_count: 1
+    dispatch:
+      task_id: web_server_scan
+      default_tool: nikto_scan
+      alternatives: [nuclei_scan]
+      skill_file: vuln/cms-and-server-scanning.md
+      reason: "Live web server fingerprinted — nikto for dangerous files / missing headers / dated software (pairs with nuclei templates)"
+      priority: 4
+
+  - id: php_stack_injection_focus
+    match:
+      metadata_key: technology
+      metadata_contains: php
+    dispatch:
+      task_id: sql_injection_test
+      default_tool: sqlmap_scan
+      alternatives: [nuclei_scan]
+      skill_file: vuln/injection-testing.md
+      reason: "PHP stack — prioritise SQLi/LFI testing on its parameters (classic injection surface)"
+      priority: 3
+
+  - id: injection_point_candidates
+    match:
+      has_tag: injection_point_candidate
+      min_count: 1
+    dispatch:
+      task_id: sql_injection_test
+      default_tool: sqlmap_scan
+      alternatives: [dalfox_xss_scan]
+      skill_file: vuln/injection-testing.md
+      reason: "Hidden parameters found in recon — test them for SQLi/XSS (scope permitting)"
       priority: 4
 
   - id: recon_complete_handoff

@@ -59,8 +59,9 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from _core.runner import default_parse, run_tool
+from _core.runner import run_tool
 from _core.result import ToolResult
+from _autorecon_results import parse as _collect_dir_results
 
 TOOL_NAME = "autorecon_scan"
 CATEGORY = "network"
@@ -84,7 +85,8 @@ def build_command(**params: Any) -> str:
     return command.strip()
 
 def parse(result: ToolResult) -> dict[str, Any]:
-    return default_parse(result)
+    # AutoRecon writes findings to output_dir, not stdout — fold them back in.
+    return _collect_dir_results(result)
 
 def run(target: str = '', output_dir: str = '/tmp/autorecon', port_scans: str = 'top-100-ports', service_scans: str = 'default', heartbeat: int = 60, timeout: int = 300, additional_args: str = '', use_recovery: bool = True, use_cache: bool = True, exec_timeout: int = 300) -> dict[str, Any]:
     params = {"target": target, "output_dir": output_dir, "port_scans": port_scans, "service_scans": service_scans, "heartbeat": heartbeat, "timeout": timeout, "additional_args": additional_args}

@@ -89,6 +89,21 @@ _TOOL_BLURBS: dict[str, str] = {
 }
 
 
+# Per-tool default foreground timeouts (seconds) for the slow recon tools —
+# these routinely exceed a flat 300s (archive crawls, DNS brute, OSINT hunts),
+# forcing needless background re-runs. 0 from the caller uses this default; an
+# explicit timeout_seconds still overrides.
+_SLOW_TIMEOUTS: dict[str, int] = {
+    "domain_hunter": 600,
+    "dnsenum_scan": 600,
+    "gau_discovery": 480,
+    "waybackurls_discovery": 480,
+    "hakrawler_crawl": 480,
+    "amass_scan": 600,
+}
+_DEFAULT_NET_TIMEOUT = 300
+
+
 def _normalize_ports_flag(ports: str) -> str:
     """Convert raw ports string to CLI -p flag (e.g. '22,443' → '-p 22,443').
 
@@ -172,7 +187,7 @@ def register_typed_recon_network_tools(
                 input_data: str = "",
                 additional_args: str = "",
                 confirm_expensive: str = "",
-                timeout_seconds: int = 300,
+                timeout_seconds: int = 0,
                 engagement_id: str = "",
             ) -> str:
                 ports_flag = _normalize_ports_flag(ports)
@@ -191,11 +206,14 @@ def register_typed_recon_network_tools(
                     additional_args="",
                     confirm_expensive=confirm_expensive,
                 )
+                effective_timeout = timeout_seconds or _SLOW_TIMEOUTS.get(
+                    name, _DEFAULT_NET_TIMEOUT
+                )
                 return execute(
                     name,
                     params,
                     additional_args=extra,
-                    timeout_seconds=timeout_seconds,
+                    timeout_seconds=effective_timeout,
                     engagement_id=engagement_id,
                 )
 

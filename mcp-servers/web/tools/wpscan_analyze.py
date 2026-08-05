@@ -31,8 +31,12 @@ CATEGORY = "web"
 def build_command(**params: Any) -> str:
     """Build CLI command (harvested from HexStrike server route)."""
     url = params.get("url", "")
-    additional_args = params.get("additional_args", "")
+    additional_args = str(params.get("additional_args", "") or "")
     command = f"wpscan --url {url}"
+    # JSON output + no banner so the backend parser gets structured
+    # version/plugin/vuln data instead of scraping the CLI report.
+    if "--format" not in additional_args and "-f " not in additional_args:
+        command += " --format json --no-banner"
     if additional_args:
         command += f" {additional_args}"
     return command.strip()

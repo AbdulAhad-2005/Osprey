@@ -91,8 +91,8 @@ def test_js_recon_endpoints_secrets_cloud():
         "target": "https://t", "js_file_count": 1, "endpoint_count": 2,
         "endpoints": ["/api/v1/admin", "/health"],
         "secrets": [
-            {"type": "sendgrid_api_key", "match": "SG.", "secret": <SENDGRID_API_KEY>, "high_signal": True, "source": "a.js"},
-            {"type": "aws_access_key_id", "match": "AKIA...", "secret": <AWS_ACCESS_KEY_ID>, "high_signal": True, "source": "a.js"},
+            {"type": "sendgrid_api_key", "match": "SG.", "secret": "SG.aaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "high_signal": True, "source": "a.js"},
+            {"type": "aws_access_key_id", "match": "AKIA...", "secret": "AKIAIOSFODNN7EXAMPLE", "high_signal": True, "source": "a.js"},
             {"type": "jwt", "match": "eyJ...", "secret": "eyJ...", "high_signal": False, "source": "a.js"},
         ],
         "cloud_assets": [{"type": "s3_bucket_url", "bucket": "prod", "match": "prod.s3.amazonaws.com", "source": "a.js"}],

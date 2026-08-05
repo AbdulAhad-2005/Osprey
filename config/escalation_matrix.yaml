@@ -133,7 +133,68 @@ techniques:
           protocol: smb
         reason: "Modern netexec enum"
 
+  # ── Vulnerability-analysis phase ──
+  vulnerability_scan:
+    thin_results_signals: [empty_stdout, few_results, no_findings]
+    blocked_signals: [timeout, tool_failure, command_not_found, waf_block, incomplete_output]
+    escalations:
+      - action: adjust_params
+        from_tool: nuclei_scan
+        tool_name: nuclei_scan
+        additional_args: "-tags cve,misconfig,exposure,default-login -severity critical,high,medium"
+        reason: "Empty nuclei result — widen with high-signal tags before switching tools"
+      - action: alternate_tool
+        from_tool: nuclei_scan
+        tool_name: jaeles_vulnerability_scan
+        reason: "nuclei blocked/empty — try jaeles' signature set"
+      - action: alternate_tool
+        from_tool: nuclei_scan
+        tool_name: nikto_scan
+        reason: "Fall back to nikto for server-level misconfig coverage"
+      - action: alternate_tool
+        from_tool: jaeles_vulnerability_scan
+        tool_name: nuclei_scan
+        reason: "jaeles unavailable (not installed) — nuclei is the primary scanner"
+
+  web_server_scan:
+    blocked_signals: [timeout, waf_block, tool_failure]
+    escalations:
+      - action: alternate_tool
+        from_tool: nikto_scan
+        tool_name: nuclei_scan
+        additional_args: "-tags misconfig,exposure,default-login"
+        reason: "nikto blocked/slow — nuclei misconfig templates are faster and WAF-lighter"
+
+  cms_vulnerability_scan:
+    blocked_signals: [timeout, tool_failure, api_limit]
+    escalations:
+      - action: alternate_tool
+        from_tool: wpscan_analyze
+        tool_name: nuclei_scan
+        additional_args: "-tags wordpress,cve"
+        reason: "wpscan blocked/rate-limited — nuclei WordPress templates as fallback"
+
+  sql_injection_test:
+    thin_results_signals: [not_injectable, empty_stdout]
+    blocked_signals: [timeout, waf_block, tool_failure]
+    escalations:
+      - action: adjust_params
+        from_tool: sqlmap_scan
+        tool_name: sqlmap_scan
+        additional_args: "--level 3 --risk 2 --random-agent"
+        reason: "No injection at default depth — raise level/risk and randomise UA (scope permitting)"
+
+  xss_test:
+    thin_results_signals: [empty_stdout, no_findings]
+    blocked_signals: [timeout, waf_block, tool_failure]
+    escalations:
+      - action: alternate_tool
+        from_tool: dalfox_xss_scan
+        tool_name: xsser_scan
+        reason: "dalfox found nothing — try xsser's payload set as a second opinion"
+
 fallback_chains:
   subdomain_enumeration: [subfinder_scan, amass_scan, fierce_scan, dnsenum_scan, crt_sh_query, shodan_search]
   port_discovery: [naabu_port_scan, rustscan_fast_scan, masscan_high_speed, nmap_syn_scan]
   service_enumeration: [nmap_service_scan, nmap_syn_scan, nmap_custom_scan]
+  vulnerability_scan: [nuclei_scan, jaeles_vulnerability_scan, nikto_scan]

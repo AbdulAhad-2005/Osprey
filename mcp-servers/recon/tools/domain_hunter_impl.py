@@ -21,38 +21,11 @@ from urllib.parse import quote_plus, urlparse
 
 logger = logging.getLogger(__name__)
 
-_COMMON_MULTI_SUFFIXES = {
-    "ac.uk",
-    "co.uk",
-    "gov.uk",
-    "ltd.uk",
-    "me.uk",
-    "net.uk",
-    "org.uk",
-    "sch.uk",
-    "com.au",
-    "edu.au",
-    "gov.au",
-    "net.au",
-    "org.au",
-    "com.br",
-    "com.cn",
-    "com.hk",
-    "com.mx",
-    "com.tr",
-    "com.pk",
-    "edu.pk",
-    "gov.pk",
-    "net.pk",
-    "org.pk",
-    "ac.pk",
-    "edu.in",
-    "gov.in",
-    "net.in",
-    "org.in",
-    "co.in",
-    "nic.in",
-}
+# Canonical PSL-backed domain parsing (shared with every other recon tool).
+_MCP_ROOT = Path(__file__).resolve().parents[2]  # mcp-servers/
+if str(_MCP_ROOT) not in sys.path:
+    sys.path.insert(0, str(_MCP_ROOT))
+from _core.domains import is_registrable_domain, is_same_apex, registrable_apex
 
 # Shared CDN/cloud/hosting infrastructure — a target proxied through one of
 # these (Cloudflare, Akamai, etc.) shares its edge IP with millions of
@@ -111,39 +84,12 @@ def normalize_seed_domain(value: str) -> str:
 
 
 def root_domain(host: str) -> str:
-    """Best-effort registrable domain extraction.
-
-    Prefers ``tldextract`` when available, but falls back to a compact built-in
-    heuristic so the tool still works in minimal environments.
-    """
-    host = normalize_seed_domain(host)
-    if not host or host.count(".") < 1:
-        return host
-
-    try:
-        import tldextract  # type: ignore
-
-        extracted = tldextract.extract(host)
-        if extracted.domain and extracted.suffix:
-            return f"{extracted.domain}.{extracted.suffix}".lower()
-    except Exception:
-        pass
-
-    labels = [label for label in host.split(".") if label]
-    if len(labels) <= 2:
-        return host
-
-    suffix2 = ".".join(labels[-2:])
-    suffix3 = ".".join(labels[-3:])
-    if suffix2 in _COMMON_MULTI_SUFFIXES and len(labels) >= 3:
-        return suffix3
-    if labels[-2] in {"edu", "gov", "ac", "co", "com", "org", "net"} and len(labels[-1]) <= 3:
-        return suffix3
-    return suffix2
+    """Registrable (apex) domain via the Public Suffix List — see _core.domains."""
+    return registrable_apex(normalize_seed_domain(host))
 
 
 def is_same_root(left: str, right: str) -> bool:
-    return root_domain(left) == root_domain(right)
+    return is_same_apex(normalize_seed_domain(left), normalize_seed_domain(right))
 
 
 def _safe_tokens(text: str) -> list[str]:
@@ -170,150 +116,19 @@ _FILE_LIKE_TLDS: frozenset[str] = frozenset({
     "do", "action", "rst",
 })
 
-# Real gTLDs longer than 6 characters that are actually delegated in the DNS
-# root zone.  Anything not in this set with a "TLD" > 6 chars is almost
-# certainly a code-identifier false positive.
-_KNOWN_LONG_TLDS: frozenset[str] = frozenset({
-    "abogado", "academy", "accountants", "active", "actor",
-    "adult", "agency", "airforce", "apartments", "archi",
-    "associates", "attorney", "auction", "audio",
-    "band", "bank", "bargains", "berlin", "bike", "bingo",
-    "bio", "black", "blog", "blue", "boutique", "broker",
-    "build", "builders", "business", "buy",
-    "cab", "cafe", "cam", "camera", "camp", "capital",
-    "cards", "care", "career", "careers", "cars", "casa",
-    "cash", "casino", "catering", "center", "ceo",
-    "channel", "chat", "church", "city", "claims",
-    "cleaning", "clinic", "clothing", "cloud", "club",
-    "coach", "codes", "coffee", "college", "community",
-    "company", "compare", "computer", "condos", "consulting",
-    "contact", "contractors", "cooking", "cool", "country",
-    "coupon", "coupons", "courses", "cricket", "cruises",
-    "dad", "dance", "date", "dating", "day", "deals",
-    "degree", "delivery", "delta", "democrat", "dental",
-    "dentist", "design", "diamonds", "diet", "digital",
-    "direct", "directory", "discount", "doctor", "dog",
-    "domains", "dot", "download", "durban",
-    "earth", "education", "email", "energy", "engineer",
-    "engineering", "enterprises", "equipment", "esq",
-    "estate", "events", "exchange", "expert", "exposed",
-    "express",
-    "fail", "faith", "family", "fan", "fans", "farm",
-    "fashion", "feedback", "film", "finance", "financial",
-    "fish", "fishing", "fitness", "flights", "florist",
-    "flowers", "fly", "foo", "food", "football", "forex",
-    "forsale", "forum", "foundation", "fun", "fund",
-    "furniture", "futbol", "fyi",
-    "gallery", "game", "games", "garden", "gent", "gift",
-    "gifts", "gives", "glass", "global", "gmbh", "gold",
-    "golf", "graphics", "gratis", "green", "gripe",
-    "group", "guide", "guitars", "guru",
-    "haus", "health", "healthcare", "help", "here",
-    "hiphop", "hiv", "hockey", "holdings", "holiday",
-    "homes", "horse", "hospital", "host", "hosting",
-    "hotel", "house",
-    "immo", "immobilien", "industries", "info", "ing",
-    "ink", "institute", "insurance", "international",
-    "investments", "irish", "islam",
-    "jewelry", "jobb", "jobs", "journal", "juegos",
-    "kaufen", "kitchen", "kiwi", "koeln",
-    "land", "law", "lawyer", "lease", "legal", "lgbt",
-    "life", "lighting", "limited", "limo", "link",
-    "live", "llc", "loan", "loans", "lol", "lotto",
-    "love", "ltd",
-    "maison", "management", "market", "marketing",
-    "markets", "mba", "media", "memorial", "men",
-    "menu", "miami", "mobi", "moda", "monster", "mortgage",
-    "movie", "music",
-    "nagoya", "name", "navy", "network", "news", "next",
-    "ninja", "nokia",
-    "observer", "okinawa", "one", "online", "organic",
-    "org", "oversees",
-    "page", "partners", "parts", "party", "pet", "photo",
-    "photography", "photos", "physio", "pics", "pictures",
-    "pid", "pink", "pizza", "place", "plumbing", "plus",
-    "poker", "porn", "press", "prime", "pro", "productions",
-    "prof", "promo", "properties", "property", "protection",
-    "pub",
-    "qpon", "queens",
-    "racing", "radio", "realty", "recipes", "red",
-    "rehab", "reise", "reisen", "rent", "rentals", "repair",
-    "report", "republican", "rest", "restaurant", "review",
-    "reviews", "rich", "rip", "rocks", "rodeo", "room",
-    "rugby", "run",
-    "sale", "salon", "sarl", "school", "schule", "science",
-    "scot", "search", "security", "services", "sex", "sexy",
-    "shiksha", "shoes", "shop", "shopping", "show", "shows",
-    "sites", "soccer", "social", "software", "solar",
-    "solutions", "sony", "space", "sport", "spots",
-    "star", "stockholm", "storage", "store", "stream",
-    "studio", "study", "style", "sucks", "supplies",
-    "supply", "support", "surgery", "systems",
-    "taipei", "talk", "tattoo", "tax", "taxi", "team",
-    "tech", "technology", "tennis", "theater", "theatre",
-    "tickets", "tienda", "tips", "tires", "today", "tokyo",
-    "tools", "top", "tours", "town", "toys", "trade",
-    "trading", "training", "travel", "trust",
-    "university", "uno", "vacations", "ventures", "vet",
-    "viajes", "video", "villas", "vin", "vip", "vision",
-    "vodka", "vote", "voting", "voto", "voyage",
-    "wang", "watch", "webcam", "website", "wedding",
-    "wiki", "win", "wine", "work", "works", "world", "wtf",
-    "xxx", "xyz",
-    "yachts", "yokohama", "yoga", "youtube",
-    "zone",
-})
-
-
-def _tldextract_uses_fallback() -> bool:
-    """Detect if tldextract falls back to last-label-as-suffix (v3.x behaviour)
-    or returns empty for unrecognised suffixes (v5.x+)."""
-    try:
-        import tldextract as _te  # type: ignore
-        test = _te.extract("validate.thisisnotarealsuffix99")
-        return bool(test.suffix)
-    except Exception:
-        return False
-
-
-_TLD_FALLBACK = _tldextract_uses_fallback()
-
-
 def _is_likely_domain_or_none(host: str) -> str | None:
-    """Return *host* if it looks like a real registered domain, else ``None``."""
+    """Return *host* if it is a real registered domain, else ``None``.
+
+    Cheap file-extension reject first (``logo.png``, ``app.js``), then
+    authoritative Public-Suffix-List validation — see ``_core.domains``. No
+    hand-maintained TLD list: the PSL knows every delegated suffix.
+    """
     host = host.strip().lower()
     if not host or "." not in host:
         return None
-    labels = host.rsplit(".", 1)
-    if len(labels) != 2:
+    if host.rsplit(".", 1)[1] in _FILE_LIKE_TLDS:
         return None
-    domain_label, tld = labels
-    if len(domain_label) < 2:
-        return None
-    if len(tld) < 2 or len(tld) > 24:
-        return None
-    if tld in _FILE_LIKE_TLDS:
-        return None
-    try:
-        import tldextract as _te  # type: ignore
-        ext = _te.extract(host)
-        if ext.suffix and ext.domain:
-            if _TLD_FALLBACK:
-                # tldextract falls back to last-label-as-suffix.
-                # Accept only short (≤6) TLDs or explicitly known long ones.
-                if len(tld) <= 6 or tld in _KNOWN_LONG_TLDS:
-                    return host
-                return None
-            # v5.x+: tldextract returned suffix → it's in the PSL
-            return host
-        # tldextract rejected the suffix
-        return None
-    except Exception:
-        pass
-    # No tldextract: accept common-length TLDs only
-    if len(tld) <= 6 or tld in _KNOWN_LONG_TLDS:
-        return host
-    return None
+    return host if is_registrable_domain(host) else None
 
 
 def _brand_tokens(seed_root: str, title_text: str = "") -> list[str]:

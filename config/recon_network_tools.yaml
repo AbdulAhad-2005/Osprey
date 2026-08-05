@@ -143,7 +143,7 @@ tasks:
     description: Mine a page's JavaScript for endpoints, hardcoded secrets and cloud storage refs.
     default_tool: js_recon
     alternatives: [katana_crawl]
-    skill_file: recon/content-and-js-recon.md
+    skill_file: recon/javascript-recon.md
     produces: [url, observation]
 
   web_crawling_deep:

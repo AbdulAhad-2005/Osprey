@@ -41,8 +41,8 @@ def test_junk_archive_urls_are_filtered():
 
 
 def test_sendgrid_key_recognized_as_high_signal():
-    # Replace with a valid SendGrid API key for testing
-    key = <SENDGRID_API_KEY>
+    # Fake key in SendGrid's format (SG.<22>.<16-64>) — not a real credential.
+    key = "SG.aaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     secs = jr._extract_secrets(f'const k="{key}";', "app.js")
     sg = [s for s in secs if s["type"] == "sendgrid_api_key"]
     assert sg and sg[0]["high_signal"] is True
@@ -54,8 +54,10 @@ def test_ingest_structural_rules_skipped_only_for_parsed_tools():
     assert _tool_has_parser("js_recon")
     assert _tool_has_parser("nmap_service_scan")
     assert _tool_has_parser("tech_stack_analyze")
-    assert not _tool_has_parser("shell:curl")
-    assert not _tool_has_parser("nikto_scan")  # no parser → keep all rules
+    # Vuln-phase scanners now own dedicated parsers too (structural rules skipped).
+    assert _tool_has_parser("nikto_scan")
+    assert _tool_has_parser("nuclei_scan")
+    assert not _tool_has_parser("shell:curl")  # invented probes → keep all rules
     assert "version_banner" in _STRUCTURAL_RULE_IDS
     assert "certificate_issuer" in _STRUCTURAL_RULE_IDS
 

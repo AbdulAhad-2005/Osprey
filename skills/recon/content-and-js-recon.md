@@ -17,9 +17,10 @@ live web host, prioritising crown jewels.
 3. **Virtual hosts** — when many names share one IP (the graph shows `co_hosts`), run
    `ffuf_scan mode=vhost` to find hosts served only by Host header.
 4. **JavaScript analysis** — `js_recon` (target=) on every live app host, and especially
-   on SPA/API frameworks (React/Vue/Angular/Next). It downloads the page's JS and
-   extracts endpoints/API paths, **hardcoded secrets** (API keys, tokens, JWTs, private
-   keys) and **exposed cloud storage** (S3/GCS/Azure). This is where modern apps leak.
+   on SPA/API frameworks (React/Vue/Angular/Next). It extracts endpoints/API paths,
+   **hardcoded secrets** and **exposed cloud storage**. This is where modern apps leak.
+   Full methodology (bundle-diving, secret-vs-publishable triage, endpoint→probe workflow):
+   see `javascript-recon`.
 5. **Parameter discovery** — `arjun_scan` (url=) actively finds hidden parameters on a
    live endpoint. Passive parameters are also mined automatically from gau/wayback/katana
    URLs. Every parameter is an **injection-point candidate**.

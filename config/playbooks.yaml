@@ -182,3 +182,40 @@ playbooks:
         suggested_params:
           domain: "{{target}}"
         fallback: [domain_hunter]
+
+  vuln_scan_web:
+    phase: vuln
+    description: >
+      Turn a live web host + known tech into confirmed, severity-rated findings.
+      Scan by evidence (tech, parameters) — not blind fan-out. Exploitation is a
+      separate, approval-gated phase; stop at proof.
+    input: url
+    steps:
+      - tool: nuclei_scan
+        why: Recon→vuln workhorse — CVE/misconfig templates on the live host. Signal first.
+        suggested_params:
+          target: "{{live_host_url}}"
+          severity: "critical,high"
+        fallback: [jaeles_vulnerability_scan, platform_shell]
+      - tool: nikto_scan
+        why: Web-server misconfig / dangerous files / missing headers baseline.
+        suggested_params:
+          target: "{{live_host_url}}"
+        fallback: [nuclei_scan]
+      - tool: wpscan_analyze
+        why: If tech fingerprinting flagged WordPress — core/plugin/theme CVEs.
+        note: Only when WordPress detected. Add --api-token via additional_args for full vuln data.
+        suggested_params:
+          url: "{{live_host_url}}"
+        fallback: [nuclei_scan]
+      - tool: sqlmap_scan
+        why: Confirm SQLi on an injection_point_candidate from recon (scope permitting).
+        note: Detection only — dumping/os-shell is exploitation, needs approval.
+        suggested_params:
+          url: "{{injection_point_url}}"
+        fallback: [platform_shell]
+      - tool: dalfox_xss_scan
+        why: Verify XSS on recon's parameters — trust verified (type V), treat leads as follow-ups.
+        suggested_params:
+          url: "{{injection_point_url}}"
+        fallback: [platform_shell]
