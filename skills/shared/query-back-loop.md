@@ -2,7 +2,7 @@
 
 Load once. Do not re-load.
 
-## The loop — three triggers, same two calls
+## The loop — three triggers, one flush + two reads
 
 Run this whenever ANY of these is true, not just on a fixed cadence:
 - every ~3 tool calls
@@ -11,17 +11,23 @@ Run this whenever ANY of these is true, not just on a fixed cadence:
 - you think you're **about to finish**
 
 ```
+0. flush your reasoning        → one bulk call for anything you concluded but no
+                                 tool emitted (platform_record_findings /
+                                 platform_graph_link_many / platform_think)
 1. platform_thinking          → shows untested hypothesis cards from evidence
 2. platform_context           → shows open gaps + crown jewels + jobs + look-back
 ```
 
-Pick the highest-value gap or hypothesis card. Run one tool against it. Repeat.
+Step 0 is the whole discipline: tool/script/shell output is already stored
+automatically, so you do NOT flush that. You flush only the conclusions living in
+your head — an interpretation, a relationship you worked out, a hypothesis — and
+you do it here, at the checkpoint, in ONE bulk call. Never pause mid-probe to
+record, and never re-record a fact a tool already printed (it's a harmless no-op,
+just wasted effort).
 
-If both return nothing → only then move toward finalize.
+Then pick the highest-value gap or hypothesis card. Run one tool against it. Repeat.
 
-If a tool call just returned a list (subdomains, IPs, ports, techs), link them
-into the graph with one `platform_graph_link_many` call before you move on —
-don't leave them as chat-only output.
+If steps 1–2 return nothing → only then move toward finalize.
 
 ## Memory augments your context — it doesn't replace it
 

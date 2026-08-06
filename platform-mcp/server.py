@@ -1353,18 +1353,19 @@ def platform_record_finding(
     confidence: str = "",
 ) -> str:
     """
-    Persist one observed fact into engagement memory (solves chat-vs-store drift).
+    Persist ONE conclusion that lives only in your reasoning — not tool output.
 
-    Use for ANYTHING you noticed and are about to explain in chat instead of
-    storing — not just typed-tool banners. WHOIS facts (registrar, DNSSEC
-    status, nameservers), a path pattern you spotted in GAU/wayback output,
-    an IP-cluster grouping you worked out by hand, a suspicious artifact in
-    historical data — all of it belongs here (or in platform_graph_link_many
-    if it's a relationship between assets). If you typed it into your answer
-    to the user, it should also be here — chat is not memory.
+    Tool / script / shell output is ingested automatically; do not re-record it
+    here (harmless no-op, wasted effort). Use this for what a tool did NOT emit:
+    an interpretation you reasoned out (an IP-cluster grouping, a path pattern
+    across GAU/wayback runs), a suspicion, a hand-verified fact. For a
+    relationship between assets use platform_graph_link_many; for a hypothesis
+    use platform_think. Prefer platform_record_findings (bulk) to flush several
+    at a checkpoint. If it lives only in your chat answer, it should be here too.
 
     evidence_grade: observed|inferred|unverified.
-    finding_type: url|host|port|service|technology|observation|subdomain
+    finding_type: url|host|port|service|technology|observation|subdomain|
+      vulnerability|credential|secret|http_response|access
       (use observation for anything that doesn't fit — it's the catch-all).
     claim_severity is clamped by evidence_grade (CRITICAL needs observed).
     derived_from: optional comma-separated parent finding ids (evidence chain).
@@ -1411,12 +1412,13 @@ def platform_record_finding(
 @mcp.tool()
 def platform_record_findings(items_json: Any) -> str:
     """
-    Persist MANY operator-authored facts in one call (bulk platform_record_finding).
+    Persist MANY reason-only conclusions in one call (bulk platform_record_finding).
 
-    Use this after reading a large raw output (GAU/wayback dumps, a JS bundle, a
-    cert SAN list, a page of banners) so everything you noticed lands in memory
-    in a single round-trip instead of one call per fact — chat is not memory,
-    and this makes storing-everything cheap.
+    The checkpoint flush: at a query-back breakpoint, drop everything you concluded
+    but no tool emitted (interpretations, hand-verified facts) in a single
+    round-trip instead of one call per fact. Tool/script/shell output is already
+    stored automatically — do not bulk-re-record it. Re-sends merge as extra
+    observations (never duplicates, never a loss), so flushing is cheap and safe.
 
     items_json: a JSON array (or JSON string of one). Each item accepts the same
     fields as platform_record_finding — at minimum title + evidence:

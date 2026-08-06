@@ -117,26 +117,31 @@ with `platform_exec`. Same for the heavy
   trivial or administrative call (delete, a not-found lookup, an empty result) came back. State
   the result plainly and stop. Save the thorough synthesis for turns where you actually have
   something substantive to report.
-- **Every hypothesis must be persisted** with `platform_think` (hypothesis, evidence, plan). If you don't record it, the graph won't know it exists.
-- **Chat is not memory.** WHOIS facts, a path pattern in GAU/wayback output, an IP-cluster
-  grouping you worked out by hand, an anomaly you spotted — if you're about to explain it to
-  the user, `platform_record_finding` it first (or `platform_graph_link_many` if it's a
-  relationship). Typed-tool findings auto-ingest; anything you noticed by reading raw output
-  yourself does not — that's on you to persist. Structural relations (subdomain→domain,
-  host→port→service) build themselves; everything else needs you to say it.
-  Persist many facts from one raw read in a single call with `platform_record_findings`
-  (bulk) — tags/metadata are yours to shape. When a tool card shows a **Memory:** note
-  (drift / unexplored assets / unread jobs), re-sync before pressing on — don't stop with
-  discovered assets left unexplored.
-- **`platform_shell`/`platform_script` results do NOT auto-ingest into the graph the way
-  typed-tool output does.** If you run a custom command/script to confirm or rule something
-  out (a manual CORS check, a hand-crafted GraphQL probe, a header inspection), persist the
-  result the moment you have it — `platform_record_finding` for the fact,
-  `platform_graph_link`/`platform_graph_link_many` if it connects two assets — before moving
-  to the next thing. If it only exists in what you told the user, the graph doesn't know it
-  happened, and `platform_finalize_check` will (correctly) still call it unexplored.
-- Tools auto-ingest findings. Call `platform_findings` only at the operator's request or before a final report — not after every tool.
-- Don't pause the engagement to grade/mirror/dump. Hack first; report when the surface story is coherent.
+- **Storage is automatic — the platform, not you, transcribes tool output.** Typed tools,
+  `platform_shell`, AND `platform_script` all auto-ingest every fact they emit: parsers +
+  universal ingest rules run on their stdout and write typed findings + graph nodes/edges the
+  moment the call returns. Structural relations (subdomain→domain, host→port→service) build
+  themselves. So do NOT re-record something a tool/script/shell already printed — re-recording
+  a known fact is a cheap no-op (it merges as another observation, never a duplicate, never a
+  loss), but it is wasted effort. Spend your attention on hacking, not bookkeeping.
+- **Persist only what lives solely in your head** — a conclusion no tool emitted: an
+  interpretation you reasoned out (an IP-cluster grouping, a path pattern you spotted across
+  runs, an anomaly), a cross-asset **relationship** you worked out, or a **hypothesis**. If
+  you're about to explain it to the user and no tool wrote it, write it:
+  `platform_record_findings` (bulk — many facts in one call) for facts,
+  `platform_graph_link_many` for relationships, `platform_think` for hypotheses.
+- **When to persist: at natural breakpoints, in bulk — never mid-probe.** Flush your
+  reasoning when the surface story shifts, when the query-back checkpoint fires, or before you
+  stop — one bulk call, not a call after every tool. Don't pause the engagement to
+  grade/mirror/dump; hack first, then persist the conclusions when the picture is coherent.
+- **For a custom script/shell check, prefer letting it self-report.** A `platform_script` can
+  print `FINDING|grade|sev|type|title|evidence` (and `REL|...`, `PATH ...`) lines that
+  auto-ingest as typed findings/edges — so a confirmed CORS/GraphQL/header check lands in
+  memory with zero extra calls. Only fall back to `platform_record_findings` for a conclusion
+  the script couldn't express as output.
+- Call `platform_findings` only at the operator's request or before a final report — not after
+  every tool. When a tool card shows a **Memory:** note (drift / unexplored assets / unread
+  jobs), re-sync before pressing on — don't stop with discovered assets left unexplored.
 
 ## Honesty on severity
 

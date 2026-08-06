@@ -225,3 +225,36 @@ rules:
     claim_severity: info
     title_template: "Version detected: {g1} {g2}"
     tags: [auto_ingest, technology, version]
+
+  # ── Secrets / credentials (high-precision only — feeds exploit/post-exploit) ──
+  - id: aws_access_key
+    pattern: '\b(AKIA[0-9A-Z]{16})\b'
+    finding_type: secret
+    evidence_grade: observed
+    claim_severity: high
+    title_template: "AWS access key id exposed: {g1}"
+    tags: [auto_ingest, secret, aws, credential_material]
+
+  - id: private_key_block
+    pattern: '-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----'
+    finding_type: secret
+    evidence_grade: observed
+    claim_severity: high
+    title_template: "Private key material exposed in output"
+    tags: [auto_ingest, secret, private_key, credential_material]
+
+  - id: jwt_token
+    pattern: '\b(eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b'
+    finding_type: credential
+    evidence_grade: observed
+    claim_severity: medium
+    title_template: "JWT exposed in output (verify scope/expiry before trusting)"
+    tags: [auto_ingest, credential, jwt, token]
+
+  - id: google_api_key
+    pattern: '\b(AIza[0-9A-Za-z_\-]{35})\b'
+    finding_type: secret
+    evidence_grade: observed
+    claim_severity: medium
+    title_template: "Google API key exposed: {g1}"
+    tags: [auto_ingest, secret, google, credential_material]

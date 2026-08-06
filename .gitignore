@@ -28,6 +28,9 @@ Thumbs.db
 
 .uv-cache
 .agents
+.claude/
+
+backend/tests/
 
 # Local engagement artifacts (sensitive)
 Pentest-Reports/
