@@ -556,16 +556,7 @@ tools:
     phase: network
     freeform_args_field: additional_args
     default_for_task: false
-    llm_hints: Heavy automated bundle — use when narrower scans are insufficient.
-    parameters:
-      target: { type: string, required: true }
-      output_dir: { type: string, default: "/tmp/autorecon" }
-
-  autorecon_comprehensive:
-    task: service_enumeration
-    phase: network
-    freeform_args_field: additional_args
-    default_for_task: false
+    llm_hints: Heavy automated bundle (all scanners) — use when narrower scans are insufficient.
     parameters:
       target: { type: string, required: true }
       output_dir: { type: string, default: "/tmp/autorecon" }

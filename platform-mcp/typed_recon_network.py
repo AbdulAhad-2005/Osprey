@@ -85,7 +85,6 @@ _TOOL_BLURBS: dict[str, str] = {
     "arp_scan_discovery": "ARP scan (target= CIDR/IP).",
     "nbtscan_netbios": "NetBIOS scan (target=).",
     "autorecon_scan": "AutoRecon (target=).",
-    "autorecon_comprehensive": "AutoRecon comprehensive (target=).",
 }
 
 
