@@ -2,7 +2,18 @@
 
 Goal: map the external attack surface before intrusive network testing.
 
-**Instincts (suggested order of concerns — not mandatory stages):**
+**Adapt to the target kind** (shown in the session header as `[kind: …]`). The engagement can be
+bound to a domain, IP, IPv6, CIDR, or host:port — not just a domain:
+- **domain** — full recon below (sisters → subdomains → live hosts → …).
+- **ip / ipv6** — no domain to enumerate: skip subdomain enum; go to port/service scanning, then
+  web/vuln. `dnsx_reverse` (PTR) and `asn_enum` still widen context; a reverse-DNS hostname can
+  reopen domain recon.
+- **cidr** — sweep the range for live hosts/ports first (naabu/masscan/nmap across it), then
+  service/vuln scan what's up. No subdomain enum.
+- **host:port (scope shown as `scope: port N`)** — the user scoped to one service: direct network/
+  web tools at that host:port; don't spend the scan on other ports unless scope is widened.
+
+**Instincts (for a domain target — suggested order of concerns, not mandatory stages):**
 1. Sister / seed scope (`domain_hunter`) when a domain is in play
 2. Subdomain enumeration — more than one source if inventory looks thin
 3. Passive internet OSINT (`shodan_search`) when an API key is available — widen without scanning

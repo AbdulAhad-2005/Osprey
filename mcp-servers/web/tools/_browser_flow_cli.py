@@ -11,6 +11,7 @@ Steps (JSON list via --steps), each an object with "action":
   press       {selector?, key}
   wait        {ms}  or  {selector}
   select      {selector, value}
+  upload      {selector, files}         -> set file(s) on an <input type=file>
   extract     {selector, name}          -> captured under result.extracted[name]
   assert_text {text}                     -> records present true/false
   screenshot  {name?}                    -> saved to --screenshot-dir
@@ -77,6 +78,12 @@ def _run(start_url: str, steps: list, *, timeout_ms: int, screenshot_dir: str) -
                         page.keyboard.press(step["key"])
                 elif action == "select":
                     page.select_option(step["selector"], str(step.get("value", "")))
+                elif action == "upload":
+                    # File upload testing (WSTG): set a file on an <input type=file>.
+                    # path(s) created beforehand via platform_script.
+                    files = step.get("files") or step.get("path") or step.get("value")
+                    page.set_input_files(step["selector"], files)
+                    rec["detail"] = str(files)[:120]
                 elif action == "wait":
                     if step.get("selector"):
                         page.wait_for_selector(step["selector"], timeout=timeout_ms)

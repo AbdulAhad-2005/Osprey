@@ -39,6 +39,13 @@ Forced browsing to post-login pages, parameter-based role flags (`?admin=true`),
 server-side checks, and alternate-channel auth all need a **session** — drive with `browser_flow`
 (log in as a low-priv user, then try to reach privileged functions). See `business-logic`.
 
+## OAuth / OIDC / SSO & JWT
+
+If the app uses OAuth/OIDC/SSO or JWT session tokens (SPA, `/authorize` redirects,
+`/.well-known/openid-configuration`, `Bearer` tokens), that's the account-takeover surface —
+redirect_uri manipulation, PKCE downgrade, `alg` confusion, `kid`/`jku` injection, claim
+tampering. Full methodology: `oauth-and-jwt`.
+
 ## Do not
 
 - Brute-force logins here — enumeration is a few requests; credential attack is the next phase

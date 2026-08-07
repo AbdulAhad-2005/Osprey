@@ -25,7 +25,8 @@ a user. You author the steps; the tool runs them and returns a per-step trace, c
 calls, extracted values, assertion results, and final cookies.
 
 **Step actions:** `goto{url}`, `fill{selector,value}`, `click{selector}`, `press{selector?,key}`,
-`wait{ms|selector}`, `select{selector,value}`, `extract{selector,name}`, `assert_text{text}`,
+`wait{ms|selector}`, `select{selector,value}`, `upload{selector,files}` (file-upload testing —
+create the test file first with `platform_script`), `extract{selector,name}`, `assert_text{text}`,
 `screenshot{name?}`, `set_header{name,value}`, `set_cookie{name,value}`.
 
 **Login example** (then confirm you're in):

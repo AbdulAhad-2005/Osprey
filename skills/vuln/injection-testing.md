@@ -30,8 +30,10 @@ an interesting endpoint, every form field. Test *those*, with the right tool, an
 
 1. Pull the parameter leads from recon (`platform_context` / findings tagged
    `injection_point_candidate`, `interesting_path`).
-2. Pick the tool by class: SQLi → sqlmap, XSS → dalfox. Other classes (SSTI, command inj, LFI)
-   → targeted `nuclei_scan` tags or a crafted `platform_script` probe.
+2. Pick the tool by class: SQLi → sqlmap, XSS → dalfox. Other classes (SSRF, SSTI, XXE,
+   deserialization, NoSQL, open-redirect, mass-assignment) → `nuclei_scan` tags for the easy
+   cases plus a crafted `platform_script` for the high-impact ones — methodology in
+   `advanced-injection-classes`.
 3. Test one candidate at a time on high-value endpoints; batch the rest via `platform_job_start`.
 4. Record the confirmed injection with its parameter and a reproducing request as evidence.
 

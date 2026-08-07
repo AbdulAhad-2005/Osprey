@@ -27,12 +27,14 @@ tool, a browser, or just write a `platform_script`**. Not a mandatory stage; fol
 - **IDENT** (Identity) — **script**: account/username enumeration via response differentials.
    → `identity-and-auth`.
 - **ATHN** (Authentication) — default creds (`nuclei` default-login, `hydra`), password policy,
-   lockout; login flows need a **browser** (`browser_flow`). → `identity-and-auth`.
+   lockout; login flows need a **browser** (`browser_flow`). → `identity-and-auth`. OAuth/OIDC/SSO
+   + JWT (account takeover) → `oauth-and-jwt`.
 - **ATHZ** (Authorization) — traversal (`nuclei`/dotdotpwn); IDOR / priv-esc need **authenticated
    browser sessions** (`browser_flow`, two users). → browser skills.
 - **SESS** (Session) — cookie flags via **script**; CSRF / fixation / logout need a **browser**.
 - **INPV** (Input Validation) — `sqlmap_scan`, `dalfox_xss_scan`, `nuclei_scan` (LFI/SSTI/SSRF/cmdi
-   via tags). → vuln skills (`injection-testing`).
+   via tags). → vuln skills (`injection-testing`, and `advanced-injection-classes` for
+   SSRF/SSTI/XXE/deserialization/NoSQL/mass-assignment).
 - **CLNT** (Client-Side) — DOM XSS / postMessage / storage need a **browser** (`browser_flow`).
 - **BUSLOGIC** (Business Logic) — **browser + your reasoning**. → `business-logic` (browser skills).
 

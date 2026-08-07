@@ -8,6 +8,7 @@ Postgres storage. Switching targets in the same chat rebinds automatically.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import re
@@ -31,10 +32,15 @@ QUICK_TIMEOUT = float(os.environ.get("PENTEST_QUICK_TIMEOUT", "60"))
 HTTP_TIMEOUT = float(os.environ.get("PENTEST_HTTP_TIMEOUT", "900"))
 SESSION_RUN_ID = os.environ.get("PENTEST_RUN_ID", "") or uuid.uuid4().hex[:12]
 
-# Active session — one engagement per root target
+# Active session — one engagement per target (domain / IP / CIDR / host)
 _SESSION_TARGET = ""
 _SESSION_ENGAGEMENT_ID = ""
 _SESSION_SWITCH_NOTICE = ""
+# Kind + scope of the bound target so the agent picks the right tools (an IP →
+# no subdomain enum; a port → scope network/web tools to it). Re-derivable from
+# the target string, but held here to surface in every session header.
+_SESSION_TARGET_KIND = "domain"
+_SESSION_SCOPE = ""
 
 # OPEN GAPS dedup — collapses the memory-gaps block to one line across
 # consecutive tool calls while its content signature is unchanged, so a
@@ -92,7 +98,16 @@ def _log(msg: str) -> None:
 
 
 def _normalize_target(raw: str) -> str:
+    """Light normalization. The backend analyze-target is the authority and
+    returns a canonical engagement key; this just tidies a directly-supplied
+    value without corrupting IPs/CIDRs (never split a CIDR mask off)."""
     value = (raw or "").strip().lower().rstrip(".")
+    # A CIDR or bare IP is already canonical — return as-is.
+    try:
+        ipaddress.ip_network(value, strict=False)
+        return value
+    except ValueError:
+        pass
     if value.startswith("http://") or value.startswith("https://"):
         value = value.split("://", 1)[1]
     value = value.split("/", 1)[0]
@@ -101,8 +116,18 @@ def _normalize_target(raw: str) -> str:
     return value
 
 
-def _valid_domain(value: str) -> bool:
-    return bool(value and _DOMAIN_RE.match(value))
+def _valid_target(value: str) -> bool:
+    """Accept anything scannable as an engagement key: domain, IPv4/IPv6, or CIDR.
+    (host:port is not a key — the backend strips the port to a bare host first.)"""
+    if not value:
+        return False
+    if _DOMAIN_RE.match(value):
+        return True
+    try:
+        ipaddress.ip_network(value, strict=False)  # covers bare IP + CIDR (v4/v6)
+        return True
+    except ValueError:
+        return False
 
 
 def _get(path: str, *, params: dict[str, Any] | None = None, timeout: float = QUICK_TIMEOUT) -> dict[str, Any]:
@@ -149,16 +174,18 @@ def _ensure_run_registered(engagement_id: str) -> None:
         _log(f"run bind warning: {exc}")
 
 
-def _bind_target(target: str, *, force_new: bool = False) -> dict[str, Any]:
-    """Bind session to a root FQDN. Incomplete names must be clarified first."""
+def _bind_target(target: str, *, force_new: bool = False, kind: str = "domain", scope: str = "") -> dict[str, Any]:
+    """Bind session to a target key (domain / IP / CIDR). Ambiguous bare labels
+    must be clarified first via analyze-target."""
     global _SESSION_TARGET, _SESSION_ENGAGEMENT_ID, _SESSION_SWITCH_NOTICE
+    global _SESSION_TARGET_KIND, _SESSION_SCOPE
     global _LAST_OPEN_LOOPS_SIG, _OPEN_LOOPS_REPEAT_COUNT
 
     normalized = _normalize_target(target)
-    if not _valid_domain(normalized):
+    if not _valid_target(normalized):
         raise ValueError(
-            f"Incomplete or invalid target {target!r}. "
-            "Ask the user for the exact FQDN after reviewing analyze-target candidates."
+            f"Incomplete or invalid target {target!r}. Provide a domain, IP, CIDR, "
+            "host:port, or URL (or clarify an ambiguous name via analyze-target)."
         )
 
     previous_target = _SESSION_TARGET
@@ -191,6 +218,8 @@ def _bind_target(target: str, *, force_new: bool = False) -> dict[str, Any]:
 
     _SESSION_TARGET = data.get("target", normalized)
     _SESSION_ENGAGEMENT_ID = data["id"]
+    _SESSION_TARGET_KIND = kind or "domain"
+    _SESSION_SCOPE = scope or ""
     _ensure_run_registered(_SESSION_ENGAGEMENT_ID)
 
     created = bool(data.get("created"))
@@ -247,8 +276,12 @@ def _session_header(engagement_id: str = "", target: str = "") -> str:
         _require_bound_target()
     eid = engagement_id or _SESSION_ENGAGEMENT_ID
     tgt = target or _SESSION_TARGET
+    target_line = f"target: {tgt}"
+    if not pinned and _SESSION_TARGET_KIND and _SESSION_TARGET_KIND != "domain":
+        target_line += f"  [kind: {_SESSION_TARGET_KIND}"
+        target_line += f"; scope: {_SESSION_SCOPE}]" if _SESSION_SCOPE else "]"
     lines = [
-        f"target: {tgt}",
+        target_line,
         f"engagement_id: {eid}",
         f"run_id: {SESSION_RUN_ID}",
     ]
@@ -339,7 +372,14 @@ def _analyze_or_bind(raw: str, *, force_new: bool = False) -> str:
     if analysis.get("needs_clarification") or analysis.get("status") != "ready":
         return _format_clarification(analysis)
     domain = analysis.get("ready_domain") or raw
-    info = _bind_target(domain, force_new=force_new)
+    kind = analysis.get("target_kind") or "domain"
+    scope = analysis.get("scope") or ""
+    info = _bind_target(domain, force_new=force_new, kind=kind, scope=scope)
+    info["target_kind"] = kind
+    if scope:
+        info["scope"] = scope
+    if analysis.get("agent_instruction") and kind != "domain":
+        info["guidance"] = analysis["agent_instruction"]
     parts = [_session_header(), _block("Target Bind", info)]
     if info.get("switched"):
         parts.append(

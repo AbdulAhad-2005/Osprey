@@ -43,8 +43,9 @@ def register_typed_browser_tools(mcp: Any, *, execute: Callable[..., str]) -> in
         authenticated navigation, and BUSINESS LOGIC testing. steps= a JSON list of step
         objects; supported actions: goto{url}, fill{selector,value}, click{selector},
         press{selector?,key}, wait{ms|selector}, select{selector,value},
-        extract{selector,name}, assert_text{text}, screenshot{name?}, set_header{name,value},
-        set_cookie{name,value}. Returns the per-step trace, captured API calls, extracted
+        upload{selector,files} (file-upload testing), extract{selector,name},
+        assert_text{text}, screenshot{name?}, set_header{name,value}, set_cookie{name,value}.
+        Returns the per-step trace, captured API calls, extracted
         values, assertion results and final cookies. Example: log in, then assert an admin-only
         string is present as a low-priv user (auth bypass). engagement_id= pins the engagement."""
         params: dict[str, Any] = {"steps": steps}

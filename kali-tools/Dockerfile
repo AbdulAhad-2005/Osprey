@@ -126,11 +126,18 @@ RUN pipx install maigret \
 RUN pip3 install --break-system-packages --no-cache-dir python-Wappalyzer
 
 # ─── 4b4. Web-pentest additions (TLS deep + GraphQL) ─────────────────────────
-# sslyze (WSTG-CRYP: protocols/ciphers/cert/TLS-CVEs) and graphql-cop (GraphQL
-# security checks) — each in its own pipx venv to isolate pinned deps; the CLI
-# lands on /usr/local/bin (on PATH for every exec path).
-RUN pipx install sslyze \
-    && pipx install graphql-cop
+# sslyze (WSTG-CRYP: protocols/ciphers/cert/TLS-CVEs) in its own pipx venv; the
+# CLI lands on /usr/local/bin (on PATH for every exec path).
+RUN pipx install sslyze
+# graphql-cop is a standalone script — its PyPI package declares no console
+# entry point, so pipx can't install it ("No apps associated"). Clone the repo,
+# install its deps for the system python3, and drop a wrapper on PATH so the
+# tool's expected `graphql-cop -t URL -o json` invocation works.
+RUN git clone --depth 1 https://github.com/dolevf/graphql-cop.git /opt/graphql-cop \
+    && pip3 install --break-system-packages --no-cache-dir requests \
+    && (pip3 install --break-system-packages --no-cache-dir -r /opt/graphql-cop/requirements.txt || true) \
+    && printf '#!/bin/sh\nexec python3 /opt/graphql-cop/graphql-cop.py "$@"\n' > /usr/local/bin/graphql-cop \
+    && chmod +x /usr/local/bin/graphql-cop
 
 # ─── 4b5. Playwright browser automation (browser_scrape / browser_flow) ───────
 # Installed for the SYSTEM python3 (the browser CLIs `import playwright` directly,
