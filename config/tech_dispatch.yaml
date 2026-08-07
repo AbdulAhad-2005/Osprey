@@ -216,6 +216,42 @@ signals:
       reason: "WordPress detected — enumerate core/plugin/theme CVEs with wpscan"
       priority: 7
 
+  - id: graphql_endpoint_found
+    match:
+      metadata_key: url
+      metadata_contains: graphql
+    dispatch:
+      task_id: graphql_security_scan
+      default_tool: graphql_cop_scan
+      alternatives: [nuclei_scan]
+      skill_file: web/graphql-testing.md
+      reason: "GraphQL endpoint discovered — audit introspection / batching / CSRF with graphql-cop"
+      priority: 5
+
+  - id: spa_framework_render
+    match:
+      metadata_key: technology
+      metadata_contains: react
+    dispatch:
+      task_id: spa_render_scrape
+      default_tool: browser_scrape
+      alternatives: [katana_crawl]
+      skill_file: web/browser-automation.md
+      reason: "SPA framework detected — render in a real browser to capture client-side routes + XHR APIs static crawlers miss"
+      priority: 5
+
+  - id: https_tls_deep_scan
+    match:
+      has_tag: tls
+      min_count: 1
+    dispatch:
+      task_id: tls_configuration_scan
+      default_tool: sslyze_scan
+      alternatives: [nuclei_scan]
+      skill_file: vuln/tls-configuration.md
+      reason: "HTTPS host with a TLS cert — deep-scan protocols/ciphers/CVEs (WSTG-CRYP, always safe)"
+      priority: 3
+
   - id: server_misconfig_nikto
     match:
       finding_type: technology

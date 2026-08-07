@@ -17,6 +17,7 @@ TYPED_RECON_CONTENT_TOOLS: tuple[str, ...] = (
     "ffuf_scan",
     "gobuster_scan",
     "arjun_scan",
+    "x8_parameter_discovery",
     "katana_crawl",
     "js_recon",
     "email_security_probe",
@@ -34,7 +35,17 @@ _TOOL_BLURBS: dict[str, str] = {
     ),
     "gobuster_scan": "Directory/DNS/vhost brute force (url=, mode=dir|dns|vhost). Alternative to feroxbuster.",
     "arjun_scan": "Active HTTP parameter discovery on a live endpoint (url=, method=GET/POST). Finds hidden params.",
-    "katana_crawl": "JS-aware crawler (url=) — follows links + parses JavaScript for endpoints; also mines URL params.",
+    "x8_parameter_discovery": (
+        "Hidden parameter brute-force via x8 (url=, method=). Detects params by response-diff — a "
+        "different method from arjun; run it as a second pass when arjun looks thin. Bundled param "
+        "wordlist by default; pass wordlist= for a bigger set."
+    ),
+    "katana_crawl": (
+        "JS-aware crawler (url=) — follows links + parses JavaScript for endpoints; also mines URL params. "
+        "For SPA / JS-rendered apps (React/Vue/Angular) add additional_args=\"-headless -xhr -no-sandbox\" to "
+        "render the DOM in real Chromium and capture client-side routes + XHR/fetch API calls that static crawling misses. "
+        "For deeper interaction (login, forms, business logic) use browser_scrape / browser_flow instead."
+    ),
     "js_recon": (
         "Analyze a page's JavaScript (target= page/JS URL): extract endpoints/API paths, hardcoded "
         "secrets (API keys, tokens, JWTs, private keys) and exposed cloud storage. Key for SPA/API targets."

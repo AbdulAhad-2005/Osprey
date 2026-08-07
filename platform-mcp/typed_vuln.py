@@ -108,7 +108,33 @@ def register_typed_vuln_tools(mcp: Any, *, execute: Callable[..., str]) -> int:
         return execute("jaeles_vulnerability_scan", {"target": target}, additional_args=additional_args,
                        timeout_seconds=timeout_seconds, engagement_id=engagement_id)
 
-    tools = (nuclei_scan, nikto_scan, wpscan_analyze, sqlmap_scan, dalfox_xss_scan, jaeles_vulnerability_scan)
+    def sslyze_scan(
+        target: str,
+        additional_args: str = "",
+        timeout_seconds: int = 300,
+        engagement_id: str = "",
+    ) -> str:
+        """TLS/SSL deep scan via SSLyze (target= host or host:port, WSTG-CRYP). Reports weak
+        protocols (SSLv2/3, TLS 1.0/1.1), weak ciphers (RC4/3DES/NULL/EXPORT), certificate
+        deployment issues, and TLS CVEs (Heartbleed/ROBOT/CCS). The crypto layer tlsx can't
+        reach. engagement_id= pins the call to a specific engagement."""
+        return execute("sslyze_scan", {"target": target}, additional_args=additional_args,
+                       timeout_seconds=timeout_seconds, engagement_id=engagement_id)
+
+    def graphql_cop_scan(
+        url: str,
+        additional_args: str = "",
+        timeout_seconds: int = 300,
+        engagement_id: str = "",
+    ) -> str:
+        """GraphQL security audit via graphql-cop (url= the /graphql endpoint). Checks
+        introspection exposure, field suggestions, batching/aliasing DoS, GET mutations, CSRF,
+        deep recursion. Use when recon/scrape finds a GraphQL endpoint. engagement_id= pins the engagement."""
+        return execute("graphql_cop_scan", {"url": url}, additional_args=additional_args,
+                       timeout_seconds=timeout_seconds, engagement_id=engagement_id)
+
+    tools = (nuclei_scan, nikto_scan, wpscan_analyze, sqlmap_scan, dalfox_xss_scan,
+             jaeles_vulnerability_scan, sslyze_scan, graphql_cop_scan)
     for fn in tools:
         mcp.tool(name=fn.__name__)(fn)
     return len(tools)

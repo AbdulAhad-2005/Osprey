@@ -32,14 +32,21 @@ from _core.result import ToolResult
 TOOL_NAME = "x8_parameter_discovery"
 CATEGORY = "web"
 
+_BUNDLED_PARAMS = str(Path(__file__).resolve().parent / "_wordlists" / "params-common.txt")
+
+
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command. Defaults to a bundled param wordlist (Kali ships none
+    at /usr/share/wordlists/x8/) so the tool works out of the box."""
     url = params.get("url", "")
-    wordlist = params.get("wordlist", "/usr/share/wordlists/x8/params.txt")
+    wordlist = str(params.get("wordlist", "") or "").strip()
+    # Fall back to the bundled list when none given or the classic path is absent.
+    if not wordlist or (wordlist == "/usr/share/wordlists/x8/params.txt" and not Path(wordlist).is_file()):
+        wordlist = _BUNDLED_PARAMS
     method = params.get("method", "GET")
     body = params.get("body", "")
     headers = params.get("headers", "")
-    additional_args = params.get("additional_args", "")
+    additional_args = str(params.get("additional_args", "") or "")
     command = f"x8 -u {url} -w {wordlist} -X {method}"
     if body:
         command += f" -b '{body}'"
@@ -52,7 +59,7 @@ def build_command(**params: Any) -> str:
 def parse(result: ToolResult) -> dict[str, Any]:
     return default_parse(result)
 
-def run(url: str = '', wordlist: str = '/usr/share/wordlists/x8/params.txt', method: str = 'GET', body: str = '', headers: str = '', additional_args: str = '', use_recovery: bool = True, use_cache: bool = True, exec_timeout: int = 300) -> dict[str, Any]:
+def run(url: str = '', wordlist: str = '', method: str = 'GET', body: str = '', headers: str = '', additional_args: str = '', use_recovery: bool = True, use_cache: bool = True, exec_timeout: int = 300) -> dict[str, Any]:
     params = {"url": url, "wordlist": wordlist, "method": method, "body": body, "headers": headers, "additional_args": additional_args}
     command = build_command(**params)
     return run_tool(

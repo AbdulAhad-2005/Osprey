@@ -23,6 +23,7 @@ from typed_tech_identification import register_typed_tech_identification_tools
 from typed_osint import register_typed_osint_tools
 from typed_recon_content import register_typed_recon_content_tools
 from typed_vuln import register_typed_vuln_tools
+from typed_browser import register_typed_browser_tools
 
 API_BASE = os.environ.get("PENTEST_API_BASE", "http://localhost:9000").rstrip("/")
 QUICK_TIMEOUT = float(os.environ.get("PENTEST_QUICK_TIMEOUT", "60"))
@@ -2414,6 +2415,25 @@ def platform_report_data(engagement_id: str = "") -> str:
     return _safe(_run)
 
 
+@mcp.tool()
+def platform_handoff(engagement_id: str = "") -> str:
+    """
+    Complete, self-contained engagement dossier for a downstream agent.
+
+    Everything the next phase (exploitation / post-exploitation) needs, assembled
+    from durable memory alone — no prior chat/agent context required: asset
+    inventory (ip, ports, services, technologies, waf/cdn/os), credentials/secrets,
+    vulnerabilities with evidence grade, entry points, every finding with
+    provenance, and the relationship graph. This is the recon→exploit handoff.
+    """
+    def _run() -> str:
+        eid, _ = _resolve_engagement(engagement_id)
+        data = _get(f"/api/v1/findings/handoff?engagement_id={eid}", timeout=45)
+        return "\n\n".join([_session_header(), _block("Engagement handoff dossier", data)])
+
+    return _safe(_run)
+
+
 # Typed recon/network catalog tools (HexStrike-style schemas for the LLM).
 def _typed_execute(
     tool_name: str,
@@ -2448,6 +2468,9 @@ _log(f"registered {_TYPED_CONTENT_COUNT} typed recon-content tools")
 
 _TYPED_VULN_COUNT = register_typed_vuln_tools(mcp, execute=_typed_execute)
 _log(f"registered {_TYPED_VULN_COUNT} typed vulnerability-analysis tools")
+
+_TYPED_BROWSER_COUNT = register_typed_browser_tools(mcp, execute=_typed_execute)
+_log(f"registered {_TYPED_BROWSER_COUNT} typed browser-automation tools")
 
 
 if __name__ == "__main__":

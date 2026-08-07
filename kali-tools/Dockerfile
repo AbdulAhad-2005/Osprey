@@ -65,6 +65,13 @@ RUN go install github.com/hahwul/dalfox/v2@latest
 # jaeles — signature-based web vuln scanner (jaeles_vulnerability_scan). Was
 # registered in the platform but missing from the image ("jaeles: command not found").
 RUN go install github.com/jaeles-project/jaeles@latest
+# x8 — hidden-parameter brute-forcer (Rust). Built via cargo; guarded so a slow
+# or failing build doesn't break the image (the tool degrades to "not found",
+# which the platform's recovery handles).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends cargo \
+    && (cargo install --root /usr/local x8 || true) \
+    && rm -rf /var/lib/apt/lists/*
 RUN go install github.com/tomnomnom/qsreplace@latest
 RUN go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest
 RUN go install github.com/projectdiscovery/tlsx/cmd/tlsx@latest
@@ -114,6 +121,22 @@ RUN pipx install maigret \
 # import Wappalyzer, WebPage"`, so the lib must be importable by the SYSTEM
 # python3 (NOT a pipx venv). Without it both tools raise ModuleNotFoundError.
 RUN pip3 install --break-system-packages --no-cache-dir python-Wappalyzer
+
+# ─── 4b4. Web-pentest additions (TLS deep + GraphQL) ─────────────────────────
+# sslyze (WSTG-CRYP: protocols/ciphers/cert/TLS-CVEs) and graphql-cop (GraphQL
+# security checks) — each in its own pipx venv to isolate pinned deps; the CLI
+# lands on /usr/local/bin (on PATH for every exec path).
+RUN pipx install sslyze \
+    && pipx install graphql-cop
+
+# ─── 4b5. Playwright browser automation (browser_scrape / browser_flow) ───────
+# Installed for the SYSTEM python3 (the browser CLIs `import playwright` directly,
+# so a pipx venv would be invisible to them). Chromium + its OS deps land in a
+# world-readable shared path so the non-root mcpuser can drive it at runtime.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
+RUN pip3 install --break-system-packages --no-cache-dir playwright \
+    && python3 -m playwright install --with-deps chromium \
+    && chmod -R a+rX /opt/pw-browsers
 
 # ─── 4c. Ruby gem tools ──────────────────────────────────────────────────────
 RUN gem install one_gadget

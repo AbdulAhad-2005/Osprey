@@ -20,6 +20,14 @@ tasks:
     skill_file: vuln/cms-and-server-scanning.md
     produces: [vulnerability, observation]
 
+  tls_configuration_scan:
+    phase: vuln
+    description: TLS/SSL deep scan (WSTG-CRYP) — weak protocols/ciphers, cert deployment, TLS CVEs on any HTTPS host.
+    default_tool: sslyze_scan
+    alternatives: [nuclei_scan, tlsx_inspect]
+    skill_file: vuln/tls-configuration.md
+    produces: [vulnerability, observation]
+
   cms_vulnerability_scan:
     phase: vuln
     description: CMS (WordPress) core/plugin/theme vulnerability enumeration. Use when tech fingerprinting flags WordPress.
@@ -43,3 +51,19 @@ tasks:
     alternatives: [xsser_scan]
     skill_file: vuln/injection-testing.md
     produces: [vulnerability]
+
+  graphql_security_scan:
+    phase: vuln
+    description: Audit a GraphQL endpoint (introspection, batching/aliasing DoS, GET mutations, CSRF) with graphql-cop.
+    default_tool: graphql_cop_scan
+    alternatives: [nuclei_scan]
+    skill_file: web/graphql-testing.md
+    produces: [vulnerability, observation]
+
+  authenticated_and_business_logic:
+    phase: vuln
+    description: Drive the app in a real browser to test authenticated flows, session/CSRF, client-side, and business-logic (workflow bypass, race, function-limit abuse).
+    default_tool: browser_flow
+    alternatives: [browser_scrape]
+    skill_file: web/business-logic.md
+    produces: [vulnerability, observation]

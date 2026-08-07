@@ -134,7 +134,7 @@ tasks:
     phase: recon
     description: Find hidden HTTP parameters (injection-point candidates) on live endpoints.
     default_tool: arjun_scan
-    alternatives: [katana_crawl]
+    alternatives: [x8_parameter_discovery, katana_crawl]
     skill_file: recon/content-and-js-recon.md
     produces: [observation]
 
@@ -152,6 +152,14 @@ tasks:
     default_tool: katana_crawl
     alternatives: [hakrawler_crawl]
     skill_file: recon/content-and-js-recon.md
+    produces: [url, observation]
+
+  spa_render_scrape:
+    phase: recon
+    description: Render a JS/SPA app in a real browser to extract client-side routes, runtime XHR/fetch API endpoints, and forms static crawlers miss.
+    default_tool: browser_scrape
+    alternatives: [katana_crawl]
+    skill_file: web/browser-automation.md
     produces: [url, observation]
 
   email_security_posture:
