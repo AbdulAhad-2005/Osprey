@@ -36,6 +36,8 @@ RUN apt-get update \
     dotdotpwn zaproxy \
     # ── Vulnerability ──
     nuclei \
+    # ── Exploit lookup (offline Exploit-DB mirror + searchsploit; NOT Metasploit) ──
+    exploitdb \
     # ── Credentials ──
     hydra john hashcat \
     # ── Binary ──
@@ -46,11 +48,12 @@ RUN apt-get update \
     binutils \
     && rm -rf /var/lib/apt/lists/*
 
-# ─── 2. Kali metasploit (optional, skip in small image) ───────────────────────
-# Uncomment if you want the full metasploit framework (~1 GB).
-# RUN apt-get update \
-#     && apt-get install -y --no-install-recommends metasploit-framework \
-#     && rm -rf /var/lib/apt/lists/*
+# ─── 2. Kali metasploit (~1 GB) ────────────────────────────────────────────────
+# metasploit_run (mcp-servers/exploit/metasploit_run.py) is registered GATED
+# in tool_registry.py — this makes that registration real instead of dead code.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends metasploit-framework \
+    && rm -rf /var/lib/apt/lists/*
 
 # ─── 3. Go tools (install individually for build resilience) ─────────────────
 RUN mkdir -p /opt/go
@@ -221,7 +224,8 @@ RUN find /opt/go/bin -type f -executable -exec bash -c \
     && command -v naabu \
     && command -v httpx \
     && command -v dnsx \
-    && command -v tlsx
+    && command -v tlsx \
+    && command -v searchsploit
 
 # ─── 6b. Raw-socket capabilities (unprivileged SYN / OS detection) ────────────
 # The container runs as non-root mcpuser, so nmap -sS/-O and masscan/naabu

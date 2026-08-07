@@ -43,3 +43,16 @@ tasks:
     alternatives: [xsser_scan]
     skill_file: vuln/injection-testing.md
     produces: [vulnerability]
+
+  network_vuln_scan:
+    phase: vuln
+    description: >
+      Comprehensive network service/protocol vulnerability + CVE scan of a host recon
+      already established ports/services for. Category-driven, not per-service — nmap's
+      own vuln/vulners NSE script categories auto-select every applicable check for
+      whatever's actually open (SSH, SMB, RDP, FTP, SMTP, NFS, HTTP, and anything else
+      nmap has script coverage for), so this is not limited to a fixed protocol list.
+    default_tool: nmap_custom_scan
+    alternatives: []
+    skill_file: vuln/network-vuln-scan.md
+    produces: [vulnerability, observation]
