@@ -143,8 +143,19 @@ RUN git clone --depth 1 https://github.com/dolevf/graphql-cop.git /opt/graphql-c
 # Installed for the SYSTEM python3 (the browser CLIs `import playwright` directly,
 # so a pipx venv would be invisible to them). Chromium + its OS deps land in a
 # world-readable shared path so the non-root mcpuser can drive it at runtime.
+#
+# Kali's apt already ships python3-playwright (Debian-packaged, no bundled Node
+# driver — it shells out to a SYSTEM /usr/bin/node). A plain `pip3 install
+# playwright` sees that as "already satisfied" and skips installing the
+# pip-packaged version (which bundles its own driver), so `playwright install`
+# fails with "No such file or directory: '/usr/bin/node'". Install nodejs so
+# the apt-packaged driver has something to run, AND force-reinstall the pip
+# package so the self-contained pip driver takes precedence either way.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
-RUN pip3 install --break-system-packages --no-cache-dir playwright \
+RUN pip3 install --break-system-packages --no-cache-dir --force-reinstall playwright \
     && python3 -m playwright install --with-deps chromium \
     && chmod -R a+rX /opt/pw-browsers
 
