@@ -19,6 +19,10 @@ This is a distinct phase, not a blind scanner sweep. Scan what the evidence poin
    SQLi, `dalfox_xss_scan` for XSS. Test what recon found, not random inputs.
 5. **Signature scan** — `jaeles_vulnerability_scan` complements nuclei with a different
    signature set on high-value apps.
+6. **Network/service-level vulnerabilities** — `nmap_custom_scan --script "vuln,vulners"`
+   (see `network-vuln-scan`) covers everything recon's port/service scan found that isn't
+   HTTP: SSH, SMB, RDP, FTP, SMTP, NFS, and any other protocol nmap has script coverage for.
+   This is the network-side counterpart to nuclei — not optional when non-web ports are open.
 
 **What feeds this phase (from recon):** `technology` findings (→ targeted templates),
 `injection_point_candidate` tags (→ sqlmap/dalfox), `interesting_path`/`js-secret`/

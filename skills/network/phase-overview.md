@@ -14,4 +14,12 @@ re-enumerate subdomains here unless a new IP sibling appears.
 **Passive assist:** Shodan host/search results may suggest ports; still verify live
 before SMB/web pivots.
 
-**Output:** Ports, services, and protocol observations into platform memory.
+**Assessing a CIDR/internal range instead of one host?** See `internal-subnet-sweep` —
+compose `platform_fanout_assets` over the discovered host list rather than looping calls.
+
+**Output:** Ports, services, and protocol observations into platform memory. Once ports/
+services are established, the platform automatically runs a comprehensive network
+vulnerability scan (`nmap --script vuln,vulners`, see `vuln/network-vuln-scan`) against
+them at the recon→network handoff — you do not need to trigger this yourself for the
+primary target, though you can re-run it with different scope if the auto-scan's port
+list was incomplete.
