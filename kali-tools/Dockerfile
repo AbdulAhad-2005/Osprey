@@ -72,8 +72,8 @@ RUN go install github.com/jaeles-project/jaeles@latest
 # or failing build doesn't break the image (the tool degrades to "not found",
 # which the platform's recovery handles).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends cargo \
-    && (cargo install --root /usr/local x8 || true) \
+    && apt-get install -y --no-install-recommends cargo pkg-config \
+    && cargo install --root /usr/local x8 \
     && rm -rf /var/lib/apt/lists/*
 RUN go install github.com/tomnomnom/qsreplace@latest
 RUN go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest

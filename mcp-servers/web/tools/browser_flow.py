@@ -55,9 +55,9 @@ def build_command(**params: Any) -> str:
         if "://" not in url:
             url = "https://" + url
         parts += ["--url", shlex.quote(url)]
-    cmd = f"bash -c \"mkdir -p {shlex.quote(_SHOT_DIR)}; " + " ".join(parts) + "\""
+    cmd = " ".join(parts)
     if additional_args:
-        cmd = cmd[:-1] + f" {additional_args}\""
+        cmd += f" {additional_args}"
     return cmd
 
 
