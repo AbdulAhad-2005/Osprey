@@ -44,11 +44,14 @@ def build_command(**params: Any) -> str:
         command = f"steghide extract -sf {cover_file}"
         if output_file:
             command += f" -xf {output_file}"
+    elif action == "embed":
         command = f"steghide embed -cf {cover_file} -ef {embed_file}"
+    elif action == "info":
+        command = f"steghide info {cover_file}"
+    else:
         command = f"steghide info {cover_file}"
     if passphrase:
         command += f" -p {passphrase}"
-        command += " -p ''"  # Empty passphrase
     if additional_args:
         command += f" {additional_args}"
     return command.strip()

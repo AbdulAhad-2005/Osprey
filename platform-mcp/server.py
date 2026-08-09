@@ -137,7 +137,7 @@ def _get(path: str, *, params: dict[str, Any] | None = None, timeout: float = QU
         return resp.json()
 
 
-def _post(path: str, body: dict[str, Any], *, timeout: float = QUICK_TIMEOUT) -> dict[str, Any]:
+def _post(path: str, body: dict[str, Any] | list[Any], *, timeout: float = QUICK_TIMEOUT) -> dict[str, Any]:
     # Cap to HTTP_TIMEOUT so we never wait forever if caller passes a huge value
     timeout = min(float(timeout), HTTP_TIMEOUT)
     with httpx.Client(base_url=API_BASE, timeout=timeout) as client:
@@ -294,16 +294,6 @@ def _session_header(engagement_id: str = "", target: str = "") -> str:
     elif _SESSION_SWITCH_NOTICE:
         lines.append(f"notice: {_SESSION_SWITCH_NOTICE}")
     return "\n".join(lines)
-
-
-def _session_params() -> dict[str, str]:
-    """Params for session bind — includes run_id for writes/audit."""
-    _require_bound_target()
-    return {
-        "run_id": SESSION_RUN_ID,
-        "engagement_id": _SESSION_ENGAGEMENT_ID,
-        "seed_target": _SESSION_TARGET,
-    }
 
 
 def _memory_params() -> dict[str, str]:
@@ -1900,7 +1890,10 @@ def platform_job_result(job_id: str) -> str:
             parts.append(_block(f"Findings from this branch ({len(titles)})", titles[:80]))
         if result:
             # Reuse exec formatter for stdout visibility
-            parts.append(_format_exec_result(result))
+            if isinstance(result, dict):
+                parts.append(_format_exec_result(result))
+            else:
+                parts.append(_block("Result", result))
         else:
             parts.append("(no result payload yet — still running? call platform_job_poll)")
         parts.append(
@@ -2385,7 +2378,7 @@ def platform_fanout_assets(
 @mcp.tool()
 def platform_visualization(
     engagement_id: str = "",
-    format: str = "mermaid",
+    fmt: str = "mermaid",
     max_nodes: int = 200,
     max_edges: int = 400,
     node_type: str = "",
@@ -2398,9 +2391,9 @@ def platform_visualization(
     embed the Mermaid block in markdown, feed Cytoscape JSON to a web dashboard,
     or read the attack-tree hierarchy for a structured summary.
 
-    format='mermaid' — styled graph TD with severity-coloured nodes (renders natively in
-    OpenCode/Claude/IDE markdown previews). format='json' — Cytoscape-compatible {nodes,edges}
-    for web dashboards. format='tree' — hierarchical domain→subdomain→IP→port→service tree.
+    fmt='mermaid' — styled graph TD with severity-coloured nodes (renders natively in
+    OpenCode/Claude/IDE markdown previews). fmt='json' — Cytoscape-compatible {nodes,edges}
+    for web dashboards. fmt='tree' — hierarchical domain→subdomain→IP→port→service tree.
     max_nodes/max_edges control output size. node_type filters to one asset type (host, subdomain…).
     exclude_urls=True filters static-asset URL noise (/assets/uploads/…).
 
@@ -2417,7 +2410,7 @@ def platform_visualization(
         data = _get(
             f"/api/v1/engagements/{eid}/visualization",
             params={
-                "format": format,
+                "format": fmt,
                 "max_nodes": str(max_nodes),
                 "max_edges": str(max_edges),
                 "node_type": node_type,
@@ -2425,7 +2418,7 @@ def platform_visualization(
             },
             timeout=30,
         )
-        fmt = data.get("format", format)
+        fmt = data.get("format", fmt)
         body = data.get("data", "")
         if fmt == "mermaid" and isinstance(body, str):
             return f"{_session_header()}\n\n## Attack Surface (Mermaid)\n\n```mermaid\n{body}\n```"

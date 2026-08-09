@@ -6,6 +6,7 @@ Python parameters so the LLM does not reverse-engineer params_json.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable
 
 # Keep in sync with agent_arg_normalizer primary sets (recon + network only).
@@ -76,15 +77,6 @@ _TOOL_BLURBS: dict[str, str] = {
     "rustscan_fast_scan": "Fast port discovery (target=).",
     "naabu_port_scan": "Naabu fast port discovery (target=, optional ports=/top_ports=).",
     "masscan_high_speed": "Masscan (target=, ports=).",
-    "netexec_scan": "NetExec / CrackMapExec style enum (target=).",
-    "smbmap_scan": "SMB share enum (target=).",
-    "enum4linux_scan": "Enum4linux (target=).",
-    "enum4linux_ng_advanced": "Enum4linux-ng (target=).",
-    "responder_credential_harvest": "Responder (gated — lab only).",
-    "rpcclient_enumeration": "rpcclient enum (target=).",
-    "arp_scan_discovery": "ARP scan (target= CIDR/IP).",
-    "nbtscan_netbios": "NetBIOS scan (target=).",
-    "autorecon_scan": "AutoRecon (target=).",
 }
 
 
@@ -109,8 +101,6 @@ def _normalize_ports_flag(ports: str) -> str:
     Strips any mistaken -p/--ports prefix the LLM may include.
     Returns '' when ports is empty.
     """
-    import re
-
     cleaned = (ports or "").strip()
     if not cleaned:
         return ""
@@ -126,7 +116,6 @@ def _build_params(
     target: str = "",
     host: str = "",
     url: str = "",
-    ports: str = "",
     flags: str = "",
     mode: str = "",
     subdomains: str = "",

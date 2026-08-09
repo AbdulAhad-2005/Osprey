@@ -50,9 +50,10 @@ def build_command(**params: Any) -> str:
         command = f"zaproxy -daemon -host {host} -port {port}"
         if api_key:
             command += f" -config api.key={api_key}"
+    else:
         command = f"zaproxy -cmd -quickurl {target}"
         if format_type:
-            command += f" -quickout {format_type}"
+            command += f" -quickout {output_file or format_type}"
         if output_file:
             command += f" -quickprogress -dir \"{output_file}\""
         if api_key:

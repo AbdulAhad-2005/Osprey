@@ -26,7 +26,7 @@ playbooks:
         suggested_params:
           target: "{{from_prior_subdomains}}"
         fallback: [platform_script, platform_fanout_assets]
-      - tool: nuclei
+      - tool: nuclei_scan
         why: Selective CVE/templates on live hosts only — not the whole internet.
         note: Use platform_shell 'nuclei -u …' if no nuclei wrapper in recon set.
         suggested_params:

@@ -58,7 +58,7 @@ def build_command(**params: Any) -> str:
 def parse(result: ToolResult) -> dict[str, Any]:
     return default_parse(result)
 
-def run(target: str = '', ports: str = '', ulimit: int = 5000, batch_size: int = 4500, timeout: int = 1500, scripts: str = '', additional_args: str = '', use_recovery: bool = True, use_cache: bool = True, exec_timeout: int = 300) -> dict[str, Any]:
+def run(target: str = '', ports: str = '', ulimit: int = 2000, batch_size: int = 1000, timeout: int = 2000, scripts: str = '', additional_args: str = '', use_recovery: bool = True, use_cache: bool = True, exec_timeout: int = 300) -> dict[str, Any]:
     params = {"target": target, "ports": ports, "ulimit": ulimit, "batch_size": batch_size, "timeout": timeout, "scripts": scripts, "additional_args": additional_args}
     command = build_command(**params)
     return run_tool(
