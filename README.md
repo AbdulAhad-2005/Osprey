@@ -6,88 +6,145 @@ An autonomous AI penetration testing platform with a FastAPI backend and a Pytho
 
 - `backend/` — FastAPI control plane, API endpoints, database models, workflow logic
 - `cli/` — Python CLI tool (prompt_toolkit) for interacting with the platform
-- `mcp-servers/` — Capability-based tool adapters for network, recon, and web modules
+- `mcp-servers/` — Capability-based tool adapters for recon, osint, network, web, vuln, …
 - `platform-mcp/` — MCP gateway server connecting AI clients to the platform
-- `docker-compose.yml` — Full stack: Postgres + Kali Linux (90+ tools) + FastAPI backend
+- `docker-compose.yml` — Postgres + (optional) Kali Linux tools + FastAPI backend
 
-## Quick start
+**How tools run.** The backend never runs scanners itself — it `docker exec`s them
+into a tools container (`KALI_CONTAINER`), or, when no such container is running,
+executes them **natively on the host**. So you can run the full Kali image, bring
+your own tools, or run entirely without Docker.
 
-### 1. Start the stack (Docker — recommended)
+## Setup — pick the path that fits you
 
-This brings up Postgres, a Kali Linux container with all pentest tools pre-installed, and the backend in one shot:
+All three paths start the same way:
 
 ```bash
 cp .env.example .env
-# Edit .env with your LLM API key (see comments in the file)
-docker compose up --build
+# Edit .env: set LLM_MODEL + LLM_API_KEY (any LiteLLM provider — OpenAI, Anthropic,
+# Gemini, Groq, DeepSeek, Ollama, …). See the comments in the file.
 ```
 
-**What you get:**
-- `postgres` — database (port 5433 mapped to host)
-- `kali-tools` — Kali container with 90+ tools (nmap, metasploit, subfinder, httpx, rustscan, etc.)
-- `backend` — FastAPI control plane (port 9000)
+### Path A — Full Docker stack (easiest; no local tools needed)
 
-> **No WSL / VirtualBox needed on Windows.** The `kali-tools` service builds a Kali image directly via Docker. All tools run inside the container, accessed by the backend via `docker exec`. This is the recommended approach.
-
-### 2. Run database migrations
-
-With the stack running, apply Alembic migrations to set up the schema:
+Builds Postgres, a Kali container with 90+ tools, and the backend. The heavy Kali
+image is behind the `kali` compose profile, so you opt into the long build explicitly:
 
 ```bash
-docker compose exec backend alembic upgrade head
+docker compose --profile kali up --build
 ```
 
-### 3. Start the backend locally (alternative)
+> No WSL / VirtualBox needed on Windows — the tools run inside the container,
+> reached over the Docker socket. Postgres is on host port 5433, backend on 9000.
+
+### Path B — Lean Docker + bring your own tools (skip the Kali build)
+
+Already have the tools (native Kali, or your own container) and don't want to build
+the image? Start just Postgres + backend:
 
 ```bash
-cd backend
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements-dev.txt
-pip install -e .
+docker compose up --build           # note: no --profile kali
+```
+
+Then in `.env` either:
+- point `KALI_CONTAINER=<your-container-name>` at a running tools container, or
+- set `KALI_CONTAINER=` (empty) to run tools directly on the host.
+
+If the named container isn't running, the backend falls back to native execution
+automatically.
+
+### Path C — Fully local, no Docker
+
+Virtualenv at the repo root, SQLite instead of Postgres, tools on your host PATH:
+
+```bash
+# creates .venv, installs backend[dev] + cli + native tool deps
+bash scripts/setup.sh                       # Linux / macOS / WSL / Kali
+# or on Windows:
+powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
+```
+
+In `.env` set a keyless DB and native execution:
+
+```
+DATABASE_URL=sqlite:///./pentest.db
+KALI_CONTAINER=
+```
+
+Then run the backend (the SQLite schema is created on startup):
+
+```bash
 uvicorn pentest_platform.main:app --host 0.0.0.0 --port 9000
 ```
 
-Requires Postgres running locally (or via `docker compose up postgres`).
+Compiled scanners (nmap, subfinder, httpx, nuclei, …) must be on your PATH; the
+keyless custom Python tools (domain_hunter, js_recon, subdomain_takeover, contact
+harvest, …) work from `mcp-servers/requirements.txt` alone. **`/tools` shows exactly
+what's present** (see below) and the agent only uses tools it actually has.
 
-### 4. Run the CLI
+## Dependencies (pip)
+
+`pyproject.toml` is the source of truth for each package's declared dependencies:
+
+- `backend/pyproject.toml` — backend runtime + `[dev]` extras (pytest, ruff, httpx)
+- `cli/pyproject.toml` — CLI runtime
+- `mcp-servers/requirements.txt` — Python deps for native tool wrappers
+
+The `requirements.txt` files are generated pinned locks (regenerate with
+`pip-compile pyproject.toml`).
+
+## Run the CLI
+
+Prerequisites: the backend is up, `.env` has `ENABLE_BUILTIN_AGENT=true` (the CLI
+drives the backend's built-in agent; the OpenCode/MCP path does not need this), and
+`LLM_API_KEY`/`LLM_MODEL` are set.
+
+If you used `scripts/setup.*`, the CLI is already installed. Otherwise:
 
 ```bash
-cd cli
-pip install -e .
+pip install -e ./cli            # from the repo root (Windows + Linux)
 ```
 
-From the project root:
+Run it (connects to `http://localhost:9000`; override with `API_BASE_URL`):
 
 ```bash
-python -m cli
+python -m cli                   # or the `pentest` console script
 ```
 
-The CLI connects to `http://localhost:9000` by default. Override with:
+### CLI commands
 
-```bash
-set API_BASE_URL=http://localhost:9000
-python -m cli
-```
+| Command                       | Description                                       |
+| ----------------------------- | ------------------------------------------------- |
+| `/help`                       | Show available commands                           |
+| `/health`                     | Check backend service health                      |
+| `/tools`                      | List tools — **installed vs missing in your env** |
+| `/models`                     | List configured LLM models                        |
+| `/model`                      | Show active model + key status                    |
+| `/scan <target> [phase]`      | Bind engagement + scan (`recon`/`network`/`full`) |
+| `/engage list`                | List all engagements                              |
+| `/engage new <target>`        | Create a fresh engagement for a target            |
+| `/engage set <id>`            | Bind this session to an existing engagement       |
+| `/findings`                   | Show findings for the active engagement           |
+| `/status`                     | Backend / model / active engagement status        |
+| `/config` · `/config reload`  | Show config · force backend to re-read `.env`     |
+| `/reconnect`                  | Re-read `.env` and reconnect to `API_BASE_URL`    |
+| `/reset` · `/clear` · `/exit` | Clear conversation · clear screen · exit          |
 
-### 5. CLI commands
+`/scan <target> [phase]` binds an engagement so `/findings` and prompts know the
+target. You can also type natural-language prompts directly. During a run the CLI
+streams commander decisions, live tool start/finish, and per-phase reports.
 
-| Command                  | Description                   |
-| ------------------------ | ----------------------------- |
-| `/help`                | Show available commands       |
-| `/health`              | Check backend service health  |
-| `/tools`               | List available MCP tools      |
-| `/models`              | List configured LLM models    |
-| `/scan <target>`       | Start a scan against a target |
-| `/engage list`         | List all engagements          |
-| `/engage new <target>` | Create a new engagement       |
-| `/findings`            | Show discovered findings      |
-| `/status`              | Show current session status   |
-| `/config`              | Show current configuration    |
-| `/clear`               | Clear the terminal screen     |
-| `/exit`                | Exit the CLI                  |
+### Seeing which tools you have
 
-You can also type natural language prompts directly to interact with the agent pipeline.
+Tool availability is environment-aware: the backend probes each binary in whatever
+execution mode is active (Kali container or host). Surface it with:
+
+- **CLI:** `/tools` — a table of every tool with `installed` / `missing`.
+- **MCP / harness:** the `platform_tools` tool, or `GET /api/v1/tools/catalog`
+  (returns per-tool `installed` plus a summary count).
+
+The agent plans around what's present, so a partial toolset still works — you just
+get fewer techniques where a tool is missing.
 
 ## MCP Client Configuration (Alternate Approach)
 

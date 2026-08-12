@@ -88,19 +88,67 @@ def print_stream_error(message: str) -> None:
     console.print(f"  [bold red]✗[/] {message}")
 
 
+def print_commander_decision(data: dict[str, Any]) -> None:
+    action = data.get("action", "")
+    phase = data.get("next_phase") or ""
+    reasoning = (data.get("reasoning") or "").strip()
+    label = f"[bold magenta]◆ commander[/] {action}" + (f" → {phase}" if phase else "")
+    console.print(label)
+    if reasoning:
+        console.print(f"    [dim]{reasoning[:200]}[/]")
+
+
+def print_phase_report(phase: str, content: str) -> None:
+    """Render an intermediate per-phase report as it streams in."""
+    if not content.strip():
+        return
+    console.print()
+    console.print(f"[bold cyan]── {phase} phase report ──[/]")
+    console.print(Markdown(content))
+
+
+def print_phase_done(data: dict[str, Any]) -> None:
+    phase = data.get("phase", "?")
+    ok = data.get("success", False)
+    icon = "[green]✓[/]" if ok else "[yellow]∅[/]"
+    calls = data.get("tool_calls")
+    suffix = f" [dim]({calls} tool calls)[/]" if calls is not None else ""
+    reason = data.get("reason")
+    if reason:
+        suffix += f" [dim]— {reason}[/]"
+    console.print(f"{icon} [bold]{phase}[/] phase complete{suffix}")
+
+
 def consume_agent_stream(stream: Iterator[tuple[str, dict[str, Any]]]) -> dict[str, Any] | None:
     """Render live agent events in the terminal (OpenCode-style). Returns final done payload."""
     final: dict[str, Any] | None = None
+    last_phase_report = ""
 
     for event_type, data in stream:
         if event_type == "run_start":
             print_run_start(data)
-        elif event_type == "status":
+        elif event_type in ("status",):
             print_agent_thinking(data.get("message", "Working..."))
+        elif event_type == "commander_decision":
+            print_commander_decision(data)
+        elif event_type == "forced_continue":
+            attempt = data.get("attempt", "?")
+            mx = data.get("max", "?")
+            print_agent_thinking(f"Open work remains — continuing ({attempt}/{mx})...")
         elif event_type == "tool_start":
             print_tool_start_live(data.get("tool_name", "?"), data.get("arguments", {}))
         elif event_type == "tool_end":
             print_tool_end_live(data.get("tool_name", "?"), data)
+        elif event_type == "assistant":
+            # Per-phase narration (phase=recon/network) is shown live; the final
+            # phase="full" report is skipped here because the `done` payload
+            # carries the same text and prints it once at the end.
+            if data.get("phase") not in (None, "", "full"):
+                content = data.get("content", "")
+                last_phase_report = content
+                print_phase_report(data.get("phase", ""), content)
+        elif event_type == "phase_done":
+            print_phase_done(data)
         elif event_type == "error":
             print_stream_error(data.get("message", "Unknown error"))
         elif event_type == "done":
@@ -115,7 +163,8 @@ def consume_agent_stream(stream: Iterator[tuple[str, dict[str, Any]]]) -> dict[s
                 final.get("duration_seconds", 0),
             )
         response = final.get("response", "")
-        if response:
+        # Avoid double-printing when the final report equals the last per-phase report we already rendered (single-phase runs).
+        if response and response.strip() != last_phase_report.strip():
             console.print()
             console.print(Markdown(response))
     return final

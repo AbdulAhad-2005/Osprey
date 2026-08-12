@@ -8,6 +8,21 @@ from typing import Any
 import httpx
 
 
+def _error_detail(exc: httpx.HTTPStatusError) -> str:
+    """Best-effort extract of the backend's `detail` from an HTTP error response."""
+    import json
+
+    try:
+        exc.response.read()
+        data = exc.response.json()
+    except (json.JSONDecodeError, ValueError, httpx.ResponseNotRead, httpx.StreamError):
+        return ""
+    if isinstance(data, dict) and data.get("detail"):
+        detail = data["detail"]
+        return str(detail) if isinstance(detail, (str, int)) else json.dumps(detail)
+    return ""
+
+
 class APIClient:
     """HTTP client for communicating with the FastAPI backend."""
 
@@ -17,6 +32,7 @@ class APIClient:
         self._client = httpx.Client(timeout=self._timeout, follow_redirects=True)
         self._conversation_history: list[dict[str, Any]] = []
         self._run_id: str | None = None
+        self._engagement_id: str | None = None
 
     def _url(self, path: str) -> str:
         return f"{self.base_url}{path}"
@@ -56,11 +72,19 @@ class APIClient:
             return []
 
     def list_findings(self, engagement_id: str | None = None) -> list[dict[str, Any]]:
+        """List findings for an engagement.
+
+        The backend returns a ``{"findings": [...], "total": n}`` envelope —
+        normalize both shapes so callers always get a bare list.
+        """
         try:
             params = {"engagement_id": engagement_id} if engagement_id else {}
             resp = self._client.get(self._url("/api/v1/findings"), params=params)
             resp.raise_for_status()
-            return resp.json()
+            data = resp.json()
+            if isinstance(data, dict) and "findings" in data:
+                return data["findings"] or []
+            return data or []
         except httpx.HTTPStatusError:
             return []
 
@@ -69,15 +93,56 @@ class APIClient:
         resp.raise_for_status()
         return resp.json()
 
-    def send_prompt(self, prompt: str, engagement_id: str | None = None) -> dict[str, Any]:
-        """Send a prompt to the agent and return the full response."""
-        payload: dict[str, Any] = {"prompt": prompt, "phase": "full"}
+    def resolve_engagement(self, target: str, force_new: bool = False) -> dict[str, Any]:
+        """Get-or-create an engagement for a target (backend validates the name).
+
+        Raises httpx.HTTPStatusError with the backend detail on bad/ambiguous targets.
+        """
+        resp = self._client.post(
+            self._url("/api/v1/engagements/resolve"),
+            json={"target": target, "force_new": force_new},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def compile_engagement_for_target(self, target: str, force_new: bool = False) -> dict[str, Any]:
+        """Bind a target to an engagement for this session — reuse existing unless force_new.
+
+        Prefers the get-or-create ``/engagements/resolve`` endpoint; falls back to a
+        plain create if the backend does not expose it yet.
+        """
+        try:
+            return self.resolve_engagement(target, force_new=force_new)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return self.create_engagement({"target": target})
+            raise
+
+    def _set_active_engagement(self, engagement_id: str | None) -> None:
+        self._engagement_id = engagement_id or None
+
+    @property
+    def active_engagement_id(self) -> str | None:
+        return self._engagement_id
+
+    def _build_chat_payload(
+        self, prompt: str, engagement_id: str | None, phase: str
+    ) -> dict[str, Any]:
+        """Shared request body for the /agent/chat[/stream] endpoints."""
+        payload: dict[str, Any] = {"prompt": prompt, "phase": phase}
         if engagement_id:
             payload["engagement_id"] = engagement_id
         if self._conversation_history:
             payload["conversation_history"] = list(self._conversation_history)
         if self._run_id:
             payload["run_id"] = self._run_id
+        return payload
+
+    def send_prompt(
+        self, prompt: str, engagement_id: str | None = None, phase: str = "full"
+    ) -> dict[str, Any]:
+        """Send a prompt to the agent and return the full response."""
+        payload = self._build_chat_payload(prompt, engagement_id, phase)
         try:
             resp = self._client.post(self._url("/api/v1/agent/chat"), json=payload)
             resp.raise_for_status()
@@ -89,6 +154,9 @@ class APIClient:
                 self._conversation_history.append({"role": "user", "content": prompt})
                 self._conversation_history.append({"role": "assistant", "content": response_text})
             return data
+        except httpx.HTTPStatusError as exc:
+            detail = _error_detail(exc)
+            return {"error": f"Request failed: {exc.response.status_code}" + (f" — {detail}" if detail else "")}
         except httpx.TimeoutException as exc:
             return {
                 "error": (
@@ -97,22 +165,15 @@ class APIClient:
                     "Use /exit, restart the CLI, then /reset before the next target."
                 ),
             }
-        except httpx.HTTPStatusError as exc:
-            return {"error": f"Request failed: {exc.response.status_code}"}
 
     def send_prompt_stream(
         self,
         prompt: str,
         engagement_id: str | None = None,
+        phase: str = "full",
     ) -> Iterator[tuple[str, dict[str, Any]]]:
         """Stream agent events from SSE. Yields (event_type, data) until done."""
-        payload: dict[str, Any] = {"prompt": prompt, "phase": "full"}
-        if engagement_id:
-            payload["engagement_id"] = engagement_id
-        if self._conversation_history:
-            payload["conversation_history"] = list(self._conversation_history)
-        if self._run_id:
-            payload["run_id"] = self._run_id
+        payload = self._build_chat_payload(prompt, engagement_id, phase)
 
         final_data: dict[str, Any] | None = None
 
@@ -158,7 +219,8 @@ class APIClient:
             }
             return
         except httpx.HTTPStatusError as exc:
-            yield "error", {"message": f"Request failed: {exc.response.status_code}"}
+            detail = _error_detail(exc)
+            yield "error", {"message": f"Request failed: {exc.response.status_code}" + (f" — {detail}" if detail else "")}
             return
 
         if final_data and final_data.get("success", True):

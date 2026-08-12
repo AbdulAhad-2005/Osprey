@@ -35,7 +35,12 @@ from _core.result import ToolResult
 TOOL_NAME = "web_contact_harvest"
 CATEGORY = "osint"
 
-_CLI = "/home/mcpuser/mcp-servers/osint/tools/_web_harvest_cli.py"
+from _core.paths import container_or_local
+
+_CLI = container_or_local(
+    "/home/mcpuser/mcp-servers/osint/tools/_web_harvest_cli.py",
+    str(Path(__file__).resolve().with_name("_web_harvest_cli.py")),
+)
 
 
 def build_command(**params: Any) -> str:

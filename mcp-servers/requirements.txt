@@ -1,1 +1,27 @@
+# Python dependencies for the MCP tool wrappers (mcp-servers/*/tools/*).
+#
+# In the Docker stack these are installed inside kali-tools/Dockerfile. 
+# Install them here only when running tools in NATIVE mode (no Kali container) — e.g.
+# `pip install -r mcp-servers/requirements.txt` into the backend environment so
+# the custom Python tools (domain_hunter, js_recon, subdomain_takeover,
+# web_contact_harvest, email_permute, shodan_*, tech/wappalyzer) work on the host.
+#
+# The compiled binaries (nmap, subfinder, httpx, nuclei, ...) are NOT installed
+# by pip — provide them via your OS package manager / Kali, or run the kali
+# profile. `/tools` (CLI) and platform_tools (MCP) show which are present.
+
 mcp>=1.2.0
+
+# Custom-tool runtime deps (keyless — the "works on a laptop" set)
+requests>=2.28
+dnspython>=2.4
+tldextract>=5.0,<6.0
+beautifulsoup4>=4.12
+pyyaml>=6.0
+openpyxl>=3.1
+
+# Optional, heavier — only needed for the tools that use them:
+#   browser_scrape / browser_flow  -> playwright  (then: playwright install chromium)
+#   wappalyzer_scan / tech_stack    -> python-Wappalyzer
+# playwright>=1.44
+# python-Wappalyzer>=0.3.1

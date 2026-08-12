@@ -17,7 +17,13 @@ services:
       timeout: 5s
       retries: 5
 
+  # The heavy Kali image (90+ tools) is opt-in via the `kali` profile so users
+  # who already have the tools (native Kali) or want a lean stack don't pay the
+  # long build. Enable it with:  docker compose --profile kali up --build
+  # Without it, the backend auto-detects the missing container and runs tools on
+  # the host (native mode) or against a container named by KALI_CONTAINER.
   kali-tools:
+    profiles: ["kali"]
     build:
       context: ./kali-tools
     container_name: ai-pentest-kali
@@ -50,7 +56,11 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://pentest:pentest@postgres:5432/pentest}
       ENVIRONMENT: ${ENVIRONMENT:-development}
-      KALI_CONTAINER: ai-pentest-kali
+      # Name of the container to `docker exec` tools into. Set to your own Kali
+      # container name to bring your own tools, or empty ("") to force native
+      # host execution. If the named container isn't running, the backend falls
+      # back to native automatically.
+      KALI_CONTAINER: ${KALI_CONTAINER:-ai-pentest-kali}
       LLM_MODEL: ${LLM_MODEL:-gemini/gemini-3.5-flash}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_API_BASE: ${LLM_API_BASE:-}
@@ -71,10 +81,11 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command: ["uvicorn", "pentest_platform.main:app", "--host", "0.0.0.0", "--port", "9000"]
+    # Only postgres is a hard dependency. kali-tools is intentionally NOT listed
+    # so the stack starts without building the Kali image; the backend detects
+    # the container at runtime and uses it when present (see KALI_CONTAINER).
     depends_on:
       postgres:
-        condition: service_healthy
-      kali-tools:
         condition: service_healthy
 
 volumes:

@@ -31,7 +31,12 @@ TOOL_NAME = "feroxbuster_scan"
 CATEGORY = "web"
 
 # Bundled wordlist path inside the Kali container (mcp-servers is mounted here).
-_DEFAULT_WORDLIST = "/home/mcpuser/mcp-servers/recon/tools/_wordlists/common-web.txt"
+from _core.paths import container_or_local
+
+_DEFAULT_WORDLIST = container_or_local(
+    "/home/mcpuser/mcp-servers/recon/tools/_wordlists/common-web.txt",
+    str(Path(__file__).resolve().parents[2] / "recon" / "tools" / "_wordlists" / "common-web.txt"),
+)
 
 def build_command(**params: Any) -> str:
     """Build a feroxbuster content-discovery command.
