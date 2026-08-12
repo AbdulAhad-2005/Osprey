@@ -236,6 +236,9 @@ tools:
     phase: recon
     freeform_args_field: additional_args
     default_for_task: false
+    llm_hints: |
+      Zone-transfer + wordlist DNS brute-force — fallback when subfinder/amass come up thin,
+      not a first choice (slower, active DNS queries vs their passive sources).
     parameters:
       domain: { type: string, required: true }
 
@@ -244,6 +247,9 @@ tools:
     phase: recon
     freeform_args_field: additional_args
     default_for_task: true
+    llm_hints: |
+      DNS record + zone-transfer intel (MX/NS/SOA, AXFR attempt) for a domain you already
+      have — a recon-depth tool, not a subdomain-discovery one (use subfinder/amass for that).
     parameters:
       domain: { type: string, required: true }
       dns_server: { type: string, default: "" }
@@ -271,6 +277,9 @@ tools:
     phase: recon
     freeform_args_field: additional_args
     default_for_task: true
+    llm_hints: |
+      Wayback Machine only — fast, single source. Use gau_discovery instead when you want
+      multiple archive sources (Common Crawl, OTX, URLScan) in one pass.
     parameters:
       domain: { type: string, required: true }
 
@@ -279,6 +288,9 @@ tools:
     phase: recon
     freeform_args_field: additional_args
     default_for_task: false
+    llm_hints: |
+      Multi-source historical URL discovery (wayback+commoncrawl+otx+urlscan) — broader than
+      waybackurls_discovery at the cost of being slower; use when wayback alone came up thin.
     parameters:
       domain: { type: string, required: true }
       providers: { type: string, default: "wayback,commoncrawl,otx,urlscan" }
@@ -288,6 +300,10 @@ tools:
     phase: recon
     freeform_args_field: additional_args
     default_for_task: true
+    llm_hints: |
+      Live crawl of a specific URL (follows links/forms up to depth) — for discovering a
+      site's current structure, distinct from waybackurls/gau which surface historical URLs
+      without visiting the live site.
     parameters:
       url: { type: string, required: true }
       depth: { type: int, default: 2 }
@@ -341,6 +357,9 @@ tools:
     phase: recon
     freeform_args_field: additional_args
     default_for_task: true
+    llm_hints: |
+      Live TLS handshake against a specific host:port — cert SANs often reveal more
+      subdomains. For historical/other-host certs without connecting, use crt_sh_query instead.
     parameters:
       target: { type: string, required: true }
       port: { type: string, default: "443" }
@@ -350,6 +369,9 @@ tools:
     phase: recon
     freeform_args_field: additional_args
     default_for_task: true
+    llm_hints: |
+      Certificate Transparency log search (crt.sh) — passive, no connection to the target;
+      often surfaces subdomains/old hosts tlsx_inspect can't reach directly (e.g. behind a CDN).
     parameters:
       domain: { type: string, required: true }
       include_subdomains: { type: bool, default: true }
@@ -507,6 +529,9 @@ tools:
     phase: network
     freeform_args_field: additional_args
     default_for_task: true
+    llm_hints: |
+      Default first SMB enum pass (users/shares/groups/policy in one run, -a). If output looks
+      thin or the target is modern Windows, try enum4linux_ng_advanced instead.
     parameters:
       target: { type: string, required: true }
       additional_args: { type: string, default: "-a" }
@@ -516,6 +541,9 @@ tools:
     phase: network
     freeform_args_field: additional_args
     default_for_task: false
+    llm_hints: |
+      Modern rewrite of enum4linux with better parsing/newer-Windows support — reach for this
+      when the classic enum4linux_scan output is thin or the target looks like recent Windows.
     parameters:
       target: { type: string, required: true }
       shares: { type: bool, default: true }
@@ -526,6 +554,9 @@ tools:
     phase: network
     freeform_args_field: additional_args
     default_for_task: false
+    llm_hints: |
+      Share-permission mapping specifically (what's readable/writable per share) — use after
+      enum4linux confirms shares exist, when you need per-share access detail, not user/group info.
     parameters:
       target: { type: string, required: true }
       username: { type: string, default: "" }
@@ -536,6 +567,10 @@ tools:
     phase: network
     freeform_args_field: additional_args
     default_for_task: false
+    llm_hints: |
+      Multi-protocol (smb/ssh/winrm/ldap/etc via protocol=) credential-validation + enum sweep —
+      reach for this over the SMB-only tools when checking credentials across a host, or a
+      non-SMB protocol.
     parameters:
       target: { type: string, required: true }
       protocol: { type: string, default: smb }
@@ -574,6 +609,9 @@ tools:
     phase: network
     freeform_args_field: additional_args
     default_for_task: false
+    llm_hints: |
+      Raw MSRPC command access (commands= is a literal rpcclient command list) — for a specific
+      RPC query the higher-level SMB tools don't expose, not a first-choice enum tool.
     parameters:
       target: { type: string, required: true }
       commands: { type: string, default: "enumdomusers;enumdomgroups;querydominfo" }

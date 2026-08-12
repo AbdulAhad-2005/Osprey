@@ -352,6 +352,62 @@ def _format_clarification(analysis: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
+def _start_expansion_job(engagement_id: str, run_id: str, *, max_passes: int = 5) -> dict[str, Any]:
+    """POST /api/v1/jobs/start with kind=expansion — the BFS engine runs as a
+    real background job (job_store.py's existing TOOL/SHELL/SCRIPT dispatch
+    mechanism, just one more kind) instead of a blocking call. A single pass
+    on a real domain can take minutes; nothing that can run that long should
+    ever be a synchronous MCP tool call regardless of client-side timeout —
+    that was the actual bug, not the timeout value. Returns immediately with
+    a job_id; progress is polled via platform_job_poll, final report via
+    platform_job_result."""
+    return _post(
+        "/api/v1/jobs/start",
+        {
+            "kind": "expansion",
+            "engagement_id": engagement_id,
+            "run_id": run_id,
+            "max_passes": max_passes,
+            "label": f"expand(max_passes={max_passes})",
+        },
+        timeout=30,
+    )
+
+
+def _render_expansion_report(report: dict[str, Any]) -> str:
+    passes = report.get("passes") or []
+    if not passes:
+        return "Surface expansion: nothing to expand (empty frontier)."
+
+    lines = []
+    for p in passes:
+        d = p.get("delta") or {}
+        titles = p.get("new_finding_titles") or []
+        sample = ", ".join(titles[:8]) + (f" (+{len(titles) - 8} more)" if len(titles) > 8 else "")
+        lines.append(
+            f"Pass {p.get('pass_number')}: {d.get('frontier_processed', 0)} seed(s) -> "
+            f"+{d.get('new_nodes', 0)} assets, +{d.get('new_edges', 0)} edges"
+            + (f" — new: {sample}" if sample else "")
+        )
+
+    stopped = report.get("stopped_reason")
+    if stopped == "exhausted":
+        lines.append("Surface exhausted (2 consecutive passes with nothing new).")
+        next_step = "Safe to move on (network/port depth, or the next phase) — expansion found nothing further."
+    else:
+        lines.append(f"Stopped at pass cap ({len(passes)}) — surface may still be growing.")
+        next_step = "Call platform_expand again to continue expanding."
+
+    cand_count = report.get("new_candidate_count") or 0
+    if cand_count:
+        samples = "; ".join(report.get("new_candidate_samples") or [])
+        lines.append(f"Exploit queue: +{cand_count} new candidate(s) — {samples}")
+        next_step += " New exploit candidates surfaced — check platform_exploit_queue."
+
+    lines.append(f"Next: {next_step}")
+    return "\n".join(lines)
+
+
 def _analyze_or_bind(raw: str, *, force_new: bool = False) -> str:
     """Analyze first; bind only when status=ready."""
     analysis = _get(
@@ -377,6 +433,34 @@ def _analyze_or_bind(raw: str, *, force_new: bool = False) -> str:
             "Target changed — prior findings in this chat were for a different "
             "engagement. Use platform_context for the NEW target only."
         )
+    # Auto-fire once on a genuinely new engagement — "domain arrives -> recursive
+    # expansion starts" only holds if this actually happens without the LLM
+    # having to remember to call platform_expand itself. `created` alone is the
+    # correct, complete signal (backend-sourced, means the ENGAGEMENT is new) —
+    # `switched` only means "a different target was bound earlier in this MCP
+    # session" and has nothing to do with engagement novelty; gating on it was
+    # a bug that silently disabled auto-fire on almost every real multi-target
+    # session (confirmed live: geo.tv -> samaa.tv had created=True, switched=True,
+    # and never fired). Never re-fires on a re-bind to an EXISTING engagement
+    # (created=False) — that would be redundant on every re-bind in a long
+    # session. Started as a background job, never a blocking call — the job_id
+    # is visible in this same response immediately; progress/result are visible
+    # via platform_job_poll/platform_job_result, never silent.
+    if info.get("created"):
+        try:
+            job = _start_expansion_job(info["engagement_id"], info.get("run_id", ""), max_passes=5)
+            parts.append(
+                _block(
+                    "Auto-expansion started (new engagement)",
+                    f"job_id: {job.get('job_id')}\n"
+                    "Recursive surface expansion is now running in the background. "
+                    "Continue other work; check progress with "
+                    f"platform_job_poll(job_id='{job.get('job_id')}', wait_seconds=20), "
+                    "read the full report with platform_job_result once complete.",
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            parts.append(f"(Auto-expansion skipped: {exc})")
     return "\n\n".join(parts)
 
 
@@ -394,6 +478,45 @@ def platform_set_target(target: str, force_new: bool = False, pick: str = "") ->
     def _run() -> str:
         chosen = (pick or "").strip() or (target or "").strip()
         return _analyze_or_bind(chosen, force_new=force_new)
+
+    return _safe(_run)
+
+
+@mcp.tool()
+def platform_expand(max_passes: int = 5, engagement_id: str = "") -> str:
+    """
+    Start the BFS surface-expansion engine as a background job: subdomains/
+    sisters -> live-host probe -> ports -> tech/CDN -> origin IPs -> the
+    comprehensive vuln scan, looping until nothing new turns up or max_passes
+    is hit. Deterministic and mechanical — no LLM judgment involved in
+    running it. Returns immediately with a job_id — do NOT wait on it.
+
+    A real domain can take minutes per pass; this never blocks the chat.
+    Continue other work, then platform_job_poll(job_id, wait_seconds=20) to
+    check progress (updated after every pass) or platform_job_result(job_id)
+    once complete for the full pass-by-pass report — real new asset names,
+    not just counts, plus any new exploit candidates the pass surfaced.
+
+    Fires automatically once when platform_set_target binds a brand-new
+    engagement — call this explicitly to continue expanding afterward, or to
+    re-check a target you've been working for a while (new assets discovered
+    manually since the last pass get picked up too).
+
+    engagement_id: optional pin — see platform_exec.
+    """
+    def _run() -> str:
+        eid, tgt = _resolve_engagement(engagement_id)
+        job = _start_expansion_job(eid, SESSION_RUN_ID, max_passes=max_passes)
+        parts = [
+            "### OPERATOR MIRROR — SURFACE EXPANSION (background job)",
+            _session_header(eid, tgt),
+            f"**job_id:** `{job.get('job_id')}` | **status:** {job.get('status')}",
+            job.get("hint") or "",
+            "",
+            f"Continue other work. platform_job_poll(job_id='{job.get('job_id')}', wait_seconds=20) "
+            "for progress, platform_job_result once complete for the full report.",
+        ]
+        return "\n\n".join(parts)
 
     return _safe(_run)
 
@@ -1673,6 +1796,63 @@ def platform_findings(
     return _safe(_run)
 
 
+@mcp.tool()
+def platform_exploit_queue(
+    limit: int = 50,
+    engagement_id: str = "",
+) -> str:
+    """
+    Read the evidence-ranked exploit candidate queue for the exploitation phase.
+
+    The platform pre-computes this deterministically (network->exploit handoff,
+    and after every exploit attempt) from vulnerability/credential findings — it
+    is additive ranked context, not a filter on what tools you can call. Pick the
+    highest-evidence, non-blocked candidate; `blocked_by_roe` entries tell you
+    exactly which RulesOfEngagement flag is missing rather than leaving you to
+    discover a 403 yourself.
+
+    engagement_id: optional pin — see platform_exec.
+    """
+    limit = max(1, min(int(limit), 200))
+
+    def _run() -> str:
+        eid, tgt = _resolve_engagement(engagement_id)
+        data = _get(
+            "/api/v1/exploit-queue/",
+            params={"engagement_id": eid, "limit": limit},
+            timeout=30,
+        )
+        candidates = data if isinstance(data, list) else []
+        parts = [
+            "### OPERATOR MIRROR — EXPLOIT QUEUE",
+            _session_header(eid, tgt),
+        ]
+        if not candidates:
+            parts.append("(empty — no evidence-backed candidates yet, or none active)")
+            return "\n\n".join(parts)
+
+        lines = []
+        for c in candidates:
+            status = c.get("status", "")
+            trigger = c.get("promotion_trigger", "")
+            tool = c.get("suggested_tool", "")
+            radius = c.get("blast_radius_required", "poc")
+            attempts = c.get("attempts", 0)
+            evidence = c.get("evidence_summary", "")
+            lines.append(
+                f"- [{status}|{trigger}|blast_radius={radius}|attempts={attempts}] "
+                f"{evidence} -> {tool} (candidate_id={c.get('id', '')})"
+            )
+        parts.append(_block(f"Candidates ({len(candidates)})", "\n".join(lines)))
+        parts.append(
+            "Set exploit_candidate_id on the tool call for the candidate you act on — "
+            "it correlates the attempt and links the result to the originating finding."
+        )
+        return "\n\n".join(parts)
+
+    return _safe(_run)
+
+
 def _coerce_params(params_json: Any) -> dict[str, Any] | str:
     """LLMs often pass an object; schema historically asked for a JSON string."""
     if params_json is None or params_json == "":
@@ -1833,11 +2013,19 @@ def platform_job_start(
 
 
 @mcp.tool()
-def platform_job_poll(job_id: str = "", engagement_id: str = "") -> str:
+def platform_job_poll(job_id: str = "", engagement_id: str = "", wait_seconds: float = 0) -> str:
     """
     Poll one job (job_id=…) or list all jobs for this engagement (empty job_id).
 
-    Status: queued | running | completed | failed.
+    Status: queued | running | completed | failed. RUNNING jobs carry a `progress`
+    field (updated per step for multi-step kinds like expansion) — read it instead
+    of assuming a running job is a black box.
+
+    wait_seconds (0-60, default 0): long-poll — the call blocks server-side up to
+    this long for the job to finish or its progress to change, instead of you
+    firing off repeated polls in a tight loop. Pass e.g. 20 when you're going to
+    wait on a job anyway; it turns several round-trips into one.
+
     When completed: findings already in memory — then platform_job_result for full stdout.
 
     engagement_id: optional pin — only matters for the "list all jobs" mode
@@ -1852,7 +2040,8 @@ def platform_job_poll(job_id: str = "", engagement_id: str = "") -> str:
                 params={"engagement_id": eid, "limit": "20"},
             )
             return "\n\n".join([_session_header(eid, tgt), _block("Jobs (this engagement)", data)])
-        data = _get(f"/api/v1/jobs/{jid}")
+        wait = max(0.0, min(float(wait_seconds), 60.0))
+        data = _get(f"/api/v1/jobs/{jid}", params={"wait_seconds": wait} if wait else None, timeout=wait + 30)
         return "\n\n".join([_session_header(eid, tgt), _block(f"Job {jid}", data)])
 
     return _safe(_run)
@@ -1889,8 +2078,11 @@ def platform_job_result(job_id: str) -> str:
         if titles:
             parts.append(_block(f"Findings from this branch ({len(titles)})", titles[:80]))
         if result:
-            # Reuse exec formatter for stdout visibility
-            if isinstance(result, dict):
+            if job.get("kind") == "expansion":
+                # ExpansionReport shape, not ToolExecutionResponse — the generic
+                # stdout formatter would print nonsense against these keys.
+                parts.append(_render_expansion_report(result))
+            elif isinstance(result, dict):
                 parts.append(_format_exec_result(result))
             else:
                 parts.append(_block("Result", result))
