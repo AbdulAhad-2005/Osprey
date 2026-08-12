@@ -329,7 +329,7 @@ tools:
       domains), NOT subdomains — run subfinder for subdomains. Free by default; every hit
       cites its evidence, method, confidence (low/medium/high) and whether it is live.
       Pass a bare root domain in `domain`. Narrow with `modules` (e.g. certs,dns,asn,
-      knowledge_recon,site_scrape) or raise `confidence_min` to medium/high to cut noise.
+      whois,knowledge_recon,site_scrape) or raise `confidence_min` to medium/high to cut noise.
       Each discovered domain is fed back to the graph — pivot by running subfinder/httpx on
       high-confidence live siblings.
     parameters:

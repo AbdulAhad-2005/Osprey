@@ -19,16 +19,30 @@ from pathlib import Path
 from typing import Any
 
 _ROOT = Path(__file__).resolve().parents[2]
+_TOOLS_DIR = Path(__file__).resolve().parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
+if str(_TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(_TOOLS_DIR))
 
 from _core.result import ToolResult
 from _core.runner import run_tool
 
-from domain_hunter_impl import parse_stdout
+# Same-dir helper module (underscore prefix = skipped by the server harvest
+# loop) — the shared implementation, imported for its stdout parser. The CLI
+# itself is invoked via a fixed container path like the other _*_cli tools.
+from _domain_hunter_cli import parse_stdout
 
 TOOL_NAME = "domain_hunter"
 CATEGORY = "recon"
+
+# Fixed container path (mirrors the shodan/js_recon/subdomain_takeover pattern).
+from _core.paths import container_or_local
+
+_CLI = container_or_local(
+    "/home/mcpuser/mcp-servers/recon/tools/_domain_hunter_cli.py",
+    str(Path(__file__).resolve().with_name("_domain_hunter_cli.py")),
+)
 
 
 def build_command(**params: Any) -> str:
@@ -42,18 +56,26 @@ def build_command(**params: Any) -> str:
     output = str(params.get("output", "") or "").strip()
     additional_args = str(params.get("additional_args", "") or "").strip()
 
-    base_dir = Path(__file__).resolve().parent / "domain-hunter"
     if not output:
         safe = domain.replace("/", "_").replace(" ", "_")
         output = f"/tmp/domain_hunter_{safe}.csv"
 
-    parts = ["python3", "main.py", "--domain", domain, "--confidence-min", confidence_min, "--output", output]
+    parts = [
+        "python3",
+        shlex.quote(_CLI),
+        "--domain",
+        shlex.quote(domain),
+        "--confidence-min",
+        shlex.quote(confidence_min),
+        "--output",
+        shlex.quote(output),
+    ]
     if modules:
-        parts.extend(["--modules", modules])
+        parts.extend(["--modules", shlex.quote(modules)])
     if additional_args:
         parts.append(additional_args)
 
-    return f"cd {shlex.quote(str(base_dir))} && {' '.join(shlex.quote(part) for part in parts)}"
+    return " ".join(parts)
 
 
 def parse(result: ToolResult) -> dict[str, Any]:

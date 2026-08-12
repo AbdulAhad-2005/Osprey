@@ -14,7 +14,7 @@ def handle_prompt(prompt: str, client: "APIClient") -> None:
         return
 
     try:
-        stream = client.send_prompt_stream(prompt)
+        stream = client.send_prompt_stream(prompt, engagement_id=client.active_engagement_id)
         final = consume_agent_stream(stream)
 
         if final is None:

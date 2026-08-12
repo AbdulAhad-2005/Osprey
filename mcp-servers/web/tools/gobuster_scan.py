@@ -31,7 +31,12 @@ TOOL_NAME = "gobuster_scan"
 CATEGORY = "web"
 
 # Bundled wordlist (Kali image ships none); mcp-servers is mounted at this path.
-_DEFAULT_WORDLIST = "/home/mcpuser/mcp-servers/recon/tools/_wordlists/common-web.txt"
+from _core.paths import container_or_local
+
+_DEFAULT_WORDLIST = container_or_local(
+    "/home/mcpuser/mcp-servers/recon/tools/_wordlists/common-web.txt",
+    str(Path(__file__).resolve().parents[2] / "recon" / "tools" / "_wordlists" / "common-web.txt"),
+)
 
 
 def build_command(**params: Any) -> str:

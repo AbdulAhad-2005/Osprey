@@ -29,7 +29,12 @@ from _core.result import ToolResult
 TOOL_NAME = "subdomain_takeover_check"
 CATEGORY = "recon"
 
-_CLI = "/home/mcpuser/mcp-servers/recon/tools/_subdomain_takeover_cli.py"
+from _core.paths import container_or_local
+
+_CLI = container_or_local(
+    "/home/mcpuser/mcp-servers/recon/tools/_subdomain_takeover_cli.py",
+    str(Path(__file__).resolve().with_name("_subdomain_takeover_cli.py")),
+)
 
 
 def build_command(**params: Any) -> str:

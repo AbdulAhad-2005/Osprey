@@ -18,6 +18,8 @@ dependencies = [
     "litellm>=1.50,<2.0",
     "orjson>=3.9,<4.0",
     "pyyaml>=6.0,<7.0",
+    # SSE streaming for POST /api/v1/agent/chat/stream (the CLI live view).
+    "sse-starlette>=2.1,<4.0",
     # Public-suffix aware apex-domain extraction — whois_lookup._strip_to_apex
     # falls back to a heuristic without it, mishandling multi-part ccTLDs
     # (e.g. nadra.gov.pk → gov.pk). Bundles an offline PSL snapshot.

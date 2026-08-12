@@ -25,7 +25,12 @@ from _core.result import ToolResult
 TOOL_NAME = "browser_scrape"
 CATEGORY = "web"
 
-_CLI = "/home/mcpuser/mcp-servers/web/tools/_browser_scrape_cli.py"
+from _core.paths import container_or_local
+
+_CLI = container_or_local(
+    "/home/mcpuser/mcp-servers/web/tools/_browser_scrape_cli.py",
+    str(Path(__file__).resolve().with_name("_browser_scrape_cli.py")),
+)
 _SHOT_DIR = "/tmp/pentest/screenshots"
 
 
