@@ -259,33 +259,93 @@ def print_engagements(engagements: list[dict[str, Any]]) -> None:
     console.print(table)
 
 
+_SEVERITY_STYLE = {
+    "critical": "bold red",
+    "high": "red",
+    "medium": "yellow",
+    "low": "blue",
+    "info": "dim",
+    "none": "dim",
+}
+
+
 def print_findings(findings: list[dict[str, Any]]) -> None:
+    """Flat, one-row-per-instance view. Prefer print_findings_grouped for a
+    normal browse — this stays available for inspecting raw individual rows."""
     if not findings:
         print_info("No findings yet. Run a scan to discover vulnerabilities.")
         return
     table = Table(title="Findings", show_header=True, header_style="bold cyan")
     table.add_column("ID", style="bold")
     table.add_column("Title")
+    table.add_column("Type")
     table.add_column("Severity")
-    table.add_column("Status")
-    table.add_column("CVSS")
+    table.add_column("Tool")
     for finding in findings:
-        severity = finding.get("severity", "info")
-        severity_style = {
-            "critical": "bold red",
-            "high": "red",
-            "medium": "yellow",
-            "low": "blue",
-            "info": "dim",
-        }.get(severity, "dim")
+        # The Finding schema's field is `claim_severity`, not `severity` —
+        # reading the wrong key silently showed "info" for every finding
+        # regardless of actual severity.
+        severity = finding.get("claim_severity") or "info"
         table.add_row(
             finding.get("id", "-"),
             finding.get("title", "-"),
-            Text(severity, style=severity_style),
-            finding.get("status", "-"),
-            str(finding.get("cvss_score", "-")),
+            finding.get("finding_type", "-"),
+            Text(severity, style=_SEVERITY_STYLE.get(severity, "dim")),
+            finding.get("source_tool", "-"),
         )
     console.print(table)
+
+
+def print_findings_grouped(data: dict[str, Any]) -> None:
+    """One row per distinct issue pattern — the same NSE script across many
+    ports, or the same URL-crawl pattern across many paths, collapsed into
+    one row with an affected-target count instead of dozens of near-
+    identical rows. Worst severity and widest-affected first (server-sorted).
+    """
+    groups = data.get("groups") or []
+    if not groups:
+        print_info("No findings yet. Run a scan to discover vulnerabilities.")
+        return
+    table = Table(title="Findings (grouped)", show_header=True, header_style="bold cyan")
+    table.add_column("Title")
+    table.add_column("Type")
+    table.add_column("Severity")
+    table.add_column("Count", justify="right")
+    table.add_column("Affected")
+    table.add_column("Tool")
+    for g in groups:
+        severity = g.get("severity") or "info"
+        targets = g.get("affected_targets") or []
+        shown = ", ".join(targets[:3])
+        if len(targets) > 3:
+            shown += f" (+{len(targets) - 3} more)"
+        table.add_row(
+            g.get("title", "-"),
+            g.get("finding_type", "-"),
+            Text(severity, style=_SEVERITY_STYLE.get(severity, "dim")),
+            str(g.get("count", 0)),
+            shown or "-",
+            g.get("source_tool", "-"),
+        )
+    console.print(table)
+    # total_groups/total_findings are the true totals BEFORE the display cap —
+    # shown_groups can be less than total_groups even when nothing looks
+    # truncated at a glance, so always compare against the real total, never
+    # against len(groups) (which is capped and would silently under-report).
+    total_findings = data.get("total_findings", 0)
+    total_groups = data.get("total_groups", len(groups))
+    shown_groups = len(groups)
+    if shown_groups < total_groups:
+        print_info(
+            f"Showing {shown_groups} of {total_groups} distinct issue(s) "
+            f"(from {total_findings} individual finding(s) total) — grouped by pattern, worst first. "
+            "Search with /findings <keyword> to narrow, or /findings <keyword> --flat for raw instances."
+        )
+    else:
+        print_info(
+            f"{total_groups} distinct issue(s) from {total_findings} individual finding(s) — "
+            "grouped by pattern. Search with /findings <keyword> --flat to see raw instances."
+        )
 
 
 def print_banner() -> None:

@@ -25,6 +25,7 @@ from typed_osint import register_typed_osint_tools
 from typed_recon_content import register_typed_recon_content_tools
 from typed_vuln import register_typed_vuln_tools
 from typed_browser import register_typed_browser_tools
+from typed_exploit import register_typed_exploit_tools
 
 API_BASE = os.environ.get("PENTEST_API_BASE", "http://localhost:9000").rstrip("/")
 QUICK_TIMEOUT = float(os.environ.get("PENTEST_QUICK_TIMEOUT", "60"))
@@ -521,6 +522,48 @@ def platform_expand(max_passes: int = 5, engagement_id: str = "") -> str:
     return _safe(_run)
 
 
+@mcp.prompt(name="scan")
+def scan_prompt(target: str = "", mode: str = "") -> str:
+    """Slash-command entry point (`/scan` in any MCP-prompt-capable client —
+    Claude Desktop/Code, OpenCode, etc.) — same convention as the CLI's
+    `/scan [target] [--mcp|--engine]` and a UI's "Scan" button: one backend
+    engine, several doors in. If target/mode aren't supplied as prompt
+    arguments, ask the user for them before doing anything else.
+
+    mode=mcp (default): proceed as normal — platform_set_target, then whatever
+    tools the situation calls for; the LLM drives every step as usual.
+    mode=engine: call platform_set_target, then platform_expand — the
+    autonomous trigger-graph pipeline runs to a fixpoint with no LLM
+    involvement in individual steps (sisters -> subdomains -> IPs -> CDN/origin
+    -> subnet pivot -> ports -> services -> vuln scan -> OSINT). Poll with
+    platform_job_poll(wait_seconds=20) and report back once
+    platform_job_result shows it's done — don't narrate every pass.
+    """
+    if not target.strip():
+        return (
+            "Ask the user for a target (domain or IP) before doing anything else. "
+            "Then ask whether they want mode=mcp (LLM-driven, step by step — how this "
+            "platform normally works) or mode=engine (autonomous pipeline, no LLM per "
+            "step, reports back when the whole recon/network sweep is done)."
+        )
+    chosen_mode = mode.strip().lower() or "mcp"
+    if chosen_mode not in ("mcp", "engine"):
+        chosen_mode = "mcp"
+    if chosen_mode == "engine":
+        return (
+            f"Call platform_set_target('{target.strip()}'), then platform_expand() "
+            "(defaults are fine unless the user asked for a different max_passes). "
+            "Poll with platform_job_poll(job_id=..., wait_seconds=20) until it's done, "
+            "then read platform_job_result and summarize what the engine found — don't "
+            "drive individual recon tools yourself, the engine already covers that ground."
+        )
+    return (
+        f"Call platform_set_target('{target.strip()}'), then proceed normally — "
+        "read what auto-expansion (if any) already surfaced, then drive the rest of "
+        "the engagement step by step as usual."
+    )
+
+
 @mcp.tool()
 def platform_delete_engagement(target: str = "", engagement_id: str = "") -> str:
     """
@@ -997,8 +1040,16 @@ def _execute_catalog_tool(
     timeout_seconds: int = 300,
     force_refresh: bool = False,
     engagement_id: str = "",
+    blast_radius: str = "",
+    exploit_candidate_id: str = "",
 ) -> str:
-    """Shared execute path for platform_exec and typed recon/network tools."""
+    """Shared execute path for platform_exec and typed recon/network/exploit tools.
+
+    blast_radius/exploit_candidate_id only matter for GATED tools — non-gated
+    calls ignore them server-side. Left empty here (rather than defaulting to
+    "poc") so ToolExecutionRequest's own default applies uniformly; passing
+    "" through is equivalent to the caller never mentioning the field.
+    """
     timeout_seconds = max(30, min(int(timeout_seconds), 900))
     eid, tgt = _resolve_engagement(engagement_id)
     body: dict[str, Any] = {
@@ -1013,6 +1064,10 @@ def _execute_catalog_tool(
         "force_refresh": bool(force_refresh),
         "timeout": timeout_seconds,
     }
+    if blast_radius.strip():
+        body["blast_radius"] = blast_radius.strip()
+    if exploit_candidate_id.strip():
+        body["exploit_candidate_id"] = exploit_candidate_id.strip()
     _log(
         f"exec {tool} target={tgt} engagement={eid} "
         f"run={SESSION_RUN_ID} force_refresh={force_refresh}"
@@ -2659,7 +2714,7 @@ def platform_handoff(engagement_id: str = "") -> str:
     return _safe(_run)
 
 
-# Typed recon/network catalog tools (HexStrike-style schemas for the LLM).
+# Typed recon/network/exploit catalog tools (HexStrike-style schemas for the LLM).
 def _typed_execute(
     tool_name: str,
     params: dict[str, Any],
@@ -2667,6 +2722,8 @@ def _typed_execute(
     additional_args: str = "",
     timeout_seconds: int = 300,
     engagement_id: str = "",
+    blast_radius: str = "",
+    exploit_candidate_id: str = "",
 ) -> str:
     return _safe(
         lambda: _execute_catalog_tool(
@@ -2675,6 +2732,8 @@ def _typed_execute(
             additional_args=additional_args,
             timeout_seconds=timeout_seconds,
             engagement_id=engagement_id,
+            blast_radius=blast_radius,
+            exploit_candidate_id=exploit_candidate_id,
         )
     )
 
@@ -2696,6 +2755,9 @@ _log(f"registered {_TYPED_VULN_COUNT} typed vulnerability-analysis tools")
 
 _TYPED_BROWSER_COUNT = register_typed_browser_tools(mcp, execute=_typed_execute)
 _log(f"registered {_TYPED_BROWSER_COUNT} typed browser-automation tools")
+
+_TYPED_EXPLOIT_COUNT = register_typed_exploit_tools(mcp, execute=_typed_execute)
+_log(f"registered {_TYPED_EXPLOIT_COUNT} typed exploitation/creds/cloud-exploit tools")
 
 
 if __name__ == "__main__":
