@@ -7,7 +7,7 @@ name = "pentest-cli"
 version = "0.1.0"
 description = "CLI interface for the Autonomous AI Pentesting Platform"
 license = {text = "AGPL-3.0-or-later"}
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 dependencies = [
     "prompt_toolkit>=3.0,<4.0",
     "httpx>=0.27,<1.0",

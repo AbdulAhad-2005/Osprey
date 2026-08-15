@@ -9,6 +9,7 @@ __pycache__/
 venv/
 .env
 .env.local
+*.db
 
 # Node
 node_modules/

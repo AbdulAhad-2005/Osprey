@@ -9,10 +9,12 @@ if TYPE_CHECKING:
     from cli.api.client import APIClient
 
 from cli.ui.display import (
+    console,
     consume_agent_stream,
     print_engagements,
     print_error,
     print_findings,
+    print_findings_grouped,
     print_health,
     print_info,
     print_models,
@@ -28,11 +30,21 @@ def handle_help(args: list[str], client: "APIClient") -> None:
         "/tools": "List tools (installed vs missing in your Kali/host)",
         "/models": "List supported LLM models",
         "/model": "Show active LLM model + key status",
-        "/scan <target> [phase]": "Bind target + scan (phase: recon|network|full)",
+        "/scan [target] [phase] [--mcp|--engine] [--include-low-confidence]": (
+            "Bind target + scan. --mcp = LLM-driven (default); "
+            "--engine = autonomous trigger-graph pipeline, no LLM. Prompts if omitted. "
+            "--include-low-confidence (engine mode) also scans low-confidence origin "
+            "candidates the engine holds back by default."
+        ),
         "/engage list": "List all engagements",
         "/engage new <target>": "Create a new engagement",
         "/engage set <id>": "Bind this session to an existing engagement",
-        "/findings": "Show discovered findings for the active engagement",
+        "/findings [keyword] [--all] [--flat]": (
+            "Show findings, grouped by issue pattern (noise excluded; --all shows everything; --flat = one row per instance)"
+        ),
+        "/report [--engagement <id>]": (
+            "Write a Markdown recon report (seed -> sisters -> subdomains -> IPs -> ports/services/tech, WHOIS/OSINT, vulns) to ./reports/"
+        ),
         "/status": "Show current session status (auto-refreshes config)",
         "/config": "Show config (auto-refreshes from .env)",
         "/config reload": "Force backend to re-read .env",
@@ -163,26 +175,54 @@ _PHASE_PROMPTS = {
 }
 
 
-def handle_scan(args: list[str], client: "APIClient") -> None:
-    """Bind an engagement to the target and run the agent pipeline on it.
+_SCAN_MODES = {"mcp", "engine"}
 
-    Usage: /scan <target> [recon|network|full]  (phase defaults to full)
+
+def handle_scan(args: list[str], client: "APIClient") -> None:
+    """Bind an engagement to the target and run either the LLM-driven agent
+    pipeline (mcp mode) or the autonomous trigger-graph engine (engine mode,
+    no LLM involved — Nessus-style: subdomains/sisters -> IPs -> CDN/origin
+    -> subnet pivot -> ports -> services -> OSINT, run to a fixpoint).
+
+    Usage: /scan [target] [recon|network|full] [--mcp|--engine]
+    Missing target or mode are asked for interactively.
     """
-    if not args:
-        print_info("Usage: /scan <target> [recon|network|full]  (e.g. /scan example.com recon)")
-        return
+    mode = ""
+    if "--mcp" in args:
+        mode = "mcp"
+        args = [a for a in args if a != "--mcp"]
+    elif "--engine" in args:
+        mode = "engine"
+        args = [a for a in args if a != "--engine"]
+
+    include_low_confidence = "--include-low-confidence" in args
+    args = [a for a in args if a != "--include-low-confidence"]
 
     phase = "full"
-    if len(args) > 1 and args[-1].lower() in _SCAN_PHASES:
+    if args and args[-1].lower() in _SCAN_PHASES:
         phase = args[-1].lower()
         args = args[:-1]
-    target = " ".join(args)
+    target = " ".join(args).strip()
+
+    if not target:
+        target = input("Target (domain or IP): ").strip()
+        if not target:
+            print_info("No target given — aborted.")
+            return
+
+    if not mode:
+        choice = input("Mode — [1] mcp (LLM-driven, default) or [2] engine (autonomous, Nessus-style): ").strip()
+        mode = "engine" if choice in ("2", "engine") else "mcp"
 
     try:
         data = client.compile_engagement_for_target(target)
         _bind_engagement(client, data)
     except Exception as exc:
         print_error(_api_error_text(exc))
+        return
+
+    if mode == "engine":
+        _run_engine_scan(client, target, include_low_confidence=include_low_confidence)
         return
 
     print_info(f"Scanning {target} (phase: {phase}) — the agent will report back when done.")
@@ -198,16 +238,193 @@ def handle_scan(args: list[str], client: "APIClient") -> None:
         print_error(final["error"])
 
 
+def _run_engine_scan(client: "APIClient", target: str, *, include_low_confidence: bool = False) -> None:
+    """Engine mode: start the expansion job and poll to completion — a plain
+    REST call the CLI drives directly, no LLM in the loop. The same backend
+    endpoint a UI's "Scan" button or the MCP platform_expand tool would call —
+    one engine, this is just one of its doors."""
+    engagement_id = client.active_engagement_id
+    if not engagement_id:
+        print_error("No engagement bound.")
+        return
+    try:
+        job = client.start_expansion_job(
+            engagement_id, max_passes=10, include_low_confidence=include_low_confidence,
+        )
+    except Exception as exc:
+        print_error(_api_error_text(exc))
+        return
+
+    job_id = job.get("job_id", "")
+    print_info(f"Engine started (job {job_id}) — running the full recon/network pipeline on {target}.")
+    print_info("Sister domains -> subdomains (tools + wordlist brute force) -> IPs -> CDN/origin "
+                "detection -> subnet pivot -> ports -> services -> vuln scan -> OSINT, to a fixpoint.")
+
+    status = job.get("status", "")
+    last_progress = ""
+    printed_results = 0
+    with console.status("[bold cyan]Engine starting…[/]", spinner="dots") as spinner:
+        while status in ("queued", "running"):
+            try:
+                # Short wait_seconds: the engine now reports live per-tool
+                # progress (which tool is running right now, not just
+                # per-pass summaries), so poll often enough for the spinner
+                # text to actually track it. Long-polling still returns early
+                # on any change, so this isn't hammering the server harder —
+                # just checking in more often for a livelier display.
+                job = client.poll_job(job_id, wait_seconds=3)
+            except Exception as exc:
+                print_error(_api_error_text(exc))
+                return
+            status = job.get("status", "")
+            # results_log is append-only — print every entry we haven't shown
+            # yet. Unlike the ephemeral `progress` string (which the next
+            # in-flight update can overwrite before the next poll ever sees
+            # it), nothing here can be missed regardless of poll timing.
+            results_log = job.get("results_log") or []
+            for line in results_log[printed_results:]:
+                console.print(f"  [green]{line}[/]")
+            printed_results = len(results_log)
+
+            progress = job.get("progress", "")
+            if progress and progress != last_progress:
+                spinner.update(f"[bold cyan]{progress}[/]")
+                last_progress = progress
+
+    if status == "failed":
+        print_error(f"Engine run failed: {job.get('error', 'unknown error')}")
+        return
+
+    try:
+        result = client.job_result(job_id)
+    except Exception as exc:
+        print_error(_api_error_text(exc))
+        return
+
+    report = (result.get("result") or {})
+    passes = report.get("passes") or []
+    print_success(f"Engine finished — {len(passes)} pass(es), "
+                  f"{'exhausted' if report.get('exhausted') else 'stopped at pass cap'}.")
+    for p in passes:
+        d = p.get("delta") or {}
+        titles = p.get("new_finding_titles") or []
+        sample = ", ".join(titles[:5]) + (f" (+{len(titles) - 5} more)" if len(titles) > 5 else "")
+        print_info(
+            f"  Pass {p.get('pass_number')}: +{d.get('new_nodes', 0)} assets, "
+            f"+{d.get('new_edges', 0)} edges" + (f" — {sample}" if sample else "")
+        )
+    cand_count = report.get("new_candidate_count") or 0
+    if cand_count:
+        print_info(f"  +{cand_count} exploit candidate(s) — see /findings or platform_exploit_queue.")
+
+    held_back = report.get("held_back_low_confidence") or []
+    if held_back:
+        console.print()
+        console.print("[bold yellow]Held back — low-confidence origin candidates, not scanned:[/]")
+        for item in held_back:
+            console.print(f"  [yellow]•[/] {item}")
+        console.print(
+            f"  [dim]Re-run with[/] [bold]/scan {target} --engine --include-low-confidence[/] "
+            "[dim]to scan these too.[/]"
+        )
+
+    print_info("Findings are already in memory — use /findings to review.")
+
+
 def handle_findings(args: list[str], client: "APIClient") -> None:
-    engagement_id = args[0] if args else client.active_engagement_id
-    if engagement_id:
-        findings = client.list_findings(engagement_id)
-        if not findings:
-            print_info(f"No findings yet for engagement {engagement_id}.")
-    else:
+    """Show findings for the active engagement, optionally filtered by keyword.
+
+    Usage: /findings [keyword...] [--engagement <id>] [--all] [--flat]
+    Grouped by default — the same issue firing on many host:port instances,
+    or the same URL-crawl pattern across many paths, collapses into one row
+    with an affected-target list instead of dozens of near-identical rows.
+    Excludes unparsed/raw-output noise by default too (kept in the DB for
+    evidence, just not shown). --all includes noise; --flat shows the raw
+    one-row-per-instance view instead of grouping. Search by keyword (title,
+    target, evidence, source tool) to cut through a large result set.
+    """
+    engagement_id = client.active_engagement_id
+    if "--engagement" in args:
+        idx = args.index("--engagement")
+        if idx + 1 < len(args):
+            engagement_id = args[idx + 1]
+        args = args[:idx] + args[idx + 2 :]
+    show_all = "--all" in args
+    flat = "--flat" in args
+    args = [a for a in args if a not in ("--all", "--flat")]
+    query = " ".join(args).strip()
+
+    if not engagement_id:
         print_info("No engagement bound. Run /scan <target> or /engage new <target> first.")
         return
-    print_findings(findings)
+
+    if flat:
+        findings = client.list_findings(
+            engagement_id, q=query, limit=500 if query else 100, exclude_noise=not show_all,
+        )
+        if not findings:
+            if query:
+                print_info(f"No findings matching '{query}' for engagement {engagement_id}.")
+            else:
+                print_info(f"No findings yet for engagement {engagement_id}.")
+            return
+        print_findings(findings)
+        if not query and len(findings) == 100:
+            print_info(
+                "Showing the first 100 findings — this engagement may have more. "
+                "Search with /findings <keyword>, e.g. /findings geo.tv or /findings exchange."
+            )
+        return
+
+    data = client.list_findings_grouped(engagement_id, q=query, exclude_noise=not show_all)
+    if not data.get("groups"):
+        if query:
+            print_info(f"No findings matching '{query}' for engagement {engagement_id}.")
+        else:
+            print_info(f"No findings yet for engagement {engagement_id}.")
+        return
+    print_findings_grouped(data)
+
+
+def handle_report(args: list[str], client: "APIClient") -> None:
+    """Write a human-readable recon report to a Markdown file: seed domain ->
+    sister/associated domains -> subdomains (nested) -> IPs -> ports/services/
+    tech, plus WHOIS/OSINT and a short vulnerability summary — the actual
+    pipeline shape, not a flat findings table. A terminal table can't show
+    this well; a saved file you can open, search, or hand to someone can.
+
+    Usage: /report [--engagement <id>]
+    """
+    engagement_id = client.active_engagement_id
+    if "--engagement" in args:
+        idx = args.index("--engagement")
+        if idx + 1 < len(args):
+            engagement_id = args[idx + 1]
+
+    if not engagement_id:
+        print_info("No engagement bound. Run /scan <target> or /engage new <target> first.")
+        return
+
+    md = client.get_report_markdown(engagement_id)
+    if md is None:
+        print_error(f"Could not generate a report for engagement {engagement_id}.")
+        return
+
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    target_line = md.splitlines()[0] if md else ""
+    target = target_line.replace("# Recon Report — ", "").strip() or engagement_id
+    safe_target = "".join(c if c.isalnum() or c in ".-" else "_" for c in target)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+    reports_dir = Path("reports")
+    reports_dir.mkdir(exist_ok=True)
+    out_path = reports_dir / f"{safe_target}_{timestamp}.md"
+    out_path.write_text(md, encoding="utf-8")
+
+    print_success(f"Report written: {out_path.resolve()}")
+    print_info("Open it in any Markdown viewer (VS Code, Obsidian, GitHub) to read it properly.")
 
 
 def _reload_backend_config(client: "APIClient") -> bool:
@@ -311,6 +528,7 @@ SLASH_COMMANDS: dict[str, tuple[str, "callable"]] = {
     "/scan": ("Bind target + run full agent scan", handle_scan),
     "/engage": ("Manage engagements", handle_engagements),
     "/findings": ("Show findings", handle_findings),
+    "/report": ("Write a Markdown recon report to ./reports/", handle_report),
     "/status": ("Session status", handle_status),
     "/config": ("Show configuration", handle_config),
     "/reconnect": ("Re-read .env and reconnect to backend", handle_reconnect),

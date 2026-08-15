@@ -71,14 +71,27 @@ class APIClient:
         except httpx.HTTPStatusError:
             return []
 
-    def list_findings(self, engagement_id: str | None = None) -> list[dict[str, Any]]:
+    def list_findings(
+        self, engagement_id: str | None = None, *, q: str = "", limit: int = 100,
+        exclude_noise: bool = True,
+    ) -> list[dict[str, Any]]:
         """List findings for an engagement.
 
         The backend returns a ``{"findings": [...], "total": n}`` envelope —
-        normalize both shapes so callers always get a bare list.
+        normalize both shapes so callers always get a bare list. `q` is a
+        substring filter (title/target/evidence/source tool/tags, backend-side)
+        — without it, a large engagement's default 100-row window can be
+        dominated by whichever tool happened to produce the most granular
+        findings (e.g. nmap's per-port/per-script output), silently hiding
+        everything else. `exclude_noise` (default True) hides unparsed/raw-
+        output findings kept only for evidence, not real findings.
         """
         try:
-            params = {"engagement_id": engagement_id} if engagement_id else {}
+            params: dict[str, Any] = {"engagement_id": engagement_id} if engagement_id else {}
+            if q:
+                params["q"] = q
+            params["limit"] = limit
+            params["exclude_noise"] = exclude_noise
             resp = self._client.get(self._url("/api/v1/findings"), params=params)
             resp.raise_for_status()
             data = resp.json()
@@ -87,6 +100,35 @@ class APIClient:
             return data or []
         except httpx.HTTPStatusError:
             return []
+
+    def get_report_markdown(self, engagement_id: str) -> str | None:
+        """Human-readable recon report (seed -> sister domains -> subdomains
+        -> IPs -> ports/services/tech, WHOIS/OSINT, vulnerabilities) as raw
+        Markdown text. None on any HTTP error (e.g. unknown engagement)."""
+        try:
+            resp = self._client.get(self._url(f"/api/v1/engagements/{engagement_id}/report.md"))
+            resp.raise_for_status()
+            return resp.text
+        except httpx.HTTPStatusError:
+            return None
+
+    def list_findings_grouped(
+        self, engagement_id: str | None = None, *, q: str = "", exclude_noise: bool = True,
+    ) -> dict[str, Any]:
+        """One row per distinct issue pattern (the same NSE script across many
+        ports, the same URL-crawl pattern across many paths) instead of one
+        row per instance — returns {"groups": [...], "total_groups": n,
+        "total_findings": n}, or an empty groups list on any HTTP error."""
+        try:
+            params: dict[str, Any] = {"engagement_id": engagement_id} if engagement_id else {}
+            if q:
+                params["q"] = q
+            params["exclude_noise"] = exclude_noise
+            resp = self._client.get(self._url("/api/v1/findings/grouped"), params=params)
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPStatusError:
+            return {"groups": [], "total_groups": 0, "total_findings": 0}
 
     def create_engagement(self, data: dict[str, Any]) -> dict[str, Any]:
         resp = self._client.post(self._url("/api/v1/engagements"), json=data)
@@ -124,6 +166,36 @@ class APIClient:
     @property
     def active_engagement_id(self) -> str | None:
         return self._engagement_id
+
+    def start_expansion_job(
+        self, engagement_id: str, *, run_id: str = "", max_passes: int = 5,
+        include_low_confidence: bool = False,
+    ) -> dict[str, Any]:
+        """Engine mode: run the BFS surface-expansion engine as a background
+        job — no LLM involved. Same job kind/endpoint the MCP `platform_expand`
+        tool and the auto-fire-on-bind path use; the CLI is just another caller."""
+        resp = self._client.post(
+            self._url("/api/v1/jobs/start"),
+            json={
+                "kind": "expansion", "engagement_id": engagement_id,
+                "run_id": run_id, "max_passes": max_passes,
+                "include_low_confidence": include_low_confidence,
+                "label": f"expand(max_passes={max_passes})",
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def poll_job(self, job_id: str, *, wait_seconds: float = 0) -> dict[str, Any]:
+        params = {"wait_seconds": wait_seconds} if wait_seconds else {}
+        resp = self._client.get(self._url(f"/api/v1/jobs/{job_id}"), params=params)
+        resp.raise_for_status()
+        return resp.json()
+
+    def job_result(self, job_id: str) -> dict[str, Any]:
+        resp = self._client.get(self._url(f"/api/v1/jobs/{job_id}/result"))
+        resp.raise_for_status()
+        return resp.json()
 
     def _build_chat_payload(
         self, prompt: str, engagement_id: str | None, phase: str
