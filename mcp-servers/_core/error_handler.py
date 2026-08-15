@@ -90,6 +90,14 @@ class IntelligentErrorHandler:
             r"sudo required|root required|insufficient privileges": ErrorType.PERMISSION_DENIED,
             r"network unreachable|host unreachable|no route to host": ErrorType.NETWORK_UNREACHABLE,
             r"connection refused|connection reset|network error": ErrorType.NETWORK_UNREACHABLE,
+            # Transient resolver hiccups (Docker embedded DNS under concurrent
+            # load, upstream flakiness) — distinct from a permanent NXDOMAIN
+            # ("host not found", below). These clear on a retry, so classify them
+            # as a retryable network condition instead of leaving them UNKNOWN
+            # (which escalates to human and drops the tool as failed — the exact
+            # cause of intermittent whois/libc-resolver "(failed)" runs).
+            r"temporary failure in name resolution|name or service not known|"
+            r"could not resolve|getaddrinfo": ErrorType.NETWORK_UNREACHABLE,
             r"rate limit|too many requests|throttled|429": ErrorType.RATE_LIMITED,
             r"request limit exceeded|quota exceeded": ErrorType.RATE_LIMITED,
             r"command not found|no such file or directory|not found": ErrorType.TOOL_NOT_FOUND,
