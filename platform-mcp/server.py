@@ -522,6 +522,86 @@ def platform_expand(max_passes: int = 5, engagement_id: str = "") -> str:
 
 
 @mcp.tool()
+def platform_pipeline(action: str = "start", engagement_id: str = "") -> str:
+    """
+    Drive the multi-agent PHASE PIPELINE — the backend's concurrent, data-triggered
+    orchestration of recon → vuln → exploit agents.
+
+    Instead of you walking every phase yourself in one long loop, this launches a
+    deterministic conductor that: starts a recon agent + the breadth engine now;
+    starts a vuln agent the moment recon has surfaced hosts/services/tech; starts
+    an exploit agent the moment vuln finds something to chain — all CONCURRENTLY,
+    and re-opening recon when later phases discover new hosts. Agents coordinate
+    through shared engagement findings; you don't relay anything between them.
+
+    action:
+      - 'start'  : launch the pipeline (idempotent per engagement). Returns at once.
+      - 'status' : running/finished, active agents, latest tick (signals + spawns).
+      - 'stop'   : stop the conductor and its running phase agents.
+
+    Poll status periodically and read platform_findings for what the agents found.
+    You remain free to spawn extra agents (platform_spawn_agent) or run tools
+    yourself alongside the pipeline.
+    """
+    def _run() -> str:
+        eid, tgt = _resolve_engagement(engagement_id)
+        act = (action or "start").strip().lower()
+        if act == "status":
+            data = _get("/api/v1/pipeline/status", params={"engagement_id": eid}, timeout=15)
+        elif act == "stop":
+            data = _post("/api/v1/pipeline/stop", {"engagement_id": eid}, timeout=15)
+        else:
+            data = _post("/api/v1/pipeline/start", {"engagement_id": eid, "run_id": SESSION_RUN_ID}, timeout=30)
+        return "\n\n".join([
+            f"### OPERATOR MIRROR — PHASE PIPELINE ({act})",
+            _session_header(eid, tgt),
+            _block("Pipeline", data),
+        ])
+
+    return _safe(_run)
+
+
+@mcp.tool()
+def platform_spawn_agent(
+    role: str = "recon", task: str = "", scope: str = "", engagement_id: str = ""
+) -> str:
+    """
+    Spawn ONE parallel sub-agent as a background job — for an independent slice of
+    work you want done concurrently while you keep going.
+
+    Each sub-agent is a scoped LLM loop bound to THIS engagement, so its findings
+    land in shared memory and come back through platform_findings — no return
+    channel needed. Use it to fan out: one agent per sister domain in recon, per
+    host in vuln, per candidate in exploit.
+
+    role:  recon | network | vuln | web | exploit | osint | custom
+    task:  what this sub-agent should accomplish (free-form)
+    scope: optional asset/host/domain to focus on
+
+    Returns a job_id — do NOT wait on it. platform_job_poll for progress,
+    platform_findings to build on its results. Bounded by agent concurrency +
+    spawn-budget caps; if it says the cap is hit, let one finish first.
+    """
+    def _run() -> str:
+        eid, tgt = _resolve_engagement(engagement_id)
+        data = _post(
+            "/api/v1/pipeline/spawn-agent",
+            {"engagement_id": eid, "run_id": SESSION_RUN_ID, "role": role, "task": task, "scope": scope},
+            timeout=30,
+        )
+        return "\n\n".join([
+            f"### OPERATOR MIRROR — SPAWN {role.upper()} AGENT",
+            _session_header(eid, tgt),
+            f"**job_id:** `{data.get('job_id')}` | **status:** {data.get('status')} | role: {data.get('role')}",
+            data.get("hint") or "",
+            f"Keep working. platform_job_poll(job_id='{data.get('job_id')}') for progress; "
+            "platform_findings for what it discovers.",
+        ])
+
+    return _safe(_run)
+
+
+@mcp.tool()
 def platform_delete_engagement(target: str = "", engagement_id: str = "") -> str:
     """
     Delete all engagements and stored memory/findings/graph for a target domain or specific engagement_id.

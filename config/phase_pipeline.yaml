@@ -1,0 +1,35 @@
+# Multi-agent phase pipeline configuration.
+#
+# The phase supervisor is a deterministic conductor: it spawns a phase agent,
+# and as soon as an upstream phase has produced ENOUGH data (not "finished"), it
+# spawns the downstream phase agent CONCURRENTLY — recon, vuln and exploit can
+# all be running at once. These thresholds decide "enough". They are deliberately
+# LOW so downstream work starts early; correctness comes from the agents + the
+# shared blackboard, not from waiting.
+#
+# requires_any: a downstream phase triggers when ANY listed signal meets its
+# threshold. Signals are counts of findings by type on the engagement blackboard.
+
+triggers:
+  vuln:            # start a vuln agent once recon has surfaced attack surface
+    requires_any:
+      live_hosts: 1
+      services: 1
+      technologies: 1
+      urls: 5
+  exploit:         # start an exploit agent once vuln has found something to chain
+    requires_any:
+      vulnerabilities: 1
+      credentials: 1
+      secrets: 1
+
+# Feedback loop: when a finding of one of these types appears during a LATER
+# phase (e.g. vuln discovers a new host), recon is re-opened for it.
+recon_reopen_on:
+  - subdomain
+  - host
+
+# Lifecycle / safety
+max_agents_per_phase: 3            # concurrent agents the supervisor runs per phase
+pipeline_time_budget_seconds: 3600 # hard wall for a whole pipeline run
+supervisor_poll_seconds: 8         # how often the conductor re-evaluates triggers

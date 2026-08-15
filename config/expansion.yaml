@@ -1,0 +1,34 @@
+# Deterministic breadth-expansion engine — frontier tool map.
+#
+# The engine does a BFS over the asset graph: for each unexpanded frontier node
+# it runs the tools listed for that frontier, ingests findings, and repeats to
+# fixpoint. Making the tool selection DATA-DRIVEN (this file) instead of a
+# hardcoded list is what generalizes it beyond the original subdomain-only shape:
+# add/remove a tool here and the engine adapts, and each tool is run only if it
+# is actually installed in the active environment (Kali container or host).
+#
+# Each entry: {tool: <catalog name>, param: <the param that takes the asset label>}
+
+domain_discovery:        # passive-first discovery on the domain/subdomain frontier
+  - {tool: subfinder_scan, param: domain}
+  - {tool: crt_sh_query, param: domain}
+  - {tool: gau_discovery, param: domain}
+  - {tool: waybackurls_discovery, param: domain}
+  - {tool: domain_hunter, param: domain}
+  - {tool: tlsx_inspect, param: target}
+
+host_expansion:          # live-host probing on the subdomain / origin-IP frontier
+  - {tool: httpx_probe, param: target}
+  - {tool: naabu_port_scan, param: target}
+  - {tool: tech_stack_analyze, param: target}
+  - {tool: wafw00f_scan, param: target}
+  - {tool: cdn_origin_probe, param: domain}
+
+ptr_expansion:           # reverse DNS on the IP frontier (co-located hosts)
+  - {tool: dnsx_reverse, param: target}
+
+# Per-pass frontier batch caps — bound one pass so a large surface spreads across
+# passes instead of one giant gather.
+batch:
+  domain: 25
+  live_host: 15

@@ -1,6 +1,6 @@
 # MCP Servers
 
-Modular capability-based MCP servers harvested from [HexStrike](https://github.com/0x4m4/hexstrike-ai) and adapted for this platform.
+Modular capability-based MCP servers, some harvested from [HexStrike](https://github.com/0x4m4/hexstrike-ai) and some our original, and adapted for this platform.
 
 Each category is a standalone **FastMCP** server. Tools combine HexStrike Flask command-builders with typed `run()` signatures, executed through `_core` (no HTTP hop, no `shell=True`).
 
