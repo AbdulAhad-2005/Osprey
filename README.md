@@ -111,6 +111,13 @@ Run it (connects to `http://localhost:9000`; override with `API_BASE_URL`):
 python -m cli                   # or the `pentest` console script
 ```
 
+> **Engine mode (`/scan <target> --engine`) needs a working tool backend.** It runs
+> scanners with no LLM, so the Kali tools container must be up:
+> `docker compose --profile kali up -d` (or point `KALI_CONTAINER` at your own tools
+> container / set it empty for native host tools). If no backend is available the
+> engine now fails fast with one clear message instead of reporting every tool as
+> failed.
+
 ### CLI commands
 
 | Command                       | Description                                       |

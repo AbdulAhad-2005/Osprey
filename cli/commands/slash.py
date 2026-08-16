@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from typing import TYPE_CHECKING
 
 import httpx
@@ -238,6 +239,39 @@ def handle_scan(args: list[str], client: "APIClient") -> None:
         print_error(final["error"])
 
 
+def _drain_stop_key() -> bool:
+    """Non-blocking check for a keypress, used as a 'stop' signal during a scan.
+
+    Returns True if the user pressed a key since the last check (any key on
+    Windows via msvcrt; a line on POSIX via select), draining the input buffer so
+    a single press registers once. Never blocks and never raises — if stdin isn't
+    a normal console (piped/redirected), it simply reports 'no key'. This is the
+    interrupt-free alternative to Ctrl+C, which on Windows tears down the whole
+    CLI process instead of just the scan.
+    """
+    try:
+        import msvcrt  # Windows
+    except ImportError:
+        import select
+        try:
+            dr, _, _ = select.select([sys.stdin], [], [], 0)
+        except (OSError, ValueError):
+            return False
+        if dr:
+            try:
+                sys.stdin.readline()
+            except Exception:
+                pass
+            return True
+        return False
+    else:
+        pressed = False
+        while msvcrt.kbhit():
+            msvcrt.getwch()  # drain every buffered key so one press == one stop
+            pressed = True
+        return pressed
+
+
 def _run_engine_scan(client: "APIClient", target: str, *, include_low_confidence: bool = False) -> None:
     """Engine mode: start the expansion job and poll to completion — a plain
     REST call the CLI drives directly, no LLM in the loop. The same backend
@@ -247,6 +281,15 @@ def _run_engine_scan(client: "APIClient", target: str, *, include_low_confidence
     if not engagement_id:
         print_error("No engagement bound.")
         return
+    # Preflight: catch a dead execution backend (e.g. the Kali tools container
+    # not started) up front, so the user gets one clear fix instead of watching
+    # every tool in every stage report "(failed)".
+    status = client.execution_status()
+    if not status.get("ready", True):
+        print_error(status.get("message", "Tool execution backend is not ready."))
+        return
+    if status.get("message"):
+        print_info(status["message"])
     try:
         job = client.start_expansion_job(
             engagement_id, max_passes=10, include_low_confidence=include_low_confidence,
@@ -259,40 +302,67 @@ def _run_engine_scan(client: "APIClient", target: str, *, include_low_confidence
     print_info(f"Engine started (job {job_id}) — running the full recon/network pipeline on {target}.")
     print_info("Sister domains -> subdomains (tools + wordlist brute force) -> IPs -> CDN/origin "
                 "detection -> subnet pivot -> ports -> services -> vuln scan -> OSINT, to a fixpoint.")
+    print_info("Press any key to stop early — findings gathered so far are kept.")
 
     status = job.get("status", "")
     last_progress = ""
     printed_results = 0
-    with console.status("[bold cyan]Engine starting…[/]", spinner="dots") as spinner:
-        while status in ("queued", "running"):
-            try:
-                # Short wait_seconds: the engine now reports live per-tool
-                # progress (which tool is running right now, not just
-                # per-pass summaries), so poll often enough for the spinner
-                # text to actually track it. Long-polling still returns early
-                # on any change, so this isn't hammering the server harder —
-                # just checking in more often for a livelier display.
-                job = client.poll_job(job_id, wait_seconds=3)
-            except Exception as exc:
-                print_error(_api_error_text(exc))
-                return
-            status = job.get("status", "")
-            # results_log is append-only — print every entry we haven't shown
-            # yet. Unlike the ephemeral `progress` string (which the next
-            # in-flight update can overwrite before the next poll ever sees
-            # it), nothing here can be missed regardless of poll timing.
-            results_log = job.get("results_log") or []
-            for line in results_log[printed_results:]:
-                console.print(f"  [green]{line}[/]")
-            printed_results = len(results_log)
+    stopped_by_user = False
+    _drain_stop_key()  # discard the Enter that launched this command
+    try:
+        with console.status("[bold cyan]Engine starting… (press any key to stop)[/]", spinner="dots") as spinner:
+            while status in ("queued", "running"):
+                try:
+                    # Short wait_seconds keeps the live per-tool progress ticker
+                    # responsive; long-polling still returns early on any change,
+                    # so this isn't hammering the server — and it bounds how long
+                    # we go between checking for a stop keypress.
+                    job = client.poll_job(job_id, wait_seconds=3)
+                except Exception as exc:
+                    print_error(_api_error_text(exc))
+                    return
+                status = job.get("status", "")
+                # results_log is append-only — print every entry we haven't shown
+                # yet. Unlike the ephemeral `progress` string (which the next
+                # in-flight update can overwrite before the next poll ever sees
+                # it), nothing here can be missed regardless of poll timing.
+                results_log = job.get("results_log") or []
+                for line in results_log[printed_results:]:
+                    console.print(f"  [green]{line}[/]")
+                printed_results = len(results_log)
 
-            progress = job.get("progress", "")
-            if progress and progress != last_progress:
-                spinner.update(f"[bold cyan]{progress}[/]")
-                last_progress = progress
+                progress = job.get("progress", "")
+                if progress and progress != last_progress:
+                    spinner.update(f"[bold cyan]{progress} (press any key to stop)[/]")
+                    last_progress = progress
+
+                # Interrupt-free stop: a keypress halts the scan without the
+                # SIGINT that Ctrl+C raises (which tears down the whole CLI).
+                if _drain_stop_key():
+                    stopped_by_user = True
+                    break
+    except KeyboardInterrupt:
+        # Fallback for terminals where Ctrl+C is still delivered here.
+        stopped_by_user = True
+
+    if stopped_by_user:
+        console.print()
+        print_info("Stopping the engine — findings gathered so far are saved…")
+        try:
+            client.cancel_job(job_id)
+        except Exception as exc:
+            print_error(_api_error_text(exc))
+        print_success("Engine stopped. Partial findings are saved.")
+        print_info("Review them with /findings, or /report to export what was found so far.")
+        return
 
     if status == "failed":
         print_error(f"Engine run failed: {job.get('error', 'unknown error')}")
+        return
+
+    if status == "cancelled":
+        print_success("Engine stopped. Partial findings are saved.")
+        print_info("Review them with /findings, or /report to export what was found so far.")
         return
 
     try:

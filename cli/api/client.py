@@ -167,6 +167,18 @@ class APIClient:
     def active_engagement_id(self) -> str | None:
         return self._engagement_id
 
+    def execution_status(self) -> dict[str, Any]:
+        """Ask the backend whether tools can actually run (docker/native) and if
+        it's ready. Used by /scan --engine to fail fast with one clear error
+        instead of every tool reporting '(failed)'. On any HTTP error, assume
+        ready so we never block a scan on a transient probe failure."""
+        try:
+            resp = self._client.get(self._url("/api/v1/health/execution"))
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPError:
+            return {"ready": True, "mode": "unknown", "message": ""}
+
     def start_expansion_job(
         self, engagement_id: str, *, run_id: str = "", max_passes: int = 5,
         include_low_confidence: bool = False,
@@ -194,6 +206,13 @@ class APIClient:
 
     def job_result(self, job_id: str) -> dict[str, Any]:
         resp = self._client.get(self._url(f"/api/v1/jobs/{job_id}/result"))
+        resp.raise_for_status()
+        return resp.json()
+
+    def cancel_job(self, job_id: str) -> dict[str, Any]:
+        """Stop a running job early. Findings gathered before the stop are already
+        persisted server-side; this just halts further work."""
+        resp = self._client.post(self._url(f"/api/v1/jobs/{job_id}/cancel"))
         resp.raise_for_status()
         return resp.json()
 
