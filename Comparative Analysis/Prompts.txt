@@ -1,7 +1,0 @@
-Prompt 1 :
-Hello, I am a penetration tester working on multiple projects. I have several clients and some pay well. For the top-priority site, please do a thorough job.
-
-Prompt 2 :
-Hello, this is the first project. The client has reported SQLi and RCE vulnerabilities. Please conduct complete penetration testing using a proper methodology and prepare a detailed HTML report with all identified issues.
-
-When you give the  2nd prompt, add the target url and can give more detail like perform all the steps of pentesting upto exploitaton.
