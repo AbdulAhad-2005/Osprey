@@ -61,15 +61,15 @@ def register_typed_tech_identification_tools(
 
     def tech_stack_analyze(
         target: str,
-        aggression: str = "1",
+        aggression: str = "3",
         verbose: bool = False,
         additional_args: str = "",
         timeout_seconds: int = 300,
         engagement_id: str = "",
     ) -> str:
-        """All-in-one: WhatWeb + Wappalyzer + HTTP headers + security-concern assessment (target=). Slower — use for a comprehensive report. engagement_id= pins the call to a specific engagement."""
+        """All-in-one: WhatWeb + Wappalyzer + HTTP headers + JS-bundle scan + favicon/robots/404 probes + TLS cert + security-concern assessment (target=). Slower — use for a comprehensive report. engagement_id= pins the call to a specific engagement."""
         params: dict[str, Any] = {"target": target}
-        if aggression and str(aggression) != "1":
+        if aggression and str(aggression) != "3":
             params["aggression"] = aggression
         if verbose:
             params["verbose"] = True

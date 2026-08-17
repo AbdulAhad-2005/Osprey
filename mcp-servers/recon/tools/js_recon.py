@@ -24,13 +24,16 @@ from _core.result import ToolResult
 TOOL_NAME = "js_recon"
 CATEGORY = "recon"
 
-# Fixed container path (mirrors the shodan/domain-hunter pattern).
-from _core.paths import container_or_local
+# Runtime-resolved in the shell (inside the Kali container where the filesystem
+# is real): commands are built in the backend but executed via docker exec.
+_CLI_CONTAINER = "/home/mcpuser/mcp-servers/recon/tools/_js_recon_cli.py"
+_CLI_FALLBACK = str(Path(__file__).resolve().with_name("_js_recon_cli.py"))
 
-_CLI = container_or_local(
-    "/home/mcpuser/mcp-servers/recon/tools/_js_recon_cli.py",
-    str(Path(__file__).resolve().with_name("_js_recon_cli.py")),
-)
+def _cli_expr() -> str:
+    return (
+        f"$( [ -f {_CLI_CONTAINER} ] && echo {_CLI_CONTAINER} "
+        f"|| echo {_CLI_FALLBACK} )"
+    )
 
 
 def build_command(**params: Any) -> str:
@@ -42,7 +45,7 @@ def build_command(**params: Any) -> str:
     additional_args = str(params.get("additional_args") or "").strip()
 
     parts = [
-        "python3", shlex.quote(_CLI),
+        "python3", _cli_expr(),
         "--target", shlex.quote(target),
         "--max-files", str(max_files),
         "--timeout", str(timeout),

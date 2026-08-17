@@ -17,5 +17,16 @@ import os
 
 
 def container_or_local(container_path: str, local_path: str) -> str:
-    """Return *container_path* if it exists on disk, else *local_path*."""
-    return container_path if os.path.exists(container_path) else local_path
+    """Return *container_path* when the platform executes commands inside the Kali
+    container (KALI_CONTAINER set), else *local_path*.
+
+    The existence check is NOT done here: command strings are built in the backend
+    process but executed via ``docker exec`` inside the Kali container, and the two
+    environments see different filesystems. In Docker mode the fixed container path
+    is the only one that exists where the command actually runs; in native/local mode
+    (no KALI_CONTAINER) the repo-relative path is correct because the tool runs as a
+    host subprocess with the backend's filesystem view.
+    """
+    if os.getenv("KALI_CONTAINER"):
+        return container_path
+    return local_path

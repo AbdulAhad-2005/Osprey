@@ -31,12 +31,18 @@ TOOL_NAME = "feroxbuster_scan"
 CATEGORY = "web"
 
 # Bundled wordlist path inside the Kali container (mcp-servers is mounted here).
-from _core.paths import container_or_local
-
-_DEFAULT_WORDLIST = container_or_local(
-    "/home/mcpuser/mcp-servers/recon/tools/_wordlists/common-web.txt",
-    str(Path(__file__).resolve().parents[2] / "recon" / "tools" / "_wordlists" / "common-web.txt"),
+# Resolved at runtime in the shell (inside the Kali container): commands are
+# built in the backend but executed via docker exec.
+_WL_CONTAINER = "/home/mcpuser/mcp-servers/recon/tools/_wordlists/common-web.txt"
+_WL_FALLBACK = str(
+    Path(__file__).resolve().parents[2] / "recon" / "tools" / "_wordlists" / "common-web.txt"
 )
+
+def _wordlist_expr() -> str:
+    return (
+        f"$( [ -f {_WL_CONTAINER} ] && echo {_WL_CONTAINER} "
+        f"|| echo {_WL_FALLBACK} )"
+    )
 
 def build_command(**params: Any) -> str:
     """Build a feroxbuster content-discovery command.
@@ -51,7 +57,7 @@ def build_command(**params: Any) -> str:
     url = str(params.get("url") or params.get("target") or "").strip()
     # Ship our own wordlist (the Kali image has none at /usr/share/wordlists);
     # the mcp-servers tree is mounted into the container at this path.
-    wordlist = params.get("wordlist") or _DEFAULT_WORDLIST
+    wordlist = params.get("wordlist") or _wordlist_expr()
     threads = int(params.get("threads") or 40)
     depth = int(params.get("depth") or 1)
     additional_args = str(params.get("additional_args") or "").strip()
@@ -78,7 +84,7 @@ def build_command(**params: Any) -> str:
 def parse(result: ToolResult) -> dict[str, Any]:
     return default_parse(result)
 
-def run(url: str = '', wordlist: str = '/usr/share/wordlists/dirb/common.txt', threads: int = 10, additional_args: str = '', use_recovery: bool = True, use_cache: bool = True, exec_timeout: int = 300) -> dict[str, Any]:
+def run(url: str = '', wordlist: str = '', threads: int = 10, additional_args: str = '', use_recovery: bool = True, use_cache: bool = True, exec_timeout: int = 300) -> dict[str, Any]:
     params = {"url": url, "wordlist": wordlist, "threads": threads, "additional_args": additional_args}
     command = build_command(**params)
     return run_tool(

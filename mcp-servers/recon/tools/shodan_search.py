@@ -30,12 +30,16 @@ from _core.result import ToolResult
 TOOL_NAME = "shodan_search"
 CATEGORY = "recon"
 
-from _core.paths import container_or_local
+# Runtime-resolved in the shell (inside the Kali container where the filesystem
+# is real): commands are built in the backend but executed via docker exec.
+_CLI_CONTAINER = "/home/mcpuser/mcp-servers/recon/tools/_shodan_cli.py"
+_CLI_FALLBACK = str(Path(__file__).resolve().with_name("_shodan_cli.py"))
 
-_CLI = container_or_local(
-    "/home/mcpuser/mcp-servers/recon/tools/_shodan_cli.py",
-    str(Path(__file__).resolve().with_name("_shodan_cli.py")),
-)
+def _cli_expr() -> str:
+    return (
+        f"$( [ -f {_CLI_CONTAINER} ] && echo {_CLI_CONTAINER} "
+        f"|| echo {_CLI_FALLBACK} )"
+    )
 _IP_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
 
 
@@ -57,7 +61,7 @@ def build_command(**params: Any) -> str:
         raise ValueError("shodan_search requires query= or domain=/target=")
 
     return (
-        f"python3 {shlex.quote(_CLI)} search "
+        f"python3 {_cli_expr()} search "
         f"{shlex.quote(query)} {shlex.quote(str(limit))}"
     )
 

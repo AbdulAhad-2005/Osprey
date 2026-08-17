@@ -666,12 +666,16 @@ tools:
     freeform_args_field: additional_args
     default_for_task: false
     llm_hints: |
-      All-in-one analysis: runs WhatWeb + Wappalyzer + HTTP header analysis. Produces unified
-      technology stack with security concerns and follow-up recommendations. Slower than
-      individual tools. Use when you want a comprehensive report in one call.
+      All-in-one analysis: WhatWeb (aggression 3) + Wappalyzer + HTTP header-pattern rules +
+      JS bundle scan (framework markers in fetched scripts, hashed-bundle SPA heuristic) +
+      robots.txt/sitemap.xml/404-body probes + <meta generator> + favicon hash + TLS cert
+      metadata. Produces unified technology stack with per-method confidence, security concerns
+      and follow-up recommendations. Slower than individual tools. Use when you want a
+      comprehensive report in one call. Extra recon data (robots disallows, favicon md5, TLS
+      issuer, JS scripts) comes back under `recon_details`.
     parameters:
       target: { type: string, required: true, description: "Target URL or domain" }
-      aggression: { type: string, default: "1" }
+      aggression: { type: string, default: "3" }
       verbose: { type: bool, default: false }
     example_calls:
       - { target: "https://example.com" }
