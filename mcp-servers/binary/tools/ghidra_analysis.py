@@ -40,6 +40,11 @@ def build_command(**params: Any) -> str:
     analysis_timeout = params.get("analysis_timeout", 300)
     output_format = params.get("output_format", "xml")
     additional_args = params.get("additional_args", "")
+    project_dir = params.get("project_dir", "")
+    if not project_dir and binary:
+        project_dir = str(Path(binary).resolve().parent)
+    if not project_dir:
+        project_dir = "/tmp/ghidra_projects"
     # Base Ghidra command for headless analysis
     command = f"analyzeHeadless {project_dir} {project_name} -import {binary} -deleteProject"
     if script_file:
