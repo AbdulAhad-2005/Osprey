@@ -525,6 +525,12 @@ def handle_clear(args: list[str], client: "APIClient") -> None:
     os.system("cls" if os.name == "nt" else "clear")
 
 
+def handle_exit(args: list[str], client: "APIClient") -> None:
+    """Placeholder so /exit shows in autocomplete. The actual exit is handled in
+    execute_command (which intercepts /exit and returns False before dispatch)."""
+    return None
+
+
 def handle_reconnect(args: list[str], client: "APIClient") -> None:
     """Re-read .env and reconnect to a (possibly changed) backend URL."""
     import os
@@ -553,6 +559,7 @@ SLASH_COMMANDS: dict[str, tuple[str, "callable"]] = {
     "/reconnect": ("Re-read .env and reconnect to backend", handle_reconnect),
     "/reset": ("Clear agent conversation", handle_reset),
     "/clear": ("Clear screen", handle_clear),
+    "/exit": ("Exit the CLI", handle_exit),
 }
 
 

@@ -1513,6 +1513,46 @@ def platform_memory_search(query: str, limit: int = 40) -> str:
 
 
 @mcp.tool()
+def platform_related(limit: int = 20) -> str:
+    """
+    Read-only cross-finding correlation — candidate relationships from memory.
+
+    Returns HYPOTHESES the platform noticed (hosts on one IP with matching page
+    titles, hosts sharing a Set-Cookie domain, hosts with heavy URL fan-out) so
+    you don't have to eyeball the whole findings list to spot them. Nothing here
+    is written to the graph. Commit the ones you judge real with
+    platform_graph_link / platform_tag_asset; ignore the rest. Naturally useful
+    right after a batch of findings lands, or before deciding where to dig next.
+    """
+
+    def _run() -> str:
+        _require_bound_target()
+        data = _post("/api/v1/hybrid/correlate", dict(_memory_params()), timeout=45)
+        cands = data.get("candidates") or []
+        if not cands:
+            return f"{_session_header()}\n\nNo cross-finding correlations right now."
+        lines: list[str] = []
+        for c in cands[: max(1, min(int(limit), 60))]:
+            if c.get("kind") == "link":
+                lines.append(
+                    f"LINK  {c.get('source')} --{c.get('relation')}--> {c.get('target')}  "
+                    f"[{c.get('evidence_grade')}, score={c.get('score')}]  {c.get('evidence')}"
+                )
+            else:
+                lines.append(
+                    f"TAG   {c.get('asset')}  role={c.get('role')} boost={c.get('boost')}  "
+                    f"{c.get('evidence')}"
+                )
+        return (
+            f"{_session_header()}\n\n"
+            + "\n".join(lines)
+            + f"\n\n_{data.get('note') or ''}_"
+        )
+
+    return _safe(_run)
+
+
+@mcp.tool()
 def platform_evidence_chain(finding_id: str, depth: int = 4) -> str:
     """
     Walk derived_from parents and children for one finding id.

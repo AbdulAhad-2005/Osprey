@@ -1,6 +1,17 @@
 # Recon + network escalation matrix (Dark-Moon WAF pivot + HexStrike fallback chains).
 # Planner consults this when a tool returns blocked / timeout / thin results.
 
+# When a tool fails cleanly (error/empty/timeout — NOT a WAF/rate-limit/ban), the
+# execution kernel auto-runs the top escalation for it instead of waiting for the
+# LLM to notice and pick one by hand. Deliberately conservative: one hop only, it
+# is skipped on any back-off signal, and it honours the rate governor's cooldown
+# so it can never turn a failure into a scan flood. Set enabled:false to make
+# fallbacks advisory-only again (the suggestions still appear in the response).
+auto_fallback:
+  enabled: true
+  max_depth: 1
+  skip_signals: [waf_block, rate_limit, "403", cloudflare, access_denied, target_unreachable]
+
 techniques:
   subdomain_enumeration:
     thin_results_signals: [few_results, empty_stdout, count_lt_5]

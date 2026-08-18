@@ -2,6 +2,24 @@
 
 When a tool fails, times out, returns thin results, or hits a WAF — **do not stop**. Consult escalations before marking a branch exhausted.
 
+## The platform already tried the first fallback
+On a **clean** failure (error / empty / timeout — *not* a WAF/rate-limit/ban) the
+kernel auto-runs the top fallback for you (e.g. `naabu` empty → it runs
+`rustscan` automatically) and returns **that tool's** result. When a response
+carries an `auto_fallback` note in `hybrid`, the platform already made one hop —
+read the result you got, don't re-run the same first alternative by hand. Your
+job starts at the *next* decision: is the fallback's output enough, or does the
+branch need a deeper/different escalation from the patterns below?
+
+Two cases are deliberately **not** auto-handled, because they need your judgement,
+not another tool fired at the same edge:
+- **WAF / rate-limit / ban** — the platform backs off (paces + cools the target
+  down) instead of escalating. If the target is in cooldown, scans auto-drop to a
+  **stealth** intensity profile; pushing harder just deepens the block. Pivot
+  (path/header bypass, sibling host, origin IP), don't hammer.
+- **Anything past the first hop** — the auto-fallback is one hop only. Chaining
+  further (rustscan → masscan → nmap) is your call.
+
 ## Signals
 
 | Signal | Meaning |

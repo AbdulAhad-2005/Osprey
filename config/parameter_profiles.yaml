@@ -1,0 +1,27 @@
+# Per-tool intensity profiles (stealth / normal / aggressive).
+#
+# These are INERT in normal operation — "normal" adds nothing, so the tool's
+# usual command_builder defaults stand untouched. Flags are only injected when:
+#   * the rate governor has flagged the target (WAF / ban / cooldown) → the
+#     kernel auto-selects STEALTH so a sensitive edge is probed gently instead
+#     of at full intensity (call-pacing alone doesn't lower per-scan intensity),
+#   * or the LLM explicitly passes params.profile = stealth | aggressive.
+#
+# Any flag the LLM passes itself still wins — profile flags are applied first, so
+# a later explicit -T4 / -rate N overrides the profile on the tools where CLI
+# order decides. Only tools with a real intensity knob need an entry here.
+
+default: normal
+
+profiles:
+  nmap_syn_scan:      {stealth: "-T2",  aggressive: "-T4"}
+  nmap_service_scan:  {stealth: "-T2",  aggressive: "-T4"}
+  nmap_custom_scan:   {stealth: "-T2",  aggressive: "-T4"}
+  naabu_port_scan:    {stealth: "-rate 200",  aggressive: "-rate 2000"}
+  masscan_high_speed: {stealth: "--rate 200", aggressive: "--rate 5000"}
+  rustscan_fast_scan: {stealth: "-b 500",      aggressive: "-b 4500"}
+  ffuf_scan:          {stealth: "-rate 20 -t 5",     aggressive: "-t 60"}
+  gobuster_scan:      {stealth: "--delay 100ms -t 10", aggressive: "-t 60"}
+  feroxbuster_scan:   {stealth: "--rate-limit 20 -t 5", aggressive: "-t 100"}
+  dirsearch_scan:     {stealth: "-t 5",  aggressive: "-t 50"}
+  dirb_scan:          {stealth: "-z 100", aggressive: ""}
