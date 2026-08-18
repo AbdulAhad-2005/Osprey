@@ -223,7 +223,7 @@ regression from normal operation.
 |---|---|---|
 | `engagement_graph.py` | Postgres-backed node/edge graph (subdomains, hosts, IPs, ports, services) | Nodes/edges upsert idempotently — re-running the same tool doesn't duplicate the graph |
 | `hypothesis_engine.py` | Universal "thinking cards" — vendor-agnostic SIGNAL→CONFIRM→GRADE prompts from regex signal classes in `config/thinking_model.yaml` | No per-vendor markdown files; cards say "use your knowledge," never a hardcoded conclusion |
-| `finding_correlator.py` | Cross-finding hypothesis edges (same-IP+title, shared cookie domain, URL fanout) from `config/correlation_rules.yaml` | Every link/tag it creates is `evidence_grade=inferred`, never asserted as fact |
+| `finding_correlator.py` | Read-only cross-finding *suggestions* (same-IP+title, shared cookie domain, URL fanout) from `config/correlation_rules.yaml`, surfaced on demand via `platform_related` / `POST /hybrid/correlate` | Never writes to the graph — it only returns candidates; the LLM commits the real ones via `platform_graph_link` / `platform_tag_asset`. Same-IP guarded against shared-infra (skips IPs with many hosts) |
 | `finalize_rules.py` + `finalize_readiness.py` | The "don't claim COMPLETE from chat memory" referee | Blocks CRITICAL/HIGH claims that rest only on hypothesis-only paths, per `config/finalize_rules.yaml` thresholds |
 | `crown_jewels.py` | Scores assets by role-weight regex + tool-source count + graph-edge count | Score is a priority ordering hint, never gates execution |
 | `coverage_engine.py` / `tool_coverage_store.py` | Tracks which tools ran against which assets | Used only to generate "you haven't tried X yet" cards — advisory |
@@ -313,7 +313,7 @@ it in code (`hypothesis_engine.py`, `finding_correlator.py`, `ingest_promoter.py
 | File | Governs | Loaded by |
 |---|---|---|
 | `ingest_rules.yaml` | stdout → findings regex rules (subdomain, port, tech fingerprint, SPA demotion, etc.) | `ingest_promoter.py` |
-| `correlation_rules.yaml` | Cross-finding hypothesis edges/tags | `finding_correlator.py` |
+| `correlation_rules.yaml` | Read-only cross-finding correlation *suggestions* (on-demand via `platform_related`) | `finding_correlator.py` |
 | `thinking_model.yaml` | Universal signal-class think/confirm/grade cards + crown-jewel role weights | `hypothesis_engine.py` |
 | `escalation_matrix.yaml` | Tool-failure fallback chains (beyond the hardcoded `_STATIC_FALLBACKS`) | `escalation_registry.py` |
 | `tech_dispatch.yaml` | Signal → suggested-next-tool dispatch | `tech_dispatch.py` |

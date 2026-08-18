@@ -1,9 +1,16 @@
 # Universal stdout → finding promotion. Applies to EVERY tool/script/shell.
 # New tools inherit these rules automatically — add patterns here, don't fork code.
 # Config owns patterns. The LLM owns interpretation, relations, and next probes.
+#
+# applies_when: no_parser  → this rule only fires for tools that have NO dedicated
+# stdout parser (platform_shell/platform_script/nikto/…). When the source tool
+# has a registered parser, that parser is authoritative and this loose rule is
+# skipped to avoid duplicate/mis-paired findings. Rules with no applies_when key
+# always fire. This is the single source of truth for suppression — no Python set.
 
 rules:
   - id: vendor_fingerprint_header
+    applies_when: no_parser
     pattern: '(?i)(?:^|\n)((?:X-[A-Z0-9-]{3,40}|Server|X-Powered-By):\s*[^\n]{3,120})'
     finding_type: technology
     evidence_grade: observed
@@ -20,6 +27,7 @@ rules:
     tags: [auto_ingest, cors]
 
   - id: open_port_line
+    applies_when: no_parser
     pattern: '(?i)(\d{1,5})/(tcp|udp)\s+open(?:\s+(\S+))?'
     finding_type: port
     evidence_grade: inferred
@@ -46,6 +54,7 @@ rules:
     tags: [auto_ingest, api_json]
 
   - id: console_or_app_path
+    applies_when: no_parser
     pattern: '(?i)(/(?:console|manager|login|admin|owa|ecp|OA_HTML|AppsLocalLogin|frmservlet)[^\s"'']{0,60})'
     finding_type: url
     evidence_grade: observed
@@ -56,6 +65,7 @@ rules:
   # Passive OSINT: any tool that surfaces an email (whois registrant, TLS cert
   # contact, theHarvester, crawl) promotes it to an EMAIL entity in the graph.
   - id: osint_email_address
+    applies_when: no_parser
     pattern: '(?i)([a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,})'
     finding_type: email
     evidence_grade: inferred
@@ -64,6 +74,7 @@ rules:
     tags: [auto_ingest, osint, email]
 
   - id: subdomain_line
+    applies_when: no_parser
     pattern: '(?i)^(?:\*\.)?([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)\s*$'
     finding_type: subdomain
     evidence_grade: inferred
@@ -75,6 +86,7 @@ rules:
   # --- Phase 3 expansions (YAML only — no AGENTS bullets per pattern) ---
 
   - id: http_status_title
+    applies_when: no_parser
     pattern: '(?i)(?:^|\n)(?:https?://\S+\s+)?\[?(\d{3})\]?\s+[^\n]{0,40}?\[([^\]]{2,80})\]'
     finding_type: observation
     evidence_grade: observed
@@ -83,6 +95,7 @@ rules:
     tags: [auto_ingest, http_title]
 
   - id: httpx_status_line
+    applies_when: no_parser
     pattern: '(?i)(https?://[^\s]+)\s+\[(\d{3})\](?:\s+\[([^\]]{1,80})\])?'
     finding_type: url
     evidence_grade: observed
@@ -115,6 +128,7 @@ rules:
     tags: [auto_ingest, redirect]
 
   - id: redirect_chain_marker
+    applies_when: no_parser
     pattern: '(?i)(?:redirect(?:ed|s|ion)?\s*(?:to|→|->|:)\s*|final[_ -]?url[=:]\s*)(https?://[^\s\n]{5,200})'
     finding_type: url
     evidence_grade: inferred
@@ -123,6 +137,7 @@ rules:
     tags: [auto_ingest, redirect]
 
   - id: tls_san_or_cn
+    applies_when: no_parser
     pattern: '(?i)(?:DNS:|subject(?:AltName)?[=:]|CN\s*=\s*|commonName\s*=\s*)([a-z0-9*.-]{3,120})'
     finding_type: observation
     evidence_grade: inferred
@@ -131,6 +146,7 @@ rules:
     tags: [auto_ingest, tls, cert_name]
 
   - id: certificate_issuer
+    applies_when: no_parser
     pattern: '(?i)(?:issuer[=:]\s*|i:\s*)([^\n]{5,160})'
     finding_type: observation
     evidence_grade: inferred
@@ -139,6 +155,7 @@ rules:
     tags: [auto_ingest, tls, cert_issuer]
 
   - id: version_banner
+    applies_when: no_parser
     pattern: '(?i)((?:SSH|OpenSSH|FTP|SMTP|MySQL|PostgreSQL|Redis|MongoDB|Apache|nginx|IIS)[^\n]{0,80}(?:version|/|\s)\s*[\w.()-]{2,40})'
     finding_type: technology
     evidence_grade: observed
@@ -147,6 +164,7 @@ rules:
     tags: [auto_ingest, banner, version]
 
   - id: nmap_service_version
+    applies_when: no_parser
     # [ \t] (not \s) between every token so the 4th group can never cross a
     # newline — \s matches \n, and when nmap has no inline version (a plain
     # "80/tcp open  http" line, common whenever -sV didn't fingerprint it)
@@ -170,6 +188,7 @@ rules:
     tags: [auto_ingest, api_json, content_type]
 
   - id: js_route_hint
+    applies_when: no_parser
     pattern: '(?i)["''`](/(?:api|rest|v[0-9]+|graphql|backend)[/a-z0-9_\-{}:.]{2,80})["''`]'
     finding_type: url
     evidence_grade: inferred
@@ -180,6 +199,7 @@ rules:
   # --- Technology Identification (WhatWeb/Wappalyzer/tech_stack) ---
 
   - id: whatweb_technology
+    applies_when: no_parser
     pattern: '(?i)"technology"\s*:\s*"([^"]+)".*?"version"\s*:\s*"([^"]*)"'
     finding_type: technology
     evidence_grade: observed
@@ -189,6 +209,7 @@ rules:
     multiline: true
 
   - id: wappalyzer_category
+    applies_when: no_parser
     pattern: '(?i)"categories"\s*:\s*\[([^\]]{3,120})\]'
     finding_type: technology
     evidence_grade: inferred
@@ -198,6 +219,7 @@ rules:
     multiline: true
 
   - id: whatweb_plugin_name
+    applies_when: no_parser
     pattern: '(?i)"plugins"\s*:\s*\{[^}]*"([A-Z][a-zA-Z0-9]+)"\s*:\s*\{'
     finding_type: technology
     evidence_grade: observed
@@ -207,6 +229,7 @@ rules:
     multiline: true
 
   - id: security_concern_line
+    applies_when: no_parser
     pattern: '(?i)(?:security_concern|concern|follow_up)[^:]*:\s*(.{10,200})'
     finding_type: observation
     evidence_grade: inferred
@@ -215,6 +238,7 @@ rules:
     tags: [auto_ingest, security_concern, tech_analysis]
 
   - id: tech_version_line
+    applies_when: no_parser
     # [ \t] (not \s) between tokens so the match can't cross a newline —
     # \s matches \n, which previously let this rule read a table header
     # like nmap's "PORT STATE SERVICE VERSION" on one line and the port

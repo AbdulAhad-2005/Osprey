@@ -1,6 +1,7 @@
-# Cross-finding correlation — memory enrichment only.
-# Emits hypothesis edges / soft tags. Never mints observed CRITICAL.
-# The LLM confirms or overrides via platform_graph_link / platform_tag_asset.
+# Cross-finding correlation — READ-ONLY matching logic.
+# These rules drive finding_correlator.find_correlations, which only *suggests*
+# candidate links/tags on demand. Nothing here is ever auto-written to the graph;
+# the LLM confirms the useful ones via platform_graph_link / platform_tag_asset.
 
 correlations:
   - id: likely_same_app
@@ -10,6 +11,9 @@ correlations:
     min_title_token_overlap: 0.5
     min_title_len: 4
     max_links_per_run: 12
+    # Shared-infra guard: skip any IP carrying more than this many hosts — on a
+    # CDN / shared-hosting block, sharing an address is not evidence of one app.
+    max_hosts_per_ip: 6
     tag: correlated_same_app
 
   - id: shares_auth

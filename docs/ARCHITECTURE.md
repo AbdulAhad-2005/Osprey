@@ -84,12 +84,13 @@ Example: the LLM calls `httpx_probe(target="scanme.nmap.org")`.
       → platform-mcp POST /api/v1/mcp/execute
 4. tool_execution.execute_tool_request:
       a. resolve engagement/run + inject seed target if the LLM omitted it
-      b. governance check            (currently permissive — see §6)
-      c. param_validator             (blocks shell metacharacters only)
-      d. scan_budget                 (blocks full-range -p- / 1-65535 w/o confirm)
-      e. exec cache                  (same engagement+tool+params within ~1h → cache_hit)
-      f. command_builder             (loads mcp-servers/recon/tools/httpx_probe.py)
+      b. param_validator             (blocks shell metacharacters only)
+      c. scan_budget                 (blocks full-range -p- / 1-65535 w/o confirm)
+      d. exec cache                  (same engagement+tool+params within ~1h → cache_hit)
+      e. command_builder             (loads mcp-servers/recon/tools/httpx_probe.py)
+      f. rate_governor               (paces calls per target; skips banned targets — see §6)
       g. mcp_client → docker exec ai-pentest-kali → httpx -u scanme.nmap.org …
+         (ban-fingerprint scan on stdout → cooldown + one OBSERVATION finding)
       h. summarize_execution         (parsers → Finding objects) + apply_ingest_rules (YAML)
       i. findings_store + engagement_graph ingest → Postgres
       j. tool_coverage record · stdout artifact index · recovery hints · audit log
@@ -143,7 +144,7 @@ Tools run inside the `ai-pentest-kali` container (NET_RAW/NET_ADMIN for SYN scan
 | Model | **LiteLLM-agnostic** (demoted path) / any MCP client (primary) | Swap providers without rewriting the platform |
 | Memory | **Durable typed graph + evidence grades** | The differentiator none of the reference tools fully have |
 
-**Governance note (accurate current state):** the governance engine is presently a **permissive pass-through** — it approves every tool and records `governance_decision=approved` for audit compatibility. Real scope/ROE enforcement is the first item on the reliability roadmap. Docs and `AGENTS.md` describe scope discipline as operator guidance, but the backend does not yet *block* out-of-scope targets.
+**Governance note (accurate current state):** there is **no scope-based governance gate** — the standalone governance engine was removed, and `tool_execution` does not block tools by matching targets against a declared scope. This is deliberate: unrestricted scanning keeps the pentest smooth (real findings often live on the less-guarded sister/sub domains, not the hardened apex). Scope discipline is operator guidance in `AGENTS.md`, not a backend block. What *does* still gate execution: **RulesOfEngagement on exploitation-tier tools** — a `GATED` tool (exploit/creds/destructive) is refused unless the engagement's `allow_exploitation` (and, for destructive calls, `destructive_actions_allowed`) is set. And the one active pacing layer, the **rate governor** (`rate_governor.py`): a per-target sliding-window pacer plus WAF/rate-limit ban detector that *delays* calls and reports bans — it never refuses one. On a clean tool failure the kernel also auto-runs the top fallback (`escalation_matrix.yaml` → `auto_fallback`), and auto-drops to a stealth intensity profile against a target the governor has cooled down. See §5.7.
 
 ---
 
