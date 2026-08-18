@@ -2239,10 +2239,10 @@ def platform_shell(
     engagement_id: str = "",
 ) -> str:
     """
-    Allowlisted binary argv in Kali. Simple pipes OK when EVERY stage is allowlisted
-    (e.g. 'curl -sI https://x | grep -i server'). Still blocked: ; & ` $ () <> && ||.
-    Example: 'nmap -sV -p 80,443 1.2.3.4'. Prefer platform_exec for catalog tools.
-    Loops, redirects, complex logic → platform_script.
+    Unrestricted bash inside the Kali container — loops, ;, &&, $(), redirects
+    all work (e.g. 'for h in www api dev; do dig +short $h.x.com; done').
+    Example: 'nmap -sV -p 80,443 1.2.3.4'. Prefer platform_exec for catalog tools;
+    use platform_script for long multi-line scripts.
 
     engagement_id: optional pin to a specific engagement — see platform_exec.
     """

@@ -19,6 +19,7 @@ Category: network
 
 from __future__ import annotations
 
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -46,9 +47,9 @@ def build_command(**params: Any) -> str:
     timeout = params.get("timeout", 2000)
     scripts = params.get("scripts", "")
     additional_args = params.get("additional_args", "")
-    command = f"rustscan -a {target} --ulimit {ulimit} -b {batch_size} -t {timeout}"
+    command = f"rustscan -a {shlex.quote(str(target))} --ulimit {shlex.quote(str(ulimit))} -b {shlex.quote(str(batch_size))} -t {shlex.quote(str(timeout))}"
     if ports:
-        command += f" -p {ports}"
+        command += f" -p {shlex.quote(str(ports))}"
     if scripts:
         command += f" -- -sC -sV"
     if additional_args:

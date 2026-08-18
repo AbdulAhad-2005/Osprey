@@ -2,8 +2,9 @@
 Fast port discovery via ProjectDiscovery naabu.
 
 Args:
-    target: IP, hostname, or CIDR
-    ports: Port list/range (empty = naabu defaults / top ports)
+    target: IP, hostname, CIDR — or a comma/space-separated list (multi-host
+        is written to a temp -l list file, so any number of hosts works)
+    ports: Port list/range, or 'top-N' / 'top_1000' style (maps to -top-ports)
     rate: Packets per second
     top_ports: Optional top-ports count (e.g. 100, 1000) when ports empty
     additional_args: Extra naabu flags
@@ -13,6 +14,8 @@ Category: network
 
 from __future__ import annotations
 
+import hashlib
+import re
 import shlex
 import sys
 from pathlib import Path
@@ -39,14 +42,41 @@ def build_command(**params: Any) -> str:
     top_ports = str(params.get("top_ports") or "").strip()
     additional_args = str(params.get("additional_args") or "").strip()
 
-    parts = [
-        "naabu",
-        "-host",
-        shlex.quote(target),
-        "-silent",
-        "-rate",
-        shlex.quote(rate),
-    ]
+    # ports='top-1000' / 'top_100' / 'top 100' → top_ports (naabu CLI naming)
+    top_match = re.fullmatch(r"(?i)top[-_ ]?(\d+)", ports)
+    if top_match and not top_ports:
+        top_ports = top_match.group(1)
+        ports = ""
+
+    hosts = [p.strip() for p in re.split(r"[,\s]+", target) if p.strip()]
+    if len(hosts) > 1:
+        # naabu -host takes ONE host; a comma list must go through -l,
+        # otherwise a multi-IP target silently scans nothing.
+        digest = hashlib.md5(target.encode()).hexdigest()[:8]
+        list_file = f"/tmp/naabu_{digest}.txt"
+        parts = [
+            "printf",
+            "%s\\n",
+            shlex.quote("\n".join(hosts)),
+            ">",
+            list_file,
+            "&&",
+            "naabu",
+            "-l",
+            list_file,
+            "-silent",
+            "-rate",
+            shlex.quote(rate),
+        ]
+    else:
+        parts = [
+            "naabu",
+            "-host",
+            shlex.quote(hosts[0]),
+            "-silent",
+            "-rate",
+            shlex.quote(rate),
+        ]
     if ports:
         parts.extend(["-p", shlex.quote(ports)])
     elif top_ports:

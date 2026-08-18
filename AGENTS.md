@@ -93,7 +93,7 @@ each naturally comes to mind:
 - _"I need to probe a batch of hosts efficiently"_ → **`platform_fanout_assets`** — one tool across many assets.
 - _"This will take a while — I want to keep working in parallel"_ → **`platform_job_start`** — runs in background, you continue other work.
 - _"No existing tool does what I need"_ → **`platform_script`** — write custom code, print `FINDING|...` lines to auto-ingest.
-- _"I just need one quick command / pipe"_ → **`platform_shell`** — simple allowlisted commands.
+- _"I just need one quick command / pipe"_ → **`platform_shell`** — unrestricted bash in Kali (loops, `;`, `$()`, redirects all work); use `platform_script` for multi-line scripts.
 - _"I'm not sure which tool to use next"_ → **`platform_playbook`** — advisory suggestions.
 - _"I want to boost this asset as important"_ → **`platform_tag_asset`** — affects crown jewel ranking.
 - _"I want to see the attack surface visually"_ → **`platform_visualization(format=)`** — Mermaid (renders in markdown), Cytoscape JSON, or hierarchical attack tree. Use `node_type=` to focus on one asset class, or `max_nodes=`/`max_edges=` to control size. Returns structured graph data — embed Mermaid in markdown, feed Cytoscape to a dashboard, or read the tree hierarchy. Graph reflects what ingestion stored; use `node_type=host` or `node_type=domain` to focus past noise.

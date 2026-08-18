@@ -259,10 +259,10 @@ These markers update findings and graph memory automatically.
 
 #### `platform_shell`
 
-Runs allowlisted binaries and simple pipelines. Governance still applies.
-
-Use it for focused commands. Use `platform_script` when loops, complex logic,
-or custom parsing are needed.
+Unrestricted bash inside the Kali container (loops, `;`, `&&`, `$()`, redirects
+all work — same capability as HexStrike's `execute_command`). Governance still
+applies. Set `enable_unrestricted_shell=false` in settings to fall back to the
+allowlisted argv mode. Use `platform_script` for long multi-line scripts.
 
 #### `platform_job_start`
 
