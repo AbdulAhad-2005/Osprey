@@ -24,6 +24,11 @@ dependencies = [
     # falls back to a heuristic without it, mishandling multi-part ccTLDs
     # (e.g. nadra.gov.pk → gov.pk). Bundles an offline PSL snapshot.
     "tldextract>=5.0,<6.0",
+    # Authoritative-nameserver DNS queries — the surface-expansion engine's
+    # second source for "does this name resolve" (dead-candidate gate): public
+    # resolvers returning nothing is not proof of death, and dnspython can ask
+    # the zone's own NS directly (dig @<NS> semantics) without a dig binary.
+    "dnspython>=2.7,<3.0",
 ]
 
 [project.optional-dependencies]

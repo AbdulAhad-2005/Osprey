@@ -1,0 +1,37 @@
+# Rate governor + ban detector — shared pacing layer for ALL tool calls.
+# Wired into tool_execution.execute_tool_request (the single choke point every
+# engine/agent/operator tool call passes through).
+#
+# The governor is a PACER, never a gate: it delays calls to hot targets but
+# never refuses them, and it never waits longer than max_wait_seconds.
+
+# Sliding-window pacing: at most this many calls to ONE target within the
+# window before new calls sleep until the window allows another call.
+max_calls_per_window: 12
+window_seconds: 60
+
+# After a WAF/rate-limiter fingerprint is seen in tool output, skip this
+# target entirely for this long (further calls sleep up to max_wait_seconds
+# each, so a banned target's calls trickle instead of hammering).
+ban_cooldown_seconds: 600
+
+# Ceiling a single delayed call may wait before running anyway — a pacer must
+# never deadlock a pass on a hot target.
+max_wait_seconds: 30
+
+# Tools exempt from pacing: cached/passive lookups that never touch the
+# target's edge (external APIs, WHOIS, CT logs, OSINT lookups).
+exempt_tools:
+  - shodan_host_info
+  - shodan_search
+  - crt_sh_query
+  - whois_lookup
+  - dnsenum_scan
+  - dnstwist
+  - asn_enum
+  - holehe
+  - phoneinfoga
+  - email_permute
+  - maigret
+  - theharvester
+  - anew_data_processing

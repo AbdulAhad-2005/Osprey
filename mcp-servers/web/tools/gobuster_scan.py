@@ -53,9 +53,18 @@ def build_command(**params: Any) -> str:
     additional_args = str(params.get("additional_args") or "").strip()
     if not url:
         raise ValueError("gobuster_scan requires url=")
-    # dns mode uses -d (domain) not -u; dir/vhost use -u and can skip TLS verify.
+    # dns mode uses --domain (the -d short flag is --delay in gobuster >= 3.6)
+    # not -u; dir/vhost use -u and can skip TLS verify. dns mode needs a BARE
+    # domain: the engine's frontier labels can carry a scheme (https://…), and
+    # `gobuster dns --domain https://x` silently brute-forces garbage and
+    # returns zero hits. Normalize at the tool boundary so every caller gets
+    # the same correct behavior.
     if mode == "dns":
-        command = f"gobuster dns -d {url} -w {wordlist}"
+        domain = url.split("://", 1)[1] if "://" in url else url
+        domain = domain.split("/", 1)[0].strip().rstrip(".")
+        if not domain:
+            raise ValueError("gobuster_scan dns mode requires a bare domain (no scheme/path)")
+        command = f"gobuster dns --domain {domain} -w {wordlist}"
     else:
         command = f"gobuster {mode} -u {url} -w {wordlist} -k"
     if additional_args:

@@ -8,27 +8,81 @@
 # is actually installed in the active environment (Kali container or host).
 #
 # Each entry: {tool: <catalog name>, param: <the param that takes the asset label>}
+#
+# This file is the SINGLE source of truth for the engine's stage map. The
+# engine merges it over its built-in defaults per section, so a section omitted
+# here falls back to defaults while a section present here fully replaces it.
 
-domain_discovery:        # passive-first discovery on the domain/subdomain frontier
-  - {tool: subfinder_scan, param: domain}
+sister_discovery:        # sister/associated root domains (per frontier domain)
+  - {tool: domain_hunter, param: domain}
   - {tool: crt_sh_query, param: domain}
+
+domain_only:             # apex-only OSINT (same answer for every subdomain)
+  - {tool: whois_lookup, param: target}
+  - {tool: dnsenum_scan, param: domain}
+
+wordlist_discovery:      # passive-first subdomain enumeration on the domain/subdomain frontier
+  - {tool: subfinder_scan, param: domain}
+  - {tool: amass_scan, param: domain}
   - {tool: gau_discovery, param: domain}
   - {tool: waybackurls_discovery, param: domain}
-  - {tool: domain_hunter, param: domain}
   - {tool: tlsx_inspect, param: target}
+
+dns_bruteforce:          # active DNS brute force (bounded wordlist, once per apex)
+  - {tool: gobuster_scan, param: target, mode: dns,
+     wordlist: /home/mcpuser/mcp-servers/recon/tools/_wordlists/subdomains.txt}
+
+# Mutate already-known subdomains (first-label × prefix/suffix patterns) into
+# new candidates, bulk-resolved via dnsx. Wildcard domains are canary-guarded
+# in the engine so a wildcard never floods the graph with fake subdomains.
+permutation_patterns:
+  prefixes: [dev, stage, staging, test, qa, uat, sit, beta, pre, prod, old, new,
+             v2, v3, api, admin, app, web, mail, webmail, vpn, portal, sso, owa,
+             db, cache, cdn, edge, origin, internal, intranet, extranet, backup,
+             docs, status, git, ci, jenkins, grafana, kibana, secure, remote,
+             noc, corp, hq, eu, us, asia, apac, in, uk, de, fr, prod2]
+  suffixes: [dev, stage, staging, test, qa, uat, beta, pre, prod, old, new, v2,
+             v3, api, admin, backup, internal, demo, sandbox, sit, 2, 3]
+  separators: ["-", ""]
+  max_words: 30
+  max_candidates: 1500
 
 host_expansion:          # live-host probing on the subdomain / origin-IP frontier
   - {tool: httpx_probe, param: target}
   - {tool: naabu_port_scan, param: target}
-  - {tool: tech_stack_analyze, param: target}
-  - {tool: wafw00f_scan, param: target}
+  - {tool: tech_stack_analyze, param: target, timeout: 300}
+  - {tool: wafw00f_scan, param: target, timeout: 300}
   - {tool: cdn_origin_probe, param: domain}
+
+web_depth:               # web-app depth on live hosts (only after a host is live)
+  - {tool: well_known_probe, param: target}
+  - {tool: js_recon, param: target}
+  - {tool: feroxbuster_scan, param: target}
+  - {tool: waybackurls_discovery, param: domain}
 
 ptr_expansion:           # reverse DNS on the IP frontier (co-located hosts)
   - {tool: dnsx_reverse, param: target}
+  - {tool: asn_enum, param: target}
 
 # Per-pass frontier batch caps — bound one pass so a large surface spreads across
 # passes instead of one giant gather.
 batch:
   domain: 25
   live_host: 15
+
+# Phase gates — which stages the engine auto-runs in its breadth passes. The
+# initial wave is recon-only by design (subdomains -> IPs -> ports/services/
+# versions -> emails/contacts); vulnerability analysis (nmap vuln/vulners,
+# wpscan) is a LATER phase driven deliberately, not a breadth-scan side effect:
+# it is slow, noisy, and needs the recon surface settled first. Flip to true
+# when you actually want the auto vuln-scan inside the engine pass.
+phases:
+  vuln_scan: false
+
+# Associated (sister) domains: DISCOVERED but never worked on while this is
+# false (the default). domain_hunter/crt still record them as assets, but the
+# engine does not enumerate, probe, or port-scan them — the seed domain and
+# its own subdomains are the only worked surface. Held-back sisters are
+# surfaced at the end of the run so the operator can decide whether to expand
+# them. Flip to true to let the engine work high-confidence sisters too.
+work_sisters: false
