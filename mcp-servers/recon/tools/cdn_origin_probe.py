@@ -59,17 +59,17 @@ DOM='""" + domain + """'
 TO=""" + str(timeout) + """
 echo "=== DNS ==="
 echo "CNAME: $(dig +short CNAME "$DOM" 2>/dev/null | head -1)"
-echo "A: $(dig +short A "$DOM" 2>/dev/null)"
-echo "AAAA: $(dig +short AAAA "$DOM" 2>/dev/null)"
-echo "NS: $(dig +short NS "$DOM" 2>/dev/null)"
-echo "MX: $(dig +short MX "$DOM" 2>/dev/null)"
+echo "A: $(dig +short A "$DOM" 2>/dev/null | paste -sd' ' -)"
+echo "AAAA: $(dig +short AAAA "$DOM" 2>/dev/null | paste -sd' ' -)"
+echo "NS: $(dig +short NS "$DOM" 2>/dev/null | paste -sd' ' -)"
+echo "MX: $(dig +short MX "$DOM" 2>/dev/null | paste -sd' ' -)"
 echo "=== MX_IPS ==="
 for mx in $(dig +short MX "$DOM" 2>/dev/null | awk '{print $NF}' | sed 's/\\.$//' | sort -u); do
   [ -z "$mx" ] && continue
   echo "MX_IP: $mx -> $(dig +short A "$mx" 2>/dev/null | head -1)"
 done
 echo "=== SPF ==="
-dig +short TXT "$DOM" 2>/dev/null | grep -i spf || true
+dig +short TXT "$DOM" 2>/dev/null | grep -i spf | paste -sd' ' -
 echo "=== SUBS ==="
 for sub in mail smtp pop imap webmail ftp vpn gateway direct origin owa autodiscover; do
   SUB_RAW=$(dig +short A "$sub.$DOM" 2>/dev/null | tail -1)

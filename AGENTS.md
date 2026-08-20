@@ -62,7 +62,7 @@ is a real but separate, lower-priority issue). Backend-autonomous execution (no
 external harness in the loop) is reached only through the platform's own CLI/GUI via
 `POST /api/v1/agent/chat`, never through this MCP surface.
 
-## Phase-agent orchestration — the default operating mode
+## Phase-agent orchestration — mandatory, not optional
 
 You are the conductor; each phase runs as its own native `task` subagent (your
 harness's mechanism — no backend LLM key, same LLM as you, full MCP tool access).
@@ -74,13 +74,17 @@ sister domain, per host, per candidate) and coordinate from their reports.
 
 The chain, driven by your judgment:
 
-1. **Recon agent first** — spawn immediately when a domain lands. Its brief MUST
-   say: enumerate subdomains EVERY way (subfinder + crt + amass + domain_hunter +
-   cert SANs), resolve ALL to IPs (dnsx), attempt CDN/WAF-origin bypass on every
-   fronted host (direct-to-origin probes, DNS history, TLS, header analysis,
-   `origin_ip_attribution`), then ports in MULTIPLE scan kinds (naabu top-1000,
-   SYN, rustscan, masscan variants), then services/versions (`-sV -sC` on
-   everything open), then URLs (httpx live, gau/wayback, js_recon, katana).
+1. **Recon agent first — required, never skipped.** Spawn it the instant a
+   domain lands. Doing the recon work yourself instead of spawning is not an
+   acceptable substitute — spawn, don't narrate what you would have spawned.
+   Its brief MUST say: enumerate subdomains EVERY way (subfinder + crt + amass +
+   domain_hunter + cert SANs), resolve ALL to IPs (dnsx), attempt CDN/WAF-origin
+   bypass on every fronted host (direct-to-origin probes, DNS history, TLS,
+   header analysis, `origin_ip_attribution`), then ports in MULTIPLE scan kinds
+   (naabu top-1000, SYN, rustscan, masscan variants), then services/versions
+   (`-sV -sC` on everything open), then URLs (httpx live, gau/wayback, js_recon,
+   katana). None of these steps are optional extras to trim when the target
+   looks simple — every one is required work, not a menu to pick from.
    Anything >90s goes through `platform_job_start` — never block on one call.
 2. **Evidence check** — when the agent reports, YOU read
    `platform_findings` / `platform_finalize_check`. If real evidence exists (live
@@ -101,8 +105,12 @@ The chain, driven by your judgment:
    (what was probed / what was found with evidence / what is noise and why).
 
 You stay the coordinator — you decide handoffs and stop points, you never
-delegate your judgment. "Spawn a recon agent" is the default first move on any
-new target, not a fallback for when manual work stalls.
+delegate your judgment. Spawning agents is **mandatory, not optional**: the
+moment a domain lands, spawn the recon agent — this is a required action on
+every engagement, not a fallback for when manual work stalls or a nicety to
+skip on a target that looks simple. The same applies to vuln/exploit once
+their unlock conditions are met (step 2-4 below) — spawn them, don't just note
+that they could be spawned.
 
 ## Do the work
 

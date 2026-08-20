@@ -326,14 +326,20 @@ def build_command(**params: Any) -> str:
     for target in all_targets:
         script_lines.extend([
             f'echo "=== Resolving "{q(target)}" ==="',
-            # Use dig for CNAME+full output, also host for clean A resolution
-            f'A_RECORDS=$(dig +short A {q(target)} 2>/dev/null)',
-            f'A_HOSTS=$(host -t A {q(target)} 2>/dev/null | grep "has address" | awk \'{{print $NF}}\' | sort -u)',
-            f'AAAA_RECORDS=$(dig +short AAAA {q(target)} 2>/dev/null)',
+            # Use dig for CNAME+full output, also host for clean A resolution.
+            # dig/host print one value per line for a multi-A-record domain —
+            # `paste -sd" " -` folds each into a single space-joined line
+            # before it's echoed, so the "A:"/"A_HOSTS:"/"AAAA:" line-prefix
+            # parsing in parse() below actually sees every value instead of
+            # only the first line (a second/third A record with no prefix
+            # was previously invisible to the section parser).
+            f'A_RECORDS=$(dig +short A {q(target)} 2>/dev/null | paste -sd" " -)',
+            f'A_HOSTS=$(host -t A {q(target)} 2>/dev/null | grep "has address" | awk \'{{print $NF}}\' | sort -u | paste -sd" " -)',
+            f'AAAA_RECORDS=$(dig +short AAAA {q(target)} 2>/dev/null | paste -sd" " -)',
             f'CNAME_RECORD=$(dig +short CNAME {q(target)} 2>/dev/null)',
             f'NS_RECORDS=$(dig +short NS {q(target)} 2>/dev/null)',
             f'MX_RECORDS=$(dig +short MX {q(target)} 2>/dev/null)',
-            f'SPF_RECORD=$(dig +short TXT {q(target)} 2>/dev/null | grep -i spf || true)',
+            f'SPF_RECORD=$(dig +short TXT {q(target)} 2>/dev/null | grep -i spf | paste -sd" " -)',
             f'echo "A: $A_RECORDS"',
             f'echo "A_HOSTS: $A_HOSTS"',
             f'echo "AAAA: $AAAA_RECORDS"',

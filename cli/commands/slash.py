@@ -37,6 +37,12 @@ def handle_help(args: list[str], client: "APIClient") -> None:
             "--include-low-confidence (engine mode) also scans low-confidence origin "
             "candidates the engine holds back by default."
         ),
+        "/fast-scan <target> [--engine]": (
+            "Narrow, deterministic, no-LLM scan: whois -> subdomain enum (no sister "
+            "domains) -> TLS SAN pass -> resolve IPs+CNAMEs -> classify CDN vs origin "
+            "-> httpx live-probe -> nmap deep scan (full on origin, light on CDN edges) "
+            "-> takeover check. Faster/narrower than /scan --engine."
+        ),
         "/engage list": "List all engagements",
         "/engage new <target>": "Create a new engagement",
         "/engage set <id>": "Bind this session to an existing engagement",
@@ -367,6 +373,137 @@ def _run_engine_scan(client: "APIClient", target: str, *, include_low_confidence
     print_info("Findings are already in memory — use /findings to review.")
 
 
+def handle_fast_scan(args: list[str], client: "APIClient") -> None:
+    """Deterministic, no-LLM, no-sister-domain fast scan.
+
+    Usage: /fast-scan <domain> [--engine]
+
+    whois -> direct subdomain enumeration (no domain_hunter/sister discovery)
+    -> TLS cert SAN pass (merges in-scope SANs) -> resolve every host to IPs
+    + CNAMEs -> classify CDN-edge vs origin IPs -> httpx live-probe -> nmap
+    deep scan (service + OS detection, tuned min-rate, top ports) on origin
+    IPs, a light 80/443 check on CDN-fronted IPs -> dangling-CNAME takeover
+    check. Narrower and faster than /scan --engine (the full BFS breadth
+    engine) — still passive/direct against the target's own DNS/TLS/IP
+    surface, nothing else. `--engine` is accepted for consistency with
+    /scan's flag but this command is inherently engine-only, no LLM mode
+    exists for it.
+    """
+    args = [a for a in args if a != "--engine"]
+    target = " ".join(args).strip()
+    if not target:
+        target = input("Target (domain): ").strip()
+        if not target:
+            print_info("No target given — aborted.")
+            return
+
+    try:
+        data = client.compile_engagement_for_target(target)
+        _bind_engagement(client, data)
+    except Exception as exc:
+        print_error(_api_error_text(exc))
+        return
+
+    _run_fast_scan(client, target)
+
+
+def _run_fast_scan(client: "APIClient", target: str) -> None:
+    engagement_id = client.active_engagement_id
+    if not engagement_id:
+        print_error("No engagement bound.")
+        return
+    status = client.execution_status()
+    if not status.get("ready", True):
+        print_error(status.get("message", "Tool execution backend is not ready."))
+        return
+    if status.get("message"):
+        print_info(status["message"])
+
+    try:
+        job = client.start_fast_scan_job(engagement_id, target)
+    except Exception as exc:
+        print_error(_api_error_text(exc))
+        return
+
+    job_id = job.get("job_id", "")
+    print_info(f"Fast scan started (job {job_id}) on {target}.")
+    print_info("whois -> subdomains -> TLS SANs -> resolve IPs/CNAMEs -> classify CDN vs origin -> "
+               "httpx live-probe -> nmap (full on origin, light on CDN edges) -> takeover check.")
+
+    status_str = job.get("status", "")
+    last_progress = ""
+    printed_results = 0
+    try:
+        with console.status("[bold cyan]Fast scan starting…[/]", spinner="dots") as spinner:
+            while status_str in ("queued", "running"):
+                try:
+                    job = client.poll_job(job_id, wait_seconds=3)
+                except Exception as exc:
+                    print_error(_api_error_text(exc))
+                    return
+                status_str = job.get("status", "")
+                results_log = job.get("results_log") or []
+                for line in results_log[printed_results:]:
+                    console.print(f"  [green]{line}[/]")
+                printed_results = len(results_log)
+
+                progress = job.get("progress", "")
+                if progress and progress != last_progress:
+                    spinner.update(f"[bold cyan]{progress}[/]")
+                    last_progress = progress
+    except KeyboardInterrupt:
+        print_error("Interrupted — findings gathered so far are saved. Review them with "
+                    "/findings, or /report to export what was found so far.")
+        return
+
+    if status_str == "failed":
+        print_error(f"Fast scan failed: {job.get('error', 'unknown error')}")
+        return
+
+    if status_str == "cancelled":
+        print_success("Fast scan stopped. Partial findings are saved.")
+        print_info("Review them with /findings, or /report to export what was found so far.")
+        return
+
+    try:
+        result = client.job_result(job_id)
+    except Exception as exc:
+        print_error(_api_error_text(exc))
+        return
+
+    report = (result.get("result") or {})
+    subs = report.get("subdomains_found", 0)
+    sans = report.get("sans_found", 0)
+    ips = report.get("ips") or []
+    origin_ips = report.get("origin_ips") or []
+    cdn_ips = report.get("cdn_edge_ips") or []
+    live_hosts = report.get("live_hosts", 0)
+    cname_count = report.get("cname_count", 0)
+    nmap_results = report.get("nmap_results") or []
+    print_success(
+        f"Fast scan finished — whois {'ok' if report.get('whois_ok') else 'failed'}, "
+        f"{subs} subdomain(s) (+{sans} from TLS SANs), {len(ips)} IP(s) "
+        f"({len(origin_ips)} origin, {len(cdn_ips)} CDN-edge), {live_hosts} live host(s)."
+    )
+    for r in nmap_results:
+        titles = r.get("finding_titles") or []
+        sample = ", ".join(titles[:5]) + (f" (+{len(titles) - 5} more)" if len(titles) > 5 else "")
+        mark = "[green]ok[/]" if r.get("success") else "[red]failed[/]"
+        tag = "[dim]cdn-edge, 80/443 only[/]" if r.get("scan_type") == "light" else ""
+        print_info(f"  {r.get('ip')}: {mark} {tag}" + (f" — {sample}" if sample else ""))
+
+    takeover_flags = report.get("takeover_flags") or []
+    if takeover_flags:
+        print_error(f"Subdomain takeover risk — {len(takeover_flags)} host(s) flagged (CNAMEs checked: {cname_count}):")
+        for line in takeover_flags[:10]:
+            print_info(f"  {line}")
+
+    if report.get("stopped_reason") == "no_ips_resolved":
+        print_info("No IPs resolved from the discovered hosts — nothing to port-scan.")
+
+    print_info("Findings are already in memory — use /findings to review.")
+
+
 def handle_findings(args: list[str], client: "APIClient") -> None:
     """Show findings for the active engagement, optionally filtered by keyword.
 
@@ -568,6 +705,7 @@ SLASH_COMMANDS: dict[str, tuple[str, "callable"]] = {
     "/models": ("List LLM models", handle_models),
     "/model": ("Show active model", handle_model),
     "/scan": ("Bind target + run full agent scan", handle_scan),
+    "/fast-scan": ("Deterministic no-LLM scan: whois+subs+SANs+IPs+CDN-classify+httpx+nmap+takeover", handle_fast_scan),
     "/engage": ("Manage engagements", handle_engagements),
     "/findings": ("Show findings", handle_findings),
     "/report": ("Write a Markdown recon report to ./reports/", handle_report),

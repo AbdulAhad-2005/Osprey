@@ -198,6 +198,23 @@ class APIClient:
         resp.raise_for_status()
         return resp.json()
 
+    def start_fast_scan_job(self, engagement_id: str, target: str, *, run_id: str = "") -> dict[str, Any]:
+        """Deterministic, no-LLM, no-sister-domain pipeline: whois -> direct
+        subdomain enumeration -> resolve to IPs -> nmap deep scan (service +
+        OS detection, tuned min-rate, top ports) per unique IP. Narrower and
+        faster than the full BFS expansion engine (start_expansion_job) —
+        just the four things asked for, nothing else."""
+        resp = self._client.post(
+            self._url("/api/v1/jobs/start"),
+            json={
+                "kind": "fast_scan", "engagement_id": engagement_id,
+                "run_id": run_id, "target": target,
+                "label": f"fast-scan({target})",
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def poll_job(self, job_id: str, *, wait_seconds: float = 0) -> dict[str, Any]:
         params = {"wait_seconds": wait_seconds} if wait_seconds else {}
         resp = self._client.get(self._url(f"/api/v1/jobs/{job_id}"), params=params)
