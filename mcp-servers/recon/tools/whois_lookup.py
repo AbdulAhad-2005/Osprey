@@ -20,6 +20,7 @@ if str(_ROOT) not in sys.path:
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
 from _core.domains import registrable_apex
+from _core.command_utils import q
 
 TOOL_NAME = "whois_lookup"
 CATEGORY = "recon"
@@ -42,7 +43,7 @@ def build_command(**params: Any) -> str:
             "Pass a root domain (e.g. example.com) or an IP address."
         )
 
-    command = f"whois {target}"
+    command = f"whois {q(target)}"
     if additional_args:
         command += f" {additional_args}"
     return command

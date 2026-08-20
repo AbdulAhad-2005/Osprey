@@ -24,6 +24,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from _core.command_utils import q
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
 
@@ -49,7 +50,8 @@ def build_command(**params: Any) -> str:
     """Build CLI command (harvested from HexStrike server route)."""
     url = str(params.get("url") or params.get("target") or "").strip()
     mode = str(params.get("mode") or "dir").strip()
-    wordlist = params.get("wordlist") or _wordlist_expr()
+    wordlist_param = str(params.get("wordlist") or "").strip()
+    wordlist = q(wordlist_param) if wordlist_param else _wordlist_expr()
     additional_args = str(params.get("additional_args") or "").strip()
     if not url:
         raise ValueError("gobuster_scan requires url=")
@@ -64,9 +66,9 @@ def build_command(**params: Any) -> str:
         domain = domain.split("/", 1)[0].strip().rstrip(".")
         if not domain:
             raise ValueError("gobuster_scan dns mode requires a bare domain (no scheme/path)")
-        command = f"gobuster dns --domain {domain} -w {wordlist}"
+        command = f"gobuster dns --domain {q(domain)} -w {wordlist}"
     else:
-        command = f"gobuster {mode} -u {url} -w {wordlist} -k"
+        command = f"gobuster {q(mode)} -u {q(url)} -w {wordlist} -k"
     if additional_args:
         command += f" {additional_args}"
     return command.strip()

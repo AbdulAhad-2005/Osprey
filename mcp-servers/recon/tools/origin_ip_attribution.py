@@ -42,6 +42,7 @@ if str(_ROOT) not in sys.path:
 
 from _core.runner import run_tool
 from _core.result import ToolResult
+from _core.command_utils import q
 
 TOOL_NAME = "origin_ip_attribution"
 CATEGORY = "recon"
@@ -320,19 +321,19 @@ def build_command(**params: Any) -> str:
     if live_hosts:
         all_targets.extend([h.strip() for h in live_hosts.split(",") if h.strip()])
 
-    script_lines = ["set -e", f'DOMAIN="{domain}"', f'TIMEOUT={timeout}']
+    script_lines = ["set -e", f'DOMAIN={q(domain)}', f'TIMEOUT={timeout}']
 
     for target in all_targets:
         script_lines.extend([
-            f'echo "=== Resolving {target} ==="',
+            f'echo "=== Resolving "{q(target)}" ==="',
             # Use dig for CNAME+full output, also host for clean A resolution
-            f'A_RECORDS=$(dig +short A "{target}" 2>/dev/null)',
-            f'A_HOSTS=$(host -t A "{target}" 2>/dev/null | grep "has address" | awk \'{{print $NF}}\' | sort -u)',
-            f'AAAA_RECORDS=$(dig +short AAAA "{target}" 2>/dev/null)',
-            f'CNAME_RECORD=$(dig +short CNAME "{target}" 2>/dev/null)',
-            f'NS_RECORDS=$(dig +short NS "{target}" 2>/dev/null)',
-            f'MX_RECORDS=$(dig +short MX "{target}" 2>/dev/null)',
-            f'SPF_RECORD=$(dig +short TXT "{target}" 2>/dev/null | grep -i spf || true)',
+            f'A_RECORDS=$(dig +short A {q(target)} 2>/dev/null)',
+            f'A_HOSTS=$(host -t A {q(target)} 2>/dev/null | grep "has address" | awk \'{{print $NF}}\' | sort -u)',
+            f'AAAA_RECORDS=$(dig +short AAAA {q(target)} 2>/dev/null)',
+            f'CNAME_RECORD=$(dig +short CNAME {q(target)} 2>/dev/null)',
+            f'NS_RECORDS=$(dig +short NS {q(target)} 2>/dev/null)',
+            f'MX_RECORDS=$(dig +short MX {q(target)} 2>/dev/null)',
+            f'SPF_RECORD=$(dig +short TXT {q(target)} 2>/dev/null | grep -i spf || true)',
             f'echo "A: $A_RECORDS"',
             f'echo "A_HOSTS: $A_HOSTS"',
             f'echo "AAAA: $AAAA_RECORDS"',
@@ -361,7 +362,7 @@ def build_command(**params: Any) -> str:
         script_lines.extend([
             f'echo "=== SUBDOMAIN_IPS ==="',
             f'for sub in {sub_list}; do',
-            f'  SUB_RAW=$(dig +short A "$sub.{target}" 2>/dev/null | tail -1)',
+            f'  SUB_RAW=$(dig +short A "$sub."{q(target)} 2>/dev/null | tail -1)',
             f'  SUB_IP=""',
             f'  if [ -n "$SUB_RAW" ] && echo "$SUB_RAW" | grep -qE \'^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$\'; then',
             f'    SUB_IP="$SUB_RAW"',
@@ -370,7 +371,7 @@ def build_command(**params: Any) -> str:
             f'    SUB_IP=$(dig +short A "$CNAME" 2>/dev/null | grep -m1 -E \'^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$\' || true)',
             f'  fi',
             f'  if [ -n "$SUB_IP" ]; then',
-            f'    echo "SUBDOMAIN_IP: $sub.{target} -> $SUB_IP"',
+            f'    echo "SUBDOMAIN_IP: $sub."{q(target)}" -> $SUB_IP"',
             f'  fi',
             f'done',
         ])
@@ -378,8 +379,8 @@ def build_command(**params: Any) -> str:
         # HTTP headers for CDN detection
         script_lines.extend([
             f'echo "=== HTTP_HEADERS ==="',
-            f'curl -sI --max-time {timeout} "https://{target}" 2>/dev/null | head -25 || true',
-            f'curl -sI --max-time {timeout} "http://{target}" 2>/dev/null | head -15 || true',
+            f'curl -sI --max-time {timeout} "https://"{q(target)} 2>/dev/null | head -25 || true',
+            f'curl -sI --max-time {timeout} "http://"{q(target)} 2>/dev/null | head -15 || true',
         ])
 
     script_lines.extend([

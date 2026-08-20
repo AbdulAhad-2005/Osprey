@@ -29,6 +29,7 @@ if str(_ROOT) not in sys.path:
 
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
+from _core.command_utils import q
 
 TOOL_NAME = "dalfox_xss_scan"
 CATEGORY = "web"
@@ -42,7 +43,7 @@ def build_command(**params: Any) -> str:
     mining_dict = params.get("mining_dict", True)
     custom_payload = params.get("custom_payload", "")
     additional_args = str(params.get("additional_args", "") or "")
-    command = "dalfox pipe" if pipe_mode else f"dalfox url {url}"
+    command = "dalfox pipe" if pipe_mode else f"dalfox url {q(url)}"
     if blind:
         command += " --blind"
     if mining_dom:

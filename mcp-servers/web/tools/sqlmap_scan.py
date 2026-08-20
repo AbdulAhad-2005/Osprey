@@ -23,6 +23,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from _core.command_utils import q
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
 
@@ -34,9 +35,9 @@ def build_command(**params: Any) -> str:
     url = params.get("url", "")
     data = params.get("data", "")
     additional_args = params.get("additional_args", "")
-    command = f"sqlmap -u {url} --batch"
+    command = f"sqlmap -u {q(url)} --batch"
     if data:
-        command += f" --data=\"{data}\""
+        command += f" --data={q(data)}"
     if additional_args:
         command += f" {additional_args}"
     return command.strip()

@@ -25,6 +25,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from _core.command_utils import q
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
 
@@ -38,13 +39,13 @@ def build_command(**params: Any) -> str:
     tags = params.get("tags", "")
     template = params.get("template", "")
     additional_args = str(params.get("additional_args", "") or "")
-    command = f"nuclei -u {target}"
+    command = f"nuclei -u {q(target)}"
     if severity:
-        command += f" -severity {severity}"
+        command += f" -severity {q(severity)}"
     if tags:
-        command += f" -tags {tags}"
+        command += f" -tags {q(tags)}"
     if template:
-        command += f" -t {template}"
+        command += f" -t {q(template)}"
     # Structured JSONL output so the backend parser gets template-id / severity /
     # CVE / matched-at reliably. -silent suppresses the banner/progress noise.
     if not any(f in additional_args for f in ("-jsonl", "-json", "-j ", "-je", "-jsone")):

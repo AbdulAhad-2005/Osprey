@@ -26,6 +26,7 @@ if str(_ROOT) not in sys.path:
 
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
+from _core.command_utils import q
 
 TOOL_NAME = "subfinder_scan"
 CATEGORY = "recon"
@@ -68,7 +69,7 @@ def build_command(**params: Any) -> str:
     silent = params.get("silent", True)
     all_sources = params.get("all_sources", False)
     additional_args = params.get("additional_args", "")
-    command = f"subfinder -d {domain}"
+    command = f"subfinder -d {q(domain)}"
     if silent:
         command += " -silent"
     if all_sources:

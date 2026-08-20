@@ -20,6 +20,9 @@ compose `platform_fanout_assets` over the discovered host list rather than loopi
 **Output:** Ports, services, and protocol observations into platform memory. Once ports/
 services are established, the platform automatically runs a comprehensive network
 vulnerability scan (`nmap --script vuln,vulners`, see `vuln/network-vuln-scan`) against
-them at the recon→network handoff — you do not need to trigger this yourself for the
-primary target, though you can re-run it with different scope if the auto-scan's port
-list was incomplete.
+them right before the vuln phase starts — you do not need to trigger this yourself for
+the primary target, though you can re-run it with different scope if the auto-scan's
+port list was incomplete. (Note: "network" is not a separate auto-triggered conductor
+phase — port/service work is part of the recon agent's own scope; this skill still
+applies whenever a network-focused agent is spawned directly, e.g. via
+`platform_spawn_agent(role='network')`.)

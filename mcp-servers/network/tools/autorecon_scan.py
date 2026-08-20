@@ -61,6 +61,7 @@ if str(_ROOT) not in sys.path:
 
 from _core.runner import run_tool
 from _core.result import ToolResult
+from _core.command_utils import q
 from _autorecon_results import parse as _collect_dir_results
 
 TOOL_NAME = "autorecon_scan"
@@ -75,7 +76,7 @@ def build_command(**params: Any) -> str:
     heartbeat = params.get("heartbeat", 60)
     timeout = params.get("timeout", 300)
     additional_args = params.get("additional_args", "")
-    command = f"autorecon {target} -o {output_dir} --heartbeat {heartbeat} --timeout {timeout}"
+    command = f"autorecon {q(target)} -o {output_dir} --heartbeat {heartbeat} --timeout {timeout}"
     if port_scans != "default":
         command += f" --port-scans {port_scans}"
     if service_scans != "default":

@@ -157,11 +157,12 @@ def _api_error_text(exc: Exception) -> str:
     return str(exc)
 
 
-_SCAN_PHASES = {"recon", "network", "full"}
+_SCAN_PHASES = {"recon", "network", "vuln", "web", "exploit", "osint", "full"}
 
 _PHASE_PROMPTS = {
     "full": (
-        "Run a full recon and network penetration test on {target}. "
+        "Run a full penetration test on {target} via the conductor: recon is always "
+        "the first/active phase; vuln and exploit unlock as real evidence accumulates. "
         "Establish the attack surface, probe services, and report findings."
     ),
     "recon": (
@@ -172,6 +173,22 @@ _PHASE_PROMPTS = {
     "network": (
         "Run a network penetration test on {target}. Port/service scan, "
         "enumerate exposed services, and report findings."
+    ),
+    "vuln": (
+        "Run vulnerability analysis on {target} using the tech/services already "
+        "discovered. Confirm real issues with proof, avoid false positives, and report."
+    ),
+    "web": (
+        "Run web application testing on {target} — auth, session, business logic, "
+        "config/headers, and injection surfaces — then report."
+    ),
+    "exploit": (
+        "Attempt exploitation on {target} for evidence-backed candidates only, within "
+        "authorized scope. Report what was confirmed and what was attempted."
+    ),
+    "osint": (
+        "Run passive OSINT on {target} — people, credentials/breach exposure, "
+        "document metadata, and public footprint — then report."
     ),
 }
 

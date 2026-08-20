@@ -27,6 +27,7 @@ if str(_ROOT) not in sys.path:
 
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
+from _core.command_utils import q
 
 TOOL_NAME = "paramspider_discovery"
 CATEGORY = "web"
@@ -38,7 +39,7 @@ def build_command(**params: Any) -> str:
     exclude = params.get("exclude", "png,jpg,gif,jpeg,swf,woff,svg,pdf,css,ico")
     output = params.get("output", "")
     additional_args = params.get("additional_args", "")
-    command = f"paramspider -d {domain} -l {level}"
+    command = f"paramspider -d {q(domain)} -l {level}"
     if exclude:
         command += f" --exclude {exclude}"
     if output:

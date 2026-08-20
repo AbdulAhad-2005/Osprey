@@ -28,6 +28,7 @@ if str(_ROOT) not in sys.path:
 
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
+from _core.command_utils import q
 
 TOOL_NAME = "arp_scan_discovery"
 CATEGORY = "network"
@@ -46,7 +47,7 @@ def build_command(**params: Any) -> str:
     if local_network:
         command += " -l"
     elif target:
-        command += f" {target}"
+        command += f" {q(target)}"
     if additional_args:
         command += f" {additional_args}"
     return command.strip()

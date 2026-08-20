@@ -26,6 +26,7 @@ if str(_ROOT) not in sys.path:
 
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
+from _core.command_utils import q
 
 TOOL_NAME = "waybackurls_discovery"
 CATEGORY = "recon"
@@ -36,7 +37,7 @@ def build_command(**params: Any) -> str:
     get_versions = params.get("get_versions", False)
     no_subs = params.get("no_subs", False)
     additional_args = params.get("additional_args", "")
-    command = f"waybackurls {domain}"
+    command = f"waybackurls {q(domain)}"
     if get_versions:
         command += " --get-versions"
     if no_subs:

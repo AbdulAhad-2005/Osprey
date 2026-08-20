@@ -28,6 +28,7 @@ if str(_ROOT) not in sys.path:
 
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
+from _core.command_utils import q
 
 TOOL_NAME = "dirsearch_scan"
 CATEGORY = "web"
@@ -40,7 +41,7 @@ def build_command(**params: Any) -> str:
     threads = params.get("threads", 30)
     recursive = params.get("recursive", False)
     additional_args = params.get("additional_args", "")
-    command = f"dirsearch -u {url} -e {extensions} -w {wordlist} -t {threads}"
+    command = f"dirsearch -u {q(url)} -e {extensions} -w {wordlist} -t {threads}"
     if recursive:
         command += " -r"
     if additional_args:

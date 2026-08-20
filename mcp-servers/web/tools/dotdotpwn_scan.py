@@ -25,6 +25,7 @@ if str(_ROOT) not in sys.path:
 
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
+from _core.command_utils import q
 
 TOOL_NAME = "dotdotpwn_scan"
 CATEGORY = "web"
@@ -34,7 +35,7 @@ def build_command(**params: Any) -> str:
     target = params.get("target", "")
     module = params.get("module", "http")
     additional_args = params.get("additional_args", "")
-    command = f"dotdotpwn -m {module} -h {target}"
+    command = f"dotdotpwn -m {module} -h {q(target)}"
     if additional_args:
         command += f" {additional_args}"
     command += " -b"

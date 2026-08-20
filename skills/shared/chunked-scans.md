@@ -34,7 +34,7 @@ Or: `platform_fanout_assets` on a **chosen** shortlist (dry-run first).
 
 ## Loop
 
-1. `platform_context` → read `jobs: n/max running […]` + OPEN GAPS  
-2. Start ≤ max jobs; keep working other gaps  
-3. `platform_job_poll` / `platform_job_result` when a branch finishes  
+1. `platform_context` → read `jobs: n/max running […]` and current phase readiness
+2. Start ≤ max jobs; keep working other assets in parallel
+3. `platform_job_poll` / `platform_job_result` when a branch finishes
 4. Narrate — never silent-wait on one linear scan when the surface is wide

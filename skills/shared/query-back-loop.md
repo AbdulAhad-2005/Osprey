@@ -1,4 +1,4 @@
-# Query-back loop (prevents early stop)
+# Query-back loop
 
 Load once. Do not re-load.
 
@@ -15,7 +15,7 @@ Run this whenever ANY of these is true, not just on a fixed cadence:
                                  tool emitted (platform_record_findings /
                                  platform_graph_link_many / platform_think)
 1. platform_thinking          → shows untested hypothesis cards from evidence
-2. platform_context           → shows open gaps + crown jewels + jobs + look-back
+2. platform_context           → phase-readiness, crown jewels, jobs, dispatch signals
 ```
 
 Step 0 is the whole discipline: tool/script/shell output is already stored
@@ -25,9 +25,7 @@ you do it here, at the checkpoint, in ONE bulk call. Never pause mid-probe to
 record, and never re-record a fact a tool already printed (it's a harmless no-op,
 just wasted effort).
 
-Then pick the highest-value gap or hypothesis card. Run one tool against it. Repeat.
-
-If steps 1–2 return nothing → only then move toward finalize.
+Then pick the highest-value hypothesis card or crown jewel. Run one tool against it. Repeat.
 
 ## Memory augments your context — it doesn't replace it
 
@@ -36,23 +34,17 @@ Your own live reasoning still matters. Use both together: query memory for
 what's stored, but also trust and act on what you've worked out yourself this
 session — then persist that reasoning so it survives past this turn.
 
-## Before you stop (or when stuck)
+## Checking where you are
 
 ```
-platform_finalize_check
+platform_finalize_check  (or platform_pipeline)
 ```
 
-This is a look-back, not a gate: it surfaces unexplored/orphan graph nodes and
-untested `platform_think` hypotheses you haven't followed up on yet. Read what
-it shows, pick the highest-value item, deepen it, then re-check.
-
-A clean result only means nothing **stored** is missing — it cannot see your
-own reasoning. Before you actually stop, ask yourself: did I conclude or
-notice anything this session (a pattern, a relation, a suspicion) that never
-got written down? If yes, persist it now (`platform_record_finding` /
-`platform_think` / `platform_graph_link_many`), then re-run the check. Only
-move to `platform_report_outline` once it comes back clean or you can name why
-the remaining items don't matter.
+Shows the conductor's phase-readiness: recon status, whether vuln/exploit have
+unlocked (with the evidence that unlocked them), and any recon-reopen candidates.
+This is informative, not a gate — you decide what to do with it. If you believe
+the surface is genuinely exhausted, say so and check with the user rather than
+silently deciding either way.
 
 ## On hypothesis → always persist
 

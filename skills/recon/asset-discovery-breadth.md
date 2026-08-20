@@ -73,7 +73,8 @@ Cluster hosts by **function** (app, API, auth, admin, CI/CD, observability, stor
 mail), not by product. Rank by exposure × value. THEN deep-dive the top few with
 `nmap_service_scan`, `tech_stack_analyze`, content discovery (`feroxbuster_scan`), and JS
 analysis (`js_recon`, `katana_crawl`). The 45 hosts you shallow-probed are now ranked, not
-forgotten — the graph and `platform_context` coverage gaps hold them for you.
+forgotten — the graph holds them for you; `platform_graph_query` / `platform_crown_jewels`
+surface what's still worth returning to.
 
 ## Advanced pivots (cheap breadth multipliers)
 
@@ -95,10 +96,10 @@ You cannot keep 50 hosts in working memory. Don't try — let the system track t
 
 - After each batch, `platform_graph_link_many` the discovered assets so the graph, not your
   context window, is the inventory of record.
-- Call `platform_context` for coverage gaps + crown jewels rather than re-listing hosts
-  yourself. If it says "38 subdomains unresolved," that's your next breadth action.
-- When you feel the urge to stop, run `platform_context` first — the gap it names is almost
-  always a host you shallow-probed and never returned to.
+- Call `platform_context` / `platform_crown_jewels` rather than re-listing hosts yourself —
+  it shows what's ranked and what phases have unlocked from the evidence so far.
+- When you feel the urge to stop, run `platform_graph_query` first — almost always there's
+  a host you shallow-probed and never returned to.
 
 ## Do not
 

@@ -28,6 +28,7 @@ if str(_ROOT) not in sys.path:
 
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
+from _core.command_utils import q
 
 TOOL_NAME = "x8_parameter_discovery"
 CATEGORY = "web"
@@ -47,7 +48,7 @@ def build_command(**params: Any) -> str:
     body = params.get("body", "")
     headers = params.get("headers", "")
     additional_args = str(params.get("additional_args", "") or "")
-    command = f"x8 -u {url} -w {wordlist} -X {method}"
+    command = f"x8 -u {q(url)} -w {wordlist} -X {method}"
     if body:
         command += f" -b '{body}'"
     if headers:

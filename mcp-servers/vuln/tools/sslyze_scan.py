@@ -29,6 +29,7 @@ if str(_ROOT) not in sys.path:
 
 from _core.runner import run_tool
 from _core.result import ToolResult
+from _core.command_utils import q
 
 TOOL_NAME = "sslyze_scan"
 CATEGORY = "vuln"
@@ -50,7 +51,7 @@ def build_command(**params: Any) -> str:
     # --json_out=- streams the machine-readable result to stdout for parsing.
     # Default scan set (protocols + ciphers + certinfo + vuln checks) runs when
     # no specific scan flags are given.
-    cmd = f"sslyze --json_out=- {target}"
+    cmd = f"sslyze --json_out=- {q(target)}"
     if additional_args:
         cmd += f" {additional_args}"
     return cmd

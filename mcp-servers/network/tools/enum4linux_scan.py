@@ -24,6 +24,7 @@ if str(_ROOT) not in sys.path:
 
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
+from _core.command_utils import q
 
 TOOL_NAME = "enum4linux_scan"
 CATEGORY = "network"
@@ -32,7 +33,7 @@ def build_command(**params: Any) -> str:
     """Build CLI command (harvested from HexStrike server route)."""
     target = params.get("target", "")
     additional_args = params.get("additional_args", "-a")
-    command = f"enum4linux {additional_args} {target}"
+    command = f"enum4linux {additional_args} {q(target)}"
     return command.strip()
 
 def parse(result: ToolResult) -> dict[str, Any]:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import argparse
 
 _DEPS_HINT = """\
 Missing Python dependency: {name}
@@ -76,9 +77,81 @@ def _prompt_loop(client: APIClient, session) -> None:
         print_info("Session ended.")
 
 
+_SCAN_PHASES = ("recon", "network", "vuln", "web", "exploit", "osint", "full")
+
+
+def _run_scan_noninteractive(args: argparse.Namespace) -> int:
+    """`python -m cli scan --target X [...]` — Executor B's scriptable/CI entry
+    point. Binds the target, then drives the conductor the same way the
+    interactive `/scan` command does (phase='full' -> the deterministic
+    phase_supervisor pipeline; see services/orchestrator.py) — never prompts."""
+    from cli.commands.slash import _PHASE_PROMPTS, _bind_engagement, _api_error_text
+    from cli.ui.display import consume_agent_stream
+
+    api_url = os.getenv("API_BASE_URL", "http://localhost:9000")
+    client = APIClient(base_url=api_url)
+    print_info(f"Connected to: {api_url}")
+
+    try:
+        health = client.health()
+        if health.get("status") != "ok":
+            print_error("Backend reported a non-ok health status.")
+    except Exception:
+        print_error(
+            f"Cannot reach the backend at {api_url}. "
+            "Start it with `docker compose up -d` (repo root) and try again."
+        )
+        return 1
+
+    try:
+        data = client.compile_engagement_for_target(args.target, force_new=args.force_new)
+        _bind_engagement(client, data)
+    except Exception as exc:
+        print_error(_api_error_text(exc))
+        return 1
+
+    if args.engine:
+        from cli.commands.slash import _run_engine_scan
+
+        _run_engine_scan(client, args.target, include_low_confidence=args.include_low_confidence)
+        client.close()
+        return 0
+
+    phase = args.phase
+    print_info(f"Scanning {args.target} (phase: {phase}) — the agent will report back when done.")
+    stream = client.send_prompt_stream(
+        _PHASE_PROMPTS[phase].format(target=args.target),
+        engagement_id=client.active_engagement_id,
+        phase=phase,
+    )
+    final = consume_agent_stream(stream)
+    client.close()
+
+    if final is None:
+        print_error("Agent stream ended without a final response.")
+        return 1
+    if not final.get("success", True) and final.get("error"):
+        print_error(final["error"])
+        return 1
+    return 0
+
+
 def main() -> None:
     # Load .env so API_BASE_URL and other env vars are available
     load_dotenv()
+
+    parser = argparse.ArgumentParser(prog="pentest", add_help=False)
+    subparsers = parser.add_subparsers(dest="command")
+    scan_parser = subparsers.add_parser("scan", help="Run a scan non-interactively (scriptable/CI)")
+    scan_parser.add_argument("--target", required=True, help="Domain, IP, CIDR, or URL")
+    scan_parser.add_argument("--phase", default="full", choices=_SCAN_PHASES)
+    scan_parser.add_argument("--engine", action="store_true", help="Autonomous trigger-graph engine, no LLM")
+    scan_parser.add_argument("--include-low-confidence", action="store_true")
+    scan_parser.add_argument("--force-new", action="store_true", help="Force a new engagement instead of reusing")
+
+    args, _unknown = parser.parse_known_args()
+    if args.command == "scan":
+        sys.exit(_run_scan_noninteractive(args))
 
     api_url = os.getenv("API_BASE_URL", "http://localhost:9000")
     client = APIClient(base_url=api_url)

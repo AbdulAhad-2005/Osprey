@@ -25,6 +25,7 @@ if str(_ROOT) not in sys.path:
 
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
+from _core.command_utils import q
 
 TOOL_NAME = "amass_scan"
 CATEGORY = "recon"
@@ -38,11 +39,11 @@ def build_command(**params: Any) -> str:
     # Kali's /usr/bin/amass wrapper may invoke sudo for libpostal setup — call binary directly.
     # passive is a sub-mode of enum, not a top-level amass subcommand.
     if mode == "passive":
-        command = f"/usr/lib/amass/amass enum -passive -d {domain}"
+        command = f"/usr/lib/amass/amass enum -passive -d {q(domain)}"
     elif mode == "intel":
-        command = f"/usr/lib/amass/amass intel -d {domain}"
+        command = f"/usr/lib/amass/amass intel -d {q(domain)}"
     else:
-        command = f"/usr/lib/amass/amass enum -d {domain}"
+        command = f"/usr/lib/amass/amass enum -d {q(domain)}"
 
     if additional_args:
         command += f" {additional_args}"

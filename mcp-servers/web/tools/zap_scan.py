@@ -31,6 +31,7 @@ if str(_ROOT) not in sys.path:
 
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
+from _core.command_utils import q
 
 TOOL_NAME = "zap_scan"
 CATEGORY = "web"
@@ -47,11 +48,11 @@ def build_command(**params: Any) -> str:
     output_file = params.get("output_file", "")
     additional_args = params.get("additional_args", "")
     if daemon:
-        command = f"zaproxy -daemon -host {host} -port {port}"
+        command = f"zaproxy -daemon -host {q(host)} -port {q(port)}"
         if api_key:
             command += f" -config api.key={api_key}"
     else:
-        command = f"zaproxy -cmd -quickurl {target}"
+        command = f"zaproxy -cmd -quickurl {q(target)}"
         if format_type:
             command += f" -quickout {output_file or format_type}"
         if output_file:

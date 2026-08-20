@@ -22,6 +22,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from _core.command_utils import q
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
 
@@ -32,7 +33,7 @@ def build_command(**params: Any) -> str:
     """Build CLI command (harvested from HexStrike server route)."""
     target = params.get("target", "")
     additional_args = params.get("additional_args", "")
-    command = f"nikto -h {target}"
+    command = f"nikto -h {q(target)}"
     if additional_args:
         command += f" {additional_args}"
     return command.strip()

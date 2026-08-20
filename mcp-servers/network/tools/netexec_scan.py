@@ -29,6 +29,7 @@ if str(_ROOT) not in sys.path:
 
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
+from _core.command_utils import q
 
 TOOL_NAME = "netexec_scan"
 CATEGORY = "network"
@@ -42,7 +43,7 @@ def build_command(**params: Any) -> str:
     hash_value = params.get("hash", "")
     module = params.get("module", "")
     additional_args = params.get("additional_args", "")
-    command = f"nxc {protocol} {target}"
+    command = f"nxc {protocol} {q(target)}"
     if username:
         command += f" -u {username}"
     if password:

@@ -76,8 +76,15 @@ batch:
 # wpscan) is a LATER phase driven deliberately, not a breadth-scan side effect:
 # it is slow, noisy, and needs the recon surface settled first. Flip to true
 # when you actually want the auto vuln-scan inside the engine pass.
+#
+# web_depth (well_known_probe/js_recon/feroxbuster/wayback on every live-web
+# host) is content discovery, not inventory — an "enumerate subs/IPs/ports"
+# ask should never trigger it. Off by default for the same reason vuln_scan
+# is: a deliberate later choice, not a breadth-pass side effect. Flip to true
+# when you actually want content discovery folded into every breadth pass.
 phases:
   vuln_scan: false
+  web_depth: false
 
 # Associated (sister) domains: DISCOVERED but never worked on while this is
 # false (the default). domain_hunter/crt still record them as assets, but the

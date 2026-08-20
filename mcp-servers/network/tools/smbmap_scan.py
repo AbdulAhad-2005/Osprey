@@ -27,6 +27,7 @@ if str(_ROOT) not in sys.path:
 
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
+from _core.command_utils import q
 
 TOOL_NAME = "smbmap_scan"
 CATEGORY = "network"
@@ -38,13 +39,13 @@ def build_command(**params: Any) -> str:
     password = params.get("password", "")
     domain = params.get("domain", "")
     additional_args = params.get("additional_args", "")
-    command = f"smbmap -H {target}"
+    command = f"smbmap -H {q(target)}"
     if username:
         command += f" -u {username}"
     if password:
         command += f" -p {password}"
     if domain:
-        command += f" -d {domain}"
+        command += f" -d {q(domain)}"
     if additional_args:
         command += f" {additional_args}"
     return command.strip()

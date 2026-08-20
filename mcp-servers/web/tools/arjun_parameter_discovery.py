@@ -29,6 +29,7 @@ if str(_ROOT) not in sys.path:
 
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
+from _core.command_utils import q
 
 TOOL_NAME = "arjun_parameter_discovery"
 CATEGORY = "web"
@@ -42,7 +43,7 @@ def build_command(**params: Any) -> str:
     threads = params.get("threads", 25)
     stable = params.get("stable", False)
     additional_args = params.get("additional_args", "")
-    command = f"arjun -u {url} -m {method} -t {threads}"
+    command = f"arjun -u {q(url)} -m {method} -t {threads}"
     if wordlist:
         command += f" -w {wordlist}"
     if delay > 0:

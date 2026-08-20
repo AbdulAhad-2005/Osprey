@@ -28,6 +28,7 @@ if str(_ROOT) not in sys.path:
 
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
+from _core.command_utils import q
 
 TOOL_NAME = "rpcclient_enumeration"
 CATEGORY = "network"
@@ -46,9 +47,9 @@ def build_command(**params: Any) -> str:
     else:
         auth_string = "-U ''"
     if domain:
-        auth_string += f" -W {domain}"
+        auth_string += f" -W {q(domain)}"
     command_sequence = commands.replace(";", "\\n")
-    command = f"echo -e '{command_sequence}' | rpcclient {auth_string} {target}"
+    command = f"echo -e '{command_sequence}' | rpcclient {auth_string} {q(target)}"
     if additional_args:
         command += f" {additional_args}"
     return command.strip()

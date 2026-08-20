@@ -28,6 +28,7 @@ if str(_ROOT) not in sys.path:
 
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
+from _core.command_utils import q
 
 TOOL_NAME = "katana_crawl"
 CATEGORY = "web"
@@ -46,7 +47,7 @@ def build_command(**params: Any) -> str:
     headless = str(params.get("headless", "")).strip().lower() in ("1", "true", "yes", "on")
     no_sandbox = str(params.get("no_sandbox", "true")).strip().lower() in ("1", "true", "yes", "on")
     additional_args = str(params.get("additional_args", "") or "")
-    command = f"katana -u {url} -d {depth}"
+    command = f"katana -u {q(url)} -d {depth}"
     if js_crawl:
         command += " -jc"
     if form_extraction:

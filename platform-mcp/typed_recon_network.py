@@ -71,9 +71,9 @@ _TOOL_BLURBS: dict[str, str] = {
     "shodan_host_info": "Passive Shodan host detail (ip=/target= IP). Needs SHODAN_API_KEY.",
     "subdomain_takeover_check": "Dangling CNAME / SaaS takeover fingerprints (target= or mode=list + subdomains=).",
     "origin_ip_attribution": "Full origin IP attribution pipeline — DNS, TLS, headers, CIDR classification, verification (domain=). The deep option; cdn_origin_probe is the fast one.",
-    "nmap_syn_scan": "TCP SYN scan (-sS, target=). Requires root/NET_RAW for raw sockets; falls back to connect scan if unprivileged. OS detection (-O) needs root — skip -O unless privileged.",
-    "nmap_service_scan": "Nmap service/version scan (-sV -sC, target=, ports=).",
-    "nmap_custom_scan": "Custom nmap (target=, flags= required).",
+    "nmap_syn_scan": "TCP SYN scan (-sS, target=). Always runs privileged (root in the Kali container) — a real SYN scan, not a connect-scan fallback.",
+    "nmap_service_scan": "Nmap service/version scan (-sV -sC, target=, ports=). host_timeout= overrides the per-host NSE budget (scales automatically for wide/full port ranges; 'none' removes it entirely).",
+    "nmap_custom_scan": "Custom nmap (target=, flags= required). Always runs privileged (real root in the Kali container) — -sS/-O/any raw-socket flag just works, no privileged= param needed. host_timeout= overrides the per-host NSE budget (auto-scales for -p-/wide ranges already; 'none' removes it entirely). For a full-range scan across many hosts, use platform_job_start — this call's own foreground ceiling is much shorter than nmap itself may need.",
     "rustscan_fast_scan": "Fast port discovery (target=).",
     "naabu_port_scan": "Naabu fast port discovery. target= accepts ONE host, a comma-separated IP list (multi-host auto-written to a temp -l list), or a CIDR. ports= accepts a list/range OR 'top-N' (e.g. ports='top-1000'); top_ports=N also works. Default: top-ports 1000.",
     "masscan_high_speed": "Masscan (target=, ports=).",
@@ -95,28 +95,30 @@ _SLOW_TIMEOUTS: dict[str, int] = {
 _DEFAULT_NET_TIMEOUT = 300
 
 
-def _normalize_ports_flag(ports: str, tool_name: str = "") -> str:
-    """Convert raw ports string to a CLI flag (e.g. '22,443' → '-p 22,443').
+def _normalize_ports_value(ports: str) -> tuple[str, str]:
+    """Split a raw ports= string into structured (ports, top_ports) values.
 
-    Strips any mistaken -p/--ports prefix the LLM may include.
-    'top-N' / 'top_N' / 'top N' maps to the tool's own top-ports flag
-    (naabu: -top-ports N; nmap family: --top-ports N) instead of an
-    invalid '-p top-N'. Returns '' when ports is empty.
+    Strips a mistaken -p/--ports prefix the LLM may include. 'top-N' /
+    'top_N' / 'top N' shorthand is classified into top_ports rather than
+    ports. This ONLY cleans and classifies the raw value — it never renders
+    a CLI flag. Each tool's own build_command() renders its own correct flag
+    from these structured values (naabu: -top-ports N; nmap family:
+    --top-ports N; ports lists become that tool's own -p/--ports flag) —
+    that per-tool rendering is why pre-rendering a flag string here and
+    folding it into additional_args caused duplicate/invalid flags whenever
+    a tool's own builder also emitted a ports flag from the same params.
+    Returns ('', '') when ports is empty.
     """
     cleaned = (ports or "").strip()
     if not cleaned:
-        return ""
+        return "", ""
     cleaned = re.sub(r"^--?p(?:orts?)?\s*", "", cleaned, flags=re.I).strip()
     if not cleaned:
-        return ""
+        return "", ""
     top_match = re.fullmatch(r"(?i)top[-_ ]?(\d+)", cleaned)
     if top_match:
-        n = top_match.group(1)
-        if tool_name == "naabu_port_scan":
-            return f"-top-ports {n}"
-        if tool_name.startswith("nmap"):
-            return f"--top-ports {n}"
-    return f"-p {cleaned}"
+        return "", top_match.group(1)
+    return cleaned, ""
 
 
 def _build_params(
@@ -125,12 +127,16 @@ def _build_params(
     target: str = "",
     host: str = "",
     url: str = "",
+    ports: str = "",
+    top_ports: str = "",
     flags: str = "",
     mode: str = "",
     subdomains: str = "",
     input_data: str = "",
     additional_args: str = "",
     confirm_expensive: str = "",
+    privileged: bool = False,
+    host_timeout: str = "",
 ) -> dict[str, Any]:
     params: dict[str, Any] = {}
     if domain.strip():
@@ -141,6 +147,10 @@ def _build_params(
         params["host"] = host.strip()
     if url.strip():
         params["url"] = url.strip()
+    if ports.strip():
+        params["ports"] = ports.strip()
+    if top_ports.strip():
+        params["top_ports"] = top_ports.strip()
     if flags.strip():
         params["flags"] = flags.strip()
     if mode.strip():
@@ -153,6 +163,10 @@ def _build_params(
         params["additional_args"] = additional_args.strip()
     if confirm_expensive.strip():
         params["confirm_expensive"] = confirm_expensive.strip()
+    if privileged:
+        params["privileged"] = "true"
+    if host_timeout.strip():
+        params["host_timeout"] = host_timeout.strip()
     return params
 
 
@@ -184,24 +198,27 @@ def register_typed_recon_network_tools(
                 input_data: str = "",
                 additional_args: str = "",
                 confirm_expensive: str = "",
+                privileged: bool = False,
+                host_timeout: str = "",
                 timeout_seconds: int = 0,
                 engagement_id: str = "",
             ) -> str:
-                ports_flag = _normalize_ports_flag(ports, name)
-                extra = (additional_args or "").strip()
-                if ports_flag:
-                    extra = f"{ports_flag} {extra}".strip() if extra else ports_flag
+                ports_value, top_ports_value = _normalize_ports_value(ports)
                 params = _build_params(
                     domain=domain,
                     target=target,
                     host=host,
                     url=url,
+                    ports=ports_value,
+                    top_ports=top_ports_value,
                     flags=flags,
                     mode=mode,
                     subdomains=subdomains,
                     input_data=input_data,
                     additional_args="",
                     confirm_expensive=confirm_expensive,
+                    privileged=privileged,
+                    host_timeout=host_timeout,
                 )
                 effective_timeout = timeout_seconds or _SLOW_TIMEOUTS.get(
                     name, _DEFAULT_NET_TIMEOUT
@@ -209,7 +226,7 @@ def register_typed_recon_network_tools(
                 return execute(
                     name,
                     params,
-                    additional_args=extra,
+                    additional_args=(additional_args or "").strip(),
                     timeout_seconds=effective_timeout,
                     engagement_id=engagement_id,
                 )

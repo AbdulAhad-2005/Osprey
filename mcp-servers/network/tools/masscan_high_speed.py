@@ -20,6 +20,7 @@ Category: network
 
 from __future__ import annotations
 
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -36,21 +37,25 @@ CATEGORY = "network"
 
 def build_command(**params: Any) -> str:
     """Build CLI command (harvested from HexStrike server route)."""
-    target = params.get("target", "")
-    ports = params.get("ports", "1-65535")
+    target = str(params.get("target", ""))
+    # masscan has no "top-N ports" concept (unlike naabu/nmap), so only an
+    # explicit ports value is ever rendered here; top_ports (if a caller
+    # passed shorthand) has nothing to translate to and is intentionally
+    # ignored rather than guessed at.
+    ports = str(params.get("ports") or "1-65535")
     rate = params.get("rate", 1000)
-    interface = params.get("interface", "")
-    router_mac = params.get("router_mac", "")
-    source_ip = params.get("source_ip", "")
+    interface = str(params.get("interface", ""))
+    router_mac = str(params.get("router_mac", ""))
+    source_ip = str(params.get("source_ip", ""))
     banners = params.get("banners", False)
     additional_args = params.get("additional_args", "")
-    command = f"masscan {target} -p{ports} --rate={rate}"
+    command = f"masscan {shlex.quote(target)} -p{shlex.quote(ports)} --rate={shlex.quote(str(rate))}"
     if interface:
-        command += f" -e {interface}"
+        command += f" -e {shlex.quote(interface)}"
     if router_mac:
-        command += f" --router-mac {router_mac}"
+        command += f" --router-mac {shlex.quote(router_mac)}"
     if source_ip:
-        command += f" --source-ip {source_ip}"
+        command += f" --source-ip {shlex.quote(source_ip)}"
     if banners:
         command += " --banners"
     if additional_args:

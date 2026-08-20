@@ -24,6 +24,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from _core.command_utils import q
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
 
@@ -57,7 +58,8 @@ def build_command(**params: Any) -> str:
     url = str(params.get("url") or params.get("target") or "").strip()
     # Ship our own wordlist (the Kali image has none at /usr/share/wordlists);
     # the mcp-servers tree is mounted into the container at this path.
-    wordlist = params.get("wordlist") or _wordlist_expr()
+    wordlist_param = str(params.get("wordlist") or "").strip()
+    wordlist = q(wordlist_param) if wordlist_param else _wordlist_expr()
     threads = int(params.get("threads") or 40)
     depth = int(params.get("depth") or 1)
     additional_args = str(params.get("additional_args") or "").strip()
@@ -66,7 +68,7 @@ def build_command(**params: Any) -> str:
 
     parts = [
         "feroxbuster",
-        f"-u {url}",
+        f"-u {q(url)}",
         f"-w {wordlist}",
         f"-t {threads}",
         f"-d {depth}",

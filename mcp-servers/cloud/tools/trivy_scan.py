@@ -28,6 +28,7 @@ if str(_ROOT) not in sys.path:
 
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
+from _core.command_utils import q
 
 TOOL_NAME = "trivy_scan"
 CATEGORY = "cloud"
@@ -40,7 +41,7 @@ def build_command(**params: Any) -> str:
     severity = params.get("severity", "")
     output_file = params.get("output_file", "")
     additional_args = params.get("additional_args", "")
-    command = f"trivy {scan_type} {target}"
+    command = f"trivy {scan_type} {q(target)}"
     if output_format:
         command += f" --format {output_format}"
     if severity:

@@ -31,6 +31,7 @@ if str(_ROOT) not in sys.path:
 
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
+from _core.command_utils import q
 
 TOOL_NAME = "enum4linux_ng_advanced"
 CATEGORY = "network"
@@ -46,13 +47,13 @@ def build_command(**params: Any) -> str:
     groups = params.get("groups", True)
     policy = params.get("policy", True)
     additional_args = params.get("additional_args", "")
-    command = f"enum4linux-ng {target}"
+    command = f"enum4linux-ng {q(target)}"
     if username:
         command += f" -u {username}"
     if password:
         command += f" -p {password}"
     if domain:
-        command += f" -d {domain}"
+        command += f" -d {q(domain)}"
     # enum4linux-ng has no "-A <list>" syntax — -A is a standalone "do all
     # simple enumeration" flag; individual categories are separate real
     # flags (-S/-U/-G/-P). Emit -A only when all four are requested.

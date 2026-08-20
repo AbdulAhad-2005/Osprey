@@ -29,6 +29,7 @@ if str(_ROOT) not in sys.path:
 
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
+from _core.command_utils import q
 
 TOOL_NAME = "kube_hunter_scan"
 CATEGORY = "cloud"
@@ -44,10 +45,10 @@ def build_command(**params: Any) -> str:
     additional_args = params.get("additional_args", "")
     command = "kube-hunter"
     if target:
-        command += f" --remote {target}"
-        command += f" --remote {remote}"
-        command += f" --cidr {cidr}"
-        command += f" --interface {interface}"
+        command += f" --remote {q(target)}"
+        command += f" --remote {q(remote)}"
+        command += f" --cidr {q(cidr)}"
+        command += f" --interface {q(interface)}"
         command += " --pod"
     if active:
         command += " --active"

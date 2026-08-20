@@ -25,6 +25,7 @@ if str(_ROOT) not in sys.path:
 
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
+from _core.command_utils import q
 
 TOOL_NAME = "fierce_scan"
 CATEGORY = "recon"
@@ -34,9 +35,9 @@ def build_command(**params: Any) -> str:
     domain = params.get("domain", "")
     dns_server = params.get("dns_server", "")
     additional_args = params.get("additional_args", "")
-    command = f"fierce --domain {domain}"
+    command = f"fierce --domain {q(domain)}"
     if dns_server:
-        command += f" --dns-servers {dns_server}"
+        command += f" --dns-servers {q(dns_server)}"
     if additional_args:
         command += f" {additional_args}"
     return command.strip()

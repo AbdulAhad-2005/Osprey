@@ -26,6 +26,7 @@ if str(_ROOT) not in sys.path:
 
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
+from _core.command_utils import q
 
 TOOL_NAME = "nbtscan_netbios"
 CATEGORY = "network"
@@ -39,7 +40,7 @@ def build_command(**params: Any) -> str:
     command = f"nbtscan -t {timeout}"
     if verbose:
         command += " -v"
-    command += f" {target}"
+    command += f" {q(target)}"
     if additional_args:
         command += f" {additional_args}"
     return command.strip()

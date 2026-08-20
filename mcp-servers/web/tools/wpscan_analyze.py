@@ -24,6 +24,7 @@ if str(_ROOT) not in sys.path:
 
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
+from _core.command_utils import q
 
 TOOL_NAME = "wpscan_analyze"
 CATEGORY = "web"
@@ -32,7 +33,7 @@ def build_command(**params: Any) -> str:
     """Build CLI command (harvested from HexStrike server route)."""
     url = params.get("url", "")
     additional_args = str(params.get("additional_args", "") or "")
-    command = f"wpscan --url {url}"
+    command = f"wpscan --url {q(url)}"
     # JSON output + no banner so the backend parser gets structured
     # version/plugin/vuln data instead of scraping the CLI report.
     if "--format" not in additional_args and "-f " not in additional_args:

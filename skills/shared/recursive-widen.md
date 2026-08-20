@@ -35,9 +35,9 @@ calls felt expensive — it's one call now.
 
 When a tool run produces **zero new findings** — everything in the graph has
 already been explored at the appropriate depth **and** linked. Graph is stable.
-Check `platform_finalize_check` — it now reflects back on unexplored/orphan
-nodes and untested hypotheses rather than just gating a report; treat what it
-shows as the last look-back before you actually stop.
+Check `platform_finalize_check` (the conductor's phase-readiness signal) — if
+vuln/exploit haven't unlocked yet, or there are recon-reopen candidates, that's
+real evidence worth acting on before you decide the surface is exhausted.
 
 ## This prevents
 

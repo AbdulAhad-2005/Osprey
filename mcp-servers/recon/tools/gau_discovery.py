@@ -27,6 +27,7 @@ if str(_ROOT) not in sys.path:
 
 from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
+from _core.command_utils import q
 
 TOOL_NAME = "gau_discovery"
 CATEGORY = "recon"
@@ -38,7 +39,7 @@ def build_command(**params: Any) -> str:
     include_subs = params.get("include_subs", True)
     blacklist = params.get("blacklist", "png,jpg,gif,jpeg,swf,woff,svg,pdf,css,ico")
     additional_args = params.get("additional_args", "")
-    command = f"gau {domain}"
+    command = f"gau {q(domain)}"
     if providers != "wayback,commoncrawl,otx,urlscan":
         command += f" --providers {providers}"
     if include_subs:

@@ -43,13 +43,6 @@ _SESSION_SWITCH_NOTICE = ""
 _SESSION_TARGET_KIND = "domain"
 _SESSION_SCOPE = ""
 
-# OPEN GAPS dedup — collapses the memory-gaps block to one line across
-# consecutive tool calls while its content signature is unchanged, so a
-# growing engagement doesn't re-teach the operator LLM the same paragraph on
-# every single tool response. Reset whenever the bound engagement changes.
-_LAST_OPEN_LOOPS_SIG = ""
-_OPEN_LOOPS_REPEAT_COUNT = 0
-
 # Section-level context delta — collapse LARGE, slow-changing context sections to
 # a one-line placeholder when their rendered content is byte-identical to the
 # previous platform_context call for the same engagement. Without this, a mode-1
@@ -62,8 +55,7 @@ _CTX_COLLAPSIBLE = frozenset(
     {
         "crown_jewels",
         "recent_artifacts",
-        "inferred_focus",
-        "finalize",
+        "phase_readiness",
         "network_surface",
         "attack_surface_tree",
         "findings_brief",
@@ -180,7 +172,6 @@ def _bind_target(target: str, *, force_new: bool = False, kind: str = "domain", 
     must be clarified first via analyze-target."""
     global _SESSION_TARGET, _SESSION_ENGAGEMENT_ID, _SESSION_SWITCH_NOTICE
     global _SESSION_TARGET_KIND, _SESSION_SCOPE
-    global _LAST_OPEN_LOOPS_SIG, _OPEN_LOOPS_REPEAT_COUNT
 
     normalized = _normalize_target(target)
     if not _valid_target(normalized):
@@ -192,8 +183,6 @@ def _bind_target(target: str, *, force_new: bool = False, kind: str = "domain", 
     previous_target = _SESSION_TARGET
     previous_engagement = _SESSION_ENGAGEMENT_ID
     switched = bool(previous_target and previous_target != normalized)
-    _LAST_OPEN_LOOPS_SIG = ""
-    _OPEN_LOOPS_REPEAT_COUNT = 0
 
     if switched:
         _new_run_id()
@@ -434,34 +423,27 @@ def _analyze_or_bind(raw: str, *, force_new: bool = False) -> str:
             "Target changed — prior findings in this chat were for a different "
             "engagement. Use platform_context for the NEW target only."
         )
-    # Auto-fire once on a genuinely new engagement — "domain arrives -> recursive
-    # expansion starts" only holds if this actually happens without the LLM
-    # having to remember to call platform_expand itself. `created` alone is the
-    # correct, complete signal (backend-sourced, means the ENGAGEMENT is new) —
-    # `switched` only means "a different target was bound earlier in this MCP
-    # session" and has nothing to do with engagement novelty; gating on it was
-    # a bug that silently disabled auto-fire on almost every real multi-target
-    # session (confirmed live: geo.tv -> samaa.tv had created=True, switched=True,
-    # and never fired). Never re-fires on a re-bind to an EXISTING engagement
-    # (created=False) — that would be redundant on every re-bind in a long
-    # session. Started as a background job, never a blocking call — the job_id
-    # is visible in this same response immediately; progress/result are visible
-    # via platform_job_poll/platform_job_result, never silent.
-    if info.get("created"):
-        try:
-            job = _start_expansion_job(info["engagement_id"], info.get("run_id", ""), max_passes=5)
-            parts.append(
-                _block(
-                    "Auto-expansion started (new engagement)",
-                    f"job_id: {job.get('job_id')}\n"
-                    "Recursive surface expansion is now running in the background. "
-                    "Continue other work; check progress with "
-                    f"platform_job_poll(job_id='{job.get('job_id')}', wait_seconds=20), "
-                    "read the full report with platform_job_result once complete.",
-                )
-            )
-        except Exception as exc:  # noqa: BLE001
-            parts.append(f"(Auto-expansion skipped: {exc})")
+    parts.append(
+        "Next: platform_pipeline(action='start') returns a ready-to-spawn recon "
+        "subagent brief — call it now (no backend key required; you supply the "
+        "brain via your own native subagent mechanism)."
+    )
+    # No auto-fire: platform_set_target only binds. The connecting LLM (this
+    # session) decides what runs next — call typed tools directly, or opt
+    # into platform_pipeline/platform_spawn_agent/platform_expand explicitly
+    # when backend-autonomous help is actually wanted. A prior version of
+    # this function auto-started platform_pipeline here, which meant a
+    # server-side PhaseAgent tried to run through the BACKEND's own LLM
+    # config — a second, usually-unconfigured "brain" that failed opaquely
+    # whenever the real driver was an external MCP client (this one) with no
+    # reason for the backend to also hold an LLM key. Removed outright rather
+    # than made conditional: even when the backend LLM IS configured,
+    # silently starting an independent agent that calls tools concurrently
+    # with whatever this session is doing is the same "why is it running
+    # feroxbuster nobody asked for" problem, just gated on an env var instead
+    # of always-on. platform_pipeline/platform_spawn_agent/platform_expand
+    # remain fully available — nothing about their capability changed, only
+    # whether the platform ever calls them without being asked.
     return "\n\n".join(parts)
 
 
@@ -498,10 +480,10 @@ def platform_expand(max_passes: int = 5, engagement_id: str = "") -> str:
     once complete for the full pass-by-pass report — real new asset names,
     not just counts, plus any new exploit candidates the pass surfaced.
 
-    Fires automatically once when platform_set_target binds a brand-new
-    engagement — call this explicitly to continue expanding afterward, or to
-    re-check a target you've been working for a while (new assets discovered
-    manually since the last pass get picked up too).
+    Not auto-started — call it explicitly when you want the deterministic
+    breadth engine (mode=engine / no LLM judgment per step), or to re-check a
+    target you've been working for a while (new assets discovered manually
+    since the last pass get picked up too).
 
     engagement_id: optional pin — see platform_exec.
     """
@@ -567,24 +549,35 @@ def scan_prompt(target: str = "", mode: str = "") -> str:
 @mcp.tool()
 def platform_pipeline(action: str = "start", engagement_id: str = "") -> str:
     """
-    Drive the multi-agent PHASE PIPELINE — the backend's concurrent, data-triggered
-    orchestration of recon → vuln → exploit agents.
+    The deterministic conductor's phase state: recon → vuln → exploit, evidence-
+    triggered, with loop-back. Always read-only, regardless of backend LLM
+    configuration — this call never spawns anything on its own, so it's always
+    safe to call from an external harness session even if a backend key happens
+    to be configured for an unrelated CLI/GUI use of this platform.
 
-    Instead of you walking every phase yourself in one long loop, this launches a
-    deterministic conductor that: starts a recon agent + the breadth engine now;
-    starts a vuln agent the moment recon has surfaced hosts/services/tech; starts
-    an exploit agent the moment vuln finds something to chain — all CONCURRENTLY,
-    and re-opening recon when later phases discover new hosts. Agents coordinate
-    through shared engagement findings; you don't relay anything between them.
+    Drive execution yourself: your own native subagent/Task mechanism (preferred
+    — no backend key needed, full MCP tool access, shared engagement memory), or
+    platform_spawn_agent for a one-off backend-driven agent if you have no
+    subagent mechanism of your own. Recon is always the first/active phase; poll
+    action='status' again after new work lands to see when vuln/exploit unlock
+    or recon should reopen.
+
+    (Genuine backend-autonomous execution with no external harness in the loop
+    at all — e.g. this platform's own CLI/GUI driving itself with a configured
+    key — is a separate, deliberately non-MCP-exposed path. It's not reachable
+    from here, by design: an MCP-connected session must never have a second,
+    unrelated LLM spawned on its behalf just because a backend key exists.)
 
     action:
-      - 'start'  : launch the pipeline (idempotent per engagement). Returns at once.
-      - 'status' : running/finished, active agents, latest tick (signals + spawns).
-      - 'stop'   : stop the conductor and its running phase agents.
+      - 'start'  : read the conductor state (same as 'status' — kept as a
+                   separate verb for the natural "call this first" moment).
+      - 'status' : current phase-readiness snapshot + any active agent jobs
+                   (however they were spawned, e.g. via platform_spawn_agent) —
+                   agent jobs report real turn-by-turn progress (results_log),
+                   not just a final blob; platform_job_poll for the detail.
+      - 'stop'   : cancel active agent jobs for this engagement.
 
-    Poll status periodically and read platform_findings for what the agents found.
-    You remain free to spawn extra agents (platform_spawn_agent) or run tools
-    yourself alongside the pipeline.
+    Read platform_findings for what's landed in shared memory either way.
     """
     def _run() -> str:
         eid, tgt = _resolve_engagement(engagement_id)
@@ -595,11 +588,19 @@ def platform_pipeline(action: str = "start", engagement_id: str = "") -> str:
             data = _post("/api/v1/pipeline/stop", {"engagement_id": eid}, timeout=15)
         else:
             data = _post("/api/v1/pipeline/start", {"engagement_id": eid, "run_id": SESSION_RUN_ID}, timeout=30)
-        return "\n\n".join([
+        parts = [
             f"### OPERATOR MIRROR — PHASE PIPELINE ({act})",
             _session_header(eid, tgt),
-            _block("Pipeline", data),
-        ])
+        ]
+        note = (data.get("note") or "").strip()
+        if note:
+            parts.append(note)
+        text = (data.get("text") or "").strip()
+        if text:
+            parts.append(text)
+        else:
+            parts.append(_block("Pipeline", data))
+        return "\n\n".join(parts)
 
     return _safe(_run)
 
@@ -723,14 +724,6 @@ def _fetch_context(engagement_id: str = "", target: str = "", *, full: bool = Fa
         "/api/v1/hybrid/context/auto",
         params={"engagement_id": eid, "seed_target": tgt},
     )
-    readiness = data.get("finalize_readiness") or {}
-    lb = readiness.get("look_back") or {}
-    finalize_banner = (
-        f"look_back: {lb.get('orphan_count', 0)} unlinked, "
-        f"{lb.get('unexplored_count', 0)} unexplored, "
-        f"{lb.get('untested_hypothesis_count', 0)} untested hypothesis(es) | "
-        f"{(readiness.get('guidance') or '')[:400]}"
-    )
 
     # Jobs: compact one-liner from backend (config-driven max slots)
     jobs_line = (data.get("jobs_line") or "").strip()
@@ -747,20 +740,6 @@ def _fetch_context(engagement_id: str = "", target: str = "", *, full: bool = Fa
             if labels:
                 jobs_line = f"jobs: {running}/? running [{', '.join(str(x) for x in labels)}]"
 
-    # Coverage: gap_id + reason only (no suggested_tool orders)
-    gap_lines: list[str] = []
-    for g in (data.get("coverage_gaps") or [])[:8]:
-        if isinstance(g, dict):
-            gid = g.get("gap_id") or ""
-            reason = (g.get("reason") or g.get("evidence") or "")[:120]
-            asset = g.get("asset") or ""
-            bit = f"[{gid}] {reason}"
-            if asset:
-                bit += f" ({asset})"
-            gap_lines.append(bit)
-        else:
-            gap_lines.append(str(g)[:140])
-
     # Crown jewels: top 5 compact
     jewels = data.get("crown_jewels") or []
     jewel_lines = []
@@ -771,17 +750,10 @@ def _fetch_context(engagement_id: str = "", target: str = "", *, full: bool = Fa
                 f"({', '.join(str(r) for r in (j.get('reasons') or [])[:3])})"
             )
 
-    open_loops = data.get("open_loops") or {}
-    gaps_text = open_loops.get("text") if isinstance(open_loops, dict) else open_loops
-
     idx = data.get("stdout_index") or {}
     idx_text = (idx.get("text") if isinstance(idx, dict) else "") or ""
 
-    # Thinking cards / universal loop — the LLM's "what's likely still unexplored" signal.
-    # Computed by the backend on every context call; was previously dropped here entirely.
-    hyp_lines = [str(h)[:180] for h in (data.get("product_hypotheses") or [])[:8] if str(h).strip()]
-
-    # Signal-based dispatch (e.g. "port 445 open -> smb enum") — likewise computed, was dropped.
+    # Signal-based dispatch (e.g. "port 445 open -> smb enum").
     dispatch_lines: list[str] = []
     for d_ in (data.get("dispatch_rules") or [])[:6]:
         if isinstance(d_, dict):
@@ -793,16 +765,23 @@ def _fetch_context(engagement_id: str = "", target: str = "", *, full: bool = Fa
                 bit += f" — {reason}"
             dispatch_lines.append(bit)
 
-    parts = [
-        _session_header(eid, tgt),
-        f"**Jobs:** {jobs_line}",
-        "### OPEN GAPS (memory — you choose how to close)",
-        str(gaps_text or "(none)"),
-        "**Thinking (what's likely still unexplored — instinct, not orders):**\n"
-        + ("\n".join(hyp_lines) if hyp_lines else "(none yet)"),
+    pipeline_line = (data.get("pipeline_line") or "").strip()
+    readiness_text = data.get("phase_readiness_text") or ""
+
+    parts = [_session_header(eid, tgt), f"**Jobs:** {jobs_line}"]
+    if pipeline_line:
+        parts.append(f"**Pipeline:** {pipeline_line}")
+    parts += [
         "**Dispatch signals (from detected tech/ports):**\n"
         + ("\n".join(dispatch_lines) if dispatch_lines else "(none yet)"),
         _block("Context delta", data.get("context_delta") or {}),
+        _ctx_delta(
+            eid,
+            "phase_readiness",
+            "**Phase status (conductor):**\n" + (readiness_text or "(no engagement bound)"),
+            full=full,
+            label="Phase status",
+        ),
         _ctx_delta(
             eid,
             "crown_jewels",
@@ -817,9 +796,6 @@ def _fetch_context(engagement_id: str = "", target: str = "", *, full: bool = Fa
             full=full,
             label="Recent artifacts",
         ),
-        "**Coverage gaps:**\n" + ("\n".join(gap_lines) if gap_lines else "(none)"),
-        _ctx_delta(eid, "inferred_focus", _block("Inferred focus", data.get("inferred_focus", {})), full=full, label="Inferred focus"),
-        _ctx_delta(eid, "finalize", _block("Finalize", finalize_banner), full=full, label="Finalize"),
     ]
     # Network surface: short only
     ns = data.get("network_surface_text") or ""
@@ -884,7 +860,8 @@ def _fetch_context(engagement_id: str = "", target: str = "", *, full: bool = Fa
 
     parts.append(
         "---\n"
-        "You decide the next probe. Gaps are data, not orders. "
+        "You decide the next probe. Phase status is evidence-based data, not an order — "
+        "recon is always active, vuln/exploit unlock when they have real evidence to work with. "
         "Use platform_tools / platform_skills / platform_findings / platform_artifact "
         "only when you need detail. "
         "platform_graph_link_many (bulk — one call for a whole tool run's relationships) "
@@ -896,7 +873,7 @@ def _fetch_context(engagement_id: str = "", target: str = "", *, full: bool = Fa
 @mcp.tool()
 def platform_context(target: str = "", engagement_id: str = "", full: bool = False) -> str:
     """
-    Compact briefing from evidence: gaps, crown jewels, jobs, delta, look-back.
+    Compact briefing from evidence: phase status, crown jewels, jobs, delta.
 
     Large, slow-changing sections (network surface, attack-surface tree, findings
     brief, role guidance, skills index, crown jewels) collapse to a one-line
@@ -904,11 +881,8 @@ def platform_context(target: str = "", engagement_id: str = "", full: bool = Fal
     context. Pass full=true to expand every section.
 
     Call this not just to plan the next probe, but whenever you're stuck — a
-    tool keeps failing, you're unsure what to try next, or you're about to ask
-    the user a question. Memory may already hold the answer (an unexplored
-    asset, an untested hypothesis) you reasoned about earlier and forgot to
-    chase. If it doesn't, that's useful too — it means you're genuinely at a
-    new edge, not repeating past work blind.
+    tool keeps failing, or you're unsure what to try next. Memory may already
+    hold the answer.
 
     No phase argument. Pass target= only to analyze/switch.
     Pull details on demand: platform_tools, platform_skills, platform_findings.
@@ -1061,54 +1035,9 @@ def _format_exec_result(data: dict[str, Any], *, engagement_id: str = "", target
         parts.append(f"**Memory:** {mem_note}")
     if arts:
         parts.append(_block("Full output on disk (Kali)", arts))
-    # Gaps from memory — data, not orders. Delta-aware: collapse to one line
-    # while the content signature is unchanged since it was last shown in
-    # full, so a growing engagement doesn't re-send the same paragraph on
-    # every tool call. Full detail resurfaces whenever it changes or
-    # periodically after refresh_every executions.
-
-    eid_for_loops = engagement_id or _SESSION_ENGAGEMENT_ID
-
-    is_trivial_result = (
-        not data.get("success")
-        or bool(data.get("cache_hit"))
-        or not (data.get("stdout") or "").strip()
-    )
-
-    if eid_for_loops and not is_trivial_result:
-        try:
-            global _LAST_OPEN_LOOPS_SIG, _OPEN_LOOPS_REPEAT_COUNT
-            loops = _get(
-                "/api/v1/hybrid/open-loops",
-                params={"engagement_id": eid_for_loops},
-                timeout=12,
-            )
-            loops = loops or {}
-            text = loops.get("text") or ""
-            count = loops.get("count") or 0
-            sig = str(loops.get("signature") or "")
-            refresh_every = int(loops.get("refresh_every") or 4)
-
-            if text and count:
-                unchanged = bool(sig) and sig == _LAST_OPEN_LOOPS_SIG
-
-                if unchanged and _OPEN_LOOPS_REPEAT_COUNT < refresh_every:
-                    _OPEN_LOOPS_REPEAT_COUNT += 1
-                    urgent = "⚠ still true — " if loops.get("strongly_recommend_continue") else ""
-                    parts.append(
-                        f"\n**OPEN GAPS:** {urgent}unchanged since last shown "
-                        f"({count} item(s) still open) — platform_context / "
-                        "platform_finalize_check for the full list."
-                    )
-                else:
-                    _LAST_OPEN_LOOPS_SIG = sig
-                    _OPEN_LOOPS_REPEAT_COUNT = 0
-                    parts.append(f"\n**OPEN GAPS** (you choose):\n{text}")
-        except Exception:
-            pass
     parts.append(
         "\n---\n"
-        "You decide the next move from evidence + gaps. Invent when catalog is thin."
+        "You decide the next move. platform_context for phase status when useful."
     )
     return "\n".join(parts)
 
@@ -1384,79 +1313,29 @@ def platform_tag_asset(
 
 
 @mcp.tool()
-def platform_finalize_check(override: bool = False) -> str:
+def platform_finalize_check() -> str:
     """
-    Look back over memory before you stop — not a gate you need to argue past.
+    The conductor's phase-readiness snapshot — evidence-based, not a gate.
 
-    Call this when you think you're finishing, AND when you're stuck (a tool
-    keeps failing, you're circling, unsure what's left) — either way, memory
-    might already hold the next move.
-
-    Surfaces what's still open in the graph: assets stored but never linked
-    (call platform_graph_link_many on them), assets discovered but never
-    followed up with a tool, and platform_think hypotheses nothing has tested
-    yet. Deepen the highest-value one, or explicitly decide the rest don't
-    matter, before writing a report — the platform never forces which.
-
-    A clean result does NOT mean nothing is missing — it means nothing STORED
-    is missing. This can't see your own reasoning: if you concluded something
-    this session (a pattern, a relation, a suspicion) and never wrote it down,
-    that's on you to persist now, then re-check. Context + memory together —
-    neither replaces the other.
-
-    Also returns the same report-quality notes as before (weak CRITICAL/CVE
-    claims, SPA-false-API, port floods, hypothesis-only paths) as advisory —
-    useful for honest labeling, never a reason to refuse writing the report.
-
-    When the look-back total, missing service-scan coverage, or an unresolved
-    HIGH/CRITICAL claim crosses a real threshold, the response leads with a
-    "STRONGLY RECOMMEND CONTINUING" banner — still your call, but designed to
-    not be skimmable past on the way to a summary.
+    Call this when you're deciding whether to keep going or wrap up. Shows:
+    recon is always the active/first phase; vuln/exploit show whether they've
+    unlocked yet (real evidence crossed a threshold — live hosts, services,
+    tech, URLs for vuln; vulnerabilities/credentials/secrets for exploit);
+    and how many new host/subdomain findings look like they'd be worth
+    another recon pass. Purely informational — you decide what to do with it.
     """
     def _run() -> str:
         _require_bound_target()
         data = _get(
-            "/api/v1/hybrid/finalize-readiness",
-            params={
-                "engagement_id": _SESSION_ENGAGEMENT_ID,
-                "override": str(bool(override)).lower(),
-            },
+            "/api/v1/hybrid/phase-readiness",
+            params={"engagement_id": _SESSION_ENGAGEMENT_ID},
             timeout=45,
         )
-        lb = data.get("look_back") or {}
-        lb_total = (
-            int(lb.get("orphan_count") or 0)
-            + int(lb.get("unexplored_count") or 0)
-            + int(lb.get("untested_hypothesis_count") or 0)
-        )
-        parts = ["### OPERATOR MIRROR — LOOK-BACK"]
-        if data.get("strongly_recommend_continue"):
-            reasons = data.get("strong_continue_reasons") or []
-            parts.append(
-                "## ⚠ STRONGLY RECOMMEND CONTINUING — not a block, but read this first\n"
-                + "\n".join(f"- {r}" for r in reasons)
-            )
-        parts.extend([
+        parts = [
+            "### OPERATOR MIRROR — PHASE READINESS",
             _session_header(),
-            f"**{lb_total} open item(s) in memory**"
-            if lb_total
-            else "**Look-back clean** — nothing unlinked/unexplored/untested",
-            _block("look_back", lb),
-            _block("report_quality_notes (advisory)", data.get("blocked_by") or []),
-            _block("checks", data.get("checks") or {}),
-            _block("guidance", data.get("guidance") or ""),
-        ])
-        if data.get("inferred_focus"):
-            parts.append(_block("inferred_focus", data["inferred_focus"]))
-        if lb_total:
-            parts.append(
-                "\nPick the highest-value item above and deepen it — or explicitly "
-                "note why the rest don't matter — before platform_report_outline."
-            )
-        else:
-            parts.append(
-                "\nBefore prose: platform_report_outline — Observed / Inferred / Hypotheses / Crown jewels."
-            )
+            data.get("text") or _block("phase_readiness", data),
+        ]
         return "\n\n".join(parts)
 
     return _safe(_run)
@@ -1466,8 +1345,8 @@ def platform_finalize_check(override: bool = False) -> str:
 def platform_report_outline() -> str:
     """
     Structure a trusted report from memory: Observed / Inferred / Hypotheses /
-    Crown jewels / open gaps + finalize gate. Call before COMPLETE or PARTIAL prose.
-    Does not invent findings — only organizes what is stored.
+    Crown jewels + the conductor's phase status. Call before COMPLETE or PARTIAL
+    prose. Does not invent findings — only organizes what is stored.
     """
     def _run() -> str:
         _require_bound_target()
@@ -2193,8 +2072,13 @@ def platform_job_poll(job_id: str = "", engagement_id: str = "", wait_seconds: f
     Poll one job (job_id=…) or list all jobs for this engagement (empty job_id).
 
     Status: queued | running | completed | failed. RUNNING jobs carry a `progress`
-    field (updated per step for multi-step kinds like expansion) — read it instead
-    of assuming a running job is a black box.
+    field (the current step, overwritten each update — expansion passes, agent
+    tool calls) AND a `results_log` (persistent history — every completed step
+    stays, nothing overwritten). For kind=agent (a backend-driven phase agent,
+    e.g. from `platform_pipeline`'s auto-executor or `platform_spawn_agent`),
+    `results_log` shows each tool call's outcome and preview as it happens —
+    genuinely watchable turn-by-turn, not fire-and-forget. Read it instead of
+    assuming a running job is a black box.
 
     wait_seconds (0-60, default 0): long-poll — the call blocks server-side up to
     this long for the job to finish or its progress to change, instead of you
