@@ -1,4 +1,19 @@
-FROM kalilinux/kali-rolling
+# syntax=docker/dockerfile:1
+
+# ─── Base image: pinned digest, not a floating tag ─────────────────────────────
+# kalilinux/kali-rolling publishes NO versioned tags — only a moving "latest"
+# pointer that re-resolves to whatever Kali ships today, on every build.
+#
+# Pinning by digest makes the base OS+toolchain snapshot reproducible: a build
+# today and a build in six months resolve to the identical image. Upgrading
+# becomes a deliberate, occasional action instead of something that happens
+# silently underneath every `--build`.
+#
+# To take a new snapshot on purpose, run `scripts/pin-kali-base.sh` (prints the
+# current amd64 digest) and paste the result below, or override at build time:
+#   docker build --build-arg KALI_BASE_DIGEST=sha256:... kali-tools/
+ARG KALI_BASE_DIGEST=sha256:d2560fdc054793be92236322113fa231e609f95403dd68c613ca864b0d872b1f
+FROM kalilinux/kali-rolling@${KALI_BASE_DIGEST}
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV GOPATH=/opt/go
@@ -7,21 +22,135 @@ ENV GOPATH=/opt/go
 # Mirrors _KALI_EXEC_PATH in backend services/mcp_client.py.
 ENV PATH="/home/mcpuser/.local/bin:${GOPATH}/bin:/usr/local/go/bin:${PATH}"
 
+# GCC 15 in this snapshot defaults to -std=gnu23 (verified: __STDC_VERSION__ ==
+# 202311L). C23 no longer auto-exposes older POSIX APIs the way earlier GNU-mode
+# defaults did, which breaks legacy C sources that assume the old default.
+# Forcing gnu17 is backward compatible — every C sdist this image
+# builds still compiles fine under it — so this is a global, preventive fix for
+# the whole class of "old C code assumed the old GCC default" breakage, not a
+# unicorn-specific patch.
+ENV CFLAGS="-std=gnu17 -D_DEFAULT_SOURCE"
+ENV CXXFLAGS="-std=gnu++17 -D_DEFAULT_SOURCE"
+
+# This image makes several hundred external network calls over the course of a
+# build (apt, go modules, pip/pipx, git clone, GitHub releases/API) across what
+# can be an hour-plus wall clock — a single transient blip anywhere in that
+# chain (a flaky mirror redirect, one dropped connection) otherwise throws away
+# everything cached before it. apt gets a global retry count; wget/curl calls
+# get native retry flags; git clone and pip/pipx `git+` installs (which have no
+# built-in retry of their own) get wrapped in retry-cmd below.
+COPY <<'EOF' /etc/apt/apt.conf.d/99retries
+Acquire::Retries "5";
+EOF
+
+COPY <<'EOF' /usr/local/bin/retry-cmd
+#!/bin/sh
+# retry-cmd N CMD...  -- run CMD, retrying up to N times with backoff.
+# For operations with no native retry flag of their own (git clone, pip/pipx
+# installing from a git+ URL).
+n=1
+max="$1"; shift
+until "$@"; do
+    if [ "$n" -ge "$max" ]; then
+        echo "retry-cmd: giving up after $n attempt(s): $*" >&2
+        exit 1
+    fi
+    wait_s=$((n * 3))
+    echo "retry-cmd: attempt $n failed, retrying in ${wait_s}s: $*" >&2
+    sleep "$wait_s"
+    n=$((n + 1))
+done
+EOF
+RUN chmod +x /usr/local/bin/retry-cmd
+
+# apt-get gets its OWN retry wrapper, not just plain retry-cmd: Acquire::Retries
+# above only retries within the SAME resolved connection, which doesn't help
+# when http.kali.org's geo-redirect sticks a whole apt session to one specific
+# mirror that has a structurally broken package pool.
+# A fresh `apt-get update` process re-resolves DNS and
+# has a real chance of landing on a different, healthy mirror; retrying inside
+# the same apt invocation does not.
+COPY <<'EOF' /usr/local/bin/apt-install-retry.sh
+#!/bin/sh
+# apt-install-retry.sh N PKG...  -- apt-get update && install, retrying the
+# WHOLE sequence (fresh process each attempt -> fresh DNS/mirror pick).
+n=1
+max="$1"; shift
+until apt-get update && apt-get install -y --no-install-recommends "$@"; do
+    if [ "$n" -ge "$max" ]; then
+        echo "apt-install-retry: giving up after $n attempt(s): $*" >&2
+        exit 1
+    fi
+    wait_s=$((n * 5))
+    echo "apt-install-retry: attempt $n failed, retrying in ${wait_s}s: $*" >&2
+    sleep "$wait_s"
+    n=$((n + 1))
+done
+EOF
+RUN chmod +x /usr/local/bin/apt-install-retry.sh
+
 # ─── System base ───────────────────────────────────────────────────────────────
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-install-retry.sh 5 \
        wget curl git ca-certificates gnupg unzip \
        python3 python3-pip python3-venv python3-dev python3-setuptools python3-wheel \
-       build-essential libssl-dev libffi-dev \
+       build-essential cmake pkg-config libssl-dev libffi-dev \
        libcap2-bin \
        ruby ruby-dev \
        golang-go \
-    && rm -rf /var/lib/apt/lists/*
+       openjdk-21-jdk-headless
+# openjdk-21-jdk-headless: Ghidra 11+ requires a real JDK 21 on PATH and bundles
+# no JVM of its own — analyzeHeadless silently has no working java without this
+
+# Small helper reused by the versioned GitHub-release installs below (terrascan,
+# kube-bench, ghidra): prints the download URL of the release asset matching a
+# glob pattern, defaulting to the latest release, or a specific tag when given
+# one. Centralizes the "fetch latest, but let a build-arg pin a version"
+# pattern instead of repeating GitHub API + JSON parsing three times.
+COPY <<'EOF' /usr/local/bin/gh-latest-asset.py
+#!/usr/bin/env python3
+"""Print the browser_download_url of a GitHub release asset matching a glob.
+
+Usage: gh-latest-asset.py OWNER/REPO 'PATTERN' [TAG]
+TAG defaults to the latest release when omitted/empty; pass a release tag to
+pin a specific version instead of tracking latest.
+"""
+import fnmatch
+import json
+import sys
+import time
+import urllib.error
+import urllib.request
+
+repo, pattern = sys.argv[1], sys.argv[2]
+tag = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else ""
+url = f"https://api.github.com/repos/{repo}/releases/" + (f"tags/{tag}" if tag else "latest")
+
+raw = None
+for attempt in range(5):
+    try:
+        raw = urllib.request.urlopen(url, timeout=20).read()
+        break
+    except (urllib.error.URLError, TimeoutError) as exc:
+        if attempt == 4:
+            raise
+        print(f"gh-latest-asset: attempt {attempt + 1} failed ({exc}), retrying...", file=sys.stderr)
+        time.sleep((attempt + 1) * 3)
+data = json.loads(raw)
+for asset in data["assets"]:
+    if fnmatch.fnmatch(asset["name"], pattern):
+        print(asset["browser_download_url"])
+        raise SystemExit(0)
+raise SystemExit(f"no asset matching {pattern!r} in {repo} release {tag or 'latest'}")
+EOF
+RUN chmod +x /usr/local/bin/gh-latest-asset.py
 
 # ─── 1. Kali apt packages ──────────────────────────────────────────────────────
 # Covers the majority of the 90 tools in one layer.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-install-retry.sh 5 \
     # ── Recon ──
     amass dnsenum fierce whois \
     # ── OSINT (passive) — real Kali packages, not the pip dummies ──
@@ -40,71 +169,96 @@ RUN apt-get update \
     exploitdb \
     # ── Credentials ──
     hydra john hashcat \
-    # ── Binary ──
-    gdb checksec binwalk radare2 \
+    # ── Binary — ropper here (apt), not pip: Kali packages its own
+    #   python3-filebytes dependency, sidestepping the upstream PyPI filebytes
+    #   sdist whose setup.py uses `ast.Str` (removed in Python 3.12+) ──
+    gdb checksec binwalk radare2 ropper \
     # ── Forensics ──
     exiftool foremost steghide \
     # ── Utilities ──
-    binutils \
-    && rm -rf /var/lib/apt/lists/*
+    binutils
 
 # ─── 2. Kali metasploit (~1 GB) ────────────────────────────────────────────────
 # metasploit_run (mcp-servers/exploit/metasploit_run.py) is registered GATED
 # in tool_registry.py — this makes that registration real instead of dead code.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends metasploit-framework \
-    && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-install-retry.sh 5 metasploit-framework
 
 # ─── 3. Go tools (install individually for build resilience) ─────────────────
 RUN mkdir -p /opt/go
-RUN go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
-RUN go install github.com/projectdiscovery/httpx/cmd/httpx@latest
-RUN go install github.com/projectdiscovery/katana/cmd/katana@latest
-RUN go install github.com/lc/gau/v2/cmd/gau@latest
-RUN go install github.com/tomnomnom/waybackurls@latest
-RUN go install github.com/tomnomnom/anew@latest
-RUN go install github.com/hakluke/hakrawler@latest
-RUN go install github.com/hahwul/dalfox/v2@latest
+RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    go install github.com/projectdiscovery/httpx/cmd/httpx@latest
+RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    go install github.com/projectdiscovery/katana/cmd/katana@latest
+RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    go install github.com/lc/gau/v2/cmd/gau@latest
+RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    go install github.com/tomnomnom/waybackurls@latest
+RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    go install github.com/tomnomnom/anew@latest
+RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    go install github.com/hakluke/hakrawler@latest
+RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    go install github.com/hahwul/dalfox/v2@latest
 # jaeles — signature-based web vuln scanner (jaeles_vulnerability_scan). Was
 # registered in the platform but missing from the image ("jaeles: command not found").
-RUN go install github.com/jaeles-project/jaeles@latest
+RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    go install github.com/jaeles-project/jaeles@latest
 # x8 — hidden-parameter brute-forcer (Rust). Built via cargo; guarded so a slow
 # or failing build doesn't break the image (the tool degrades to "not found",
 # which the platform's recovery handles).
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends cargo pkg-config \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    apt-install-retry.sh 5 cargo pkg-config \
     && cargo install --root /usr/local x8 \
-    && rm -rf /var/lib/apt/lists/*
-RUN go install github.com/tomnomnom/qsreplace@latest
-RUN go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest
-RUN go install github.com/projectdiscovery/tlsx/cmd/tlsx@latest
+    || true
+RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    go install github.com/tomnomnom/qsreplace@latest
+RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest
+RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    go install github.com/projectdiscovery/tlsx/cmd/tlsx@latest
 # naabu is installed via apt above (the Go build needs libpcap headers and was
 # unreliable); apt ships a working 2.6.x binary on the system PATH.
 # PhoneInfoga (passive phone-number OSINT) — installed from the prebuilt release.
 # `go install` fails: phoneinfoga v2 embeds its web UI via go:embed (client/dist/*),
-# which is not present in the Go module, so the build errors out.
+# which is not present in the Go module, so the build errors out. Asset filename
+# has no version in it, so the "latest" release redirect works without an API call;
+# ARG below lets a build pin an exact tag if a future "latest" ever regresses.
+ARG PHONEINFOGA_VERSION=""
 RUN set -eux; \
-    PIF_VER="2.11.0"; \
-    wget -q "https://github.com/sundowndev/phoneinfoga/releases/download/v${PIF_VER}/phoneinfoga_Linux_x86_64.tar.gz" -O /tmp/phoneinfoga.tar.gz; \
+    if [ -n "$PHONEINFOGA_VERSION" ]; then \
+      PIF_URL="https://github.com/sundowndev/phoneinfoga/releases/download/${PHONEINFOGA_VERSION}/phoneinfoga_Linux_x86_64.tar.gz"; \
+    else \
+      PIF_URL="https://github.com/sundowndev/phoneinfoga/releases/latest/download/phoneinfoga_Linux_x86_64.tar.gz"; \
+    fi; \
+    wget -q --tries=5 --waitretry=5 --timeout=30 "$PIF_URL" -O /tmp/phoneinfoga.tar.gz; \
     tar -xzf /tmp/phoneinfoga.tar.gz -C /tmp phoneinfoga; \
     install -m 0755 /tmp/phoneinfoga /usr/local/bin/phoneinfoga; \
     rm -f /tmp/phoneinfoga.tar.gz /tmp/phoneinfoga; \
     phoneinfoga version
 
 # ─── 4. Python pip tools ──────────────────────────────────────────────────────
-RUN pip3 install --break-system-packages --no-cache-dir --ignore-installed \
+# ropper -> apt (section 1, above): the PyPI build was broken on modern Python.
+# terrascan / autorecon -> dedicated installs below: the PyPI packages of those
+# names are unrelated, abandoned projects — NOT the real tools (see notes there).
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install --break-system-packages --ignore-installed \
        pwntools \
        angr \
-       ropper \
        checkov \
-       terrascan \
        kube-hunter \
-       autorecon \
        arjun \
        volatility3
 
 # ─── 4b. domain-hunter deps (mcp-servers/recon/tools/domain-hunter) ──────────
-RUN pip3 install --break-system-packages --no-cache-dir \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install --break-system-packages \
        requests pyyaml openpyxl dnspython tldextract beautifulsoup4
 
 # ─── 4b2. Passive-OSINT python tools NOT packaged in Kali apt ─────────────────
@@ -114,28 +268,37 @@ RUN pip3 install --break-system-packages --no-cache-dir \
 # heavy/pinned deps cannot conflict with netexec/pacu/awscli/checkov/etc. pipx
 # symlinks the CLI into /usr/local/bin (on PATH for every exec path).
 # web_contact_harvest / email_permute are bundled scripts using the 4b deps.
+#
+# autorecon lands here too: the PyPI package named "autorecon" (0.1.3) is an unrelated, 
+# abandoned project — Tib3rius's actual AutoRecon (currently 2.x) is poetry-packaged and was never published
+# to PyPI, so it has to come straight from the source repo like maigret/holehe.
 ENV PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin
-RUN pipx install maigret \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pipx install maigret \
     && pipx install holehe \
-    && pipx install social-analyzer
+    && pipx install social-analyzer \
+    && retry-cmd 5 pipx install git+https://github.com/Tib3rius/AutoRecon.git
 
 # ─── 4b3. Wappalyzer python lib ───────────────────────────────────────────────
 # wappalyzer_scan.py and tech_stack_analyze.py run `python3 -c "from Wappalyzer
 # import Wappalyzer, WebPage"`, so the lib must be importable by the SYSTEM
 # python3 (NOT a pipx venv). Without it both tools raise ModuleNotFoundError.
-RUN pip3 install --break-system-packages --no-cache-dir python-Wappalyzer
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install --break-system-packages python-Wappalyzer
 
 # ─── 4b4. Web-pentest additions (TLS deep + GraphQL) ─────────────────────────
 # sslyze (WSTG-CRYP: protocols/ciphers/cert/TLS-CVEs) in its own pipx venv; the
 # CLI lands on /usr/local/bin (on PATH for every exec path).
-RUN pipx install sslyze
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pipx install sslyze
 # graphql-cop is a standalone script — its PyPI package declares no console
 # entry point, so pipx can't install it ("No apps associated"). Clone the repo,
 # install its deps for the system python3, and drop a wrapper on PATH so the
 # tool's expected `graphql-cop -t URL -o json` invocation works.
-RUN git clone --depth 1 https://github.com/dolevf/graphql-cop.git /opt/graphql-cop \
-    && pip3 install --break-system-packages --no-cache-dir requests \
-    && (pip3 install --break-system-packages --no-cache-dir -r /opt/graphql-cop/requirements.txt || true) \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    retry-cmd 5 sh -c 'rm -rf /opt/graphql-cop && git clone --depth 1 https://github.com/dolevf/graphql-cop.git /opt/graphql-cop' \
+    && pip3 install --break-system-packages requests \
+    && (pip3 install --break-system-packages -r /opt/graphql-cop/requirements.txt || true) \
     && printf '#!/bin/sh\nexec python3 /opt/graphql-cop/graphql-cop.py "$@"\n' > /usr/local/bin/graphql-cop \
     && chmod +x /usr/local/bin/graphql-cop
 
@@ -150,15 +313,14 @@ RUN git clone --depth 1 https://github.com/dolevf/graphql-cop.git /opt/graphql-c
 # satisfied" and skips installing the pip-packaged version (which bundles its
 # own driver), so `playwright install` fails with "No such file or directory:
 # '/usr/bin/node'". Installing nodejs fixes that, but pip still needs to lay
-# down its own playwright/pyee: `--force-reinstall` tries to UNINSTALL the
-# apt-owned packages first and fails ("no RECORD file" — apt packages aren't
-# pip-uninstallable). `--ignore-installed` installs pip's copies straight into
+# down its own playwright/pyee. `--ignore-installed` installs pip's copies straight into
 # site-packages (shadowing the apt ones on sys.path) without touching them.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-install-retry.sh 5 nodejs
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
-RUN pip3 install --break-system-packages --no-cache-dir --ignore-installed playwright \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install --break-system-packages --ignore-installed playwright \
     && python3 -m playwright install --with-deps chromium \
     && chmod -R a+rX /opt/pw-browsers
 
@@ -169,75 +331,113 @@ RUN gem install one_gadget
 
 # whois is also in the apt recon layer above; this late install is a safety net
 # for cached builds that predate that package.
-RUN command -v whois >/dev/null 2>&1 || (apt-get update \
-    && apt-get install -y --no-install-recommends whois \
-    && rm -rf /var/lib/apt/lists/*)
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    command -v whois >/dev/null 2>&1 || apt-install-retry.sh 5 whois
 
 # ── rustscan (prebuilt release — cargo is slow/flaky; fail the build if missing) ──
+# Asset filename carries no version, so the "latest" redirect works without an
+# API call; ARG below lets a build pin an exact tag if latest ever regresses.
+ARG RUSTSCAN_VERSION=""
 RUN set -eux; \
     mkdir -p /tmp/rustscan; \
-    wget -q "https://github.com/bee-san/RustScan/releases/download/2.4.1/rustscan.deb.zip" \
-      -O /tmp/rustscan/rustscan.deb.zip; \
+    if [ -n "$RUSTSCAN_VERSION" ]; then \
+      RS_URL="https://github.com/bee-san/RustScan/releases/download/${RUSTSCAN_VERSION}/rustscan.deb.zip"; \
+    else \
+      RS_URL="https://github.com/bee-san/RustScan/releases/latest/download/rustscan.deb.zip"; \
+    fi; \
+    wget -q --tries=5 --waitretry=5 --timeout=30 "$RS_URL" -O /tmp/rustscan/rustscan.deb.zip; \
     unzip -q /tmp/rustscan/rustscan.deb.zip -d /tmp/rustscan; \
-    apt-get update; \
     DEB="$(find /tmp/rustscan -name 'rustscan_*.deb' | head -n1)"; \
     test -n "$DEB"; \
     apt-get install -y --no-install-recommends "$DEB"; \
     command -v rustscan; \
-    rm -rf /tmp/rustscan /var/lib/apt/lists/*
+    rm -rf /tmp/rustscan
 
 # ── pacu (AWS exploitation) ──
-RUN git clone --depth 1 https://github.com/RhinoSecurityLabs/pacu.git /opt/pacu \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    retry-cmd 5 sh -c 'rm -rf /opt/pacu && git clone --depth 1 https://github.com/RhinoSecurityLabs/pacu.git /opt/pacu' \
     && cd /opt/pacu \
-    && pip3 install --break-system-packages --no-cache-dir . \
+    && pip3 install --break-system-packages . \
     && ln -s /opt/pacu/cli.py /usr/local/bin/pacu \
     || true
 
-# ── ghidra (headless) ──
-RUN GHIDRA_TAG="Ghidra_12.1.2_build" \
-    && GHIDRA_FILE="ghidra_12.1.2_PUBLIC_20260605.zip" \
-    && wget -q "https://github.com/NationalSecurityAgency/ghidra/releases/download/${GHIDRA_TAG}/${GHIDRA_FILE}" \
-       -O /tmp/ghidra.zip \
-    && unzip -q /tmp/ghidra.zip -d /opt/ \
-    && ln -s /opt/ghidra_*/ghidraRun /usr/local/bin/ghidra \
-    && ln -s /opt/ghidra_*/support/analyzeHeadless /usr/local/bin/analyzeHeadless \
-    && rm /tmp/ghidra.zip \
+# ── terrascan (IaC scanner) — the "terrascan" PyPI package (0.2.3) is an
+# unrelated, abandoned project; the real tool from tenable/terrascan ships only
+# as a Go binary via GitHub releases. Pass TERRASCAN_VERSION (a release tag,
+# e.g. v1.19.9) to pin instead of tracking latest. ──
+ARG TERRASCAN_VERSION=""
+RUN set -eux; \
+    TS_URL="$(python3 /usr/local/bin/gh-latest-asset.py tenable/terrascan '*_Linux_x86_64.tar.gz' "$TERRASCAN_VERSION")"; \
+    wget -q --tries=5 --waitretry=5 --timeout=30 "$TS_URL" -O /tmp/terrascan.tar.gz; \
+    tar -xzf /tmp/terrascan.tar.gz -C /tmp terrascan; \
+    install -m 0755 /tmp/terrascan /usr/local/bin/terrascan; \
+    rm -f /tmp/terrascan.tar.gz /tmp/terrascan; \
+    terrascan version
+
+# ── ghidra (headless) — requires the JDK 21 installed in the system-base layer
+# above; Ghidra bundles no JVM of its own. Pass GHIDRA_VERSION (the release TAG,
+# e.g. Ghidra_12.1.2_build — not a bare version number) to pin instead of
+# tracking latest. ──
+ARG GHIDRA_VERSION=""
+RUN set -eux; \
+    GH_URL="$(python3 /usr/local/bin/gh-latest-asset.py NationalSecurityAgency/ghidra '*.zip' "$GHIDRA_VERSION")"; \
+    wget -q --tries=5 --waitretry=5 --timeout=30 "$GH_URL" -O /tmp/ghidra.zip; \
+    unzip -q /tmp/ghidra.zip -d /opt/; \
+    ln -s /opt/ghidra_*/ghidraRun /usr/local/bin/ghidra; \
+    ln -s /opt/ghidra_*/support/analyzeHeadless /usr/local/bin/analyzeHeadless; \
+    rm /tmp/ghidra.zip \
     || true
 
 # ── hashpump (hash length extension) ──
-RUN git clone --depth 1 https://github.com/leapsecurity/HashPump.git /opt/hashpump \
+RUN retry-cmd 5 sh -c 'rm -rf /opt/hashpump && git clone --depth 1 https://github.com/leapsecurity/HashPump.git /opt/hashpump' \
     && cd /opt/hashpump \
     && make \
     && cp hashpump /usr/local/bin/ \
     || true
 
 # ── docker-bench-security ──
-RUN git clone --depth 1 https://github.com/docker/docker-bench-security.git /opt/docker-bench-security \
+RUN retry-cmd 5 sh -c 'rm -rf /opt/docker-bench-security && git clone --depth 1 https://github.com/docker/docker-bench-security.git /opt/docker-bench-security' \
     && ln -s /opt/docker-bench-security/docker-bench-security.sh /usr/local/bin/docker-bench-security
 
-# ── kube-bench (CIS) ──
-RUN wget -q https://github.com/aquasecurity/kube-bench/releases/download/v0.9.3/kube-bench_0.9.3_linux_amd64.tar.gz -O /tmp/kube-bench.tar.gz \
-    && tar xzf /tmp/kube-bench.tar.gz -C /usr/local/bin kube-bench \
-    && rm /tmp/kube-bench.tar.gz
+# ── kube-bench (CIS) — asset filename carries the version, so this uses the
+# same latest/pin helper as terrascan/ghidra above. ──
+ARG KUBE_BENCH_VERSION=""
+RUN set -eux; \
+    KB_URL="$(python3 /usr/local/bin/gh-latest-asset.py aquasecurity/kube-bench '*_linux_amd64.tar.gz' "$KUBE_BENCH_VERSION")"; \
+    wget -q --tries=5 --waitretry=5 --timeout=30 "$KB_URL" -O /tmp/kube-bench.tar.gz; \
+    tar xzf /tmp/kube-bench.tar.gz -C /usr/local/bin kube-bench; \
+    rm /tmp/kube-bench.tar.gz
 
 # ── clairctl (Clair) ──
-RUN go install github.com/quay/clair/cmd/clairctl@latest 2>/dev/null || true
+RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    go install github.com/quay/clair/cmd/clairctl@latest 2>/dev/null || true
 
-# ── prowler (cloud — optional; pip/debian pytz conflict on Kali) ──
-RUN pip3 install --break-system-packages --no-cache-dir prowler || true
+# ── prowler (cloud — optional) — pipx-isolated like maigret/holehe/sslyze
+# above: a system-wide `pip3 install prowler` was pulling down its own pins of
+# aiohttp/beautifulsoup4/certifi/playwright/shodan/etc. into the SAME shared
+# site-packages theHarvester's apt package depends on, silently downgrading/
+# upgrading them out from under it. A standalone CLI never imported
+# by other scripts, same as prowler — pipx's own venv is the right boundary. ──
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pipx install prowler || true
 
 # ── falco ──
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends falco || true \
-    && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-install-retry.sh 5 falco || true
 
 # ── scout-suite ──
-RUN pip3 install --break-system-packages --no-cache-dir --no-build-isolation \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    retry-cmd 5 pip3 install --break-system-packages --no-build-isolation \
        git+https://github.com/nccgroup/ScoutSuite.git \
     || true
 
-# ── libc-database ──
-RUN git clone --depth 1 https://github.com/niklasb/libc-database.git /opt/libc-database \
+# ── libc-database — registered as libc_database_lookup in tool_registry.py /
+# mcp-servers/binary/tools/libc_database_lookup.py, so this stays hard-required
+# (no || true): if it's genuinely unreachable the build should fail loudly
+# rather than silently ship a registered tool that doesn't work. ──
+RUN retry-cmd 5 sh -c 'rm -rf /opt/libc-database && git clone --depth 1 https://github.com/niklasb/libc-database.git /opt/libc-database' \
     && ln -s /opt/libc-database/libc-database.sh /usr/local/bin/libc-database
 
 # ── python3 (already present from base) ──
@@ -246,7 +446,8 @@ RUN ln -sf /usr/bin/python3 /usr/bin/python
 # ─── 6. Copy MCP servers ──────────────────────────────────────────────────────
 # The mcp-servers/ directory is mounted as a volume in docker-compose.
 # This step ensures the base Python environment can import mcp.
-RUN pip3 install --break-system-packages --no-cache-dir mcp>=1.2.0
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install --break-system-packages "mcp>=1.2.0"
 
 # ─── 6b. Make Go tools + PATH permanent for all shells / healthchecks ──────────
 # Symlink into /usr/local/bin so login shells (`bash -lc`) still find tools when
@@ -288,8 +489,7 @@ USER mcpuser
 WORKDIR /home/mcpuser
 
 # Pre-fetch nuclei templates at build so the first scan doesn't block on a
-# multi-minute download (and severity filters aren't silently empty until the
-# template set exists). Runs as mcpuser so templates land in its HOME.
+# multi-minute download. Runs as mcpuser so templates land in its HOME.
 RUN nuclei -update-templates || true
 
 # MCP servers are mounted at /home/mcpuser/mcp-servers via docker-compose volume.
