@@ -243,7 +243,10 @@ rules:
     # \s matches \n, which previously let this rule read a table header
     # like nmap's "PORT STATE SERVICE VERSION" on one line and the port
     # number on the next as a fake "SERVICE 80" technology finding.
-    pattern: '(?i)([a-zA-Z][a-zA-Z0-9._-]{2,30})[ \t]*(?:version|v)[ \t]*[:=]?[ \t]*([\d.]{2,20})'
+    # [ \t]+ (not *) BEFORE the keyword so the bare "v" alternative can't glue
+    # onto the end of a hostname token. Requiring whitespace first means
+    # the keyword must be its own token ("nginx v1.2.3", "Apache version 2.4").
+    pattern: '(?i)([a-zA-Z][a-zA-Z0-9._-]{2,30})[ \t]+(?:version|v)[ \t]*[:=]?[ \t]*([\d.]{2,20})'
     finding_type: technology
     evidence_grade: inferred
     claim_severity: info

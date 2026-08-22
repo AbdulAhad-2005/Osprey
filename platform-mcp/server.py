@@ -43,6 +43,56 @@ _SESSION_SWITCH_NOTICE = ""
 _SESSION_TARGET_KIND = "domain"
 _SESSION_SCOPE = ""
 
+# The binding above is process-local, so an interrupted call that makes the host
+# respawn this MCP server drops it → the next tool fails "No active target" and
+# forces a re-bind. Mirror it to a small state file (keyed by PENTEST_RUN_ID when
+# set, else a shared default) so a respawned process can restore it. Engagements
+# are durable + deterministic by target, so restoring a prior binding is safe.
+import json as _json
+import tempfile as _tempfile
+
+_SESSION_STATE_FILE = os.path.join(
+    _tempfile.gettempdir(),
+    f"pentest_mcp_session_{os.environ.get('PENTEST_RUN_ID', '') or 'default'}.json",
+)
+
+
+def _persist_session() -> None:
+    try:
+        with open(_SESSION_STATE_FILE, "w", encoding="utf-8") as fh:
+            _json.dump(
+                {
+                    "target": _SESSION_TARGET,
+                    "engagement_id": _SESSION_ENGAGEMENT_ID,
+                    "kind": _SESSION_TARGET_KIND,
+                    "scope": _SESSION_SCOPE,
+                },
+                fh,
+            )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _restore_session() -> bool:
+    """Reload a persisted binding into the globals after a process respawn.
+    Returns True if a binding was restored. Best-effort."""
+    global _SESSION_TARGET, _SESSION_ENGAGEMENT_ID, _SESSION_TARGET_KIND, _SESSION_SCOPE
+    try:
+        with open(_SESSION_STATE_FILE, encoding="utf-8") as fh:
+            data = _json.load(fh)
+    except Exception:  # noqa: BLE001
+        return False
+    tgt = (data.get("target") or "").strip()
+    eid = (data.get("engagement_id") or "").strip()
+    if not tgt or not eid:
+        return False
+    _SESSION_TARGET = tgt
+    _SESSION_ENGAGEMENT_ID = eid
+    _SESSION_TARGET_KIND = data.get("kind") or "domain"
+    _SESSION_SCOPE = data.get("scope") or ""
+    _log(f"restored session binding {eid} for target {tgt} after process respawn")
+    return True
+
 # Section-level context delta — collapse LARGE, slow-changing context sections to
 # a one-line placeholder when their rendered content is byte-identical to the
 # previous platform_context call for the same engagement. Without this, a mode-1
@@ -211,6 +261,7 @@ def _bind_target(target: str, *, force_new: bool = False, kind: str = "domain", 
     _SESSION_TARGET_KIND = kind or "domain"
     _SESSION_SCOPE = scope or ""
     _ensure_run_registered(_SESSION_ENGAGEMENT_ID)
+    _persist_session()
 
     created = bool(data.get("created"))
     if created and not switched:
@@ -231,6 +282,11 @@ def _bind_target(target: str, *, force_new: bool = False, kind: str = "domain", 
 
 
 def _require_bound_target() -> str:
+    if not _SESSION_TARGET or not _SESSION_ENGAGEMENT_ID:
+        # A respawned MCP process starts with empty globals — try restoring the
+        # last binding from the state file before giving up, so an interrupted
+        # call doesn't force a manual re-bind.
+        _restore_session()
     if not _SESSION_TARGET or not _SESSION_ENGAGEMENT_ID:
         raise RuntimeError(
             "No active target. Call platform_set_target('example.com') first "
@@ -1081,7 +1137,11 @@ def _execute_catalog_tool(
         f"exec {tool} target={tgt} engagement={eid} "
         f"run={SESSION_RUN_ID} force_refresh={force_refresh}"
     )
-    data = _post("/api/v1/mcp/execute", body, timeout=timeout_seconds + 15)
+    # Buffer must exceed the backend's WHOLE response time, not just the tool's
+    # run: a slow tool that hits its own timeout (dnsenum routinely does) then
+    # drains partial output + parses + ingests before responding. +60s covers
+    # that post-timeout processing so the partial always makes it back.
+    data = _post("/api/v1/mcp/execute", body, timeout=timeout_seconds + 60)
     return _format_exec_result(data, engagement_id=eid, target=tgt)
 
 

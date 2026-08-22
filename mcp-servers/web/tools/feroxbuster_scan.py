@@ -66,19 +66,20 @@ def build_command(**params: Any) -> str:
     if not url:
         raise ValueError("feroxbuster_scan requires url=")
 
-    parts = [
-        "feroxbuster",
-        f"-u {q(url)}",
-        f"-w {wordlist}",
-        f"-t {threads}",
-        f"-d {depth}",
-        "-k",  # skip TLS verification (targets with expired/self-signed certs)
-        "--no-state",
-        "--auto-tune",
-        "--filter-status 404",
-        "--json",
-        "--silent",
-    ]
+    # A wrapper default must yield to an explicit flag the LLM passed, or
+    # feroxbuster aborts with "cannot be used multiple times". _absent() returns
+    # the default only when none of its aliases already appear in additional_args.
+    extra_tokens = set(additional_args.split())
+
+    def _absent(default: str, *aliases: str) -> list[str]:
+        return [] if any(a in extra_tokens for a in aliases) else [default]
+
+    parts = ["feroxbuster", f"-u {q(url)}", f"-w {wordlist}", "--no-state", "--json", "--silent"]
+    parts += _absent(f"-t {threads}", "-t", "--threads")
+    parts += _absent(f"-d {depth}", "-d", "--depth")
+    parts += _absent("-k", "-k", "--insecure")
+    parts += _absent("--auto-tune", "--auto-tune", "--rate-limit", "--scan-limit")
+    parts += _absent("--filter-status 404", "--filter-status", "-C", "--filter-status-code")
     if additional_args:
         parts.append(additional_args)
     return " ".join(parts)

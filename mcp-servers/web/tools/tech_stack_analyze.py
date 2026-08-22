@@ -667,6 +667,16 @@ def parse(result: ToolResult) -> dict[str, Any]:
         )
     if method_errors:
         result["method_errors"] = method_errors
+        # whatweb is the primary fingerprinter — if it failed but others survived.
+        # Flag that loudly so the degradation isn't mistaken for "no further tech exists"
+        # (common against Cloudflare, where whatweb hits its 90s timeout).
+        if "whatweb" in method_errors and methods_succeeded:
+            result["degraded"] = (
+                "PRIMARY fingerprinter whatweb failed/timed out "
+                f"({method_errors['whatweb'][:120]}) — the technology list is from "
+                "fallback sources only and is likely incomplete. Re-run whatweb "
+                "directly (whatweb_scan) or via a background job before concluding."
+            )
     if methods and not methods_succeeded:
         result["error"] = "All detection methods failed (see method_errors) — target likely unreachable from this vantage point."
     return result
