@@ -64,9 +64,47 @@ def build_command(**params: Any) -> str:
 
 
 def parse(result: ToolResult) -> dict[str, Any]:
-    """Light stub — the backend osint parser turns stdout into typed findings."""
+    """Email count from stdout (backend osint parser mints typed EMAIL findings)."""
+    import json
+    import re
+
     text = result.raw_stdout or ""
-    return {"lines": len([ln for ln in text.splitlines() if ln.strip()])}
+    emails: list[str] = []
+    seen: set[str] = set()
+    rx = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,24}")
+
+    def _add(addr: str) -> None:
+        e = addr.strip().lower().strip("\"'<>")
+        if e and "@" in e and e not in seen and not e.endswith((".png", ".jpg", ".gif")):
+            seen.add(e)
+            emails.append(e)
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("# EMAILJSON "):
+            try:
+                obj = json.loads(stripped[len("# EMAILJSON "):])
+            except (json.JSONDecodeError, ValueError):
+                obj = None
+            if isinstance(obj, dict):
+                for item in obj.get("emails") or []:
+                    _add(str(item))
+    try:
+        obj = json.loads(text.strip())
+        if isinstance(obj, dict):
+            for item in obj.get("emails") or []:
+                _add(str(item))
+    except (json.JSONDecodeError, ValueError):
+        pass
+    for match in rx.findall(text):
+        _add(match)
+    return {
+        "emails": emails,
+        "email_count": len(emails),
+        "lines": len([ln for ln in text.splitlines() if ln.strip()]),
+        "timed_out": bool(result.timed_out),
+        "returncode": result.returncode,
+    }
 
 
 def run(

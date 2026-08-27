@@ -65,15 +65,37 @@ def build_command(**params: Any) -> str:
 
 def parse(result: ToolResult) -> dict[str, Any]:
     raw = (result.raw_stdout or "").strip()
-    try:
-        data = json.loads(raw)
-    except (json.JSONDecodeError, ValueError):
-        return {"error": "invalid_json", "raw": raw[:500]}
+    data = None
+    for line in (result.raw_stdout or "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("# EMAILJSON "):
+            try:
+                obj = json.loads(stripped[len("# EMAILJSON "):])
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if isinstance(obj, dict):
+                data = obj
+    if data is None:
+        try:
+            parsed = json.loads(raw)
+            data = parsed if isinstance(parsed, dict) else None
+        except (json.JSONDecodeError, ValueError):
+            data = None
+    if data is None:
+        return {
+            "error": "invalid_json",
+            "raw": raw[:500],
+            "timed_out": bool(result.timed_out),
+            "returncode": result.returncode,
+        }
     return {
         "emails": len(data.get("emails", [])),
         "phones": len(data.get("phones", [])),
         "social": len(data.get("social", [])),
         "names": len(data.get("names", [])),
+        "timed_out": bool(result.timed_out),
+        "returncode": result.returncode,
+        "partial": bool(result.timed_out),
     }
 
 

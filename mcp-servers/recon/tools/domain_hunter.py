@@ -31,7 +31,7 @@ from _core.runner import run_tool
 # Same-dir helper module (underscore prefix = skipped by the server harvest
 # loop) — the shared implementation, imported for its stdout parser. The CLI
 # itself is invoked via a fixed container path like the other _*_cli tools.
-from _domain_hunter_cli import parse_stdout
+from _domain_hunter_cli import hunter_seed_apex, parse_stdout
 
 TOOL_NAME = "domain_hunter"
 CATEGORY = "recon"
@@ -50,9 +50,9 @@ def _cli_expr() -> str:
 
 def build_command(**params: Any) -> str:
     """Build CLI command for local MCP execution."""
-    domain = str(params.get("domain", "")).strip()
+    domain = hunter_seed_apex(str(params.get("domain", "")).strip())
     if not domain:
-        raise ValueError("domain_hunter requires a 'domain'")
+        raise ValueError("domain_hunter requires a registrable seed domain")
 
     modules = str(params.get("modules", "") or "").strip()
     confidence_min = str(params.get("confidence_min", "low") or "low").strip().lower()
