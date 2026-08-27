@@ -15,7 +15,7 @@ into a tools container (`KALI_CONTAINER`), or, when no such container is running
 executes them **natively on the host**. So you can run the full Kali image, bring
 your own tools, or run entirely without Docker.
 
-## Setup — pick the path that fits you
+## Setup — pick the path that fits you (Path A is preferable as it provides all tools integration platform needs)
 
 All three paths start the same way:
 
@@ -33,7 +33,7 @@ image is behind the `kali` compose profile, so you opt into the long build expli
 ```bash
 docker compose --profile kali up --build
 ```
-
+> takes time to build kali image ~40-50 min and additional disk space ~16GB
 > No WSL / VirtualBox needed on Windows — the tools run inside the container,
 > reached over the Docker socket. Postgres is on host port 5433, backend on 9000.
 
@@ -141,16 +141,14 @@ python -m cli                   # or the `pentest` console script
 target. You can also just **type natural-language prompts** — these go to the
 **Commander**, a conversational brain that owns the conductor: it answers, runs one
 probe, or launches the full recon→vuln→exploit pipeline in the background and keeps
-chatting so you can steer it ("hit the sister domains harder", "status", "stop"). You
-never run a `set_target` ceremony — naming a target in chat binds it automatically.
+chatting so you can steer it ("hit the sister domains harder", "status", "stop").
 During a run the CLI streams commander decisions, live tool start/finish, and
 per-phase reports.
 
-Set or switch your LLM provider/key at runtime (no manual `.env` editing) with
+Set or switch your LLM provider/key either manually in .env or at runtime with
 `POST /api/v1/config/llm` `{"model": "...", "api_key": "...", "api_base": "..."}` —
-the Settings surface a GUI would use. The chat thread is persisted server-side per
-engagement (`GET /api/v1/agent/conversation/{engagement_id}`), so the CLI and any
-future dashboard share one conversation.
+the Settings surface GUI uses. The chat thread is persisted server-side per
+engagement (`GET /api/v1/agent/conversation/{engagement_id}`), so the CLI and dashboard share one conversation.
 
 ### Seeing which tools you have
 
@@ -200,9 +198,11 @@ Verify it's indexed: `GET /api/v1/capabilities/skills-index?phase=web` (or
 
 ## MCP Client Configuration (Alternate Approach)
 
-Connect your AI client directly to the platform via MCP. All clients use the same MCP server at `platform-mcp/server.py`.
+Connect your AI client directly to the platform via MCP. All clients use the same MCP server at `platform-mcp/server.py`. Below are setup guides for some harnesses, setup in others is similar.
 
-### OpenCode (recommended)
+### OpenCode
+
+CLI recommended instead of GUI for detailed commands outputs
 
 Edit `~/.config/opencode/opencode.json` (global config — works in any project):
 
@@ -258,23 +258,13 @@ You can configure your MCP server either from the graphical interface or directl
 
 #### Option 1 (Recommended): GUI Configuration
 
-Open:
-
-Settings → Plugins → MCPs → Add Server
+Open Settings → Plugins → MCPs → Add Server
 
 Configure the server as follows.
 
-##### Name
+##### Name: pentest-platform
 
-```
-pentest-platform
-```
-
-##### Type
-
-```
-STDIO
-```
+##### Type: STDIO
 
 ##### Command
 
@@ -346,7 +336,7 @@ command = "C:\\path\\to\\AI-Pentesting-Tool\\.venv\\Scripts\\python.exe"
 
 Restart ChatGPT Desktop after editing `config.toml`.
 
-For the best integrated experience, use **OpenCode** or **Claude Desktop**.
+For the best integrated experience, use **Hermes** or **OpenCode**. **Claude Code** if you have completed Cyber Verification Program or **ChatGPT** if approved OpenAI's Trusted Access for Cyber (TAC) access.
 
 ## Backend API endpoints
 
