@@ -1,3 +1,10 @@
+---
+name: smb-enumeration
+description: "SMB enumeration when 445/139 are open: enum4linux and variants (enum4linux-ng, smbmap, netexec); responder is high-risk and governance-gated."
+phase: network
+tags: [network, smb]
+---
+
 # SMB Enumeration
 
 **When:** Ports 445 or 139 are open on a Windows/Samba host.

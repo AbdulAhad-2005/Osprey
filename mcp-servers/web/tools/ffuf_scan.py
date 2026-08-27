@@ -11,7 +11,6 @@ Args:
 Returns:
     Web fuzzing results
 
-Harvested: HexStrike `ffuf_scan` -> `/api/tools/ffuf`.
 Category: web
 """
 
@@ -60,7 +59,7 @@ def _base_and_host(url: str) -> tuple[str, str]:
 def build_command(**params: Any) -> str:
     """Build a coherent ffuf command for ONE fuzzing mode.
 
-    The harvested version emitted four conflicting ``-u`` flags in a single
+    The original version emitted four conflicting ``-u`` flags in a single
     invocation (directory + vhost + parameter at once), which ffuf silently
     reduces to the last one — so it never fuzzed what the caller asked for.
     This builds exactly one well-formed command per mode and emits NDJSON so

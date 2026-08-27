@@ -9,7 +9,6 @@ Args:
 Returns:
     One-shot RCE gadget search results
 
-Harvested: HexStrike `one_gadget_search` -> `/api/tools/one-gadget`.
 Category: binary
 """
 
@@ -30,7 +29,7 @@ TOOL_NAME = "one_gadget_search"
 CATEGORY = "binary"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     libc_path = params.get("libc_path", "")
     level = params.get("level", 1)  # 0, 1, 2 for different constraint levels
     additional_args = params.get("additional_args", "")

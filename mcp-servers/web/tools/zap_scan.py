@@ -15,7 +15,6 @@ Args:
 Returns:
     ZAP scan results
 
-Harvested: HexStrike `zap_scan` -> `/api/tools/zap`.
 Category: web
 """
 
@@ -37,7 +36,7 @@ TOOL_NAME = "zap_scan"
 CATEGORY = "web"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     target = params.get("target", "")
     scan_type = params.get("scan_type", "baseline")
     api_key = params.get("api_key", "")

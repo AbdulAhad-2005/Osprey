@@ -8,7 +8,6 @@ Args:
 Returns:
     WAF detection results
 
-Harvested: HexStrike `wafw00f_scan` -> `/api/tools/wafw00f`.
 Category: web
 """
 
@@ -30,7 +29,7 @@ TOOL_NAME = "wafw00f_scan"
 CATEGORY = "web"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     target = params.get("target", "")
     additional_args = params.get("additional_args", "")
     command = f"wafw00f {q(target)}"

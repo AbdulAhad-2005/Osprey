@@ -9,7 +9,6 @@ Args:
 Returns:
     ROP gadget search results
 
-Harvested: HexStrike `ropgadget_search` -> `/api/tools/ropgadget`.
 Category: binary
 """
 
@@ -30,7 +29,7 @@ TOOL_NAME = "ropgadget_search"
 CATEGORY = "binary"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     binary = params.get("binary", "")
     gadget_type = params.get("gadget_type", "")
     additional_args = params.get("additional_args", "")

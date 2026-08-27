@@ -12,7 +12,6 @@ Args:
 Returns:
     Categorized technology stack from Wappalyzer fingerprinting
 
-Harvested: HexStrike `wappalyzer_scan` -> `/api/tools/wappalyzer`.
 Category: web
 """
 

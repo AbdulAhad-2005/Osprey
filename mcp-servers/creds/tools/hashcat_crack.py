@@ -12,7 +12,6 @@ Args:
 Returns:
     Password cracking results
 
-Harvested: HexStrike `hashcat_crack` -> `/api/tools/hashcat`.
 Category: creds
 """
 
@@ -33,7 +32,7 @@ TOOL_NAME = "hashcat_crack"
 CATEGORY = "creds"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     hash_file = params.get("hash_file", "")
     hash_type = params.get("hash_type", "")
     attack_mode = params.get("attack_mode", "0")

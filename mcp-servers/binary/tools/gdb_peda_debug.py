@@ -11,7 +11,6 @@ Args:
 Returns:
     Enhanced debugging results with PEDA
 
-Harvested: HexStrike `gdb_peda_debug` -> `/api/tools/gdb-peda`.
 Category: binary
 """
 

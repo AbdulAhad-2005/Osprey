@@ -9,7 +9,6 @@ Args:
 Returns:
     XSS vulnerability test results
 
-Harvested: HexStrike `xsser_scan` -> `/api/tools/xsser`.
 Category: web
 """
 
@@ -30,7 +29,7 @@ TOOL_NAME = "xsser_scan"
 CATEGORY = "web"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     url = params.get("url", "")
     params_str = params.get("params", "")
     additional_args = params.get("additional_args", "")

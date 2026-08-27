@@ -10,7 +10,6 @@ Args:
 Returns:
     Hex dump results
 
-Harvested: HexStrike `xxd_hexdump` -> `/api/tools/xxd`.
 Category: binary
 """
 
@@ -31,7 +30,7 @@ TOOL_NAME = "xxd_hexdump"
 CATEGORY = "binary"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     file_path = params.get("file_path", "")
     offset = params.get("offset", "0")
     length = params.get("length", "")

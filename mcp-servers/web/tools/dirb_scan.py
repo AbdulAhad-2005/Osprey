@@ -9,7 +9,6 @@ Args:
 Returns:
     Scan results with enhanced telemetry
 
-Harvested: HexStrike `dirb_scan` -> `/api/tools/dirb`.
 Category: web
 """
 
@@ -31,7 +30,7 @@ TOOL_NAME = "dirb_scan"
 CATEGORY = "web"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     url = params.get("url", "")
     wordlist = params.get("wordlist", "/usr/share/wordlists/dirb/common.txt")
     additional_args = params.get("additional_args", "")

@@ -1,3 +1,10 @@
+---
+name: sister-domain-discovery
+description: "Discover affiliated root domains (subsidiaries, sibling brands, shared infrastructure) and staging hosts the checklist misses, widening scope beyond the seed."
+phase: shared
+tags: [recon, sister-domains, scope]
+---
+
 # Sister Domain & Shared Hosting Discovery
 
 Finds domains the checklist misses: affiliated **root** domains (subsidiaries,

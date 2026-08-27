@@ -38,7 +38,7 @@ def run_tool(
     """
     Execute a shell-style command string safely (tokenised, no shell).
 
-    When *use_recovery* is True, failures flow through HexStrike's
+    When *use_recovery* is True, failures flow through the
     ``IntelligentErrorHandler`` (retry/backoff, param adjust, tool switch,
     human escalation, graceful degradation).
     """

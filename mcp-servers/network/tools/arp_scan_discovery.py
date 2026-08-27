@@ -12,7 +12,6 @@ Args:
 Returns:
     Network discovery results via ARP scanning
 
-Harvested: HexStrike `arp_scan_discovery` -> `/api/tools/arp-scan`.
 Category: network
 """
 
@@ -34,7 +33,7 @@ TOOL_NAME = "arp_scan_discovery"
 CATEGORY = "network"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     target = params.get("target", "")
     interface = params.get("interface", "")
     local_network = params.get("local_network", False)

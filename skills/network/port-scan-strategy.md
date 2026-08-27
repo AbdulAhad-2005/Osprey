@@ -1,3 +1,10 @@
+---
+name: port-scan-strategy
+description: "Port-scan strategy: prefer naabu_port_scan (top 1000), fall back to rustscan/masscan/nmap when missing or thin, and pass extra flags via additional_args."
+phase: network
+tags: [network, port-scan]
+---
+
 # Port Scan Strategy
 
 **When:** You have a host IP or hostname from recon findings.

@@ -1,4 +1,4 @@
-"""Safe subprocess executor — arg-list execution, no shell (hardened vs HexStrike shell=True)."""
+"""Safe subprocess executor — arg-list execution, no shell (hardened: no shell=True)."""
 
 from __future__ import annotations
 

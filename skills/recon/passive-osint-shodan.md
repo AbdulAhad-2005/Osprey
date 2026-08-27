@@ -1,3 +1,10 @@
+---
+name: passive-osint-shodan
+description: "Passive internet-wide ports, banners, and hostnames via Shodan (shodan_search, shodan_host_info) without scanning; authorized targets only."
+phase: recon
+tags: [recon, shodan, passive]
+---
+
 # Passive OSINT — Shodan
 
 **When:** After (or alongside) subdomain/DNS inventory, when you want internet-wide

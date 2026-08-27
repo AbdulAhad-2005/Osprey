@@ -28,7 +28,6 @@ Returns:
     Unified technology stack with categories, versions, security concerns,
     and follow-up recommendations
 
-Harvested: HexStrike `tech_stack_analyze` -> `/api/tools/tech-stack`.
 Category: web
 """
 

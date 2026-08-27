@@ -12,7 +12,6 @@ Args:
 Returns:
     Advanced web crawling results with endpoints and forms
 
-Harvested: HexStrike `katana_crawl` -> `/api/tools/katana`.
 Category: web
 """
 
@@ -34,7 +33,7 @@ TOOL_NAME = "katana_crawl"
 CATEGORY = "web"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     url = params.get("url", "")
     depth = params.get("depth", 3)
     js_crawl = params.get("js_crawl", True)

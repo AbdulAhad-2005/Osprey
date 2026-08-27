@@ -1,3 +1,10 @@
+---
+name: browser-automation
+description: "Browser automation with browser_scrape (one-shot SPA render plus attack-surface extract) and browser_flow (authenticated multi-step session with a live-DOM snapshot loop and a session-aware HTTP repeater) for authenticated, client-side, and access-control testing."
+phase: web
+tags: [web, browser, spa]
+---
+
 # Browser automation (browser_scrape & browser_flow)
 
 Two Playwright-backed tools give you a **real rendered browser** — the capability that unlocks
@@ -27,7 +34,40 @@ calls, extracted values, assertion results, and final cookies.
 **Step actions:** `goto{url}`, `fill{selector,value}`, `click{selector}`, `press{selector?,key}`,
 `wait{ms|selector}`, `select{selector,value}`, `upload{selector,files}` (file-upload testing —
 create the test file first with `platform_script`), `extract{selector,name}`, `assert_text{text}`,
-`screenshot{name?}`, `set_header{name,value}`, `set_cookie{name,value}`.
+`screenshot{name?}`, `set_header{name,value}`, `set_cookie{name,value}`,
+`snapshot{name?,limit?}`, `replay{url,method?,headers?,body?,json?,name?}`.
+
+## snapshot — see the page, then act (don't pre-guess selectors)
+
+You don't always know a page's structure up front. `snapshot` returns a **compact map of the live
+DOM's interactive elements** (links, buttons, inputs, forms) each with a **CSS selector** and its
+text/label — ~1 line per element, not raw HTML. Drive the human loop: `goto` → `snapshot` → read
+the returned selectors → `fill`/`click` the right ones → `snapshot` again after the page changes.
+This is far more robust on unfamiliar apps than guessing `#username` blind. Put a `snapshot` step
+right after any `goto`/`click` that changes the page, then use the returned selectors in later
+steps (or in a follow-up `browser_flow` call).
+
+## replay — the session-aware HTTP repeater (IDOR / broken access control)
+
+`replay` re-sends an HTTP request **through the live logged-in browser session** (cookies intact),
+so it's a Buron/Caido-style **repeater that reuses your real auth** — no proxy to configure. Every
+XHR the app makes is captured with its **headers and body** (`captured_requests`), so the loop is:
+1. Log in and exercise the feature so the real API call is captured.
+2. `replay` that request with **one field tampered** — a different object id, a stripped auth
+   header, a role/price/quantity changed, an added `?admin=true`.
+3. Read the returned **status + body**. A 2xx (or the victim's data) on a request you tampered to
+   act cross-user is **IDOR / broken object-level authorization** — confirm impact, then record it.
+
+**IDOR example** (capture your own order, replay someone else's):
+```json
+[{"action":"goto","url":"https://app/orders/123"},
+ {"action":"wait","ms":1500},
+ {"action":"replay","url":"https://app/api/orders/124","method":"GET","name":"idor-124"},
+ {"action":"replay","url":"https://app/api/orders/125","method":"GET","name":"idor-125"}]
+```
+Tamper method/headers/body too — e.g. replay a `POST` with `{"role":"admin"}` (mass assignment),
+or replay with `set_header` having removed the CSRF/authorization header (auth-bypass). Replays that
+return 2xx are surfaced tagged `access-control-candidate` for you to confirm.
 
 **Login example** (then confirm you're in):
 ```json

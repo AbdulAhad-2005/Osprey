@@ -11,7 +11,6 @@ Args:
 Returns:
     CTF binary exploitation setup results
 
-Harvested: HexStrike `pwninit_setup` -> `/api/tools/pwninit`.
 Category: binary
 """
 
@@ -32,7 +31,7 @@ TOOL_NAME = "pwninit_setup"
 CATEGORY = "binary"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     binary = params.get("binary", "")
     libc = params.get("libc", "")
     ld = params.get("ld", "")

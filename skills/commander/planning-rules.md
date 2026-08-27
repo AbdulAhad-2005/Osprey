@@ -1,3 +1,10 @@
+---
+name: planning-rules
+description: "Judgment helpers for planning: prefer live evidence over hostname keywords, parsed findings over chat memory, and pick the next step that closes a concrete gap."
+phase: commander
+tags: [methodology, planning]
+---
+
 # Judgment helpers (not a checklist)
 
 These are instincts of a strong operator — apply when they fit.

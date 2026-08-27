@@ -1,3 +1,3 @@
-"""HexStrike CLI tools."""
+"""CLI tools."""
 
 

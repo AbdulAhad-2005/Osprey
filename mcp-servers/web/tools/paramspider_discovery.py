@@ -11,7 +11,6 @@ Args:
 Returns:
     Parameter discovery results
 
-Harvested: HexStrike `paramspider_discovery` -> `/api/tools/paramspider`.
 Category: web
 """
 
@@ -33,7 +32,7 @@ TOOL_NAME = "paramspider_discovery"
 CATEGORY = "web"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     domain = params.get("domain", "")
     level = params.get("level", 2)
     exclude = params.get("exclude", "png,jpg,gif,jpeg,swf,woff,svg,pdf,css,ico")

@@ -9,7 +9,6 @@ Args:
 Returns:
     Web application fuzzing results
 
-Harvested: HexStrike `wfuzz_scan` -> `/api/tools/wfuzz`.
 Category: web
 """
 
@@ -30,7 +29,7 @@ TOOL_NAME = "wfuzz_scan"
 CATEGORY = "web"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     url = params.get("url", "")
     wordlist = params.get("wordlist", "/usr/share/wordlists/dirb/common.txt")
     additional_args = params.get("additional_args", "")

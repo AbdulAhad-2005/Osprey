@@ -1,4 +1,4 @@
-# Recon + network escalation matrix (Dark-Moon WAF pivot + HexStrike fallback chains).
+# Recon + network escalation matrix (WAF pivot + fallback chains).
 # Planner consults this when a tool returns blocked / timeout / thin results.
 
 # When a tool fails cleanly (error/empty/timeout — NOT a WAF/rate-limit/ban), the
@@ -66,7 +66,7 @@ techniques:
       - action: alternate_path
         tool_name: httpx_probe
         additional_args: "-follow-redirects -path /index.php/"
-        reason: "Dark-Moon pattern: path pivot when root blocked"
+        reason: "path pivot when root blocked"
       - action: adjust_params
         tool_name: httpx_probe
         additional_args: "-H 'X-Forwarded-For: 127.0.0.1'"

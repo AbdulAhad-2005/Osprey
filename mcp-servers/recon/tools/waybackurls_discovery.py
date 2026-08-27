@@ -10,7 +10,6 @@ Args:
 Returns:
     Historical URL discovery results from Wayback Machine
 
-Harvested: HexStrike `waybackurls_discovery` -> `/api/tools/waybackurls`.
 Category: recon
 """
 
@@ -32,7 +31,7 @@ TOOL_NAME = "waybackurls_discovery"
 CATEGORY = "recon"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     domain = params.get("domain", "")
     get_versions = params.get("get_versions", False)
     no_subs = params.get("no_subs", False)

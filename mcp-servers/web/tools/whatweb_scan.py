@@ -14,7 +14,6 @@ Args:
 Returns:
     Structured technology findings from WhatWeb fingerprinting
 
-Harvested: HexStrike `whatweb_scan` -> `/api/tools/whatweb`.
 Category: web
 """
 

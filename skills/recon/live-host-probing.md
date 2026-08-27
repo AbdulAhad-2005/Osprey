@@ -1,3 +1,10 @@
+---
+name: live-host-probing
+description: "Probe hostnames for live HTTP(S) with httpx_probe (title, tech, status, redirects); the gate between discovered hosts and deeper testing."
+phase: recon
+tags: [recon, httpx, live-hosts]
+---
+
 # Live Host Probing
 
 **When:** You have a list of hostnames or need to verify HTTP(S) reachability.

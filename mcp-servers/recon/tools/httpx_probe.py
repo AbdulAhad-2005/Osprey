@@ -14,7 +14,6 @@ Args:
 Returns:
     HTTP probing results
 
-Harvested: HexStrike `httpx_probe` -> `/api/tools/httpx`.
 Category: recon
 """
 
@@ -36,7 +35,7 @@ TOOL_NAME = "httpx_probe"
 CATEGORY = "recon"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     # Accept the documented bulk-list aliases too — agents pass input_data= / host=
     # for many-host runs; only reading `target` silently dropped those lists.
     target = str(

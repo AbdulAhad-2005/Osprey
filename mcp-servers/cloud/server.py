@@ -1,5 +1,5 @@
 """
-FastMCP server — `cloud` capability domain (HexStrike CLI tools).
+FastMCP server — `cloud` capability domain (CLI tools).
 """
 
 from __future__ import annotations

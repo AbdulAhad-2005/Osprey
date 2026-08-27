@@ -12,7 +12,6 @@ Args:
 Returns:
     RPC enumeration results
 
-Harvested: HexStrike `rpcclient_enumeration` -> `/api/tools/rpcclient`.
 Category: network
 """
 

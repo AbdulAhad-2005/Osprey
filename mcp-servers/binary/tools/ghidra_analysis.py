@@ -12,7 +12,6 @@ Args:
 Returns:
     Advanced binary analysis results from Ghidra
 
-Harvested: HexStrike `ghidra_analysis` -> `/api/tools/ghidra`.
 Category: binary
 """
 
@@ -33,9 +32,9 @@ TOOL_NAME = "ghidra_analysis"
 CATEGORY = "binary"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     binary = params.get("binary", "")
-    project_name = params.get("project_name", "hexstrike_analysis")
+    project_name = params.get("project_name", "pentest_analysis")
     script_file = params.get("script_file", "")
     analysis_timeout = params.get("analysis_timeout", 300)
     output_format = params.get("output_format", "xml")
@@ -58,7 +57,7 @@ def build_command(**params: Any) -> str:
 def parse(result: ToolResult) -> dict[str, Any]:
     return default_parse(result)
 
-def run(binary: str = '', project_name: str = 'hexstrike_analysis', script_file: str = '', analysis_timeout: int = 300, output_format: str = 'xml', additional_args: str = '', use_recovery: bool = True, use_cache: bool = True, exec_timeout: int = 300) -> dict[str, Any]:
+def run(binary: str = '', project_name: str = 'pentest_analysis', script_file: str = '', analysis_timeout: int = 300, output_format: str = 'xml', additional_args: str = '', use_recovery: bool = True, use_cache: bool = True, exec_timeout: int = 300) -> dict[str, Any]:
     params = {"binary": binary, "project_name": project_name, "script_file": script_file, "analysis_timeout": analysis_timeout, "output_format": output_format, "additional_args": additional_args}
     command = build_command(**params)
     return run_tool(

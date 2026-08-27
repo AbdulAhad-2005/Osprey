@@ -1,3 +1,10 @@
+---
+name: phase-overview
+description: "Network phase overview: discover ports and services on hosts/IPs already in recon memory; fast port discovery first, then service enumeration."
+phase: network
+tags: [network, overview]
+---
+
 # Network Phase
 
 Goal: discover ports and services on hosts/IPs already in recon memory — do not

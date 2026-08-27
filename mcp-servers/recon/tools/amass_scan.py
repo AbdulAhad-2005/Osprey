@@ -9,7 +9,6 @@ Args:
 Returns:
     Subdomain enumeration results
 
-Harvested: HexStrike `amass_scan` -> `/api/tools/amass`.
 Category: recon
 """
 
@@ -31,7 +30,7 @@ TOOL_NAME = "amass_scan"
 CATEGORY = "recon"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     domain = params.get("domain", "")
     mode = str(params.get("mode", "enum")).strip().lower()
     additional_args = params.get("additional_args", "")

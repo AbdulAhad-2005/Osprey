@@ -1,3 +1,10 @@
+---
+name: tls-configuration
+description: "TLS/SSL configuration testing with sslyze on HTTPS hosts (handshake, protocols, ciphers); passive and fast."
+phase: vuln
+tags: [vuln, tls]
+---
+
 # TLS/SSL configuration testing (WSTG-CRYP)
 
 `sslyze_scan` (target= host or host:port) probes the real TLS handshake surface — the crypto

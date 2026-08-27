@@ -1,3 +1,10 @@
+---
+name: evidence-to-hypothesis
+description: "Universal evidence-to-hypothesis loop for unfamiliar products: expand, observe, hypothesize, verify — no per-vendor skill packs required."
+phase: shared
+tags: [methodology, reasoning]
+---
+
 # Evidence → hypothesis (universal thinking)
 
 You will meet products you have never seen in this repo. That is normal.

@@ -1,3 +1,10 @@
+---
+name: network-vuln-scan
+description: "Network-side vulnerability scanning via nmap NSE vuln/vulners against already-open ports and services; the network counterpart to nuclei."
+phase: vuln
+tags: [vuln, network, nmap]
+---
+
 # Network vulnerability scan — nmap NSE `vuln`/`vulners` categories
 
 `nmap_custom_scan` with `--script "vuln,vulners"` is the network-side counterpart to nuclei:

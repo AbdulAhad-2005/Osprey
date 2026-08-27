@@ -39,6 +39,8 @@ Pentest-Reports/
 platform-mcp/Pentest-Reports/
 **/Pentest-Reports/
 
+# Third-party reference clones — never shipped; attribution in THIRD_PARTY_NOTICES.md
+other tools/
 hexstrike-ai/
 strix/
 shannon/

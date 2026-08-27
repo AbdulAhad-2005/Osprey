@@ -1,3 +1,10 @@
+---
+name: phase-overview
+description: "Vulnerability-analysis phase overview: turn the recon-mapped surface into confirmed, severity-rated findings by scanning what the evidence points at."
+phase: vuln
+tags: [vuln, overview]
+---
+
 # Vulnerability Analysis Phase
 
 Goal: turn the attack surface recon mapped into **confirmed, severity-rated findings**.

@@ -10,7 +10,6 @@ Args:
 Returns:
     Metadata extraction results
 
-Harvested: HexStrike `exiftool_extract` -> `/api/tools/exiftool`.
 Category: forensics
 """
 
@@ -31,7 +30,7 @@ TOOL_NAME = "exiftool_extract"
 CATEGORY = "forensics"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     file_path = params.get("file_path", "")
     output_format = params.get("output_format", "")  # json, xml, csv
     tags = params.get("tags", "")

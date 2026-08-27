@@ -7,7 +7,6 @@ Args:
 Returns:
     Security features analysis results
 
-Harvested: HexStrike `checksec_analyze` -> `/api/tools/checksec`.
 Category: binary
 """
 
@@ -28,7 +27,7 @@ TOOL_NAME = "checksec_analyze"
 CATEGORY = "binary"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     binary = params.get("binary", "")
     command = f"checksec --file={binary}"
     return command.strip()

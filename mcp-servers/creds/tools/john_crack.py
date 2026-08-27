@@ -10,7 +10,6 @@ Args:
 Returns:
     Password cracking results
 
-Harvested: HexStrike `john_crack` -> `/api/tools/john`.
 Category: creds
 """
 
@@ -31,7 +30,7 @@ TOOL_NAME = "john_crack"
 CATEGORY = "creds"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     hash_file = params.get("hash_file", "")
     wordlist = params.get("wordlist", "/usr/share/wordlists/rockyou.txt")
     format_type = params.get("format", "")

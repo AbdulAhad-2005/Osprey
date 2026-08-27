@@ -10,7 +10,6 @@ Args:
 Returns:
     NetBIOS name scanning results
 
-Harvested: HexStrike `nbtscan_netbios` -> `/api/tools/nbtscan`.
 Category: network
 """
 
@@ -32,7 +31,7 @@ TOOL_NAME = "nbtscan_netbios"
 CATEGORY = "network"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     target = params.get("target", "")
     verbose = params.get("verbose", False)
     timeout = params.get("timeout", 2)

@@ -1,5 +1,5 @@
 """
-FastMCP server — `web` capability domain (HexStrike CLI tools).
+FastMCP server — `web` capability domain (CLI tools).
 """
 
 from __future__ import annotations

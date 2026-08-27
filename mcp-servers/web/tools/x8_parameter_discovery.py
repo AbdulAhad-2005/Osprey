@@ -12,7 +12,6 @@ Args:
 Returns:
     Hidden parameter discovery results
 
-Harvested: HexStrike `x8_parameter_discovery` -> `/api/tools/x8`.
 Category: web
 """
 

@@ -10,7 +10,6 @@ Args:
 Returns:
     Binary analysis results
 
-Harvested: HexStrike `gdb_analyze` -> `/api/tools/gdb`.
 Category: binary
 """
 

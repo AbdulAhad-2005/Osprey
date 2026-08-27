@@ -12,7 +12,6 @@ Args:
 Returns:
     Advanced directory discovery results
 
-Harvested: HexStrike `dirsearch_scan` -> `/api/tools/dirsearch`.
 Category: web
 """
 
@@ -34,7 +33,7 @@ TOOL_NAME = "dirsearch_scan"
 CATEGORY = "web"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     url = params.get("url", "")
     extensions = params.get("extensions", "php,html,js,txt,xml,json")
     wordlist = params.get("wordlist", "/usr/share/wordlists/dirsearch/common.txt")

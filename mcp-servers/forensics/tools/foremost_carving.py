@@ -10,7 +10,6 @@ Args:
 Returns:
     File carving results
 
-Harvested: HexStrike `foremost_carving` -> `/api/tools/foremost`.
 Category: forensics
 """
 
@@ -31,7 +30,7 @@ TOOL_NAME = "foremost_carving"
 CATEGORY = "forensics"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     input_file = params.get("input_file", "")
     output_dir = params.get("output_dir", "/tmp/foremost_output")
     file_types = params.get("file_types", "")

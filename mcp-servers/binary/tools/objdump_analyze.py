@@ -9,7 +9,6 @@ Args:
 Returns:
     Binary analysis results
 
-Harvested: HexStrike `objdump_analyze` -> `/api/tools/objdump`.
 Category: binary
 """
 
@@ -30,7 +29,7 @@ TOOL_NAME = "objdump_analyze"
 CATEGORY = "binary"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     binary = params.get("binary", "")
     disassemble = params.get("disassemble", True)
     additional_args = params.get("additional_args", "")

@@ -9,7 +9,6 @@ Args:
 Returns:
     Directory traversal test results
 
-Harvested: HexStrike `dotdotpwn_scan` -> `/api/tools/dotdotpwn`.
 Category: web
 """
 
@@ -31,7 +30,7 @@ TOOL_NAME = "dotdotpwn_scan"
 CATEGORY = "web"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     target = params.get("target", "")
     module = params.get("module", "http")
     additional_args = params.get("additional_args", "")

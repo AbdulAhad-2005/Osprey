@@ -163,9 +163,14 @@ def _api_error_text(exc: Exception) -> str:
     return str(exc)
 
 
-_SCAN_PHASES = {"recon", "network", "vuln", "web", "exploit", "osint", "full"}
+_SCAN_PHASES = {"commander", "recon", "network", "vuln", "web", "exploit", "osint", "full"}
 
 _PHASE_PROMPTS = {
+    "commander": (
+        "You are the Commander for {target}. Decide the best course: answer, run a "
+        "single probe, or launch the full conductor pipeline in the background and "
+        "steer it. Bind {target} and get to work."
+    ),
     "full": (
         "Run a full penetration test on {target} via the conductor: recon is always "
         "the first/active phase; vuln and exploit unlock as real evidence accumulates. "

@@ -11,7 +11,6 @@ Args:
 Returns:
     CIS Kubernetes benchmark results
 
-Harvested: HexStrike `kube_bench_cis` -> `/api/tools/kube-bench`.
 Category: cloud
 """
 
@@ -32,7 +31,7 @@ TOOL_NAME = "kube_bench_cis"
 CATEGORY = "cloud"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     targets = params.get("targets", "")  # master, node, etcd, policies
     version = params.get("version", "")
     config_dir = params.get("config_dir", "")

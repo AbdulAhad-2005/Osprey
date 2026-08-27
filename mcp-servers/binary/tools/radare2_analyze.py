@@ -9,7 +9,6 @@ Args:
 Returns:
     Binary analysis results
 
-Harvested: HexStrike `radare2_analyze` -> `/api/tools/radare2`.
 Category: binary
 """
 

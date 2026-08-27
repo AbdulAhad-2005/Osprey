@@ -12,7 +12,6 @@ Args:
 Returns:
     Vulnerability scan results
 
-Harvested: HexStrike `trivy_scan` -> `/api/tools/trivy`.
 Category: cloud
 """
 
@@ -34,7 +33,7 @@ TOOL_NAME = "trivy_scan"
 CATEGORY = "cloud"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     scan_type = params.get("scan_type", "image")  # image, fs, repo
     target = params.get("target", "")
     output_format = params.get("output_format", "json")

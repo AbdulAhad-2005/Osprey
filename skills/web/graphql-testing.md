@@ -1,3 +1,10 @@
+---
+name: graphql-testing
+description: "GraphQL-specific testing with graphql_cop_scan when a /graphql endpoint is found: introspection, batching, and GraphQL weaknesses."
+phase: web
+tags: [web, graphql, api]
+---
+
 # GraphQL testing (WSTG-API)
 
 GraphQL endpoints (`/graphql`, `/api/graphql`, `/v1/graphql`) have their own class of issues.

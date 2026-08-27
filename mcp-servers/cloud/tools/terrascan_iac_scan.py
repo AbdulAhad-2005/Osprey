@@ -12,7 +12,6 @@ Args:
 Returns:
     Infrastructure as code security scanning results
 
-Harvested: HexStrike `terrascan_iac_scan` -> `/api/tools/terrascan`.
 Category: cloud
 """
 
@@ -33,7 +32,7 @@ TOOL_NAME = "terrascan_iac_scan"
 CATEGORY = "cloud"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     scan_type = params.get("scan_type", "all")  # all, terraform, k8s, etc.
     iac_dir = params.get("iac_dir", ".")
     policy_type = params.get("policy_type", "")

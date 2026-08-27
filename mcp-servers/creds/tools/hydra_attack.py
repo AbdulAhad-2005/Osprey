@@ -13,7 +13,6 @@ Args:
 Returns:
     Brute force attack results
 
-Harvested: HexStrike `hydra_attack` -> `/api/tools/hydra`.
 Category: creds
 """
 
@@ -35,7 +34,7 @@ TOOL_NAME = "hydra_attack"
 CATEGORY = "creds"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     target = params.get("target", "")
     service = params.get("service", "")
     username = params.get("username", "")

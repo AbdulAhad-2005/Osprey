@@ -10,7 +10,6 @@ Args:
 Returns:
     Libc database lookup results
 
-Harvested: HexStrike `libc_database_lookup` -> `/api/tools/libc-database`.
 Category: binary
 """
 

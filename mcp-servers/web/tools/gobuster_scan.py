@@ -10,7 +10,6 @@ Args:
 Returns:
     Scan results with enhanced telemetry
 
-Harvested: HexStrike `gobuster_scan` -> `/api/tools/gobuster`.
 Category: web
 """
 
@@ -47,7 +46,7 @@ def _wordlist_expr() -> str:
 
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     url = str(params.get("url") or params.get("target") or "").strip()
     mode = str(params.get("mode") or "dir").strip()
     wordlist_param = str(params.get("wordlist") or "").strip()

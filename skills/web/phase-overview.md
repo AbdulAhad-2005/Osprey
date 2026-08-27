@@ -1,3 +1,10 @@
+---
+name: phase-overview
+description: "Web-application testing phase overview mapped to OWASP WSTG: when to reach for a tool, a browser, or a platform_script; follow evidence rather than a fixed stage."
+phase: web
+tags: [web, overview, wstg]
+---
+
 # Web Application Testing (OWASP WSTG map)
 
 Focus on HTTP(S) apps once live hosts/URLs exist in memory. This overlay maps the WSTG

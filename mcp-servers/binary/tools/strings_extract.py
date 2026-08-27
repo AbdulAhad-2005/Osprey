@@ -9,7 +9,6 @@ Args:
 Returns:
     String extraction results
 
-Harvested: HexStrike `strings_extract` -> `/api/tools/strings`.
 Category: binary
 """
 
@@ -30,7 +29,7 @@ TOOL_NAME = "strings_extract"
 CATEGORY = "binary"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     file_path = params.get("file_path", "")
     min_len = params.get("min_len", 4)
     additional_args = params.get("additional_args", "")

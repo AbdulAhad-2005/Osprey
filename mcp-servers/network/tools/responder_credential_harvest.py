@@ -13,7 +13,6 @@ Args:
 Returns:
     Credential harvesting results
 
-Harvested: HexStrike `responder_credential_harvest` -> `/api/tools/responder`.
 Category: network
 """
 
@@ -34,7 +33,7 @@ TOOL_NAME = "responder_credential_harvest"
 CATEGORY = "network"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     interface = params.get("interface", "eth0")
     analyze = params.get("analyze", False)
     wpad = params.get("wpad", True)

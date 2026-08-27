@@ -13,7 +13,6 @@ Args:
 Returns:
     Kubernetes penetration testing results
 
-Harvested: HexStrike `kube_hunter_scan` -> `/api/tools/kube-hunter`.
 Category: cloud
 """
 
@@ -35,7 +34,7 @@ TOOL_NAME = "kube_hunter_scan"
 CATEGORY = "cloud"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     target = params.get("target", "")
     remote = params.get("remote", "")
     cidr = params.get("cidr", "")

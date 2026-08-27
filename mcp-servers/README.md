@@ -1,12 +1,16 @@
 # MCP Servers
 
-Modular capability-based MCP servers, some harvested from [HexStrike](https://github.com/0x4m4/hexstrike-ai) and some our original, and adapted for this platform.
+Modular, capability-based MCP servers exposing real CLI pentest tools with typed
+signatures. Each category is a standalone **FastMCP** server; tools pair a
+`build_command()` recipe with a typed `run()` signature, executed through `_core`
+(no HTTP hop, no `shell=True`).
 
-Each category is a standalone **FastMCP** server. Tools combine HexStrike Flask command-builders with typed `run()` signatures, executed through `_core` (no HTTP hop, no `shell=True`).
+> Attribution for reused third-party command-builder recipes and error-handling
+> logic is recorded in [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).
 
-## Full harvest (87 + nmap)
+## Catalog (87 tools + nmap)
 
-All **real CLI pentest tools** from HexStrike are lifted — not AI helpers, dashboards, or server ops.
+Only **real CLI pentest tools** are exposed — not AI helpers, dashboards, or server ops.
 
 | Category | Tools | Examples |
 |---|---:|---|
@@ -21,17 +25,19 @@ All **real CLI pentest tools** from HexStrike are lifted — not AI helpers, das
 | **binary** | 15 | gdb, ghidra, angr, radare2, ropgadget, checksec |
 | **forensics** | 6 | volatility, foremost, exiftool, steghide, hashpump |
 
-**Hero nmap (3):** `nmap_syn_scan`, `nmap_service_scan`, `nmap_custom_scan` — command building is special-cased in the backend's `command_builder.py::_build_nmap_command` (handles unprivileged-container flag rewriting), not routed through a per-tool `tools/*.py` adapter here.
+**Hero nmap (3):** `nmap_syn_scan`, `nmap_service_scan`, `nmap_custom_scan` — command
+building is special-cased in the backend's `command_builder.py::_build_nmap_command`
+(handles unprivileged-container flag rewriting), not routed through a per-tool
+`tools/*.py` adapter here.
 
-**Total MCP-exposed tools: 90** (87 harvested + 3 nmap).
+**Total MCP-exposed tools: 90** (87 catalog + 3 nmap).
 
-### Not harvested (by design)
+### Deliberately excluded
 
 | Excluded | Why |
 |---|---|
-| ~60 MCP entries | AI wrappers, bug-bounty workflows, telemetry, `execute_command`, file/process ops |
-| `jwt_analyzer` | Pure Python logic in Flask — no CLI binary |
-| `comprehensive_api_audit` | MCP wrapper with no server route |
+| AI wrappers, bug-bounty workflows, telemetry, `execute_command`, file/process ops | Not pentest tools — the platform provides these as governed primitives, not catalog tools |
+| `jwt_analyzer` | Pure Python logic — no CLI binary |
 | `nmap_scan`, `nmap_advanced_scan` | Superseded by the `command_builder.py` nmap special-case |
 
 ## Layout
@@ -53,10 +59,10 @@ mcp-servers/
 
 ## Per-tool module pattern
 
-| Piece | Source |
+| Piece | Role |
 |---|---|
-| `TOOL_NAME`, `CATEGORY` | HexStrike MCP name |
-| `build_command(**params)` | Flask route (auto) or `hexstrike_manual_tools.py` (script/temp-file routes) |
+| `TOOL_NAME`, `CATEGORY` | Tool identity |
+| `build_command(**params)` | Assemble the CLI invocation from typed params |
 | `run(...)` | Typed params + `exec_timeout` |
 | `parse(result)` | Stub — Summary Agent / graph parsers go here |
 
@@ -70,13 +76,6 @@ python mcp-servers/web/server.py
 
 Run inside **Kali WSL** or a Docker image where the underlying binaries exist.
 
-## Regenerate from HexStrike
-
-```bash
-python scripts/harvest_hexstrike_tools.py
-python scripts/count_hexstrike_tools.py   # inventory summary
-```
-
 ## OpenCode / Claude Desktop
 
 ```json
@@ -84,11 +83,11 @@ python scripts/count_hexstrike_tools.py   # inventory summary
   "mcpServers": {
     "pentest-network": {
       "command": "python",
-      "args": ["D:/personal work/AI-Pentesting-Tool/mcp-servers/network/server.py"]
+      "args": ["mcp-servers/network/server.py"]
     },
     "pentest-web": {
       "command": "python",
-      "args": ["D:/personal work/AI-Pentesting-Tool/mcp-servers/web/server.py"]
+      "args": ["mcp-servers/web/server.py"]
     }
   }
 }
@@ -96,13 +95,13 @@ python scripts/count_hexstrike_tools.py   # inventory summary
 
 ## Error handling (Escalation Matrix)
 
-HexStrike's ``IntelligentErrorHandler`` (~lines 1606–2200) is lifted verbatim into [`_core/error_handler.py`](_core/error_handler.py):
+`_core/error_handler.py` provides an intelligent recovery loop:
 
 - Regex error classification (timeout, permission, rate limit, tool not found, …)
 - Recovery strategy selection per error type
-- Retry with backoff, parameter auto-adjustment per tool, alternative tool lookup
+- Retry with backoff, parameter auto-adjustment per tool, alternative-tool lookup
 - Human escalation payload with suggested actions
-- ``GracefulDegradation`` fallback chains for partial failures
+- Graceful-degradation fallback chains for partial failures
 
 **Summary Agent integration** — before writing a failed tool result to the graph:
 
@@ -110,7 +109,7 @@ HexStrike's ``IntelligentErrorHandler`` (~lines 1606–2200) is lifted verbatim 
 from _core import process_tool_failure
 
 decision = process_tool_failure(
-    tool_name="nmap_scan",
+    tool_name="nmap_service_scan",
     error_message=result["stderr"],
     parameters=params,
     target="10.0.0.1",
@@ -120,10 +119,9 @@ decision = process_tool_failure(
 # decision["alternative_tool"], decision["adjusted_parameters"], decision["human_escalation"]
 ```
 
-MCP tools pass ``use_recovery=True`` to ``run_tool()`` to apply the full loop automatically.
+MCP tools pass `use_recovery=True` to `run_tool()` to apply the full loop automatically.
 
 ## Next steps (orchestrator)
 
 1. Per-tool `parse()` → graph nodes for Summary Agent
 2. FastAPI MCP client wiring by engagement phase
-3. Governance gate before tool execution

@@ -9,7 +9,6 @@ Args:
 Returns:
     Passive subdomain enumeration results
 
-Harvested: HexStrike `subfinder_scan` -> `/api/tools/subfinder`.
 Category: recon
 """
 
@@ -64,7 +63,7 @@ def _sanitize_subdomains(raw_lines: list[str]) -> list[str]:
 
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     domain = params.get("domain", "")
     silent = params.get("silent", True)
     all_sources = params.get("all_sources", False)

@@ -13,7 +13,6 @@ Args:
 Returns:
     Ultra-fast port scanning results
 
-Harvested: HexStrike `rustscan_fast_scan` -> `/api/tools/rustscan`.
 Category: network
 """
 
@@ -35,10 +34,10 @@ TOOL_NAME = "rustscan_fast_scan"
 CATEGORY = "network"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     target = params.get("target", "")
     ports = params.get("ports", "")
-    # Gentler defaults: the harvested 4500-batch / 5000-ulimit floods shared
+    # Gentler defaults: the aggressive 4500-batch / 5000-ulimit floods shared
     # hosts and gets the scanning source IP-banned mid-engagement. 1000/2000 is
     # still fast but survives rate-limited / shared-hosting targets. Override via
     # batch_size= / ulimit= when the target can take it.

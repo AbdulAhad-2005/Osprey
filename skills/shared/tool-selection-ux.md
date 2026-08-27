@@ -1,3 +1,10 @@
+---
+name: tool-selection-ux
+description: "For the Commander when planning: state each tool with one-line reasoning and which coverage gap it closes; trust the LLM to pick flags (there is no command-preview round-trip)."
+phase: shared
+tags: [methodology, commander]
+---
+
 # Tool Selection (for Commander)
 
 When planning, state for each step:

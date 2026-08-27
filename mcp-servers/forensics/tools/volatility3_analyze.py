@@ -10,7 +10,6 @@ Args:
 Returns:
     Advanced memory forensics results
 
-Harvested: HexStrike `volatility3_analyze` -> `/api/tools/volatility3`.
 Category: forensics
 """
 
@@ -31,7 +30,7 @@ TOOL_NAME = "volatility3_analyze"
 CATEGORY = "forensics"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     memory_file = params.get("memory_file", "")
     plugin = params.get("plugin", "")
     output_file = params.get("output_file", "")

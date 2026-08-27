@@ -14,7 +14,6 @@ Args:
 Returns:
     High-speed port scanning results with intelligent rate limiting
 
-Harvested: HexStrike `masscan_high_speed` -> `/api/tools/masscan`.
 Category: network
 """
 
@@ -36,7 +35,7 @@ TOOL_NAME = "masscan_high_speed"
 CATEGORY = "network"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     target = str(params.get("target", ""))
     # masscan has no "top-N ports" concept (unlike naabu/nmap), so only an
     # explicit ports value is ever rendered here; top_ports (if a caller

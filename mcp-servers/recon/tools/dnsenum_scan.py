@@ -1,7 +1,6 @@
 """
 Execute dnsenum for DNS enumeration with enhanced logging.
 
-Harvested: HexStrike `dnsenum_scan` -> `/api/tools/dnsenum`.
 Category: recon
 """
 

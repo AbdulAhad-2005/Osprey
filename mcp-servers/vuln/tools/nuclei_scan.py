@@ -11,7 +11,6 @@ Args:
 Returns:
     Scan results with discovered vulnerabilities and telemetry
 
-Harvested: HexStrike `nuclei_scan` -> `/api/tools/nuclei`.
 Category: vuln
 """
 
@@ -33,7 +32,7 @@ TOOL_NAME = "nuclei_scan"
 CATEGORY = "vuln"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     target = params.get("target", "")
     severity = params.get("severity", "")
     tags = params.get("tags", "")
