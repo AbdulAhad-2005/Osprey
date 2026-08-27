@@ -1,3 +1,10 @@
+---
+name: query-back-loop
+description: "The query-back loop: flush and re-read memory and graph on triggers (roughly every three tool calls, or on new assets) so context stays current."
+phase: shared
+tags: [methodology, memory]
+---
+
 # Query-back loop
 
 Load once. Do not re-load.

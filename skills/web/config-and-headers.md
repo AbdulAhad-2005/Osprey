@@ -1,3 +1,10 @@
+---
+name: config-and-headers
+description: "Config, headers, and CORS testing (WSTG-CONF/CLNT) via platform_script: security headers, cookie flags, and CORS — one HTTP request plus logic each."
+phase: web
+tags: [web, headers, cors]
+---
+
 # Config, headers & CORS testing (WSTG-CONF / CLNT) — via platform_script
 
 These checks are one HTTP request + logic — **write a `platform_script` (curl/python)** rather

@@ -1,3 +1,10 @@
+---
+name: username-pivot
+description: "Pivot from a username or handle to a cross-platform footprint using maigret (3000+ sites), then follow linked accounts."
+phase: osint
+tags: [osint, username]
+---
+
 # Username Pivot
 
 **When:** You have a username / handle (from a social link, email local-part, or

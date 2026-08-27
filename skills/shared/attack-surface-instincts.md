@@ -1,3 +1,10 @@
+---
+name: attack-surface-instincts
+description: "Attack-surface instincts: use the full resource set (typed tools, domain_hunter, amass, Shodan, jobs, fanout, scripts) to build the best picture rather than stopping at the first comfortable result."
+phase: shared
+tags: [methodology, instincts]
+---
+
 # Attack-surface instincts (ideas, not a script)
 
 Elite means: use the **resources you have** (typed tools, domain_hunter, amass,

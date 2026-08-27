@@ -1,7 +1,7 @@
 # Architecture & Workflow
 
 > **Audience:** Anyone evaluating how the platform works and *why* it is built this way — developers, operators, stakeholders.
-> **Scope:** The current build (recon + network / enum phases). Web, vuln, exploit, cloud, and binary phases are planned — see [`STATUS_AND_ROADMAP.md`](./STATUS_AND_ROADMAP.md) and the vision in [`HYBRID_PLATFORM_BLUEPRINT.md`](./HYBRID_PLATFORM_BLUEPRINT.md).
+> **Scope:** The full build. Recon, network, **web, vuln, exploit, and osint** phases are all implemented — their MCP tools (sqlmap, dalfox, nuclei, nikto, wpscan, metasploit, sslyze, the Playwright browser + session-aware repeater, …) are registered and driven by the conductor. See [`STATUS_AND_ROADMAP.md`](./STATUS_AND_ROADMAP.md).
 > **Related:** [`PLATFORM_GUIDE.md`](./PLATFORM_GUIDE.md) (operator) · [`DEVELOPER_GUIDE.md`](./DEVELOPER_GUIDE.md) (code map) · [`CAPABILITY_REFERENCE.md`](./CAPABILITY_REFERENCE.md) (per-tool reference) · [`INTEGRATION_CONTRACT.md`](./INTEGRATION_CONTRACT.md) (APIs)
 
 ---
@@ -11,6 +11,29 @@
 **An external LLM (OpenCode) is the brain; the platform is a lab + referee + shared notebook.** You describe a target in plain English; the LLM chooses security tools from a governed catalog, runs them in Kali via MCP, reads the full output, adapts, writes typed findings into a durable engagement graph, and reports back — while YAML config and markdown skills *assist* it, not *script* it.
 
 > **Motto:** We do not hardcode the engagement. We give the LLM trustworthy memory, safe execution primitives, transparent policy, and complete provenance so it can become an elite operator.
+
+### One Conductor, Two Executors
+
+The brain is pluggable. The **conductor** (`phase_supervisor.py` + `sufficiency.py`) is LLM-free
+shared state — phase sequencing (recon first; vuln/exploit unlock on evidence thresholds),
+loop-back on new assets, the tool catalog, per-phase skills, and the shared blackboard
+(`findings_store` + `engagement_graph`). It decides *what/when*, never *how*, and never calls an
+LLM. Two interchangeable executors consume that one conductor:
+
+- **Executor A — an external harness** (OpenCode / Claude Code / any MCP client) using its own
+  LLM and subagents, reaching the conductor over the `pentest-platform` MCP tools. No key needed
+  — the affordable default.
+- **Executor B — the built-in Commander** (`services/phase_agent.py` `phase="commander"`, entered
+  via `POST /api/v1/agent/chat[/stream]`). A self-hosted conversational brain running whatever
+  LiteLLM key the user configures (Claude / DeepSeek / GPT / Groq / **local Ollama**). It owns the
+  conductor as a background job: `launch_pipeline` runs recon→vuln→exploit fire-and-forget while
+  the Commander stays conversational, `check_readiness` reports progress, `spawn_agent` steers,
+  `stop_pipeline` halts. Target binding is **lazy and implicit** — naming a target in chat
+  get-or-creates its engagement; there is no `set_target` ceremony.
+
+Both executors read skills the same way (description-indexed, surfaced at the active phase, pulled
+on demand) and write to the same evidence graph, so they cannot diverge. New intelligence goes
+into the LLM-free conductor + skills, never into a per-executor service.
 
 ---
 
@@ -181,4 +204,4 @@ Tools run inside the `ai-pentest-kali` container (NET_RAW/NET_ADMIN for SYN scan
 
 ---
 
-*Reflects the current OpenCode-primary recon+network build. For per-capability detail see [`CAPABILITY_REFERENCE.md`](./CAPABILITY_REFERENCE.md); for what is built vs planned see [`STATUS_AND_ROADMAP.md`](./STATUS_AND_ROADMAP.md).*
+*Reflects the two-executor build: an external MCP harness (Executor A) and the built-in Commander (Executor B), over one LLM-free conductor spanning recon/network/web/vuln/exploit/osint. For per-capability detail see [`CAPABILITY_REFERENCE.md`](./CAPABILITY_REFERENCE.md).*

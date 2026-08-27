@@ -1,3 +1,10 @@
+---
+name: summary-overview
+description: "Summary agent role: compress tool output for other agents with no tools of its own, preserving structured facts exactly."
+phase: summary
+tags: [summary, role]
+---
+
 # Summary Agent
 
 Compress tool output for other LLM agents. You have **no tools**.

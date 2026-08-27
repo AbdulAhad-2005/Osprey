@@ -1,3 +1,10 @@
+---
+name: subdomain-takeover
+description: "Spot dangling CNAMEs pointing at unclaimed SaaS across a subdomain/host list with subdomain_takeover_check."
+phase: recon
+tags: [recon, takeover]
+---
+
 # Subdomain Takeover Checks
 
 **When:** You have a subdomain / host list (from `subfinder_scan`, `amass_scan`,

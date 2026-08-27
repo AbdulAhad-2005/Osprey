@@ -1073,22 +1073,11 @@ def _format_exec_result(data: dict[str, Any], *, engagement_id: str = "", target
         parts.append(_block(f"Top findings this run ({min(len(titles), 15)}/{len(titles)})", titles[:15]))
         if len(titles) > 15:
             parts.append(f"… +{len(titles) - 15} more — platform_findings / platform_report_outline")
-    # Soft notes — failure gaps + optional parallel branch hint (never orders)
-    parallel_note = hybrid_meta.get("parallel_note") if isinstance(hybrid_meta, dict) else None
-    if data.get("timed_out") or not data.get("success") or (
-        data.get("next_hint") and "EMPTY" in str(data.get("next_hint"))
-    ):
-        if data.get("next_hint"):
-            parts.append(f"**Note:** {data['next_hint']}")
-    elif parallel_note:
-        parts.append(f"**Note:** {parallel_note}")
-    elif data.get("next_hint") and "Parallel note" in str(data.get("next_hint")):
+    # next_hint now only carries factual markers of a deterministic action the
+    # kernel already took (auto-fallback ran, wide scan auto-chunked) — not the
+    # old advisory nudge text. Render it plainly when present.
+    if data.get("next_hint"):
         parts.append(f"**Note:** {data['next_hint']}")
-    # Active-memory awareness — drift / unexplored / unread jobs (advisory, shows on
-    # success too, because that's exactly when the agent keeps going without re-syncing).
-    mem_note = hybrid_meta.get("memory_awareness") if isinstance(hybrid_meta, dict) else None
-    if mem_note:
-        parts.append(f"**Memory:** {mem_note}")
     if arts:
         parts.append(_block("Full output on disk (Kali)", arts))
     parts.append(
@@ -2481,7 +2470,8 @@ def platform_skills(path: str = "", phase: str = "", query: str = "") -> str:
     """
     Browse platform skill markdown (commander, recon, network, products, …).
 
-    Empty path → index. path='shared/evidence-to-hypothesis.md' → full text.
+    Empty path → index of `name — description` lines. path='shared/evidence-to-hypothesis.md'
+    OR path='evidence-to-hypothesis' (bare skill name) → full text.
     phase= / query= filter the index.
     """
     def _run() -> str:
@@ -2506,10 +2496,11 @@ def platform_skills(path: str = "", phase: str = "", query: str = "") -> str:
         lines = [
             "### OPERATOR MIRROR — SKILLS INDEX",
             f"count={data.get('count')}",
-            "Call platform_skills(path='…') for full text.",
+            "Call platform_skills(path='<name>') for full text.",
         ]
         for it in data.get("skills") or []:
-            lines.append(f"- [{it.get('phase')}] {it.get('path')} — {it.get('title')}")
+            desc = it.get("description") or it.get("title") or ""
+            lines.append(f"- [{it.get('phase')}] {it.get('name') or it.get('path')} — {desc}")
         return "\n".join(lines)
 
     return _safe(_run)

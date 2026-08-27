@@ -1,3 +1,10 @@
+---
+name: verification-and-severity
+description: "Severity discipline: evidence grade caps severity (platform clamp); verify scanner output before rating so reports are not a wall of unverified criticals."
+phase: vuln
+tags: [vuln, severity, verification]
+---
+
 # Verification & severity discipline
 
 The fastest way to make a report worthless is a wall of unverified scanner output rated

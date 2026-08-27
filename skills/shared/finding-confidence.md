@@ -1,3 +1,10 @@
+---
+name: finding-confidence
+description: "Confidence grading for findings: confirmed vs likely vs hypothesis, with honesty rules so passive signals are not inflated to critical."
+phase: shared
+tags: [methodology, findings, confidence]
+---
+
 # Finding Confidence
 
 - **High / confirmed:** Parser extracted structured finding with clear evidence in stdout

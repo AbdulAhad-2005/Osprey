@@ -1,3 +1,10 @@
+---
+name: web-crawling
+description: "Deeper endpoint discovery on a live URL via hakrawler_crawl (forms, JS routes, depth-limited spider), staying within engagement scope."
+phase: recon
+tags: [recon, crawl]
+---
+
 # Web Crawling
 
 **When:** A live URL needs deeper endpoint discovery (forms, JS routes, depth-limited spider).

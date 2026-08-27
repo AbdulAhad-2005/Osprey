@@ -1,3 +1,10 @@
+---
+name: historical-url-discovery
+description: "Discover endpoints not in the current crawl via waybackurls/gau historical URLs, then dedupe/filter and probe with httpx."
+phase: recon
+tags: [recon, urls, wayback]
+---
+
 # Historical URL Discovery
 
 **When:** You need endpoints not visible in current crawl or DNS.

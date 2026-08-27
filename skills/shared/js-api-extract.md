@@ -1,3 +1,10 @@
+---
+name: js-api-extract
+description: "Script convention for extracting JS/API routes with platform_script when catalog tools only give titles/ports; print structured lines so memory and graph update."
+phase: shared
+tags: [methodology, javascript, scripting]
+---
+
 # JS / API route extract (script convention)
 
 When catalog tools only give titles/ports, **invent** a probe with `platform_script`.

@@ -138,8 +138,19 @@ python -m cli                   # or the `pentest` console script
 | `/reset` · `/clear` · `/exit` | Clear conversation · clear screen · exit          |
 
 `/scan <target> [phase]` binds an engagement so `/findings` and prompts know the
-target. You can also type natural-language prompts directly. During a run the CLI
-streams commander decisions, live tool start/finish, and per-phase reports.
+target. You can also just **type natural-language prompts** — these go to the
+**Commander**, a conversational brain that owns the conductor: it answers, runs one
+probe, or launches the full recon→vuln→exploit pipeline in the background and keeps
+chatting so you can steer it ("hit the sister domains harder", "status", "stop"). You
+never run a `set_target` ceremony — naming a target in chat binds it automatically.
+During a run the CLI streams commander decisions, live tool start/finish, and
+per-phase reports.
+
+Set or switch your LLM provider/key at runtime (no manual `.env` editing) with
+`POST /api/v1/config/llm` `{"model": "...", "api_key": "...", "api_base": "..."}` —
+the Settings surface a GUI would use. The chat thread is persisted server-side per
+engagement (`GET /api/v1/agent/conversation/{engagement_id}`), so the CLI and any
+future dashboard share one conversation.
 
 ### Seeing which tools you have
 
@@ -152,6 +163,40 @@ execution mode is active (Kali container or host). Surface it with:
 
 The agent plans around what's present, so a partial toolset still works — you just
 get fewer techniques where a tool is missing.
+
+## Adding your own skills (drop-in, zero code)
+
+Skills are markdown files under `skills/<phase>/` that steer the agent's methodology
+for a phase. Both executors index them by their YAML frontmatter **description** and
+surface the descriptions for the *active* phase every turn, pulling full text on
+demand — so a well-described skill can't be missed, and adding more never bloats the
+prompt.
+
+To add one, drop a file into the right phase folder with frontmatter:
+
+```markdown
+---
+name: my-graphql-idor-playbook
+description: How I hunt IDOR in GraphQL mutations on this org's APIs — the checks and payloads that work here.
+phase: web
+tags: [web, graphql, idor]
+---
+
+# My GraphQL IDOR playbook
+...your methodology...
+```
+
+- **`phase`** is which phase it appears in: `recon`, `network`, `web`, `vuln`,
+  `exploit`, `osint`, `commander`, or `shared` (always-relevant). The folder you drop
+  it in usually matches, but the `phase:` field is authoritative — so a file under
+  `skills/custom/` with `phase: web` shows up during the web phase too.
+- **`description`** is the single most important field: it's what the LLM reads to
+  decide whether to open the skill. Make it concrete (when to use it + what it does).
+- No restart or code change needed — the registry re-reads `skills/` on each request.
+
+Verify it's indexed: `GET /api/v1/capabilities/skills-index?phase=web` (or
+`platform_skills(phase="web")` from an MCP harness) — your skill's `name` and
+`description` should appear.
 
 ## MCP Client Configuration (Alternate Approach)
 

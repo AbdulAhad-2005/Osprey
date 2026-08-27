@@ -1,3 +1,10 @@
+---
+name: chunked-scans
+description: "Keep the session moving: push long probes into background jobs and split large host lists into shortlists/batches, inventing chunk size from evidence and scope."
+phase: shared
+tags: [methodology, parallelism, jobs]
+---
+
 # Chunked / parallel scans (skill — not a stage script)
 
 Elite operators keep the chat moving. Long probes belong in **jobs**; large host

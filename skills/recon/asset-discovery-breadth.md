@@ -1,3 +1,10 @@
+---
+name: asset-discovery-breadth
+description: "Breadth-before-depth asset discovery: enumerate wide (forgotten hosts, staging, acquisitions) before deep-diving a few, so the winning host is never left unprobed."
+phase: recon
+tags: [recon, discovery, breadth]
+---
+
 # Asset Discovery — Breadth Before Depth
 
 The failure mode this skill exists to prevent: you enumerate 50 subdomains, deep-dive 5

@@ -1,3 +1,10 @@
+---
+name: client-side-and-session
+description: "Client-side and session testing (WSTG-CLNT/SESS/ATHZ): DOM XSS, session, and authorization issues that need the real DOM or a real session via browser tools."
+phase: web
+tags: [web, dom-xss, session]
+---
+
 # Client-side & session testing (WSTG-CLNT / SESS / ATHZ)
 
 These need the real DOM or a real session — `browser_flow` / `browser_scrape`, sometimes with a

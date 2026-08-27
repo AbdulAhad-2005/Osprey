@@ -247,7 +247,7 @@ class APIClient:
         return payload
 
     def send_prompt(
-        self, prompt: str, engagement_id: str | None = None, phase: str = "full"
+        self, prompt: str, engagement_id: str | None = None, phase: str = "commander"
     ) -> dict[str, Any]:
         """Send a prompt to the agent and return the full response."""
         payload = self._build_chat_payload(prompt, engagement_id, phase)
@@ -278,7 +278,7 @@ class APIClient:
         self,
         prompt: str,
         engagement_id: str | None = None,
-        phase: str = "full",
+        phase: str = "commander",
     ) -> Iterator[tuple[str, dict[str, Any]]]:
         """Stream agent events from SSE. Yields (event_type, data) until done."""
         payload = self._build_chat_payload(prompt, engagement_id, phase)

@@ -39,15 +39,22 @@ def register_typed_browser_tools(mcp: Any, *, execute: Callable[..., str]) -> in
         timeout_seconds: int = 300,
         engagement_id: str = "",
     ) -> str:
-        """Drive a real browser through a declarative flow in ONE session — for login,
-        authenticated navigation, and BUSINESS LOGIC testing. steps= a JSON list of step
-        objects; supported actions: goto{url}, fill{selector,value}, click{selector},
-        press{selector?,key}, wait{ms|selector}, select{selector,value},
-        upload{selector,files} (file-upload testing), extract{selector,name},
-        assert_text{text}, screenshot{name?}, set_header{name,value}, set_cookie{name,value}.
-        Returns the per-step trace, captured API calls, extracted
-        values, assertion results and final cookies. Example: log in, then assert an admin-only
-        string is present as a low-priv user (auth bypass). engagement_id= pins the engagement."""
+        """Drive a real browser through a declarative flow in ONE authenticated session — for
+        login, authenticated navigation, BUSINESS LOGIC testing, and a session-aware HTTP
+        repeater. steps= a JSON list of step objects; supported actions: goto{url},
+        fill{selector,value}, click{selector}, press{selector?,key}, wait{ms|selector},
+        select{selector,value}, upload{selector,files} (file-upload testing),
+        extract{selector,name}, assert_text{text}, screenshot{name?}, set_header{name,value},
+        set_cookie{name,value},
+        snapshot{name?,limit?} (compact map of the live DOM's interactive elements with CSS
+        selectors — SEE the page mid-flow then act; iterate open->snapshot->act like a human),
+        replay{url,method?,headers?,body?,json?,name?} (re-send an HTTP request THROUGH the live
+        logged-in session, cookies intact — tamper any field to test IDOR / auth-bypass / param
+        pollution, then read the full status+headers+body back).
+        Returns the per-step trace, captured API calls (with headers+body, replayable),
+        snapshots, replays, extracted values, assertions and final cookies. Example: log in,
+        capture GET /api/orders/123, replay it as /api/orders/124, check for 2xx (IDOR).
+        engagement_id= pins the engagement."""
         params: dict[str, Any] = {"steps": steps}
         if url.strip():
             params["url"] = url.strip()
