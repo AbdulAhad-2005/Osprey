@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CNAME + HTTP fingerprint subdomain takeover checker (Shannon-adapted)."""
+"""CNAME + HTTP fingerprint subdomain takeover checker."""
 
 from __future__ import annotations
 

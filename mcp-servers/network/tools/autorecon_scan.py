@@ -45,7 +45,6 @@ Args:
 Returns:
     Comprehensive enumeration results with full configurability
 
-Harvested: HexStrike `autorecon_scan` -> `/api/tools/autorecon`.
 Category: network
 """
 
@@ -68,7 +67,7 @@ TOOL_NAME = "autorecon_scan"
 CATEGORY = "network"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     target = params.get("target", "")
     output_dir = params.get("output_dir", "/tmp/autorecon")
     port_scans = params.get("port_scans", "top-100-ports")

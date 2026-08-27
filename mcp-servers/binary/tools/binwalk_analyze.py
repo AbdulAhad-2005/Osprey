@@ -9,7 +9,6 @@ Args:
 Returns:
     Firmware analysis results
 
-Harvested: HexStrike `binwalk_analyze` -> `/api/tools/binwalk`.
 Category: binary
 """
 
@@ -30,7 +29,7 @@ TOOL_NAME = "binwalk_analyze"
 CATEGORY = "binary"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     file_path = params.get("file_path", "")
     extract = params.get("extract", False)
     additional_args = params.get("additional_args", "")

@@ -10,7 +10,6 @@ Args:
 Returns:
     Docker security assessment results
 
-Harvested: HexStrike `docker_bench_security_scan` -> `/api/tools/docker-bench-security`.
 Category: cloud
 """
 
@@ -31,7 +30,7 @@ TOOL_NAME = "docker_bench_security_scan"
 CATEGORY = "cloud"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     checks = params.get("checks", "")  # Specific checks to run
     exclude = params.get("exclude", "")  # Checks to exclude
     output_file = params.get("output_file", "/tmp/docker-bench-results.json")

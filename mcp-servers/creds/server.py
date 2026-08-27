@@ -1,5 +1,5 @@
 """
-FastMCP server — `creds` capability domain (HexStrike CLI tools).
+FastMCP server — `creds` capability domain (CLI tools).
 """
 
 from __future__ import annotations

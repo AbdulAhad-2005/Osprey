@@ -9,7 +9,6 @@ Args:
 Returns:
     Parameter replacement results for fuzzing
 
-Harvested: HexStrike `qsreplace_parameter_replacement` -> `/api/tools/qsreplace`.
 Category: web
 """
 
@@ -30,7 +29,7 @@ TOOL_NAME = "qsreplace_parameter_replacement"
 CATEGORY = "web"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     urls = params.get("urls", "")
     replacement = params.get("replacement", "FUZZ")
     additional_args = params.get("additional_args", "")

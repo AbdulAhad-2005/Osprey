@@ -11,7 +11,6 @@ Args:
 Returns:
     Comprehensive URL discovery results from multiple sources
 
-Harvested: HexStrike `gau_discovery` -> `/api/tools/gau`.
 Category: recon
 """
 
@@ -33,7 +32,7 @@ TOOL_NAME = "gau_discovery"
 CATEGORY = "recon"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     domain = params.get("domain", "")
     providers = params.get("providers", "wayback,commoncrawl,otx,urlscan")
     include_subs = params.get("include_subs", True)

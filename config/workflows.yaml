@@ -1,11 +1,11 @@
-# Dark-Moon-style structured workflows for recon + network.
+# Structured workflows for recon + network.
 # LLM may call these OR chain individual tools freely.
 
 workflows:
   subdomain_discovery:
     phase: recon
     description: Passive subdomain enum then live HTTP probe (subfinder → httpx).
-    source: darkmoon_subdomain_discovery
+    source: subdomain_discovery
     input_params: [domain]
     steps:
       - id: enum
@@ -51,7 +51,7 @@ workflows:
   port_scan_pipeline:
     phase: network
     description: Fast rustscan then nmap service scan on discovered ports.
-    source: darkmoon_port_scan
+    source: port_scan
     input_params: [target]
     steps:
       - id: fast

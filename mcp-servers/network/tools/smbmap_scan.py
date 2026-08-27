@@ -11,7 +11,6 @@ Args:
 Returns:
     SMB share enumeration results
 
-Harvested: HexStrike `smbmap_scan` -> `/api/tools/smbmap`.
 Category: network
 """
 
@@ -33,7 +32,7 @@ TOOL_NAME = "smbmap_scan"
 CATEGORY = "network"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     target = params.get("target", "")
     username = params.get("username", "")
     password = params.get("password", "")

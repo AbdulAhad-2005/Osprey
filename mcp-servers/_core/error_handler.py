@@ -1,5 +1,5 @@
 """
-IntelligentErrorHandler + GracefulDegradation — lifted from HexStrike hexstrike_server.py (~1606–2427).
+IntelligentErrorHandler + GracefulDegradation.
 
 Strips Flask/ANSI telemetry only. Use via ``error_handler`` / ``degradation_manager`` singletons
 or ``process_tool_failure()`` for Summary Agent → graph ingestion.
@@ -600,7 +600,7 @@ def determine_operation_type(tool_name: str) -> str:
 
 
 def rebuild_command_with_params(tool_name: str, original_command: str, new_params: dict[str, Any]) -> str:
-    """Append tool-specific flags after parameter adjustment (HexStrike recipe)."""
+    """Append tool-specific flags after parameter adjustment."""
     base = normalize_tool_key(tool_name)
     additional_args: list[str] = []
     for key, value in new_params.items():

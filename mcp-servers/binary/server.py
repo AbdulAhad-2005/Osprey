@@ -1,5 +1,5 @@
 """
-FastMCP server — `binary` capability domain (HexStrike CLI tools).
+FastMCP server — `binary` capability domain (CLI tools).
 """
 
 from __future__ import annotations

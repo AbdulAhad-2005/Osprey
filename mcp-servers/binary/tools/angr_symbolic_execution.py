@@ -12,7 +12,6 @@ Args:
 Returns:
     Symbolic execution and binary analysis results
 
-Harvested: HexStrike `angr_symbolic_execution` -> `/api/tools/angr`.
 Category: binary
 """
 

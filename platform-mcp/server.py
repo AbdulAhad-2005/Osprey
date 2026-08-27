@@ -2778,7 +2778,7 @@ def platform_handoff(engagement_id: str = "") -> str:
     return _safe(_run)
 
 
-# Typed recon/network/exploit catalog tools (HexStrike-style schemas for the LLM).
+# Typed recon/network/exploit catalog tools (typed schemas for the LLM).
 def _typed_execute(
     tool_name: str,
     params: dict[str, Any],

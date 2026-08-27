@@ -10,7 +10,6 @@ Args:
 Returns:
     Filtered URL results with duplicates removed
 
-Harvested: HexStrike `uro_url_filtering` -> `/api/tools/uro`.
 Category: web
 """
 
@@ -31,7 +30,7 @@ TOOL_NAME = "uro_url_filtering"
 CATEGORY = "web"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     urls = params.get("urls", "")
     whitelist = params.get("whitelist", "")
     blacklist = params.get("blacklist", "")

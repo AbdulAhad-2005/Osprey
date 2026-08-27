@@ -8,7 +8,6 @@ Args:
 Returns:
     Scan results with discovered vulnerabilities
 
-Harvested: HexStrike `nikto_scan` -> `/api/tools/nikto`.
 Category: web
 """
 
@@ -30,7 +29,7 @@ TOOL_NAME = "nikto_scan"
 CATEGORY = "web"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     target = params.get("target", "")
     additional_args = params.get("additional_args", "")
     command = f"nikto -h {q(target)}"

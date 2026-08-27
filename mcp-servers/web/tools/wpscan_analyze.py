@@ -8,7 +8,6 @@ Args:
 Returns:
     WordPress vulnerability scan results
 
-Harvested: HexStrike `wpscan_analyze` -> `/api/tools/wpscan`.
 Category: web
 """
 
@@ -30,7 +29,7 @@ TOOL_NAME = "wpscan_analyze"
 CATEGORY = "web"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     url = params.get("url", "")
     additional_args = str(params.get("additional_args", "") or "")
     command = f"wpscan --url {q(url)}"

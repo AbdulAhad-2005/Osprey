@@ -12,7 +12,6 @@ Args:
 Returns:
     Steganography analysis results
 
-Harvested: HexStrike `steghide_analysis` -> `/api/tools/steghide`.
 Category: forensics
 """
 
@@ -33,7 +32,7 @@ TOOL_NAME = "steghide_analysis"
 CATEGORY = "forensics"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     action = params.get("action", "extract")  # extract, embed, info
     cover_file = params.get("cover_file", "")
     embed_file = params.get("embed_file", "")

@@ -33,8 +33,8 @@ but every stage's work is required, not optional to skip):**
 10. Technology identification (`whatweb_scan` / `tech_stack_analyze`) on live hosts — informs
     targeted vuln research
 
-**Asset-discovery pivots (beyond subfinder/crt.sh basics — adapted from Strix's
-asset-discovery methodology; loaded unconditionally, every recon agent gets this):**
+**Asset-discovery pivots (beyond subfinder/crt.sh basics;
+loaded unconditionally, every recon agent gets this):**
 - **Iterate to convergence, don't run each source once.** CT (`crt_sh_query`) → TLS
   SAN pivot (`tlsx_inspect`) → resolve (`dnsx_resolve`) → ASN/IP-range sweep
   (`asn_enum`) → back to CT on any new org/domain found → repeat until a full pass

@@ -12,7 +12,6 @@ Args:
 Returns:
     Infrastructure as code security scanning results
 
-Harvested: HexStrike `checkov_iac_scan` -> `/api/tools/checkov`.
 Category: cloud
 """
 
@@ -33,7 +32,7 @@ TOOL_NAME = "checkov_iac_scan"
 CATEGORY = "cloud"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     directory = params.get("directory", ".")
     framework = params.get("framework", "")  # terraform, cloudformation, kubernetes, etc.
     check = params.get("check", "")

@@ -9,7 +9,6 @@ Args:
 Returns:
     SQL injection test results
 
-Harvested: HexStrike `sqlmap_scan` -> `/api/tools/sqlmap`.
 Category: web
 """
 
@@ -31,7 +30,7 @@ TOOL_NAME = "sqlmap_scan"
 CATEGORY = "web"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     url = params.get("url", "")
     data = params.get("data", "")
     additional_args = params.get("additional_args", "")

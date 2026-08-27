@@ -15,7 +15,6 @@ Args:
 Returns:
     Advanced SMB enumeration results
 
-Harvested: HexStrike `enum4linux_ng_advanced` -> `/api/tools/enum4linux-ng`.
 Category: network
 """
 
@@ -37,7 +36,7 @@ TOOL_NAME = "enum4linux_ng_advanced"
 CATEGORY = "network"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     target = params.get("target", "")
     username = params.get("username", "")
     password = params.get("password", "")

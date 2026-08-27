@@ -12,7 +12,6 @@ Args:
 Returns:
     Multi-cloud security assessment results
 
-Harvested: HexStrike `scout_suite_assessment` -> `/api/tools/scout-suite`.
 Category: cloud
 """
 
@@ -33,7 +32,7 @@ TOOL_NAME = "scout_suite_assessment"
 CATEGORY = "cloud"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     provider = params.get("provider", "aws")  # aws, azure, gcp, aliyun, oci
     profile = params.get("profile", "default")
     report_dir = params.get("report_dir", "/tmp/scout-suite")

@@ -8,7 +8,6 @@ Args:
 Returns:
     SMB enumeration results
 
-Harvested: HexStrike `enum4linux_scan` -> `/api/tools/enum4linux`.
 Category: network
 """
 
@@ -30,7 +29,7 @@ TOOL_NAME = "enum4linux_scan"
 CATEGORY = "network"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     target = params.get("target", "")
     additional_args = params.get("additional_args", "-a")
     command = f"enum4linux {additional_args} {q(target)}"

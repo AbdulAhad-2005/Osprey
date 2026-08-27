@@ -13,7 +13,6 @@ Args:
 Returns:
     Cloud security assessment results
 
-Harvested: HexStrike `prowler_scan` -> `/api/tools/prowler`.
 Category: cloud
 """
 
@@ -34,7 +33,7 @@ TOOL_NAME = "prowler_scan"
 CATEGORY = "cloud"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     provider = params.get("provider", "aws")
     profile = params.get("profile", "default")
     region = params.get("region", "")

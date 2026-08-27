@@ -10,7 +10,6 @@ Args:
 Returns:
     AWS network visualization and security analysis results
 
-Harvested: HexStrike `cloudmapper_analysis` -> `/api/tools/cloudmapper`.
 Category: cloud
 """
 
@@ -31,7 +30,7 @@ TOOL_NAME = "cloudmapper_analysis"
 CATEGORY = "cloud"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     action = params.get("action", "collect")  # collect, prepare, webserver, find_admins, etc.
     account = params.get("account", "")
     config = params.get("config", "config.json")

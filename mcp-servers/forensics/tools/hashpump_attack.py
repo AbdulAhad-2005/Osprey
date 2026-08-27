@@ -11,7 +11,6 @@ Args:
 Returns:
     Hash length extension attack results
 
-Harvested: HexStrike `hashpump_attack` -> `/api/tools/hashpump`.
 Category: forensics
 """
 
@@ -32,7 +31,7 @@ TOOL_NAME = "hashpump_attack"
 CATEGORY = "forensics"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     signature = params.get("signature", "")
     data = params.get("data", "")
     key_length = params.get("key_length", "")

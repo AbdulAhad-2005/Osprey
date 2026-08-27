@@ -1,4 +1,4 @@
-"""LRU command-result cache (lifted from HexStrike HexStrikeCache, stripped of logging noise)."""
+"""LRU command-result cache (stripped of logging noise)."""
 
 from __future__ import annotations
 

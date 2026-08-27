@@ -1,5 +1,5 @@
 """
-FastMCP server — `forensics` capability domain (HexStrike CLI tools).
+FastMCP server — `forensics` capability domain (CLI tools).
 """
 
 from __future__ import annotations

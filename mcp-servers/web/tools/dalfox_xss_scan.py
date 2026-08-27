@@ -13,7 +13,6 @@ Args:
 Returns:
     Advanced XSS vulnerability scanning results
 
-Harvested: HexStrike `dalfox_xss_scan` -> `/api/tools/dalfox`.
 Category: web
 """
 
@@ -35,7 +34,7 @@ TOOL_NAME = "dalfox_xss_scan"
 CATEGORY = "web"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     url = params.get("url", "")
     pipe_mode = params.get("pipe_mode", False)
     blind = params.get("blind", False)

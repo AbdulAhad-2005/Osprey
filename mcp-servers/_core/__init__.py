@@ -1,4 +1,4 @@
-"""Shared execution core for harvested HexStrike tools."""
+"""Shared execution core for CLI tools."""
 
 from .cache import CommandCache
 from .error_handler import (

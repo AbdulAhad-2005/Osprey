@@ -11,7 +11,6 @@ Args:
 Returns:
     Runtime security monitoring results
 
-Harvested: HexStrike `falco_runtime_monitoring` -> `/api/tools/falco`.
 Category: cloud
 """
 
@@ -32,7 +31,7 @@ TOOL_NAME = "falco_runtime_monitoring"
 CATEGORY = "cloud"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     config_file = params.get("config_file", "/etc/falco/falco.yaml")
     rules_file = params.get("rules_file", "")
     output_format = params.get("output_format", "json")

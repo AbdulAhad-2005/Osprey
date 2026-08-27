@@ -9,7 +9,6 @@ Args:
 Returns:
     DNS reconnaissance results
 
-Harvested: HexStrike `fierce_scan` -> `/api/tools/fierce`.
 Category: recon
 """
 
@@ -31,7 +30,7 @@ TOOL_NAME = "fierce_scan"
 CATEGORY = "recon"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     domain = params.get("domain", "")
     dns_server = params.get("dns_server", "")
     additional_args = params.get("additional_args", "")

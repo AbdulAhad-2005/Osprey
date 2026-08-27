@@ -13,7 +13,6 @@ Args:
 Returns:
     Network enumeration results
 
-Harvested: HexStrike `netexec_scan` -> `/api/tools/netexec`.
 Category: network
 """
 
@@ -35,7 +34,7 @@ TOOL_NAME = "netexec_scan"
 CATEGORY = "network"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     target = params.get("target", "")
     protocol = params.get("protocol", "smb")
     username = params.get("username", "")

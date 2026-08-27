@@ -12,7 +12,6 @@ Args:
 Returns:
     Advanced ROP/JOP gadget search results
 
-Harvested: HexStrike `ropper_gadget_search` -> `/api/tools/ropper`.
 Category: binary
 """
 
@@ -33,7 +32,7 @@ TOOL_NAME = "ropper_gadget_search"
 CATEGORY = "binary"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     binary = params.get("binary", "")
     gadget_type = params.get("gadget_type", "rop")  # rop, jop, sys, all
     quality = params.get("quality", 1)  # 1-5, higher = better quality

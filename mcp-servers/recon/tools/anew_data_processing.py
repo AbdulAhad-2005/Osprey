@@ -9,7 +9,6 @@ Args:
 Returns:
     Data processing results with unique line filtering
 
-Harvested: HexStrike `anew_data_processing` -> `/api/tools/anew`.
 Category: recon
 """
 
@@ -30,7 +29,7 @@ TOOL_NAME = "anew_data_processing"
 CATEGORY = "recon"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     input_data = params.get("input_data", "")
     output_file = params.get("output_file", "")
     additional_args = params.get("additional_args", "")

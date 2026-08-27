@@ -1,4 +1,4 @@
-# Tech/signal dispatch for recon + network (Dark-Moon reactive pattern, config-driven).
+# Tech/signal dispatch for recon + network (reactive pattern, config-driven).
 # Commander reads active signals from graph + findings and gets task suggestions.
 
 phase: recon_network

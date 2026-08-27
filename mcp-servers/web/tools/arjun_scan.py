@@ -13,7 +13,6 @@ Args:
 Returns:
     Parameter discovery results
 
-Harvested: HexStrike `arjun_scan` -> `/api/tools/arjun`.
 Category: web
 """
 
@@ -35,7 +34,7 @@ TOOL_NAME = "arjun_scan"
 CATEGORY = "web"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     url = params.get("url", "")
     method = params.get("method", "GET")
     wordlist = params.get("wordlist", "")

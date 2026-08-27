@@ -20,7 +20,6 @@ Args:
 Returns:
     Web endpoint discovery results
 
-Harvested: HexStrike `hakrawler_crawl` -> `/api/tools/hakrawler`.
 Category: recon
 """
 
@@ -41,7 +40,7 @@ TOOL_NAME = "hakrawler_crawl"
 CATEGORY = "recon"
 
 def build_command(**params: Any) -> str:
-    """Build CLI command (harvested from HexStrike server route)."""
+    """Build CLI command."""
     url = params.get("url", "")
     depth = params.get("depth", 2)
     forms = params.get("forms", True)

@@ -10,7 +10,6 @@ Args:
 Returns:
     Content discovery results
 
-Harvested: HexStrike `feroxbuster_scan` -> `/api/tools/feroxbuster`.
 Category: web
 """
 

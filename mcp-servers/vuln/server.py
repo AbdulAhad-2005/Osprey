@@ -1,5 +1,5 @@
 """
-FastMCP server — `vuln` capability domain (HexStrike CLI tools).
+FastMCP server — `vuln` capability domain (CLI tools).
 """
 
 from __future__ import annotations
