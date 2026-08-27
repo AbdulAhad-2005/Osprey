@@ -77,7 +77,7 @@ def _prompt_loop(client: APIClient, session) -> None:
         print_info("Session ended.")
 
 
-_SCAN_PHASES = ("recon", "network", "vuln", "web", "exploit", "osint", "full")
+_SCAN_PHASES = ("commander", "recon", "network", "vuln", "web", "exploit", "osint", "full")
 
 
 def _run_scan_noninteractive(args: argparse.Namespace) -> int:

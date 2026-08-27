@@ -17,9 +17,22 @@ Steps (JSON list via --steps), each an object with "action":
   screenshot  {name?}                    -> saved to --screenshot-dir
   set_header  {name, value}              -> extra HTTP header for later requests
   set_cookie  {name, value, domain?}
+  snapshot    {name?, limit?}            -> compact interactive-element map of the
+                                            current DOM (links/forms/inputs/buttons
+                                            with CSS selectors) so the agent can SEE
+                                            the page mid-flow and decide the next
+                                            step (Strix-style snapshot-and-act loop)
+  replay      {url, method?, headers?, body?, json?, name?}
+                                          -> re-send an HTTP request THROUGH the live
+                                            authenticated browser session (cookies
+                                            intact). Tamper any field to test IDOR /
+                                            auth-bypass / param pollution, then read
+                                            the full status+headers+body back. This is
+                                            a session-aware HTTP repeater.
 
 Emits JSON: steps[] (per-step ok/error/detail), final_url, title, cookies,
-captured_requests (xhr/fetch), extracted{}, asserts[]. Never raises to the shell.
+captured_requests (xhr/fetch with headers+post_data — replayable), snapshots{},
+replays[], extracted{}, asserts[]. Never raises to the shell.
 """
 
 from __future__ import annotations
@@ -30,17 +43,86 @@ import os
 import sys
 
 
+_SNAPSHOT_JS = """
+() => {
+  const pick = (el) => {
+    let sel = el.tagName.toLowerCase();
+    if (el.id) sel += '#' + CSS.escape(el.id);
+    else if (el.name) sel += `[name="${el.name}"]`;
+    const t = (el.innerText || el.value || el.getAttribute('placeholder') || el.getAttribute('aria-label') || '').trim().slice(0, 80);
+    const rec = { tag: el.tagName.toLowerCase(), selector: sel, text: t };
+    if (el.tagName === 'A' && el.href) rec.href = el.href;
+    if (el.tagName === 'INPUT') { rec.type = el.type; rec.name = el.name || ''; }
+    if (el.tagName === 'FORM') { rec.action = el.action || ''; rec.method = (el.method || 'get'); }
+    return rec;
+  };
+  const els = Array.from(document.querySelectorAll('a[href],button,input,select,textarea,form,[role=button],[onclick]'));
+  return els.map(pick);
+}
+"""
+
+
+def _snapshot_interactive(page, limit: int) -> list:
+    try:
+        items = page.evaluate(_SNAPSHOT_JS) or []
+    except Exception as exc:  # noqa: BLE001
+        return [{"error": str(exc)[:160]}]
+    # Drop empty/duplicate rows, cap for context size.
+    seen = set()
+    out = []
+    for it in items:
+        key = (it.get("tag"), it.get("selector"), it.get("text"))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(it)
+        if len(out) >= max(1, limit):
+            break
+    return out
+
+
+def _replay_request(context, step: dict, timeout_ms: int) -> dict:
+    """Re-send an HTTP request via the browser context's APIRequestContext so the
+    live session (cookies) is reused. Returns full status/headers/body."""
+    url = str(step.get("url") or "").strip()
+    if not url:
+        return {"error": "replay requires url="}
+    method = str(step.get("method") or "GET").upper()
+    headers = step.get("headers") or {}
+    kwargs = {"method": method, "headers": headers, "timeout": timeout_ms}
+    if step.get("json") is not None:
+        kwargs["data"] = json.dumps(step["json"])
+        headers.setdefault("content-type", "application/json")
+    elif step.get("body") is not None:
+        kwargs["data"] = step["body"]
+    try:
+        resp = context.request.fetch(url, **kwargs)
+        body = resp.text()
+        return {
+            "url": url,
+            "method": method,
+            "status": resp.status,
+            "ok": resp.ok,
+            "headers": dict(resp.headers),
+            "body_len": len(body or ""),
+            "body": (body or "")[:6000],
+            "name": step.get("name", ""),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"url": url, "method": method, "error": str(exc)[:240]}
+
+
 def _run(start_url: str, steps: list, *, timeout_ms: int, screenshot_dir: str) -> dict:
     from playwright.sync_api import sync_playwright
 
     out: dict = {
         "start_url": start_url, "final_url": "", "title": "",
         "steps": [], "cookies": [], "captured_requests": [],
+        "snapshots": {}, "replays": [],
         "extracted": {}, "asserts": [], "errors": [],
     }
     captured: list[dict] = []
     extra_headers: dict[str, str] = {}
-    shot_i = 0
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -51,8 +133,24 @@ def _run(start_url: str, steps: list, *, timeout_ms: int, screenshot_dir: str) -
         page.set_default_timeout(timeout_ms)
 
         def _on_request(req):
+            # Capture the FULL request (headers + body), not just url+method, so a
+            # captured API call is actually replayable/tamperable downstream.
             if req.resource_type in ("xhr", "fetch"):
-                captured.append({"url": req.url, "method": req.method})
+                try:
+                    post = req.post_data
+                except Exception:
+                    post = None
+                try:
+                    hdrs = dict(req.headers)
+                except Exception:
+                    hdrs = {}
+                captured.append({
+                    "url": req.url,
+                    "method": req.method,
+                    "resource_type": req.resource_type,
+                    "headers": hdrs,
+                    "post_data": (post or "")[:4000] if post else "",
+                })
         page.on("request", _on_request)
 
         if start_url:
@@ -117,6 +215,22 @@ def _run(start_url: str, steps: list, *, timeout_ms: int, screenshot_dir: str) -
                         "name": step["name"], "value": str(step.get("value", "")),
                         "url": step.get("url") or page.url,
                     }])
+                elif action == "snapshot":
+                    # Compact, see-then-act view of the live DOM (Strix-style): the
+                    # interactive elements with stable CSS selectors, so the agent can
+                    # decide its next step without parsing raw HTML.
+                    limit = int(step.get("limit", 60))
+                    snap = _snapshot_interactive(page, limit)
+                    name = step.get("name") or f"snapshot_{idx}"
+                    out["snapshots"][name] = snap
+                    rec["detail"] = f"{len(snap)} elements"
+                elif action == "replay":
+                    # Session-aware HTTP repeater: re-send through the authenticated
+                    # browser context so cookies/session are preserved. Tamper any
+                    # field to test IDOR / auth-bypass / parameter pollution.
+                    rep = _replay_request(context, step, timeout_ms)
+                    out["replays"].append(rep)
+                    rec["detail"] = f"status={rep.get('status')} bytes={rep.get('body_len')}"
                 else:
                     rec["detail"] = f"unknown action '{action}'"
                     out["steps"].append(rec)

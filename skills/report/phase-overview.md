@@ -1,3 +1,10 @@
+---
+name: phase-overview
+description: "Optional reporting methodology: summarize from engagement memory (attack-surface tree plus findings) rather than reconstructing from chat; not a mandatory stage."
+phase: report
+tags: [report, overview]
+---
+
 # Reporting methodology (optional)
 
 Summarize from engagement memory (tree + findings), not from chat reconstruction.

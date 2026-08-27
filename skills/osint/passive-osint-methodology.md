@@ -1,3 +1,10 @@
+---
+name: passive-osint-methodology
+description: "Passive people/identity OSINT from public sources only: a recursive seed-and-dig loop starting from the target's own site, with no breach data or active exploitation."
+phase: osint
+tags: [osint, methodology, passive]
+---
+
 # Passive OSINT — Methodology
 
 **Scope:** People/identity recon from **public sources only**. No breach/leak data,

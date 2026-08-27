@@ -1,3 +1,10 @@
+---
+name: oauth-and-jwt
+description: "OAuth/OIDC and JWT testing (WSTG-ATHN/SESS), the account-takeover class: discovery via well_known_probe/script, login via browser_flow, token forging/replay via script."
+phase: web
+tags: [web, oauth, jwt]
+---
+
 # OAuth / OIDC & JWT testing (WSTG-ATHN / SESS)
 
 Token and SSO failures are the account-takeover class — treat every redirect, client id, key,

@@ -256,8 +256,8 @@ with `platform_exec`. Same for the heavy
   memory with zero extra calls. Only fall back to `platform_record_findings` for a conclusion
   the script couldn't express as output.
 - Call `platform_findings` only at the operator's request or before a final report — not after
-  every tool. When a tool card shows a **Memory:** note (haven't consulted memory in a while,
-  or unread job results), re-sync before pressing on.
+  every tool. Re-sync with `platform_context` when you've run several probes, a job you spawned
+  has completed, or you're unsure what to try next — the graph may already hold the answer.
 
 ## Honesty on severity
 

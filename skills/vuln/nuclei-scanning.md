@@ -1,3 +1,10 @@
+---
+name: nuclei-scanning
+description: "Template-based vulnerability scanning with nuclei_scan against a live, tech-fingerprinted host; the default first vuln move."
+phase: vuln
+tags: [vuln, nuclei]
+---
+
 # Nuclei — template-based vulnerability scanning
 
 `nuclei_scan` is the bridge from recon to vuln analysis: it runs a huge community template

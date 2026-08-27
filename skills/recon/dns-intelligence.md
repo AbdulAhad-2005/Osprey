@@ -1,3 +1,10 @@
+---
+name: dns-intelligence
+description: "DNS intelligence with dnsenum/fierce when subdomain lists are thin or a zone transfer is suspected: nameservers, MX, zone transfer, and IP ranges."
+phase: recon
+tags: [recon, dns]
+---
+
 # DNS Intelligence
 
 **When:** Subdomain lists are thin, zone transfer is suspected, or IP ranges are unknown.

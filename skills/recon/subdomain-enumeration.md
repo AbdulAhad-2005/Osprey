@@ -1,3 +1,10 @@
+---
+name: subdomain-enumeration
+description: "Subdomain enumeration for a root domain: subfinder by default, pivoting to amass/dnsenum/crt.sh, then takeover checks on interesting names."
+phase: recon
+tags: [recon, subdomains]
+---
+
 # Subdomain Enumeration
 
 **When:** Start of recon on a single root domain.

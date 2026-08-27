@@ -1,3 +1,10 @@
+---
+name: javascript-recon
+description: "Mine bundled and inline JavaScript for API routes, secrets, and cloud assets with js_recon; run on every live app host, especially SPAs where the real surface hides."
+phase: recon
+tags: [recon, javascript, secrets]
+---
+
 # JavaScript Recon — endpoints, secrets & cloud assets
 
 Modern apps ship their attack surface in JavaScript. A SPA's `index.html` is nearly empty;

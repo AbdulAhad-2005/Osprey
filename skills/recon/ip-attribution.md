@@ -1,3 +1,10 @@
+---
+name: ip-attribution
+description: "Attribute CDN-fronted hosts to real origin IPs before network scanning, to avoid wasting scan budget on shared edge ranges."
+phase: recon
+tags: [recon, cdn, origin-ip]
+---
+
 # CDN / origin IP attribution
 
 Use when evidence suggests a CDN or you need real IPs before network scanning.

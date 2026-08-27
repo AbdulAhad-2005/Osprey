@@ -1,3 +1,10 @@
+---
+name: technology-identification
+description: "Identify the target's tech stack (CMS, frameworks, servers, JS libraries, CDNs, languages) to guide targeted security testing."
+phase: recon
+tags: [recon, fingerprint]
+---
+
 # Technology Identification
 
 **When:** After live host probing, or when you need to understand the target's technology stack for security assessment.

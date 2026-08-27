@@ -1,3 +1,10 @@
+---
+name: recursive-widen
+description: "Recursive expansion rule: after every tool run, ask whether it found anything new and, if so, feed the new assets back into discovery."
+phase: shared
+tags: [methodology, expansion]
+---
+
 # Recursive expansion (universal)
 
 Load once. Re-use on any phase. Do not re-load.

@@ -1,3 +1,10 @@
+---
+name: document-metadata
+description: "Harvest metadata (internal names, software, usernames, hostnames) from a domain's public documents using metagoofil plus exiftool_extract."
+phase: osint
+tags: [osint, metadata]
+---
+
 # Document Metadata Harvest
 
 **When:** You want internal names, software, usernames or hostnames leaked in a

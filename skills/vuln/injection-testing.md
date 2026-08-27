@@ -1,3 +1,10 @@
+---
+name: injection-testing
+description: "Targeted SQLi/XSS testing on recon's discovered parameters (injection_point candidates) with sqlmap and dalfox; test those inputs and prove impact."
+phase: vuln
+tags: [vuln, sqli, xss]
+---
+
 # Injection testing — SQLi & XSS on recon's parameters
 
 Injection testing is **targeted**, not sprayed. Recon already found the inputs: every
