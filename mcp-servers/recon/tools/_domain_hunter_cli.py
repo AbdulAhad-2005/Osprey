@@ -220,6 +220,27 @@ def root_domain(host: str) -> str:
     return registrable_apex(normalize_seed_domain(host))
 
 
+def hunter_seed_apex(value: str) -> str:
+    """Apex used as the Domain Hunter seed, or '' if the input is not a domain."""
+    apex = root_domain(value)
+    if not apex or not is_registrable_domain(apex):
+        return ""
+    return apex
+
+
+def crtsh_like_query(query: str, *, token_search: bool, seed_root: str) -> str:
+    """crt.sh SQL-LIKE pattern. Pass the raw ``%`` wildcards; URL-encode once at fetch time.
+
+    Pre-encoding ``%`` as ``%25`` here used to be double-encoded by ``quote_plus``,
+    so the service searched for literal ``25…`` instead of a wildcard around the seed.
+    """
+    query = (query or "").strip().lower()
+    seed_root = (seed_root or "").strip().lower()
+    if token_search and query and query != seed_root:
+        return f"%{query}%"
+    return f"%{seed_root}" if seed_root else ""
+
+
 def is_same_root(left: str, right: str) -> bool:
     return is_same_apex(normalize_seed_domain(left), normalize_seed_domain(right))
 
@@ -522,14 +543,21 @@ def _resolve_dns_hosts(domain: str) -> list[str]:
     return hosts
 
 
-def _crtsh_query(session: Any, query: str, timeout: int = 8) -> list[dict[str, Any]]:
+def _crtsh_query(session: Any, query: str, timeout: int = 8) -> list[dict[str, Any]] | None:
     """crt.sh is flaky (502s/empty bodies are common) — retry with backoff.
+
+    Returns a list (possibly empty) on a successful JSON body, or ``None`` when
+    the service failed. Empty ``[]`` is a real answer (no certs), not an outage;
+    the circuit breaker must not treat those the same.
 
     Uses a FRESH request (not ``session``) so the session's urllib3 Retry
     adapter (which already retries 5xx with backoff) cannot multiply with the
     manual loop below and turn one query into 90s.
     """
     import requests
+
+    if not query:
+        return []
 
     url = f"https://crt.sh/?q={quote_plus(query)}&output=json"
     last_error: Exception | None = None
@@ -549,7 +577,7 @@ def _crtsh_query(session: Any, query: str, timeout: int = 8) -> list[dict[str, A
         if attempt == 0:
             time.sleep(1.5)
     logger.info("crt.sh query failed (%s): %s", query, last_error)
-    return []
+    return None
 
 
 def _certspotter_query(domain: str, timeout: int = 8) -> list[str]:
@@ -718,8 +746,8 @@ class DomainHunter:
     """Best-effort sister-domain discovery with multiple weak signals."""
 
     def __init__(self, domain: str, *, modules: str = "", confidence_min: str = "low") -> None:
-        self.seed = normalize_seed_domain(domain)
-        self.seed_root = root_domain(self.seed)
+        self.seed_root = hunter_seed_apex(domain)
+        self.seed = self.seed_root
         self.seed_tld = self.seed_root.rsplit(".", 1)[-1] if self.seed_root else ""
         self.modules = self._normalize_modules(modules)
         self.confidence_min = confidence_min if confidence_min in _CONF_RANK else "low"
@@ -730,11 +758,11 @@ class DomainHunter:
         # single run may fire up to ~11 crt.sh queries (certs + knowledge_recon
         # tokens + RDAP org tokens). When the service is down, retrying every
         # query serially can burn minutes — so the breaker trips after TWO
-        # consecutive empty/failed queries (each already includes retries with
-        # backoff) and the rest of the run skips crt.sh work. A single empty
-        # result no longer trips it (a token search legitimately returning zero
-        # rows is not evidence the service is down), and any successful query
-        # resets the counter. The direct-domain query additionally falls back to
+        # consecutive *service failures* (HTTP/non-JSON; each already includes
+        # retries with backoff) and the rest of the run skips crt.sh work.
+        # A successful JSON body with zero rows is not a failure — brand-token
+        # searches often return nothing — and any successful query resets the
+        # counter. The direct-domain query additionally falls back to
         # certspotter (see _collect_cert_signals), so a crt.sh outage does not
         # blind cert discovery entirely.
         self._crtsh_degraded = False
@@ -745,12 +773,12 @@ class DomainHunter:
         if self._crtsh_degraded:
             return []
         rows = _crtsh_query(self.session, query)
-        if rows:
-            self._crtsh_failures = 0
-        else:
+        if rows is None:
             self._crtsh_failures += 1
             if self._crtsh_failures >= 2:
                 self._crtsh_degraded = True
+            return []
+        self._crtsh_failures = 0
         return rows
 
     @staticmethod
@@ -774,12 +802,11 @@ class DomainHunter:
         # leaves a usable partial result on stdout instead of nothing. Reuses
         # format_rows()'s exact "=== Findings ===" layout so parse_stdout can
         # read it the same way as the final block; a leading comment line (not
-        # matched by row_re/the "===" checks) marks it as in-progress.
+        # matched by row_re/the "===" checks) marks it as in-progress. A
+        # machine-readable JSON line follows so a timeout still yields rows
+        # even if the table is truncated.
         print(f"# domain_hunter progress: completed={stage!r} candidates_so_far={len(self.candidates)}")
-        block = format_rows(list(self.candidates.values()))
-        if block:
-            print(block)
-        sys.stdout.flush()
+        emit_findings_snapshot(list(self.candidates.values()))
 
     def discover(self) -> list[Candidate]:
         if not self.seed_root:
@@ -810,12 +837,12 @@ class DomainHunter:
         return filtered
 
     def _add_candidate(self, domain: str, *, method: str, points: int, evidence: str) -> None:
-        domain = normalize_seed_domain(domain)
+        domain = root_domain(domain)
         if not domain or "." not in domain:
             return
         if not _is_likely_domain_or_none(domain):
             return
-        if is_same_root(domain, self.seed_root):
+        if not self.seed_root or is_same_root(domain, self.seed_root):
             return
         # Candidates living at a shared cloud-platform apex (azurewebsites.net,
         # cloudfront.net, github.io, ...) are never an affiliated root — the
@@ -912,7 +939,7 @@ class DomainHunter:
         query = query.strip().lower()
         if not query:
             return
-        crt_query = f"%25{query}%25" if token_search and query != self.seed_root else f"%25{self.seed_root}"
+        crt_query = crtsh_like_query(query, token_search=token_search, seed_root=self.seed_root)
         rows = self._query_crtsh(crt_query)
         if not rows and not token_search:
             # crt.sh gave nothing for the high-value direct query — diversify to
@@ -1180,6 +1207,16 @@ def format_rows(candidates: list[Candidate]) -> str:
     return "\n".join(lines)
 
 
+_DHJSON_PREFIX = "# DHJSON "
+
+
+def emit_findings_snapshot(candidates: list[Candidate]) -> None:
+    """Print the human table plus a last-wins JSON line for parsers/timeouts."""
+    print(format_rows(candidates) or "=== Findings ===\n(none)")
+    print(_DHJSON_PREFIX + json.dumps(rows_from_candidates(candidates), separators=(",", ":")))
+    sys.stdout.flush()
+
+
 def write_output_file(path: str, candidates: list[Candidate]) -> Path | None:
     if not path:
         return None
@@ -1208,14 +1245,61 @@ def write_output_file(path: str, candidates: list[Candidate]) -> Path | None:
 def parse_stdout(stdout: str) -> list[dict[str, Any]]:
     """Extract candidate rows from stdout.
 
-    DomainHunter prints a "=== Findings ===" block after EVERY module (see
-    DomainHunter._emit_progress), not just once at the end — so a timed-out,
-    killed-mid-run process still has a usable partial block on stdout. Collect
-    ALL such blocks and return the LAST one: on a normal completed run that's
-    the final full result (unchanged behavior from before); on a timeout kill
-    it's the latest progress snapshot instead of nothing.
+    Prefer the last ``# DHJSON`` line (full fields, including empty ``[]`` so a
+    filtered-empty final result is not overwritten by an earlier progress
+    table). Fall back to the last ``=== Findings ===`` table for older output.
     """
-    row_re = re.compile(r"^(?P<domain>\S+\.\S+)\s+(?P<method>.+?)\s+(?P<conf>low|medium|high)\s+(?P<live>Yes|No)\s*$")
+    json_blocks: list[list[dict[str, Any]]] = []
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(_DHJSON_PREFIX):
+            payload = stripped[len(_DHJSON_PREFIX) :]
+            try:
+                data = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(data, list):
+                json_blocks.append([row for row in data if isinstance(row, dict)])
+    if json_blocks:
+        return _normalize_parsed_rows(json_blocks[-1])
+    return _normalize_parsed_rows(_parse_findings_table(stdout))
+
+
+def _normalize_parsed_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in rows:
+        raw = str(row.get("domain", "") or "").strip()
+        apex = root_domain(raw)
+        if not apex or apex in seen or not is_registrable_domain(apex):
+            continue
+        seen.add(apex)
+        live = row.get("live")
+        if isinstance(live, str):
+            live = live.strip().lower() in {"yes", "true", "1"}
+        else:
+            live = bool(live)
+        conf = str(row.get("confidence", "low") or "low").strip().lower()
+        if conf not in _CONF_RANK:
+            conf = "low"
+        normalized.append(
+            {
+                "domain": apex,
+                "method": str(row.get("method", "") or "").strip() or "unknown",
+                "confidence": conf,
+                "live": live,
+                "score": row.get("score"),
+                "evidence": row.get("evidence") or [],
+            }
+        )
+    return normalized
+
+
+def _parse_findings_table(stdout: str) -> list[dict[str, Any]]:
+    """Last ``=== Findings ===`` table, including an empty final block."""
+    row_re = re.compile(
+        r"^(?P<domain>\S+\.\S+)\s+(?P<method>.+?)\s+(?P<conf>low|medium|high)\s+(?P<live>Yes|No)\s*$"
+    )
     blocks: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] | None = None
     for line in stdout.splitlines():
@@ -1227,11 +1311,11 @@ def parse_stdout(stdout: str) -> list[dict[str, Any]]:
             continue
         if current is None:
             continue
-        if stripped.startswith("Wrote ") or stripped.startswith("==="):
+        if stripped.startswith("Wrote ") or (stripped.startswith("===") and not stripped.startswith("=== Findings")):
             blocks.append(current)
             current = None
             continue
-        if not stripped or stripped == "(none)":
+        if not stripped or stripped == "(none)" or stripped.startswith("Domain "):
             continue
         match = row_re.match(stripped)
         if match:
@@ -1270,7 +1354,7 @@ def main(argv: list[str] | None = None) -> int:
         output=args.output,
     )
 
-    print(format_rows(candidates) or "=== Findings ===\n(none)")
+    emit_findings_snapshot(candidates)
     if extra:
         logger.info("Ignored extra args: %s", " ".join(extra))
     if output_path:

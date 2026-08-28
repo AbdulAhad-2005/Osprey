@@ -72,7 +72,7 @@ RUN chmod +x /usr/local/bin/retry-cmd
 # the same apt invocation does not.
 COPY <<'EOF' /usr/local/bin/apt-install-retry.sh
 #!/bin/sh
-# apt-install-retry.sh N PKG...  -- apt-get update && install, retrying the
+# /usr/local/bin/apt-install-retry.sh N PKG...  -- apt-get update && install, retrying the
 # WHOLE sequence (fresh process each attempt -> fresh DNS/mirror pick).
 n=1
 max="$1"; shift
@@ -92,7 +92,7 @@ RUN chmod +x /usr/local/bin/apt-install-retry.sh
 # ─── System base ───────────────────────────────────────────────────────────────
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    apt-install-retry.sh 5 \
+    /usr/local/bin/apt-install-retry.sh 5 \ 
        wget curl git ca-certificates gnupg unzip \
        python3 python3-pip python3-venv python3-dev python3-setuptools python3-wheel \
        build-essential cmake pkg-config libssl-dev libffi-dev \
@@ -150,7 +150,7 @@ RUN chmod +x /usr/local/bin/gh-latest-asset.py
 # Covers the majority of the 90 tools in one layer.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    apt-install-retry.sh 5 \
+    /usr/local/bin/apt-install-retry.sh 5 \
     # ── Recon ──
     amass dnsenum fierce whois \
     # ── OSINT (passive) — real Kali packages, not the pip dummies ──
@@ -183,7 +183,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # in tool_registry.py — this makes that registration real instead of dead code.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    apt-install-retry.sh 5 metasploit-framework
+    /usr/local/bin/apt-install-retry.sh 5 metasploit-framework
 
 # ─── 3. Go tools (install individually for build resilience) ─────────────────
 RUN mkdir -p /opt/go
@@ -214,7 +214,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
-    apt-install-retry.sh 5 cargo pkg-config \
+    /usr/local/bin/apt-install-retry.sh 5 cargo pkg-config \
     && cargo install --root /usr/local x8 \
     || true
 RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
@@ -317,7 +317,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # site-packages (shadowing the apt ones on sys.path) without touching them.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    apt-install-retry.sh 5 nodejs
+    /usr/local/bin/apt-install-retry.sh 5 nodejs
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip3 install --break-system-packages --ignore-installed playwright \
@@ -333,7 +333,7 @@ RUN gem install one_gadget
 # for cached builds that predate that package.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    command -v whois >/dev/null 2>&1 || apt-install-retry.sh 5 whois
+    command -v whois >/dev/null 2>&1 || /usr/local/bin/apt-install-retry.sh 5 whois
 
 # ── rustscan (prebuilt release — cargo is slow/flaky; fail the build if missing) ──
 # Asset filename carries no version, so the "latest" redirect works without an
@@ -425,7 +425,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # ── falco ──
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    apt-install-retry.sh 5 falco || true
+    /usr/local/bin/apt-install-retry.sh 5 falco || true
 
 # ── scout-suite ──
 RUN --mount=type=cache,target=/root/.cache/pip \
