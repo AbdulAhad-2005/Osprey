@@ -29,8 +29,7 @@ wordlist_discovery:      # passive-first subdomain enumeration on the domain/sub
   - {tool: tlsx_inspect, param: target}
 
 dns_bruteforce:          # active DNS brute force (bounded wordlist, once per apex)
-  - {tool: gobuster_scan, param: target, mode: dns,
-     wordlist: /home/mcpuser/mcp-servers/recon/tools/_wordlists/subdomains.txt}
+  - {tool: gobuster_scan, param: target, mode: dns, wordlist: subdomains}
 
 # Mutate already-known subdomains (first-label × prefix/suffix patterns) into
 # new candidates, bulk-resolved via dnsx. Wildcard domains are canary-guarded
