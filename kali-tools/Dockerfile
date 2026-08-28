@@ -61,7 +61,16 @@ until "$@"; do
     n=$((n + 1))
 done
 EOF
-RUN chmod +x /usr/local/bin/retry-cmd
+# Strip any \r before chmod: this heredoc's content is copied byte-for-byte from
+# the Dockerfile, so a contributor's editor/git config that checked the
+# Dockerfile out with CRLF line endings bakes a `\r` into this script's shebang line,
+# turning it into `#!/bin/sh\r` — the kernel can't resolve that interpreter
+# path and every invocation fails with a bare "not found" (exit 127), which
+# looks exactly like the file is missing even though it exists and is
+# executable. Normalizing here makes the build immune to host line-ending
+# state entirely, independent of any git config or .gitattributes on either
+# the repo or the machine building it.
+RUN sed -i 's/\r$//' /usr/local/bin/retry-cmd && chmod +x /usr/local/bin/retry-cmd
 
 # apt-get gets its OWN retry wrapper, not just plain retry-cmd: Acquire::Retries
 # above only retries within the SAME resolved connection, which doesn't help
@@ -87,12 +96,12 @@ until apt-get update && apt-get install -y --no-install-recommends "$@"; do
     n=$((n + 1))
 done
 EOF
-RUN chmod +x /usr/local/bin/apt-install-retry.sh
+RUN sed -i 's/\r$//' /usr/local/bin/apt-install-retry.sh && chmod +x /usr/local/bin/apt-install-retry.sh
 
 # ─── System base ───────────────────────────────────────────────────────────────
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    /usr/local/bin/apt-install-retry.sh 5 \ 
+    apt-install-retry.sh 5 \
        wget curl git ca-certificates gnupg unzip \
        python3 python3-pip python3-venv python3-dev python3-setuptools python3-wheel \
        build-essential cmake pkg-config libssl-dev libffi-dev \
@@ -144,7 +153,7 @@ for asset in data["assets"]:
         raise SystemExit(0)
 raise SystemExit(f"no asset matching {pattern!r} in {repo} release {tag or 'latest'}")
 EOF
-RUN chmod +x /usr/local/bin/gh-latest-asset.py
+RUN sed -i 's/\r$//' /usr/local/bin/gh-latest-asset.py && chmod +x /usr/local/bin/gh-latest-asset.py
 
 # ─── 1. Kali apt packages ──────────────────────────────────────────────────────
 # Covers the majority of the 90 tools in one layer.
