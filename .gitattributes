@@ -1,0 +1,55 @@
+# Force LF line endings on checkout for every platform, regardless of a
+# contributor's local `core.autocrlf` setting.
+#
+# Why this exists: kali-tools/Dockerfile embeds shell scripts via BuildKit
+# heredocs (COPY <<'EOF' /usr/local/bin/apt-install-retry.sh). Without this
+# file, a Windows clone with the common `core.autocrlf=true` default silently
+# rewrites the Dockerfile's LF endings to CRLF, which bakes a CRLF into the
+# heredoc-embedded script content. The resulting file's shebang becomes
+# `#!/bin/sh\r`, which the kernel can't resolve — the script fails at build
+# time with "not found" (exit 127) even though the file exists and is
+# executable. Same failure mode applies to every other shebang script the
+# build relies on (retry-cmd, gh-latest-asset.py, scripts/setup.sh, ...).
+# Pinning eol=lf here removes the dependency on any user's git config.
+
+* text=auto eol=lf
+
+# Anything with a shebang or executed as a script inside a container must be
+# LF no matter what — explicit belt-and-suspenders on top of the wildcard rule.
+*.sh text eol=lf
+Dockerfile text eol=lf
+Dockerfile.* text eol=lf
+*.dockerfile text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.cfg text eol=lf
+*.ini text eol=lf
+*.env text eol=lf
+*.env.example text eol=lf
+Makefile text eol=lf
+
+# Windows-native scripts stay CRLF — that's the convention Windows tooling
+# expects, and PowerShell doesn't care either way.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary assets: never touch line endings, never diff as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.docx binary
+*.xlsx binary
+*.zip binary
+*.gz binary
+*.db binary
+*.sqlite binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
