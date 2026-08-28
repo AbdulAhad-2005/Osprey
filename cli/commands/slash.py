@@ -329,8 +329,16 @@ def _run_engine_scan(client: "APIClient", target: str, *, include_low_confidence
                     spinner.update(f"[bold cyan]{progress}[/]")
                     last_progress = progress
     except KeyboardInterrupt:
-        print_error("Interrupted — findings gathered so far are saved. Review them with "
-                    "/findings, or /report to export what was found so far.")
+        # Actually stop the server-side job — without this the engine keeps
+        # running in the background after the operator thinks they cancelled it,
+        # burning the target's rate budget and holding tool-coverage claims.
+        try:
+            client.cancel_job(job_id)
+            print_error("Interrupted — engine job cancelled. Findings gathered so far are saved. "
+                        "Review them with /findings, or /report to export what was found so far.")
+        except Exception:
+            print_error("Interrupted — but the cancel request failed; the engine job may still be "
+                        "running server-side. Findings gathered so far are saved (/findings, /report).")
         return
 
     if status == "failed":
@@ -457,8 +465,13 @@ def _run_fast_scan(client: "APIClient", target: str) -> None:
                     spinner.update(f"[bold cyan]{progress}[/]")
                     last_progress = progress
     except KeyboardInterrupt:
-        print_error("Interrupted — findings gathered so far are saved. Review them with "
-                    "/findings, or /report to export what was found so far.")
+        try:
+            client.cancel_job(job_id)
+            print_error("Interrupted — fast-scan job cancelled. Findings gathered so far are saved. "
+                        "Review them with /findings, or /report to export what was found so far.")
+        except Exception:
+            print_error("Interrupted — but the cancel request failed; the fast-scan job may still be "
+                        "running server-side. Findings gathered so far are saved (/findings, /report).")
         return
 
     if status_str == "failed":
