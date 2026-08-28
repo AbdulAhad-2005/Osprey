@@ -1,4 +1,20 @@
-"""Safe subprocess executor — arg-list execution, no shell (hardened: no shell=True)."""
+"""Subprocess executor for tool commands.
+
+A tool's ``build_command()`` returns a *shell-style command string* — the same
+contract the docker path honors by running it via ``bash -c``. These strings
+legitimately use shell features: ``$( ... )`` path selection (container-vs-host),
+here-docs (``cat > file << EOF``), pipes, and ``if`` guards. Tokenising them with
+``shlex.split`` (the old behaviour) silently breaks every one of those — a
+``$(`` becomes a literal argv entry, a here-doc trips "No closing quotation".
+
+So a **string** command is executed through ``bash -c`` here too, exactly as the
+docker path does, keeping the two execution modes consistent. This is not
+arbitrary-shell exposure: the command comes from a trusted dev-authored
+``build_command()`` with every user-supplied param already ``shlex.quote``'d;
+free-form shell for the LLM stays behind the separate allowlisted
+``platform_shell`` / ``platform_script`` paths. A **list** command (explicit
+argv) still runs directly as argv with no shell.
+"""
 
 from __future__ import annotations
 
@@ -18,18 +34,6 @@ class ExecutorError(RuntimeError):
     pass
 
 
-def _resolve_command(command: CommandInput) -> tuple[list[str], str]:
-    if isinstance(command, str):
-        parts = shlex.split(command, posix=(os.name != "nt"))
-        if not parts:
-            raise ExecutorError("Empty command")
-        return parts, command
-    parts = [str(p) for p in command if str(p)]
-    if not parts:
-        raise ExecutorError("Empty command")
-    return parts, " ".join(shlex.quote(p) for p in parts)
-
-
 def run_command(
     tool_name: str,
     command: CommandInput,
@@ -39,20 +43,34 @@ def run_command(
     env: Optional[dict[str, str]] = None,
     sudo: bool = False,
 ) -> ToolResult:
-    """Execute *command* and capture full stdout/stderr without a shell."""
-    args, display = _resolve_command(command)
-    binary = args[0]
-    if shutil.which(binary) is None and not os.path.isabs(binary):
-        return ToolResult(
-            tool_name=tool_name,
-            command=display,
-            success=False,
-            returncode=None,
-            duration_seconds=0.0,
-            error=f"Binary not found: {binary}",
-        )
+    """Execute *command* and capture full stdout/stderr.
 
-    exec_args = (["sudo", "-n", *args] if sudo else args)
+    String commands run via ``bash -c`` (shell-style contract, matches docker);
+    list commands run as direct argv.
+    """
+    if isinstance(command, str):
+        display = command
+        if not command.strip():
+            raise ExecutorError("Empty command")
+        exec_args = ["bash", "-c", command]
+        if sudo:
+            exec_args = ["sudo", "-n", *exec_args]
+    else:
+        args = [str(p) for p in command if str(p)]
+        if not args:
+            raise ExecutorError("Empty command")
+        display = " ".join(shlex.quote(p) for p in args)
+        binary = args[0]
+        if shutil.which(binary) is None and not os.path.isabs(binary):
+            return ToolResult(
+                tool_name=tool_name,
+                command=display,
+                success=False,
+                returncode=None,
+                duration_seconds=0.0,
+                error=f"Binary not found: {binary}",
+            )
+        exec_args = (["sudo", "-n", *args] if sudo else args)
     start = time.monotonic()
     timed_out = False
     stdout = ""

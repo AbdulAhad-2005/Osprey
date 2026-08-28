@@ -30,19 +30,23 @@ from _core.result import ToolResult
 TOOL_NAME = "gobuster_scan"
 CATEGORY = "web"
 
-# Bundled wordlist (Kali image ships none); mcp-servers is mounted at this path.
-# Resolved at runtime in the shell (inside the Kali container): commands are
-# built in the backend but executed via docker exec.
-_WL_CONTAINER = "/home/mcpuser/mcp-servers/recon/tools/_wordlists/common-web.txt"
-_WL_FALLBACK = str(
-    Path(__file__).resolve().parents[2] / "recon" / "tools" / "_wordlists" / "common-web.txt"
-)
+# Bundled wordlists (Kali image ships none); mcp-servers is mounted at this path
+# in Docker mode. Resolved by NAME, not by a caller-supplied filesystem path, so
+# no caller (config, engine, LLM) ever needs to know the container-vs-host split —
+# `$( [ -f <container> ] && ... || ... )` is evaluated by the shell that actually
+# runs the command (bash -c, both in docker-exec and native execution), so it
+# picks whichever path is real wherever this command ends up running.
+_BUNDLED_WORDLISTS = {
+    "common-web": "common-web.txt",
+    "subdomains": "subdomains.txt",
+}
+_WL_LOCAL_DIR = Path(__file__).resolve().parents[2] / "recon" / "tools" / "_wordlists"
 
-def _wordlist_expr() -> str:
-    return (
-        f"$( [ -f {_WL_CONTAINER} ] && echo {_WL_CONTAINER} "
-        f"|| echo {_WL_FALLBACK} )"
-    )
+
+def _bundled_wordlist_expr(filename: str) -> str:
+    container = f"/home/mcpuser/mcp-servers/recon/tools/_wordlists/{filename}"
+    fallback = str(_WL_LOCAL_DIR / filename)
+    return f"$( [ -f {container} ] && echo {container} || echo {fallback} )"
 
 
 def build_command(**params: Any) -> str:
@@ -50,7 +54,13 @@ def build_command(**params: Any) -> str:
     url = str(params.get("url") or params.get("target") or "").strip()
     mode = str(params.get("mode") or "dir").strip()
     wordlist_param = str(params.get("wordlist") or "").strip()
-    wordlist = q(wordlist_param) if wordlist_param else _wordlist_expr()
+    if not wordlist_param:
+        wordlist = _bundled_wordlist_expr(_BUNDLED_WORDLISTS["common-web"])
+    elif wordlist_param in _BUNDLED_WORDLISTS:
+        wordlist = _bundled_wordlist_expr(_BUNDLED_WORDLISTS[wordlist_param])
+    else:
+        # A caller-supplied literal path (bring-your-own-wordlist) — used as-is.
+        wordlist = q(wordlist_param)
     additional_args = str(params.get("additional_args") or "").strip()
     if not url:
         raise ValueError("gobuster_scan requires url=")
