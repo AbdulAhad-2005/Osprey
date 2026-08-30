@@ -200,6 +200,13 @@ RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.c
     go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
 RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     go install github.com/projectdiscovery/httpx/cmd/httpx@latest
+# The pip package `httpx` (a plain backend HTTP-client dependency, not this tool)
+# installs its own same-named CLI into /home/mcpuser/.local/bin, which sits ahead
+# of $GOPATH/bin on PATH (see ENV PATH below) so it always shadows this real
+# ProjectDiscovery tool. Kali's own apt package sidesteps the exact same
+# collision by naming its binary `httpx-toolkit` — mirror that convention here
+# at build time so no wrapper ever has to guess an install path at runtime.
+RUN ln -sf "$GOPATH/bin/httpx" "$GOPATH/bin/httpx-toolkit"
 RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     go install github.com/projectdiscovery/katana/cmd/katana@latest
 RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \

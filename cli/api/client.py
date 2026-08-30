@@ -257,6 +257,13 @@ class APIClient:
             data = resp.json()
             if data.get("run_id"):
                 self._run_id = data["run_id"]
+            if data.get("engagement_id"):
+                # The backend's frictionless binding may have created/resolved an
+                # engagement from a plain free-text prompt (no /scan or /engage
+                # ceremony) — mirror it here so /report, /findings etc. know
+                # what the Commander already bound, instead of reporting
+                # "no engagement" for work that actually happened.
+                self._set_active_engagement(data["engagement_id"])
             response_text = data.get("response", "")
             if response_text and data.get("success", True):
                 self._conversation_history.append({"role": "user", "content": prompt})
@@ -274,6 +281,28 @@ class APIClient:
                 ),
             }
 
+    def _iter_sse_lines(self, resp: httpx.Response) -> Iterator[tuple[str, dict[str, Any]]]:
+        """Shared SSE line-parser — both the per-message stream and the
+        persistent events stream speak the same `event:`/`data:` wire format."""
+        event_type = "message"
+        data_lines: list[str] = []
+        for raw_line in resp.iter_lines():
+            if raw_line is None:
+                continue
+            line = raw_line.strip()
+            if not line:
+                if data_lines:
+                    data = json.loads("".join(data_lines))
+                    data_lines.clear()
+                    yield event_type, data
+                continue
+            if line.startswith("event:"):
+                event_type = line[6:].strip()
+            elif line.startswith("data:"):
+                data_lines.append(line[5:].strip())
+        if data_lines:
+            yield event_type, json.loads("".join(data_lines))
+
     def send_prompt_stream(
         self,
         prompt: str,
@@ -282,7 +311,6 @@ class APIClient:
     ) -> Iterator[tuple[str, dict[str, Any]]]:
         """Stream agent events from SSE. Yields (event_type, data) until done."""
         payload = self._build_chat_payload(prompt, engagement_id, phase)
-
         final_data: dict[str, Any] | None = None
 
         try:
@@ -292,28 +320,7 @@ class APIClient:
                 json=payload,
             ) as resp:
                 resp.raise_for_status()
-                event_type = "message"
-                data_lines: list[str] = []
-
-                for raw_line in resp.iter_lines():
-                    if raw_line is None:
-                        continue
-                    line = raw_line.strip()
-                    if not line:
-                        if data_lines:
-                            data = json.loads("".join(data_lines))
-                            data_lines.clear()
-                            if event_type == "done":
-                                final_data = data
-                            yield event_type, data
-                        continue
-                    if line.startswith("event:"):
-                        event_type = line[6:].strip()
-                    elif line.startswith("data:"):
-                        data_lines.append(line[5:].strip())
-
-                if data_lines:
-                    data = json.loads("".join(data_lines))
+                for event_type, data in self._iter_sse_lines(resp):
                     if event_type == "done":
                         final_data = data
                     yield event_type, data
@@ -338,6 +345,36 @@ class APIClient:
                 self._conversation_history.append({"role": "assistant", "content": response_text})
             if final_data.get("run_id"):
                 self._run_id = final_data["run_id"]
+            if final_data.get("engagement_id"):
+                # Same as send_prompt: a free-text prompt may have implicitly
+                # bound/created an engagement server-side — mirror it here.
+                self._set_active_engagement(final_data["engagement_id"])
+
+    def stream_events(self, engagement_id: str) -> Iterator[tuple[str, dict[str, Any]]]:
+        """The persistent live-activity stream for one engagement — opened
+        ONCE and kept open for as long as the session cares about it, not
+        per-message like `send_prompt_stream`. Shows the Commander's own
+        turns AND every background pipeline / spawned phase agent's tool
+        calls as they happen, tagged by `source` in each event's data — the
+        fix for "background work is invisible": a harness has exactly one
+        live activity feed, this is it. No read timeout — the connection is
+        meant to sit open indefinitely; the caller decides when to stop
+        iterating (e.g. the engagement changed, or the CLI is exiting).
+        """
+        try:
+            with self._client.stream(
+                "GET",
+                self._url(f"/api/v1/agent/events/{engagement_id}"),
+                timeout=httpx.Timeout(None, connect=30.0),
+            ) as resp:
+                resp.raise_for_status()
+                yield from self._iter_sse_lines(resp)
+        except httpx.HTTPStatusError as exc:
+            yield "error", {"message": f"Event stream failed: {exc.response.status_code}"}
+        except httpx.TransportError:
+            # Backend restarted / connection dropped — let the caller decide
+            # whether to reconnect; never raise into a background listener.
+            return
 
     def get_agent_status(self) -> dict[str, Any]:
         try:

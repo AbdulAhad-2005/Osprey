@@ -35,24 +35,14 @@ TOOL_NAME = "httpx_probe"
 CATEGORY = "recon"
 
 # The PyPI package `httpx` (a plain backend dependency, used as an HTTP client
-# library — not this tool) installs its own `httpx` console script. When our
-# venv is active, its bin/ is prepended to $PATH, so bare `httpx` silently
-# resolves to THAT (a Click CLI: "Usage: httpx [OPTIONS] URL", no `-u`/`-l`
-# flags at all) instead of ProjectDiscovery's Go recon tool this wrapper
-# actually targets — a well-known name collision in the security-tooling
-# community. Kali's own apt package sidesteps it by naming the binary
-# `httpx-toolkit`; resolve explicitly by absolute path/known alt-name instead
-# of trusting bare `httpx` on $PATH, so this can't be silently shadowed again
-# by any future venv-installed package.
-_HTTPX_BIN_EXPR = (
-    "$( command -v httpx-toolkit 2>/dev/null "
-    "|| { [ -x \"$HOME/go/bin/httpx\" ] && echo \"$HOME/go/bin/httpx\"; } "
-    "|| { [ -x /root/go/bin/httpx ] && echo /root/go/bin/httpx; } "
-    "|| { [ -x /usr/local/go/bin/httpx ] && echo /usr/local/go/bin/httpx; } "
-    "|| { [ -x /usr/bin/httpx ] && echo /usr/bin/httpx; } "
-    "|| { [ -x /usr/local/bin/httpx ] && echo /usr/local/bin/httpx; } "
-    "|| echo httpx )"
-)
+# library — not this tool) installs its own same-named `httpx` console script,
+# which sits ahead of the Go tool on $PATH and would silently shadow it (a
+# Click CLI: "Usage: httpx [OPTIONS] URL", no `-u`/`-l` flags at all) — a
+# well-known name collision in the security-tooling community. Fixed at the
+# source (kali-tools/Dockerfile aliases the real binary to `httpx-toolkit`,
+# Kali's own apt package uses the same name for the same reason), so this
+# wrapper never has to guess an install path at runtime.
+_HTTPX_BIN_EXPR = "httpx-toolkit"
 
 
 def build_command(**params: Any) -> str:

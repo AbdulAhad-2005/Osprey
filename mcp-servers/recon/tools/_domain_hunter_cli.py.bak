@@ -156,84 +156,13 @@ _POINTS_ASN = 20
 _POINTS_WIKIDATA = 36
 _POINTS_TLD_VARIANT = 20
 _POINTS_LIVE = 8
-
+_POINTS_CORPORATE = 38
 _POINTS_EMAIL_PIVOT = 30
+_POINTS_ORG_CERTS = 28
 _POINTS_SPF_DMARC = 24
 _POINTS_REVERSE_NS = 22
 _POINTS_ASN_EXPAND = 26
-_POINTS_MULTI_SOURCE = 22
-_POINTS_REVERSE_WHOIS = 40
-_POINTS_TRACKER_PIVOT = 28
-_POINTS_AI_HUNT = 35  # LLM hypothesis — high value when verified
-_POINTS_FAVICON_HASH = 30  # identical favicon MD5 to seed
-_POINTS_PATTERN_GEN = 15  # generated label variant (weaker signal)
 
-# Registrar / privacy protection / email forwarding domains — when a seed
-# uses WHOIS privacy, the RDAP registrant is the privacy service (e.g.,
-# enom.com, whoisguard.com).  Reverse WHOIS on those returns thousands of
-# unrelated domains.  Filter these out aggressively.
-_REGISTRAR_DOMAINS = frozenset({
-    "enom.com", "enom.net", "enom.org", "enom.ca", "enom.uk",
-    "whoisguard.com", "whoisprivacyservices.com", "domainsbyproxy.com",
-    "privacyprotect.org", "contactprivacy.com", "withheldforprivacy.com",
-    "perfectprivacy.com", "namecheap.com", "namesilo.com",
-    "godaddy.com", "gregians.net", "web.com",
-    "hubspot.net", "wixdns.net", "squarespace.com",
-    "google.com", "googleapis.com", "cloudflare.com",
-    "protectiondomain.com", "redactedforprivacy.com",
-    "dataprotected.com", "privatewhois.net",
-    "hostedemail.com", "forwardemail.net",
-})
-
-# Known shared platforms / hosting providers / free subdomain hosts.
-# Domains under these are shared infrastructure — not sister organizations.
-# Used to filter noise from CT token searches in corporate module.
-_SHARED_PLATFORM_DOMAINS = frozenset({
-    # Free hosting / blog platforms
-    "blogspot.com", "wordpress.com", "tumblr.com", "wix.com", "weebly.com",
-    "squarespace.com", "godaddy.com", "pages.dev", "netlify.app",
-    "vercel.app", "github.io", "gitlab.io", "herokuapp.com",
-    "byethost7.com", "byethost.com", "000webhost.com",
-    "writeablog.net", "blogsome.com", "posterous.com",
-    # Cloud / CDN / email providers
-    "google.com", "googleapis.com", "cloudflare.com", "akamai.com",
-    "fastly.com", "cloudfront.net", "amazonaws.com",
-    "outlook.com", "office365.com", "microsoft.com",
-    "icloud.com", "me.com", "mac.com",
-    "office.com", "live.com",
-    # Domain registrars / privacy
-    "enom.com", "whoisguard.com", "domainsbyproxy.com",
-    "namecheap.com", "namesilo.com",
-    # Hosting providers
-    "wixdns.net", "syrahost.com", "whmpanels.com",
-    "hostgator.com", "bluehost.com", "dreamhost.com",
-    "siteground.com", "a2hosting.com", "inmotionhosting.com",
-    # News aggregators / content farms
-    "einnews.com",
-})
-
-
-def _is_shared_platform(domain: str) -> bool:
-    """Check if a domain is a known shared platform / hosting provider.
-
-    Returns True if the domain matches any entry in _SHARED_PLATFORM_DOMAINS.
-    Used to filter noise from CT token searches — domains on shared platforms
-    are not sister organizations.
-    """
-    rd = root_domain(domain)
-    if not rd:
-        return False
-    # Direct match
-    if rd in _SHARED_PLATFORM_DOMAINS:
-        return True
-    # Subdomain match (e.g., freefireapk2025.blogspot.com → blogspot.com)
-    for platform in _SHARED_PLATFORM_DOMAINS:
-        if rd.endswith("." + platform) or rd == platform:
-            return True
-    return False
-
-
-# ---------------------------------------------------------------------------
 # Per-IP cap on reverse-IP results — bounds runtime and the noise tail on
 # shared-hosting ranges.
 _MAX_REVERSE_RESULTS = 250
@@ -390,35 +319,9 @@ def _seed_base_tokens(seed_root: str) -> list[str]:
 
 
 def _brand_tokens(seed_root: str, title_text: str = "") -> list[str]:
-    # Common English words + country names that appear in news titles but are NOT brand tokens
-    _STOPWORDS = frozenset({
-        # Common English words
-        "the", "and", "for", "are", "but", "not", "you", "all", "can", "had",
-        "her", "was", "one", "our", "out", "has", "his", "how", "its", "may",
-        "new", "now", "old", "see", "way", "who", "did", "get", "let", "say",
-        "she", "too", "use", "with", "that", "this", "will", "each", "make",
-        "like", "long", "look", "many", "most", "over", "such", "take", "than",
-        "them", "then", "what", "when", "your", "from", "have", "been", "said",
-        "more", "some", "time", "very", "just", "into", "also", "back", "after",
-        "only", "come", "made", "could", "well", "were", "their", "would",
-        "about", "other", "which", "would", "these", "first", "going", "still",
-        "where", "think", "world", "life", "being", "every", "found", "under",
-        "never", "since", "might", "doing", "right", "place", "year", "years",
-        # News/media common words
-        "live", "news", "latest", "breaking", "today", "daily", "online",
-        "watch", "read", "more", "video", "photos", "photo", "report",
-        "updates", "update", "show", "shows", "special",
-        "exclusive", "developing", "trending", "headlines", "bulletin",
-        # Country names (appear in news org titles but are NOT brand tokens)
-        "pakistan", "india", "china", "usa", "uk", "canada", "australia",
-        "afghanistan", "iran", "iraq", "syria", "turkey", "saudi", "arabia",
-        "emirates", "uae", "bangladesh", "srilanka", "nepal", "bhutan",
-        "maldives", "myanmar", "thailand", "vietnam", "philippines",
-        "indonesia", "malaysia", "singapore", "japan", "korea", "mongolia",
-    })
     tokens = list(_seed_base_tokens(seed_root))
     for token in _safe_tokens(title_text):
-        if token not in tokens and token not in _STOPWORDS and len(token) > 3:
+        if token not in tokens:
             tokens.append(token)
     return tokens[:8]
 
@@ -669,494 +572,104 @@ def _resolve_dns_hosts(domain: str) -> list[str]:
     return hosts
 
 
-def _urlscan_query(session: Any, domain: str, timeout: int = 10) -> list[str]:
-    """urlscan.io search — free, no API key required for basic queries.
+def _crtsh_query(session: Any, query: str, timeout: int = 8) -> list[dict[str, Any]] | None:
+    """crt.sh is flaky (502s/empty bodies are common) — retry with backoff.
 
-    Searches urlscan.io for pages served by the domain, extracts linked
-    domains from the results.  Limited to ~100 results per query on the
-    free tier but covers recent crawl data.
-    """
-    url = f"https://urlscan.io/api/v1/search/?q=domain:{quote_plus(domain)}&size=100"
-    names: list[str] = []
-    try:
-        response = session.get(url, timeout=timeout)
-        if not response.ok:
-            return []
-        data = response.json()
-        for result in data.get("results", []):
-            page = result.get("page", {})
-            for key in ("domain", "ip", "asn"):
-                val = str(page.get(key, "")).strip().lower()
-                if val and "." in val and val not in names:
-                    if is_registrable_domain(val):
-                        names.append(val)
-            # Extract linked domains from the result
-            for item in result.get("lists", {}).get("domains", []):
-                val = str(item).strip().lower()
-                if val and "." in val and val not in names:
-                    if is_registrable_domain(val):
-                        names.append(val)
-    except Exception as exc:
-        logger.info("urlscan.io query failed (%s): %s", domain, exc)
-    return names
+    Returns a list (possibly empty) on a successful JSON body, or ``None`` when
+    the service failed. Empty ``[]`` is a real answer (no certs), not an outage;
+    the circuit breaker must not treat those the same.
 
-
-def _threatminer_query(session: Any, domain: str, timeout: int = 10) -> list[str]:
-    """ThreatMiner free API — domain passive DNS and related hosts.
-
-    Returns historical DNS resolutions and related domains for the query.
-    No API key required.
-    """
-    url = f"https://api.threatminer.org/v2/host.php?q={quote_plus(domain)}&rt=1&pta=2"
-    names: list[str] = []
-    try:
-        response = session.get(url, timeout=timeout)
-        if not response.ok:
-            return []
-        data = response.json()
-        for item in data.get("results", []):
-            val = str(item).strip().lower()
-            if val and "." in val and val not in names:
-                if is_registrable_domain(val):
-                    names.append(val)
-    except Exception as exc:
-        logger.info("ThreatMiner query failed (%s): %s", domain, exc)
-    return names
-
-
-def _rapiddns_query(session: Any, domain: str, timeout: int = 10) -> list[str]:
-    """rapiddns.io free DNS history — finds domains sharing infrastructure.
-
-    Scrapes the rapiddns.io page for historical DNS data.  No API key
-    required; returns domains that previously resolved to the same IPs
-    as the seed.
+    Uses a FRESH request (not ``session``) so the session's urllib3 Retry
+    adapter (which already retries 5xx with backoff) cannot multiply with the
+    manual loop below and turn one query into 90s.
     """
     import requests
-    from bs4 import BeautifulSoup  # type: ignore
 
-    url = f"https://rapiddns.io/subdomain/{quote_plus(domain)}?full=1"
-    names: list[str] = []
-    try:
-        response = session.get(url, timeout=timeout)
-        if not response.ok:
-            return []
-        soup = BeautifulSoup(response.text, "html.parser")
-        for td in soup.find_all("td"):
-            text = td.get_text(strip=True).lower()
-            if text and "." in text and text != domain:
-                if is_registrable_domain(text) and text not in names:
-                    names.append(text)
-    except Exception as exc:
-        logger.info("rapiddns query failed (%s): %s", domain, exc)
-    return names
+    if not query:
+        return []
 
-
-def _alienvault_otx_query(session: Any, domain: str, timeout: int = 10) -> list[str]:
-    """AlienVault OTX free API — passive DNS and domain pulses.
-
-    Queries OTX for passive DNS records related to the domain.  No API
-    key required for basic queries; returns historical resolutions.
-    """
-    url = f"https://otx.alienvault.com/api/v1/indicators/domain/{quote_plus(domain)}/passive_dns"
-    names: list[str] = []
-    try:
-        response = session.get(url, timeout=timeout)
-        if not response.ok:
-            return []
-        data = response.json()
-        for entry in data.get("passive_dns", []):
-            hostname = str(entry.get("hostname", "")).strip().lower()
-            if hostname and "." in hostname and hostname != domain:
-                if is_registrable_domain(hostname) and hostname not in names:
-                    names.append(hostname)
-    except Exception as exc:
-        logger.info("AlienVault OTX query failed (%s): %s", domain, exc)
-    return names
-
-
-# ---------------------------------------------------------------------------
-# Reverse WHOIS / corporate registry / tracker-pivot sources
-# ---------------------------------------------------------------------------
-
-def _whoxy_reverse_whois(
-    session: Any,
-    seed_root: str,
-    api_key: str = "",
-    *,
-    timeout: int = 12,
-) -> list[str]:
-    """Whoxy reverse WHOIS — finds all domains registered by the same org/email.
-
-    Whoxy offers a free API tier (250K credits for education/non-profit).
-    When an API key is provided (``WHOXY_API_KEY`` env var or direct), searches
-    by registrant email, organization name, and keyword to discover sister
-    domains registered by the same entity.
-
-    Without an API key, falls back to a free reverse WHOIS via ViewDNS
-    (limited to 100 results per day).
-
-    This is the SINGLE HIGHEST-VALUE addition for sister-domain discovery:
-    it finds domains that share NO infrastructure, NO certs, and NO DNS —
-    they are only linked by the same human or organization registering them.
-    """
-    import os
-
-    api_key = api_key or os.environ.get("WHOXY_API_KEY", "")
-    found: list[str] = []
-
-    if api_key:
-        # Whoxy API: reverse WHOIS by email, company, and keyword
-        # Step 1: Get WHOIS data for the seed to extract email/org
-        whois_url = f"https://api.whoxy.com/?key={api_key}&whois={quote_plus(seed_root)}"
+    url = f"https://crt.sh/?q={quote_plus(query)}&output=json"
+    last_error: Exception | None = None
+    for attempt in range(2):
         try:
-            resp = session.get(whois_url, timeout=timeout)
-            if resp.ok:
-                data = resp.json()
-                if data.get("status") == 1:
-                    whois_record = data.get("whois_data", {})
-                    email = whois_record.get("registrant_contact", {}).get("email_address", "")
-                    org = whois_record.get("registrant_contact", {}).get("company_name", "")
-                    name = whois_record.get("registrant_contact", {}).get("full_name", "")
-
-                    # Step 2: Reverse WHOIS by email
-                    if email and "@" in email:
-                        rev_url = (
-                            f"https://api.whoxy.com/?key={api_key}"
-                            f"&reverse=whois&email={quote_plus(email)}&mode=domains"
-                        )
-                        try:
-                            r = session.get(rev_url, timeout=timeout)
-                            if r.ok:
-                                rd = r.json()
-                                for domain in rd.get("domains_list", []):
-                                    val = str(domain).strip().lower()
-                                    if val and "." in val and val != seed_root:
-                                        # Skip registrar/privacy service domains
-                                        if root_domain(val) in _REGISTRAR_DOMAINS:
-                                            continue
-                                        if is_registrable_domain(val) and val not in found:
-                                            found.append(val)
-                        except Exception:
-                            pass
-
-                    # Step 3: Reverse WHOIS by company/org name
-                    if org and len(org) >= 3:
-                        rev_url = (
-                            f"https://api.whoxy.com/?key={api_key}"
-                            f"&reverse=whois&company={quote_plus(org)}&mode=domains"
-                        )
-                        try:
-                            r = session.get(rev_url, timeout=timeout)
-                            if r.ok:
-                                rd = r.json()
-                                for domain in rd.get("domains_list", []):
-                                    val = str(domain).strip().lower()
-                                    if val and "." in val and val != seed_root:
-                                        if root_domain(val) in _REGISTRAR_DOMAINS:
-                                            continue
-                                        if is_registrable_domain(val) and val not in found:
-                                            found.append(val)
-                        except Exception:
-                            pass
-
-                    # Step 4: Reverse WHOIS by registrant name
-                    if name and len(name) >= 3:
-                        rev_url = (
-                            f"https://api.whoxy.com/?key={api_key}"
-                            f"&reverse=whois&name={quote_plus(name)}&mode=domains"
-                        )
-                        try:
-                            r = session.get(rev_url, timeout=timeout)
-                            if r.ok:
-                                rd = r.json()
-                                for domain in rd.get("domains_list", []):
-                                    val = str(domain).strip().lower()
-                                    if val and "." in val and val != seed_root:
-                                        if root_domain(val) in _REGISTRAR_DOMAINS:
-                                            continue
-                                        if is_registrable_domain(val) and val not in found:
-                                            found.append(val)
-                        except Exception:
-                            pass
-
-                    # Step 5: Reverse WHOIS by brand keyword
-                    brand = seed_root.split(".")[0]
-                    if len(brand) >= 3:
-                        rev_url = (
-                            f"https://api.whoxy.com/?key={api_key}"
-                            f"&reverse=whois&keyword={quote_plus(brand)}&mode=domains"
-                        )
-                        try:
-                            r = session.get(rev_url, timeout=timeout)
-                            if r.ok:
-                                rd = r.json()
-                                for domain in rd.get("domains_list", []):
-                                    val = str(domain).strip().lower()
-                                    if val and "." in val and val != seed_root:
-                                        if is_registrable_domain(val) and val not in found:
-                                            found.append(val)
-                        except Exception:
-                            pass
-        except Exception as exc:
-            logger.info("Whoxy WHOIS lookup failed (%s): %s", seed_root, exc)
-    else:
-        # Free fallback: RDAP + crt.sh email search (no API key needed)
-        # Get WHOIS data via RDAP to extract registrant email/org
-        try:
-            rdap_url = f"https://rdap.org/domain/{seed_root}"
-            resp = session.get(rdap_url, timeout=timeout)
-            if resp.ok:
-                payload = resp.json()
-                emails: list[str] = []
-                orgs: list[str] = []
-
-                def _walk_rdap(node: Any) -> None:
-                    if isinstance(node, dict):
-                        for key, value in node.items():
-                            if key == "vcardArray" and isinstance(value, list) and len(value) >= 2:
-                                for entry in value[1]:
-                                    if isinstance(entry, list) and len(entry) >= 4:
-                                        label = str(entry[0]).lower()
-                                        text = str(entry[3]).strip()
-                                        if label == "email" and text and text not in emails:
-                                            emails.append(text)
-                                        elif label in ("fn", "org") and text:
-                                            for tok in _safe_tokens(text):
-                                                if tok not in orgs and len(tok) >= 3:
-                                                    orgs.append(tok)
-                            else:
-                                _walk_rdap(value)
-                    elif isinstance(node, list):
-                        for item in node:
-                            _walk_rdap(item)
-
-                _walk_rdap(payload)
-
-        except Exception as exc:
-            logger.info("RDAP-based reverse WHOIS failed (%s): %s", seed_root, exc)
-
-    return found
-
-
-def _favicon_md5(session: Any, domain: str, *, timeout: int = 8) -> str | None:
-    """Compute MD5 hash of a domain's favicon.ico.
-
-    Used for cross-site correlation: sites sharing the same favicon are
-    likely operated by the same organization (common with media groups
-    using shared branding assets).
-    """
-    import hashlib
-    for scheme in ("https", "http"):
-        try:
-            resp = session.get(
-                f"{scheme}://{domain}/favicon.ico",
-                timeout=timeout,
-                headers={"User-Agent": "DomainHunter/0.1"},
-            )
-            resp.raise_for_status()
-            if resp.content:
-                return hashlib.md5(resp.content).hexdigest()
-        except Exception:
-            continue
+            response = requests.get(url, timeout=timeout)
+            if not response.ok or not response.text.strip():
+                last_error = ValueError(f"crt.sh status {response.status_code}")
+                continue
+            text = response.text.strip()
+            if text.startswith("["):
+                data = response.json()
+                return data if isinstance(data, list) else []
+            last_error = ValueError("crt.sh non-JSON body")
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+        if attempt == 0:
+            time.sleep(1.5)
+    logger.info("crt.sh query failed (%s): %s", query, last_error)
     return None
 
 
-def _pattern_gen_candidates(label: str, cc_tld: str | None = None) -> list[str]:
-    """Generate domain variants by appending common corporate suffixes/prefixes.
+def _certspotter_query(domain: str, timeout: int = 8) -> list[str]:
+    """CT fallback for the direct seed-domain query when crt.sh is unavailable.
 
-    Ported from pseudogeek7/domain-hunter pattern_gen.py — rule-based label
-    variants like samaagroup.com, samaamobile.net, mysamaa.org.
+    crt.sh is the single passive source three of the six modules lean on, and it
+    is documented-flaky (502s / empty bodies). certspotter's free issuances API
+    is an independent Certificate Transparency aggregator, so a crt.sh outage no
+    longer blinds cert discovery entirely. It returns full issuances (dns_names)
+    for a domain+subdomains but has NO substring/token search — so it can only
+    back the high-value direct-domain query, not the brand-token searches.
     """
-    _SUFFIXES = [
-        "group", "holdings", "global", "inc", "intl", "international",
-        "online", "digital", "tech", "solutions", "services", "systems",
-        "mobile", "telecom", "media", "labs", "cloud", "connect", "pay",
-        "news", "tv", "press", "entertainment", "sports", "money", "health",
-    ]
-    _PREFIXES = ["my", "get", "go", "the"]
-    _GENERIC_TLDS = ["com", "net", "org", "co"]
+    import requests
 
-    candidates = set()
-    for suffix in _SUFFIXES:
-        candidates.add(f"{label}{suffix}")
-        candidates.add(f"{label}-{suffix}")
-    for prefix in _PREFIXES:
-        candidates.add(f"{prefix}{label}")
-
-    # Generate domain strings
-    domains = []
-    tlds = set(_GENERIC_TLDS)
-    if cc_tld:
-        tlds.add(cc_tld)
-    for gen_label in candidates:
-        for tld in tlds:
-            domains.append(f"{gen_label}.{tld}")
-    return domains
-
-
-def _site_scrape_with_robots(
-    session: Any,
-    seed_root: str,
-    homepage_html: str,
-    base_url: str,
-    *,
-    timeout: int = 15,
-) -> list[str]:
-    """Enhanced site scrape with robots.txt respect and relationship page detection.
-
-    Ported from pseudogeek7/domain-hunter site_scrape.py — fetches the seed's
-    homepage plus relationship pages (about, subsidiaries, partners) for
-    outbound links. Respects robots.txt for pages after the homepage.
-    """
-    from bs4 import BeautifulSoup  # type: ignore
-    from urllib.parse import urljoin
-    from urllib.robotparser import RobotFileParser
-
-    _RELATIONSHIP_HINTS = [
-        "subsidiar", "joint-venture", "jointventure", "joint_venture", "investor",
-        "group-compan", "group_compan", "groupcompan", "our-compan", "ourcompan",
-        "affiliat", "partner", "about-us", "aboutus", "about",
-    ]
-
-    _EXCLUDED_DOMAINS = {
-        "facebook.com", "twitter.com", "x.com", "linkedin.com", "youtube.com",
-        "instagram.com", "pinterest.com", "tiktok.com", "whatsapp.com", "telegram.org",
-        "google.com", "googleapis.com", "gstatic.com", "google-analytics.com",
-        "googletagmanager.com", "doubleclick.net", "cloudflare.com",
-        "wordpress.com", "wp.com", "jquery.com", "jsdelivr.net",
-        "w3.org", "schema.org", "wikipedia.org", "wikimedia.org", "apple.com",
-        "microsoft.com", "adobe.com",
-    }
-
-    soup = BeautifulSoup(homepage_html, "html.parser")
-
-    # Extract all links from homepage
-    home_links = []
-    for a in soup.find_all("a", href=True):
-        href = a["href"].strip()
-        if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
-            continue
-        abs_url = urljoin(base_url, href)
-        text = (a.get_text() or "").strip()
-        home_links.append({"url": abs_url, "text": text})
-
-    # Find relationship pages
-    relationship_pages = []
-    seen_urls = set()
-    for link in home_links:
-        parsed = urlparse(link["url"])
-        path = parsed.path.lower()
-        text = link["text"].lower()
-        if any(hint in path or hint in text for hint in _RELATIONSHIP_HINTS):
-            host = (parsed.hostname or "").lower()
-            if host == seed_root or host.endswith(f".{seed_root}"):
-                if link["url"] not in seen_urls:
-                    seen_urls.add(link["url"])
-                    relationship_pages.append(link["url"])
-
-    # Load robots.txt
-    robots = RobotFileParser()
-    robots_url = f"{base_url}/robots.txt"
+    url = (
+        "https://api.certspotter.com/v1/issuances"
+        f"?domain={quote_plus(domain)}&include_subdomains=true&expand=dns_names"
+    )
+    names: list[str] = []
     try:
-        robots.set_url(robots_url)
-        robots.read()
-    except Exception:
-        pass
-
-    # Extract external domains from all links
-    candidates = []
-    seen_domains = {seed_root}
-
-    all_links = home_links.copy()
-    for page_url in relationship_pages[:8]:
-        # Check robots.txt
-        try:
-            if not robots.can_fetch("DomainHunter/0.1", page_url):
-                continue
-        except Exception:
-            pass
-
-        # Fetch relationship page
-        try:
-            resp = session.get(page_url, timeout=timeout, headers={"User-Agent": "DomainHunter/0.1"})
-            resp.raise_for_status()
-            page_soup = BeautifulSoup(resp.text, "html.parser")
-            for a in page_soup.find_all("a", href=True):
-                href = a["href"].strip()
-                if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
-                    continue
-                abs_url = urljoin(page_url, href)
-                text = (a.get_text() or "").strip()
-                all_links.append({"url": abs_url, "text": text})
-        except Exception:
-            continue
-
-    for link in all_links:
-        parsed = urlparse(link["url"])
-        host = (parsed.hostname or "").lower()
-        if not host:
-            continue
-        rd = root_domain(host)
-        if not rd or rd in seen_domains or rd in _EXCLUDED_DOMAINS:
-            continue
-        if rd.endswith(f".{seed_root}"):
-            continue
-        seen_domains.add(rd)
-        candidates.append(rd)
-
-    return candidates
+        response = requests.get(url, timeout=timeout)
+        if not response.ok:
+            return []
+        data = response.json()
+        if isinstance(data, list):
+            for issuance in data:
+                for name in (issuance.get("dns_names") or []):
+                    cleaned = str(name).strip().lower()
+                    if cleaned and cleaned not in names:
+                        names.append(cleaned)
+    except Exception as exc:  # noqa: BLE001
+        logger.info("certspotter query failed (%s): %s", domain, exc)
+    return names
 
 
-def _tracker_id_pivot(
+def _certspotter_brand_probe(
+    brand_label: str,
     session: Any,
-    seed_root: str,
     *,
-    timeout: int = 8,
+    tlds: tuple[str, ...] = ("com", "net", "org", "tv", "io", "co", "pk"),
+    timeout: int = 6,
 ) -> list[str]:
-    """Google Analytics / Tag Manager / FB Pixel ID pivot.
+    """Probe certspotter for a brand label across common TLDs.
 
-    Sites sharing the same GA property ID (UA-XXXXX or G-XXXXXXX), GTM
-    container (GTM-XXXXXXX), or Facebook Pixel ID (XXXXXXXXXX) are likely
-    operated by the same organization.  Extracts tracker IDs from the seed's
-    homepage and searches for other sites using the same IDs.
-
-    Sources: BuiltWith-like lookup via public APIs, and direct page scraping.
+    When crt.sh is down, brand-token searches (``%geo%``) have no fallback
+    because certspotter's API has no substring search.  This function works
+    around that by probing certspotter for each ``brand.tld`` combination
+    directly — finding certs issued to those exact domains.  It's not a full
+    wildcard replacement, but it catches the highest-value brand+TLD pairs
+    that crt.sh would have returned.
     """
-    import re
-
     found: list[str] = []
-
-    # Fetch seed homepage to extract tracker IDs
-    homepage, _ = _fetch_with_fallback(session, f"https://{seed_root}")
-    if not homepage:
-        return []
-
-    # Extract GA, GTM, FB Pixel IDs
-    ga_ids = re.findall(r'UA-\d{4,}-\d+', homepage)
-    gtm_ids = re.findall(r'GTM-\w+', homepage)
-    fb_ids = re.findall(r'fbq\(["\']init["\'],\s*["\'](\d+)["\']', homepage)
-
-    tracker_ids = list(set(ga_ids + gtm_ids + fb_ids))
-    if not tracker_ids:
-        return []
-
-    # Search urlscan.io for domains sharing these tracker IDs
-    for tracker_id in tracker_ids[:5]:
-        search_url = f"https://urlscan.io/api/v1/search/?q=page trackers.{tracker_id}&size=20"
-        try:
-            resp = session.get(search_url, timeout=timeout)
-            if not resp.ok:
+    for tld in tlds:
+        probe = f"{brand_label}.{tld}"
+        for raw_name in _certspotter_query(probe, timeout=timeout):
+            candidate = normalize_seed_domain(raw_name)
+            if candidate.startswith("*."):
+                candidate = candidate[2:]
+            if not candidate:
                 continue
-            data = resp.json()
-            for result in data.get("results", []):
-                page_domain = result.get("page", {}).get("domain", "")
-                if page_domain and page_domain != seed_root:
-                    rd = root_domain(page_domain.lower())
-                    if rd and rd not in found:
-                        found.append(rd)
-        except Exception:
-            continue
-
+            rd = root_domain(candidate)
+            if rd and rd not in found:
+                found.append(rd)
     return found
 
 
@@ -1240,6 +753,115 @@ def _wikidata_official_websites(session: Any, token: str, timeout: int = 8) -> t
         return entity_found, []
     except Exception:
         return False, []
+
+
+def _wikidata_corporate_hierarchy(session: Any, token: str, timeout: int = 8) -> list[str]:
+    """Walk Wikidata corporate hierarchy: P749 (parent), P1830 (owned by), P355 (subsidiary).
+
+    Returns a list of brand tokens derived from related entities' labels and
+    P856 (official website) values.  This finds parent companies, sister brands,
+    and subsidiaries that have no shared infrastructure with the seed.
+
+    Only returns tokens from entities that have a P856 (official website) claim
+    — this filters out unrelated namesake entities (e.g., a rapper named "Geo"
+    that has no corporate relationship).
+    """
+    org_tokens: list[str] = []
+    websites: list[str] = []
+
+    # Step 1: Find the entity for the seed
+    search_url = (
+        "https://www.wikidata.org/w/api.php"
+        f"?action=wbsearchentities&search={quote_plus(token)}&language=en&format=json&limit=5"
+    )
+    try:
+        response = session.get(search_url, timeout=timeout)
+        if not response.ok:
+            return []
+        results = (response.json().get("search") or [])[:5]
+    except Exception:
+        return []
+
+    if not results:
+        return []
+
+    # Step 2: For each entity, walk P749/P1830/P355 claims
+    for hit in results:
+        entity_id = hit.get("id", "")
+        if not entity_id:
+            continue
+
+        # Get the entity's claims
+        claims_url = (
+            "https://www.wikidata.org/w/api.php"
+            f"?action=wbgetentities&ids={quote_plus(entity_id)}&props=claims&format=json"
+        )
+        try:
+            response = session.get(claims_url, timeout=timeout)
+            if not response.ok:
+                continue
+            entities = response.json().get("entities", {})
+            entity = entities.get(entity_id, {})
+            claims = entity.get("claims", {})
+        except Exception:
+            continue
+
+        # Collect related entity IDs from P749 (parent), P1830 (owned by), P355 (subsidiary)
+        related_ids: list[str] = []
+        for prop in ("P749", "P1830", "P355"):
+            for claim in claims.get(prop, []):
+                try:
+                    value = claim["mainsnak"]["datavalue"]["value"]
+                    if isinstance(value, dict) and "id" in value:
+                        related_ids.append(value["id"])
+                except (KeyError, TypeError):
+                    continue
+
+        # Step 3: For each related entity, get label + P856 website
+        for rel_id in related_ids[:15]:  # cap to bound runtime
+            rel_url = (
+                "https://www.wikidata.org/w/api.php"
+                f"?action=wbgetentities&ids={quote_plus(rel_id)}&props=labels|claims|descriptions&languages=en&format=json"
+            )
+            try:
+                response = session.get(rel_url, timeout=timeout)
+                if not response.ok:
+                    continue
+                rel_entity = response.json().get("entities", {}).get(rel_id, {})
+                label = rel_entity.get("labels", {}).get("en", {}).get("value", "")
+                description = rel_entity.get("descriptions", {}).get("en", {}).get("value", "")
+                rel_claims = rel_entity.get("claims", {})
+
+                # Only include entities that have a P856 (official website) —
+                # this filters out unrelated namesakes (e.g., a rapper named "Geo")
+                entity_websites: list[str] = []
+                for claim in rel_claims.get("P856", []):
+                    try:
+                        value = claim["mainsnak"]["datavalue"]["value"]
+                        if isinstance(value, str) and value.strip():
+                            entity_websites.append(value.strip())
+                    except (KeyError, TypeError):
+                        continue
+
+                if entity_websites and label:
+                    for tok in _safe_tokens(label):
+                        if tok not in org_tokens:
+                            org_tokens.append(tok)
+                    for website in entity_websites:
+                        host = urlparse(website if "://" in website else f"//{website}").hostname
+                        if host:
+                            rd = root_domain(host)
+                            if rd and rd != token:
+                                base = rd.split(".")[0]
+                                for tok in _safe_tokens(base):
+                                    if tok not in org_tokens:
+                                        org_tokens.append(tok)
+                                if website not in websites:
+                                    websites.append(website)
+            except Exception:
+                continue
+
+    return org_tokens[:20]
 
 
 def _extract_emails_from_html(html: str) -> list[str]:
@@ -1401,389 +1023,6 @@ class Candidate:
             self.evidence.append(evidence)
 
 
-# ---------------------------------------------------------------------------
-# .env loader + AI Hunt (LLM-powered hypothesis generation)
-# ---------------------------------------------------------------------------
-
-def _load_env_file() -> dict[str, str]:
-    """Load .env file from project root or current directory."""
-    env_vars = {}
-    # Check multiple possible .env locations
-    for candidate in [
-        Path(__file__).resolve().parents[3] / ".env",  # global project root
-        Path(__file__).resolve().parent / ".env",  # same dir as script (fallback)
-        Path(__file__).resolve().parents[2] / ".env",  # mcp-servers/ (fallback)
-        Path.cwd() / ".env",
-    ]:
-        if candidate.exists():
-            with open(candidate, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith("#"):
-                        continue
-                    if "=" in line:
-                        key, _, value = line.partition("=")
-                        key = key.strip()
-                        value = value.strip().strip("'\"")
-                        if key and value:
-                            env_vars[key] = value
-            break
-    return env_vars
-
-
-_ENV_CACHE: dict[str, str] = {}
-
-
-def _get_env(key: str, default: str = "") -> str:
-    """Get env var with .env file fallback."""
-    global _ENV_CACHE
-    if not _ENV_CACHE:
-        _ENV_CACHE = _load_env_file()
-    import os
-    return os.environ.get(key, _ENV_CACHE.get(key, default))
-
-
-def _web_search_sister_domains(
-    session: Any,
-    seed_root: str,
-    *,
-    timeout: int = 10,
-) -> list[str]:
-    """Web search for domains associated with the seed.
-
-    Raw search — returns every domain found. No filtering here; the LLM
-    module or the caller decides what's a real sister vs noise.
-    """
-    from bs4 import BeautifulSoup  # type: ignore
-
-    brand = seed_root.split(".")[0]
-    seed_tld = seed_root.rsplit(".", 1)[-1]
-    found: list[str] = []
-
-    # --- Source 1: Wikipedia page ---
-    try:
-        wiki_url = f"https://en.wikipedia.org/wiki/{brand.replace(' ', '_')}_Television_Network"
-        resp = session.get(wiki_url, timeout=timeout)
-        if resp.ok:
-            soup = BeautifulSoup(resp.text, "html.parser")
-            content = soup.find("div", {"id": "mw-content-text"})
-            if content:
-                text = content.get_text(" ", strip=True)
-                for match in _DOMAIN_RE.finditer(text):
-                    rd = root_domain(match.group(1).lower())
-                    if rd and rd != seed_root and rd not in found:
-                        found.append(rd)
-                for match in re.finditer(r'https?://([a-z0-9.-]+\.[a-z]{2,})', text):
-                    rd = root_domain(match.group(1).lower())
-                    if rd and rd != seed_root and rd not in found:
-                        found.append(rd)
-                # "Geo Super" -> geosuper.tv
-                for match in re.finditer(rf'{re.escape(brand)}\s+(\w{{2,}})', text, re.IGNORECASE):
-                    suffix = match.group(1).strip().lower()
-                    if suffix not in {'news', 'tv', 'television', 'network', 'group', 'entertainment', 'films'}:
-                        candidate = f"{brand.lower()}{suffix}.{seed_tld}"
-                        if candidate not in found:
-                            found.append(candidate)
-    except Exception as exc:
-        logger.info("Wikipedia fetch failed for %s: %s", seed_root, exc)
-
-    # --- Source 2: Google/Bing ---
-    for query in [
-        f"what are the associated and sister domains of {seed_root}",
-        f"{brand} sister domains affiliated websites",
-    ]:
-        for engine_url in [
-            f"https://www.google.com/search?q={quote_plus(query)}&num=20",
-            f"https://www.bing.com/search?q={quote_plus(query)}&count=20",
-        ]:
-            try:
-                resp = session.get(engine_url, timeout=timeout, headers={
-                    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                })
-                if not resp.ok:
-                    continue
-                soup = BeautifulSoup(resp.text, "html.parser")
-                for link in soup.find_all("a", href=True):
-                    href = link["href"]
-                    if "://" in href:
-                        host = urlparse(href).hostname
-                        if host:
-                            rd = root_domain(host.lower())
-                            if rd and rd != seed_root and rd not in found:
-                                found.append(rd)
-                for match in _DOMAIN_RE.finditer(soup.get_text(" ", strip=True)):
-                    rd = root_domain(match.group(1).lower())
-                    if rd and rd != seed_root and rd not in found:
-                        found.append(rd)
-            except Exception:
-                continue
-
-    # DNS-verify
-    return [rd for rd in found if _domain_resolves(rd)]
-
-
-_AI_HUNT_PROMPT = """You are assisting an OSINT domain-discovery tool. Given a seed \
-organization, propose plausible ADDITIONAL domains that might be owned or operated by \
-the same organization, across these categories:
-- TLD/spelling variants of the seed's own name
-- Wholly-owned subsidiaries, brands, or products
-- Joint ventures with partial or shared ownership
-- Affiliated organizations (alumni associations, foundations, hosted projects, \
-training/research arms)
-- Language-specific versions (e.g. urdu.seed.tv for a Pakistani news org)
-- Vertical-specific domains (e.g. seedmoney.com, seedsport.com)
-
-Some entities genuinely have no standalone domain — if so, leave the domain empty \
-rather than inventing one you're not confident exists.
-
-Seed domain: {domain}
-Organization name (if known): {org_name}
-Already-known associated domains: {known_domains}
-
-Respond with ONLY a JSON object, no markdown, no commentary:
-{{
-  "tld_variants": ["<domain>", ...],
-  "subsidiaries_brands_products": [
-    {{"name": "<entity>", "domain": "<domain or empty>", "relationship": "<description>"}}
-  ],
-  "joint_ventures": [
-    {{"name": "<entity>", "domain": "<domain or empty>", "partners": "<ownership split>"}}
-  ],
-  "affiliated_orgs": [
-    {{"name": "<entity>", "domain": "<domain or empty>", "category": "<category>"}}
-  ]
-}}"""
-
-_DEFAULT_LLM_MODELS = {
-    "anthropic": "claude-sonnet-5",
-    "openai": "gpt-4o-mini",
-    "gemini": "gemini-3.6-flash",
-}
-
-
-def _call_llm_hunt(
-    session: Any,
-    domain: str,
-    org_name: str = "",
-    known_domains: list[str] | None = None,
-    *,
-    timeout: int = 60,
-) -> list[str]:
-    """LLM-powered hypothesis generation via Gemini/Anthropic/OpenAI.
-
-    Returns a list of candidate domains suggested by the LLM.
-    API key read from .env: dom_hunter_gemini_key, dom_hunter_anthropic_key,
-    dom_hunter_openai_key, or generic DOM_HUNTER_LLM_KEY.
-    """
-    # Find API key from .env
-    provider = ""
-    api_key = ""
-    model = ""
-
-    for prov, env_key, default_model in [
-        ("gemini", "dom_hunter_gemini_key", "gemini-3.6-flash"),
-        ("anthropic", "dom_hunter_anthropic_key", "claude-sonnet-5"),
-        ("openai", "dom_hunter_openai_key", "gpt-4o-mini"),
-    ]:
-        key = _get_env(env_key)
-        if key:
-            provider = prov
-            api_key = key
-            model = _get_env("dom_hunter_llm_model", default_model)
-            break
-
-    if not provider:
-        logger.info("ai_hunt: SKIPPED — no dom_hunter_*_key in .env")
-        return []
-
-    known_domains = known_domains or []
-    prompt = _AI_HUNT_PROMPT.format(
-        domain=domain,
-        org_name=org_name or "unknown",
-        known_domains=", ".join(known_domains[:20]) if known_domains else "none yet",
-    )
-
-    try:
-        if provider == "gemini":
-            raw = _call_gemini(api_key, model, prompt, timeout=timeout)
-        elif provider == "anthropic":
-            raw = _call_anthropic(api_key, model, prompt, timeout=timeout)
-        elif provider == "openai":
-            raw = _call_openai(api_key, model, prompt, timeout=timeout)
-        else:
-            return []
-    except Exception as exc:
-        logger.warning("ai_hunt: LLM call failed: %s", exc)
-        return []
-
-    return _parse_llm_proposals(raw)
-
-
-def _call_gemini(api_key: str, model: str, prompt: str, *, timeout: int = 60) -> str:
-    """Call Google Gemini API."""
-    import requests as _req
-    resp = _req.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        params={"key": api_key},
-        json={
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"responseMimeType": "application/json"},
-        },
-        timeout=timeout,
-    )
-    resp.raise_for_status()
-    return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-
-
-def _call_anthropic(api_key: str, model: str, prompt: str, *, timeout: int = 60) -> str:
-    """Call Anthropic API."""
-    import requests as _req
-    resp = _req.post(
-        "https://api.anthropic.com/v1/messages",
-        headers={
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        },
-        json={"model": model, "max_tokens": 1024, "messages": [{"role": "user", "content": prompt}]},
-        timeout=timeout,
-    )
-    resp.raise_for_status()
-    return resp.json()["content"][0]["text"]
-
-
-def _call_openai(api_key: str, model: str, prompt: str, *, timeout: int = 60) -> str:
-    """Call OpenAI API."""
-    import requests as _req
-    resp = _req.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}", "content-type": "application/json"},
-        json={
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "response_format": {"type": "json_object"},
-        },
-        timeout=timeout,
-    )
-    resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"]
-
-
-def _parse_llm_proposals(raw: str) -> list[str]:
-    """Parse LLM JSON response into a list of candidate domains."""
-    import json as _json
-    text = raw.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        if "\n" in text:
-            first_line, rest = text.split("\n", 1)
-            text = rest if first_line.strip().lower() in ("json", "") else text
-
-    try:
-        data, _ = _json.JSONDecoder().raw_decode(text.strip())
-    except (ValueError, _json.JSONDecodeError) as exc:
-        logger.warning("ai_hunt: failed to parse LLM JSON: %s", exc)
-        return []
-
-    candidates = []
-    seen = set()
-
-    # Collect all domains from the response
-    for key in ("tld_variants",):
-        for item in (data.get(key) or []):
-            if isinstance(item, str) and item and item not in seen:
-                candidates.append(item.lower().strip("."))
-                seen.add(item)
-
-    for key in ("subsidiaries_brands_products", "joint_ventures", "affiliated_orgs"):
-        for item in (data.get(key) or []):
-            if isinstance(item, dict):
-                domain = (item.get("domain") or "").strip().lower().strip(".")
-                if domain and domain not in seen and _DOMAIN_RE.match(domain):
-                    candidates.append(domain)
-                    seen.add(domain)
-
-    return candidates
-
-
-def _site_scrape_relationship_pages(
-    session: Any,
-    seed_root: str,
-    homepage_html: str,
-    base_url: str,
-    *,
-    timeout: int = 15,
-) -> list[str]:
-    """Scrape relationship pages (about, subsidiaries, partners) for outbound links.
-
-    Ported from pseudogeek7/domain-hunter site_scrape.py — finds external domains
-    the org lists on its own site (highest-priority evidence).
-    """
-    from bs4 import BeautifulSoup  # type: ignore
-
-    _RELATIONSHIP_HINTS = [
-        "subsidiar", "joint-venture", "jointventure", "joint_venture", "investor",
-        "group-compan", "group_compan", "groupcompan", "our-compan", "ourcompan",
-        "affiliat", "partner", "about-us", "aboutus", "about",
-    ]
-
-    _EXCLUDED_DOMAINS = {
-        "facebook.com", "twitter.com", "x.com", "linkedin.com", "youtube.com",
-        "instagram.com", "pinterest.com", "tiktok.com", "whatsapp.com", "telegram.org",
-        "google.com", "googleapis.com", "gstatic.com", "google-analytics.com",
-        "googletagmanager.com", "doubleclick.net", "cloudflare.com",
-        "wordpress.com", "wp.com", "jquery.com", "jsdelivr.net",
-        "w3.org", "schema.org", "wikipedia.org", "wikimedia.org", "apple.com",
-        "microsoft.com", "adobe.com",
-    }
-
-    soup = BeautifulSoup(homepage_html, "html.parser")
-
-    # Extract all links from homepage
-    home_links = []
-    for a in soup.find_all("a", href=True):
-        href = a["href"].strip()
-        if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
-            continue
-        from urllib.parse import urljoin
-        abs_url = urljoin(base_url, href)
-        text = (a.get_text() or "").strip()
-        home_links.append({"url": abs_url, "text": text})
-
-    # Find relationship pages
-    relationship_pages = []
-    seen_urls = set()
-    for link in home_links:
-        parsed = urlparse(link["url"])
-        path = parsed.path.lower()
-        text = link["text"].lower()
-        if any(hint in path or hint in text for hint in _RELATIONSHIP_HINTS):
-            host = (parsed.hostname or "").lower()
-            if host == seed_root or host.endswith(f".{seed_root}"):
-                if link["url"] not in seen_urls:
-                    seen_urls.add(link["url"])
-                    relationship_pages.append(link["url"])
-
-    # Extract external domains from all links
-    candidates = []
-    seen_domains = {seed_root}
-
-    for link in home_links + [{"url": p, "text": ""} for p in relationship_pages[:8]]:
-        parsed = urlparse(link["url"])
-        host = (parsed.hostname or "").lower()
-        if not host:
-            continue
-        rd = root_domain(host)
-        if not rd or rd in seen_domains or rd in _EXCLUDED_DOMAINS:
-            continue
-        if rd.endswith(f".{seed_root}"):
-            continue
-        seen_domains.add(rd)
-        candidates.append(rd)
-
-    return candidates
-
-
 class DomainHunter:
     """Best-effort sister-domain discovery with multiple weak signals."""
 
@@ -1796,37 +1035,54 @@ class DomainHunter:
         self.session = _http_session()
         self.candidates: dict[str, Candidate] = {}
         self._brand_tokens: list[str] = _brand_tokens(self.seed_root)
+        # Circuit breaker for crt.sh: it is flaky (502s/empty bodies), and a
+        # single run may fire up to ~11 crt.sh queries (certs + knowledge_recon
+        # tokens + RDAP org tokens). When the service is down, retrying every
+        # query serially can burn minutes — so the breaker trips after TWO
+        # consecutive *service failures* (HTTP/non-JSON; each already includes
+        # retries with backoff) and the rest of the run skips crt.sh work.
+        # A successful JSON body with zero rows is not a failure — brand-token
+        # searches often return nothing — and any successful query resets the
+        # counter. The direct-domain query additionally falls back to
+        # certspotter (see _collect_cert_signals), so a crt.sh outage does not
+        # blind cert discovery entirely.
+        self._crtsh_degraded = False
+        self._crtsh_failures = 0
+
+    def _query_crtsh(self, query: str) -> list[dict[str, Any]]:
+        """Single crt.sh access point honoring the circuit breaker."""
+        if self._crtsh_degraded:
+            return []
+        rows = _crtsh_query(self.session, query)
+        if rows is None:
+            self._crtsh_failures += 1
+            if self._crtsh_failures >= 2:
+                self._crtsh_degraded = True
+            return []
+        self._crtsh_failures = 0
+        return rows
 
     @staticmethod
     def _normalize_modules(modules: str) -> set[str]:
         if not modules.strip():
             return {
-                "dns", "whois", "site_scrape",
-                "email_pivot", "spf_dmarc",
-                "reverse_ns", "reverse_whois", "tracker_pivot", "ai_hunt",
-                "favicon", "web_search",
+                "certs", "dns", "asn", "whois", "site_scrape", "knowledge_recon",
+                "corporate", "email_pivot", "spf_dmarc",
+                "reverse_ns",
             }
         normalized = {part.strip().lower() for part in modules.split(",") if part.strip()}
         aliases = {
             "crawl": "site_scrape",
             "scrape": "site_scrape",
+            "search": "knowledge_recon",
             "rdap": "whois",
+            "corp": "corporate",
+            "hierarchy": "corporate",
             "email": "email_pivot",
             "dmarc": "spf_dmarc",
             "spf": "spf_dmarc",
             "ns": "reverse_ns",
             "nameserver": "reverse_ns",
-            "revwhois": "reverse_whois",
-            "rev-whois": "reverse_whois",
-            "whoxy": "reverse_whois",
-            "trackers": "tracker_pivot",
-            "ga_pivot": "tracker_pivot",
-            "llm": "ai_hunt",
-            "gemini": "ai_hunt",
-            "gpt": "ai_hunt",
-            "anthropic": "ai_hunt",
-            "icon": "favicon",
-            "favicon_hash": "favicon",
         }
         return {aliases.get(part, part) for part in normalized}
 
@@ -1851,12 +1107,24 @@ class DomainHunter:
         if "site_scrape" in self.modules:
             self._collect_site_signals()
             self._emit_progress("site_scrape")
+        if "certs" in self.modules:
+            self._collect_cert_signals(self.seed_root)
+            self._emit_progress("certs")
+        if "knowledge_recon" in self.modules:
+            self._collect_knowledge_signals()
+            self._emit_progress("knowledge_recon")
         if "dns" in self.modules:
             self._collect_dns_signals()
             self._emit_progress("dns")
+        if "asn" in self.modules:
+            self._collect_reverse_ip_signals()
+            self._emit_progress("asn")
         if "whois" in self.modules:
             self._collect_rdap_signals()
             self._emit_progress("whois")
+        if "corporate" in self.modules:
+            self._collect_corporate_signals()
+            self._emit_progress("corporate")
         if "email_pivot" in self.modules:
             self._collect_email_pivot_signals()
             self._emit_progress("email_pivot")
@@ -1866,24 +1134,8 @@ class DomainHunter:
         if "reverse_ns" in self.modules:
             self._collect_reverse_ns_signals()
             self._emit_progress("reverse_ns")
-        if "reverse_whois" in self.modules:
-            self._collect_reverse_whois_signals()
-            self._emit_progress("reverse_whois")
-        if "tracker_pivot" in self.modules:
-            self._collect_tracker_pivot_signals()
-            self._emit_progress("tracker_pivot")
-        if "ai_hunt" in self.modules:
-            self._collect_ai_hunt_signals()
-            self._emit_progress("ai_hunt")
-        if "favicon" in self.modules:
-            self._collect_favicon_signals()
-            self._emit_progress("favicon")
-        if "web_search" in self.modules:
-            self._collect_web_search_signals()
-            self._emit_progress("web_search")
 
         self._resolve_live_status()
-
         filtered = [c for c in self.candidates.values() if self._passes_confidence_floor(c)]
         filtered.sort(key=lambda item: (-item.score, not item.live, item.domain))
         return filtered
@@ -1987,22 +1239,144 @@ class DomainHunter:
                         evidence=f"{label} reference: {domain}",
                     )
 
-        # Scrape relationship pages (about, subsidiaries, partners) for outbound links
-        # This finds external domains the org lists on its own site — highest-priority evidence
-        # Enhanced version with robots.txt respect
-        try:
-            rel_candidates = _site_scrape_with_robots(
-                self.session, self.seed_root, homepage, f"https://{self.seed_root}",
-            )
-            for rd in rel_candidates:
+    def _collect_cert_signals(self, query: str, *, token_search: bool = False) -> None:
+        query = query.strip().lower()
+        if not query:
+            return
+        crt_query = crtsh_like_query(query, token_search=token_search, seed_root=self.seed_root)
+        rows = self._query_crtsh(crt_query)
+        if not rows and not token_search:
+            # crt.sh gave nothing for the high-value direct query — diversify to
+            # a second CT aggregator so an outage there doesn't zero out cert
+            # discovery. (Token searches can't fall back: certspotter has no
+            # substring search.)
+            for raw_name in _certspotter_query(self.seed_root):
+                candidate = normalize_seed_domain(raw_name)
+                if candidate.startswith("*."):
+                    candidate = candidate[2:]
+                if not candidate:
+                    continue
+                rd = root_domain(candidate)
+                if rd and rd != self.seed_root:
+                    self._add_candidate(
+                        rd,
+                        method="certs",
+                        points=_POINTS_CERTS_DIRECT,
+                        evidence=f"certspotter: {candidate}",
+                    )
+            return
+        for row in rows:
+            names = str(row.get("name_value", "") or "").splitlines()
+            common_name = str(row.get("common_name", "") or "").strip()
+            entry_evidence = common_name or query
+            for raw_name in names:
+                candidate = normalize_seed_domain(raw_name.strip().lower())
+                if candidate.startswith("*."):
+                    candidate = candidate[2:]
+                if not candidate:
+                    continue
+                rd = root_domain(candidate)
+                if rd and rd != self.seed_root:
+                    points = _POINTS_CERTS_DIRECT if not token_search else _POINTS_CERTS_TOKEN
+                    self._add_candidate(
+                        rd,
+                        method="certs",
+                        points=points,
+                        evidence=f"crt.sh {entry_evidence}: {candidate}",
+                    )
+
+    def _collect_knowledge_signals(self) -> None:
+        """Brand-token crt.sh searches + Wikidata official websites + TLD variants.
+
+        ``knowledge_recon`` is the "brand relationship" module: it searches the
+        brand tokens on certificate transparency, pulls the brand entity's
+        official website from Wikidata (P856), and guesses TLD/pattern variants
+        (geo.tv -> geonews.tv, geotv.pk) — each verified by DNS before scoring.
+        """
+        for token in self._brand_tokens[:3]:
+            self._collect_cert_signals(token, token_search=True)
+
+        # crt.sh fallback: when crt.sh is down, brand-token cert searches
+        # return nothing.  Probe certspotter for the brand label across
+        # common TLDs to recover cert-based discovery.
+        if self._crtsh_degraded:
+            brand_label = self.seed_root.split(".")[0]
+            if len(brand_label) >= 3:
+                for rd in _certspotter_brand_probe(brand_label, self.session):
+                    if rd != self.seed_root:
+                        self._add_candidate(
+                            rd,
+                            method="certs",
+                            points=_POINTS_CERTS_TOKEN,
+                            evidence=f"certspotter brand probe: {brand_label} → {rd}",
+                        )
+
+        # Wikidata anchors on the SEED ROOT first: a bare brand token can bind
+        # to a namesake entity (abc.xyz -> the Disney "ABC"), which manufactured
+        # false "official website" candidates. Only when the seed itself has no
+        # entity do we fall back — to progressively looser seed-derived forms
+        # (label -> collapsed label -> seed tokens), never to a brand token
+        # that is not part of the seed's own name.
+        wikidata_websites: list[str] = []
+        for form in _wikidata_search_forms(self.seed_root):
+            hit_entity, websites = _wikidata_official_websites(self.session, form)
+            if hit_entity:
+                wikidata_websites = websites
+                break
+        for website in wikidata_websites:
+            host = urlparse(website if "://" in website else f"//{website}").hostname
+            if not host:
+                continue
+            rd = root_domain(host)
+            if rd and rd != self.seed_root:
                 self._add_candidate(
                     rd,
-                    method="site_scrape",
-                    points=_POINTS_SITE_LINK + 5,  # bonus for relationship page evidence
-                    evidence=f"relationship page link: {rd}",
+                    method="wikidata",
+                    points=_POINTS_WIKIDATA,
+                    evidence=f"wikidata P856: {website}",
                 )
-        except Exception as exc:
-            logger.info("site_scrape: enhanced scraping failed: %s", exc)
+
+        if self.seed_tld:
+            # Variant guessing, generic (no hardcoded English word list):
+            #   * BARE brand token across the seed TLD + generic gTLDs
+            #     (geo.tv -> geo.com/geo.net/geo.io ...) — language-independent.
+            #   * COMPOUND token + brandword (geo + "news" -> geonews.tv) where
+            #     the brandword is derived from the seed's OWN discovered brand
+            #     tokens (homepage title, populated by site_scrape which runs
+            #     first), NOT a fixed list — so it adapts per-domain/language.
+            # Every probe is DNS-verified before scoring, so the broader fan-out
+            # cannot inflate results with dead guesses.
+            base_tokens = [
+                token
+                for token in _seed_base_tokens(self.seed_root)
+                if len(token) >= 3 and not _is_tld_like_label(token, self.seed_tld)
+            ]
+            derived_suffixes = [
+                token
+                for token in self._brand_tokens
+                if token not in base_tokens and 3 <= len(token) <= 8 and token.isalnum()
+            ][:4]
+            tld_set = tuple(dict.fromkeys((self.seed_tld,) + _VARIANT_GTLDS + _CC_TLDS))
+            seen_variants: set[str] = set()
+            for token in base_tokens:
+                variants = [(token, tld_set)] + [
+                    # Compound variants stay on the seed TLD to bound noise.
+                    (f"{token}{suffix}", (self.seed_tld,))
+                    for suffix in derived_suffixes
+                ]
+                for variant, probe_tlds in variants:
+                    if variant in seen_variants:
+                        continue
+                    seen_variants.add(variant)
+                    for tld in probe_tlds:
+                        probe = f"{variant}.{tld}"
+                        if _is_likely_domain_or_none(probe) and _domain_resolves(probe):
+                            self._add_candidate(
+                                probe,
+                                method="tld_variant",
+                                points=_POINTS_TLD_VARIANT,
+                                evidence=f"pattern variant {probe} resolves",
+                            )
 
     def _collect_dns_signals(self) -> None:
         hosts = _resolve_dns_hosts(self.seed_root)
@@ -2071,6 +1445,176 @@ class DomainHunter:
 
         walk(payload)
 
+        for token in org_tokens[:8]:
+            self._collect_cert_signals(token, token_search=True)
+
+    def _collect_corporate_signals(self) -> None:
+        """Brand/org-based discovery via crt.sh — the generic, reliable strategy.
+
+        For ANY seed domain, finds sister/affiliated domains by:
+        1. Seed cert issuer tokens → crt.sh (finds domains with same cert issuer)
+        2. Homepage title tokens → crt.sh (finds domains sharing brand words in certs)
+        3. ASN/org tokens → crt.sh (finds domains from same org)
+        4. Wikidata hierarchy (optional) — only when entity exists and has claims
+
+        NOTE: crt.sh wildcard queries (%brand%) timeout on broad terms. All crt.sh
+        searches use specific tokens from cert/title/org data, not wildcards.
+        """
+        seen_tokens: set[str] = set()
+
+        # Strategy 1: Seed cert issuer/subject tokens → crt.sh.
+        # The seed's TLS cert contains org/issuer names. Searching crt.sh for
+        # those exact tokens finds all other domains with certs from the same org.
+        import ssl
+        try:
+            context = ssl.create_default_context()
+            conn = ssl.wrap_socket(socket.socket(), context=context)
+            conn.settimeout(5)
+            conn.connect((self.seed_root, 443))
+            cert = conn.getpeercert()
+            conn.close()
+        except Exception:
+            cert = None
+
+        if cert:
+            cert_tokens: list[str] = []
+            for field in ("subject", "issuer"):
+                for rdn in cert.get(field, ()):
+                    for attr in rdn:
+                        if len(attr) >= 2:
+                            key, value = attr[0], attr[1]
+                            if key in ("organizationName", "organizationalUnitName"):
+                                for tok in _safe_tokens(str(value)):
+                                    if tok not in cert_tokens and len(tok) >= 3:
+                                        cert_tokens.append(tok)
+            for tok in cert_tokens[:5]:
+                if tok in seen_tokens:
+                    continue
+                seen_tokens.add(tok)
+                rows = self._query_crtsh(tok)
+                if rows:
+                    for row in rows:
+                        names = str(row.get("name_value", "") or "").splitlines()
+                        for raw_name in names:
+                            candidate = normalize_seed_domain(raw_name.strip().lower())
+                            if candidate.startswith("*."):
+                                candidate = candidate[2:]
+                            if not candidate:
+                                continue
+                            rd = root_domain(candidate)
+                            if rd and rd != self.seed_root:
+                                self._add_candidate(
+                                    rd,
+                                    method="corporate",
+                                    points=_POINTS_ORG_CERTS,
+                                    evidence=f"cert issuer: '{tok}' found {candidate}",
+                                )
+
+        # crt.sh fallback: when crt.sh is down, brand-token searches return
+        # nothing.  Probe certspotter for the seed brand across common TLDs
+        # to recover some cert-based discovery.
+        brand_label = self.seed_root.split(".")[0]
+        if len(brand_label) >= 3 and self._crtsh_degraded:
+            for rd in _certspotter_brand_probe(brand_label, self.session):
+                if rd != self.seed_root:
+                    self._add_candidate(
+                        rd,
+                        method="corporate",
+                        points=_POINTS_CERTS_TOKEN,
+                        evidence=f"certspotter brand probe: {brand_label} → {rd}",
+                    )
+
+        # Strategy 2: Homepage title tokens → crt.sh.
+        # Extract brand words from the page title and search crt.sh for each.
+        # Uses specific queries (not wildcards) to avoid crt.sh timeouts.
+        homepage, _ = _fetch_with_fallback(self.session, f"https://{self.seed_root}")
+        if homepage:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(homepage, "html.parser")
+            title = (soup.title.get_text(" ", strip=True) if soup.title else "").strip()
+            if title:
+                for separator in (" - ", " | ", " — ", " :: ", " // "):
+                    if separator in title:
+                        brand_phrase = title.split(separator)[0].strip()
+                        break
+                else:
+                    brand_phrase = title.strip()
+                for word in brand_phrase.split():
+                    tok = word.lower().strip(".,;:!?\"'()")
+                    if len(tok) >= 3 and tok not in seen_tokens and not _is_tld_like_label(tok, self.seed_tld):
+                        seen_tokens.add(tok)
+                        rows = self._query_crtsh(tok)
+                        if rows:
+                            for row in rows:
+                                names = str(row.get("name_value", "") or "").splitlines()
+                                for raw_name in names:
+                                    candidate = normalize_seed_domain(raw_name.strip().lower())
+                                    if candidate.startswith("*."):
+                                        candidate = candidate[2:]
+                                    if not candidate:
+                                        continue
+                                    rd = root_domain(candidate)
+                                    if rd and rd != self.seed_root:
+                                        self._add_candidate(
+                                            rd,
+                                            method="corporate",
+                                            points=_POINTS_CERTS_TOKEN,
+                                            evidence=f"title token: '{tok}' found {candidate}",
+                                        )
+
+        # Strategy 3: ASN/org tokens → crt.sh.
+        ips = _resolve_ips(self.seed_root)
+        seen_orgs: set[str] = set()
+        for ip in ips[:4]:
+            if _is_shared_edge_ip(ip):
+                continue
+            org = _asn_org(ip)
+            if not org or org in seen_orgs:
+                continue
+            seen_orgs.add(org)
+            org_tokens = [t for t in _safe_tokens(org) if len(t) >= 4
+                          and t.upper() not in ("THE", "AND", "FOR", "INC", "LTD", "LLC", "COM")]
+            for tok in org_tokens[:5]:
+                if tok in seen_tokens:
+                    continue
+                seen_tokens.add(tok)
+                rows = self._query_crtsh(tok)
+                if rows:
+                    for row in rows:
+                        names = str(row.get("name_value", "") or "").splitlines()
+                        for raw_name in names:
+                            candidate = normalize_seed_domain(raw_name.strip().lower())
+                            if candidate.startswith("*."):
+                                candidate = candidate[2:]
+                            if not candidate:
+                                continue
+                            rd = root_domain(candidate)
+                            if rd and rd != self.seed_root:
+                                self._add_candidate(
+                                    rd,
+                                    method="corporate",
+                                    points=_POINTS_ORG_CERTS,
+                                    evidence=f"org cert: '{tok}' from org '{org}' found {candidate}",
+                                )
+
+        # Strategy 4: Wikidata hierarchy (optional enhancement).
+        for form in _wikidata_search_forms(self.seed_root):
+            related_tokens = _wikidata_corporate_hierarchy(self.session, form)
+            for token in related_tokens:
+                if token in seen_tokens:
+                    continue
+                seen_tokens.add(token)
+                for tld in ("tv", "com", "net", "org", "pk", "com.pk", "io", "co"):
+                    probe = f"{token}.{tld}"
+                    if _is_likely_domain_or_none(probe) and _domain_resolves(probe):
+                        self._add_candidate(
+                            probe,
+                            method="corporate",
+                            points=_POINTS_CORPORATE,
+                            evidence=f"wikidata hierarchy: {token} (related to {form})",
+                        )
+                self._collect_cert_signals(token, token_search=True)
+
     def _collect_email_pivot_signals(self) -> None:
         """Extract emails from the seed site, then search crt.sh by registrant email.
 
@@ -2121,6 +1665,30 @@ class DomainHunter:
             if local not in seen:
                 seen.add(local)
                 unique_emails.append(e)
+
+        # Step 2: For each unique email local-part, search crt.sh
+        for email in unique_emails[:10]:
+            local = email.split("@")[0]
+            if len(local) < 3:
+                continue
+            rows = self._query_crtsh(f"%{local}%")
+            if rows:
+                for row in rows:
+                    names = str(row.get("name_value", "") or "").splitlines()
+                    for raw_name in names:
+                        candidate = normalize_seed_domain(raw_name.strip().lower())
+                        if candidate.startswith("*."):
+                            candidate = candidate[2:]
+                        if not candidate:
+                            continue
+                        rd = root_domain(candidate)
+                        if rd and rd != self.seed_root:
+                            self._add_candidate(
+                                rd,
+                                method="email_pivot",
+                                points=_POINTS_EMAIL_PIVOT,
+                                evidence=f"email pivot: {email} found in cert for {candidate}",
+                            )
 
     def _collect_spf_dmarc_signals(self) -> None:
         """Parse SPF includes and DMARC rua addresses to find related domains.
@@ -2184,127 +1752,6 @@ class DomainHunter:
                 points=_POINTS_REVERSE_NS,
                 evidence=f"authoritative NS: {ns}",
             )
-
-    def _collect_reverse_whois_signals(self) -> None:
-        """Reverse WHOIS discovery — finds domains by same registrant/org.
-
-        Uses Whoxy API (when WHOXY_API_KEY is set) for comprehensive reverse
-        WHOIS by email, company name, and registrant name.  Falls back to
-        ViewDNS free API when no Whoxy key is available.
-
-        This is the SINGLE HIGHEST-VALUE module for sister-domain discovery:
-        it finds domains that share NO infrastructure, NO certs, and NO DNS —
-        they are only linked by the same human or organization registering them.
-        """
-        for rd in _whoxy_reverse_whois(self.session, self.seed_root):
-            if rd != self.seed_root:
-                self._add_candidate(
-                    rd,
-                    method="reverse_whois",
-                    points=_POINTS_REVERSE_WHOIS,
-                    evidence=f"reverse WHOIS: same registrant/org as {self.seed_root}",
-                )
-
-    def _collect_tracker_pivot_signals(self) -> None:
-        """Tracker ID pivot — finds domains sharing GA/GTM/FB Pixel IDs.
-
-        Sites sharing the same Google Analytics property ID, GTM container,
-        or Facebook Pixel ID are likely operated by the same organization.
-        Extracts tracker IDs from the seed's homepage and searches urlscan.io
-        for other sites using the same IDs.
-        """
-        for rd in _tracker_id_pivot(self.session, self.seed_root):
-            if rd != self.seed_root:
-                self._add_candidate(
-                    rd,
-                    method="tracker_pivot",
-                    points=_POINTS_TRACKER_PIVOT,
-                    evidence=f"shared tracker ID with {self.seed_root}",
-                )
-
-    def _collect_ai_hunt_signals(self) -> None:
-        """AI-powered hypothesis generation via LLM (Gemini/Anthropic/OpenAI).
-
-        The LLM proposes plausible sister domains based on organizational
-        knowledge, then each suggestion is verified via DNS before recording.
-        API key read from .env: dom_hunter_gemini_key, dom_hunter_anthropic_key,
-        or dom_hunter_openai_key.
-        """
-        # Gather context from other modules
-        known_domains = list(self.candidates.keys())
-        org_name = ""
-        # Try to get org name from Wikidata or WHOIS
-        if "knowledge_recon" in self.modules:
-            for c in self.candidates.values():
-                if "wikidata" in c.methods:
-                    # Extract org name from evidence
-                    for ev in c.evidence:
-                        if "organization" in ev.lower() or "company" in ev.lower():
-                            org_name = ev.split(":")[-1].strip() if ":" in ev else ""
-                            break
-                    if org_name:
-                        break
-
-        # Call LLM
-        candidates = _call_llm_hunt(
-            self.session,
-            self.seed_root,
-            org_name=org_name,
-            known_domains=known_domains,
-        )
-
-        # Add verified candidates
-        for domain in candidates:
-            rd = root_domain(domain)
-            if rd and rd != self.seed_root and not _at_psl_private_apex(rd):
-                self._add_candidate(
-                    rd,
-                    method="ai_hunt",
-                    points=_POINTS_AI_HUNT,
-                    evidence=f"LLM hypothesis: {domain}",
-                )
-
-    def _collect_web_search_signals(self) -> None:
-        """Web search for associated/sister/parent domains of the target.
-
-        Searches Wikipedia + Google/Bing, extracts domain names from results.
-        Each is DNS-verified before recording.
-        """
-        domains = _web_search_sister_domains(self.session, self.seed_root)
-        for rd in domains:
-            if rd != self.seed_root:
-                self._add_candidate(
-                    rd,
-                    method="web_search",
-                    points=25,
-                    evidence=f"web search: sister/associated domain of {self.seed_root}",
-                )
-
-    def _collect_favicon_signals(self) -> None:
-        """Favicon MD5 fingerprinting for cross-site correlation.
-
-        Sites sharing the same favicon are likely operated by the same
-        organization (common with media groups using shared branding assets).
-        Computes the seed's favicon hash, then checks all existing candidates.
-        """
-        seed_hash = _favicon_md5(self.session, self.seed_root)
-        if not seed_hash:
-            return
-
-        # Store seed hash for later comparison
-        self._seed_favicon_hash = seed_hash
-
-        # Check all existing candidates for matching favicon
-        for candidate in list(self.candidates.values()):
-            if candidate.domain == self.seed_root:
-                continue
-            cand_hash = _favicon_md5(self.session, candidate.domain)
-            if cand_hash and cand_hash == seed_hash:
-                candidate.add(
-                    "favicon_hash",
-                    _POINTS_FAVICON_HASH,
-                    f"identical favicon MD5 hash to {self.seed_root}",
-                )
 
     def _resolve_live_status(self) -> None:
         # Parallel sweep with a global time budget: probing hundreds of

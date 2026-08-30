@@ -88,6 +88,36 @@ def print_stream_error(message: str) -> None:
     console.print(f"  [bold red]✗[/] {message}")
 
 
+def print_background_event(source: str, event_type: str, data: dict[str, Any]) -> None:
+    """Render one event from the persistent /agent/events stream — the fix for
+    background pipeline/spawned-agent activity being invisible. `source` is
+    "pipeline" (conductor lifecycle) or "agent:<role>" (a spawned phase
+    agent's own tool calls); tagged with a `[role]` prefix so it's visually
+    distinguishable from the current interactive turn's own output without
+    looking like a different, disconnected thing."""
+    label = f"[bold yellow][{source}][/]"
+    if event_type == "tool_start":
+        args = _format_tool_args(data.get("arguments", {}))
+        suffix = f"({args})" if args else "()"
+        console.print(f"{label} [bold cyan]▶[/] [bold]{data.get('tool_name', '?')}[/]{suffix}")
+    elif event_type == "tool_end":
+        success = data.get("success", False)
+        duration = data.get("duration_seconds", 0)
+        icon = "[green]✓[/]" if success else "[red]✗[/]"
+        console.print(f"{label} {icon} [dim]{data.get('tool_name', '?')}[/] ({duration:.1f}s)")
+    elif event_type in ("pipeline_launched", "phase_triggered", "recon_reopened"):
+        detail = data.get("reason") or data.get("phase") or ""
+        console.print(f"{label} [bold magenta]◆[/] {event_type}" + (f" — {detail}" if detail else ""))
+    elif event_type in ("pipeline_complete", "pipeline_stop", "pipeline_cancelled", "pipeline_error"):
+        console.print(f"{label} [bold]{event_type}[/]")
+    elif event_type == "assistant":
+        content = (data.get("content") or "").strip()
+        if content:
+            console.print(f"{label} [dim italic]{content[:200]}[/]")
+    elif event_type == "error":
+        console.print(f"{label} [bold red]✗[/] {data.get('message', 'error')}")
+
+
 def print_commander_decision(data: dict[str, Any]) -> None:
     action = data.get("action", "")
     phase = data.get("next_phase") or ""

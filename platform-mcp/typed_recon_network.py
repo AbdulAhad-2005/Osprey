@@ -60,7 +60,7 @@ _TOOL_BLURBS: dict[str, str] = {
     "whois_lookup": "WHOIS lookup (domain=). Auto-strips subdomains to apex domain.",
     "gau_discovery": "GetAllUrls historical URLs (domain=).",
     "anew_data_processing": "Deduplicate line-based tool output (input_data=).",
-    "domain_hunter": "Sister/affiliate root domains (domain=).",
+    "domain_hunter": "Sister/affiliate root domains (domain=). 12-module OSINT: cert transparency, DNS/ASN, WHOIS, Wikidata corporate hierarchy, email pivoting, SPF/DMARC, org certs, reverse NS, ASN expansion.",
     "dnsx_resolve": "Bulk DNS resolve to IPs/CNAMEs (target= host list).",
     "dnsx_reverse": "Reverse DNS / PTR (target= IP list) — maps IPs back to hostnames; each PTR name is a new seed. Run on resolved IPs to find co-located vhosts.",
     "asn_enum": "ASN/netblock enum (target= IP → Team Cymru IP→ASN, or target=AS#### → RADb prefix list). Expands scope to the org's full IP range. Skip provider-owned cloud ranges.",

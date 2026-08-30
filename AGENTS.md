@@ -43,6 +43,19 @@ whether you're driving directly (this session) or a backend-executed pipeline is
   agent to spawn inside your session just because you called this). You drive execution
   yourself: your own native subagent/Task mechanism (preferred), or `platform_spawn_agent`
   for a one-off backend-driven agent if you have no subagent mechanism of your own.
+- **Every unlocked phase's response carries its exact standardized brief — use it
+  VERBATIM as the subagent's task, never your own invented breakdown of the
+  methodology.** This is the same text the platform's own CLI/GUI reads for the same
+  phase (`phase_supervisor.subagent_brief()`), so a full pentest looks identical no
+  matter which brain — you, or this platform's own Commander — is driving it. Inventing
+  your own version of "how to do recon" per session is exactly the inconsistency this
+  is meant to prevent.
+- **Run the standardized sequence yourself, foreground, one visible session — never
+  detach it.** Spawn the recon subagent, watch it work, read the readiness signal again,
+  spawn the next unlocked phase, loop back on new findings — all within your own live
+  session, the same way you'd work through any other multi-step task. Do not build your
+  own "launch in the background and poll for status" wrapper around this; that hides
+  work from the user for no benefit — everything here is meant to be watched, not polled.
 
 This is evidence-based information, not an order or a gate — you decide what to do
 with it. Nothing on the platform side blocks you from writing a summary whenever you
@@ -77,15 +90,14 @@ The chain, driven by your judgment:
 1. **Recon agent first — required, never skipped.** Spawn it the instant a
    domain lands. Doing the recon work yourself instead of spawning is not an
    acceptable substitute — spawn, don't narrate what you would have spawned.
-   Its brief MUST say: enumerate subdomains EVERY way (subfinder + crt + amass +
-   domain_hunter + cert SANs), resolve ALL to IPs (dnsx), attempt CDN/WAF-origin
-   bypass on every fronted host (direct-to-origin probes, DNS history, TLS,
-   header analysis, `origin_ip_attribution`), then ports in MULTIPLE scan kinds
-   (naabu top-1000, SYN, rustscan, masscan variants), then services/versions
-   (`-sV -sC` on everything open), then URLs (httpx live, gau/wayback, js_recon,
-   katana). None of these steps are optional extras to trim when the target
-   looks simple — every one is required work, not a menu to pick from.
-   Anything >90s goes through `platform_job_start` — never block on one call.
+   Its brief is **`platform_pipeline`'s own recon brief, used verbatim** — do
+   not hand-write your own version of this methodology; that creates a second,
+   independently-drifting copy of the same instructions. (For reference, that
+   brief covers: every subdomain source, resolving all of them to IPs,
+   CDN/WAF-origin bypass on every fronted host, multiple port-scan techniques,
+   service/version detection, and URL discovery — none of it optional, none of
+   it a menu to trim on a target that looks simple.) Anything >90s goes through
+   `platform_job_start` — never block on one call.
 2. **Evidence check** — when the agent reports, YOU read
    `platform_findings` / `platform_finalize_check`. If real evidence exists (live
    host, service, technology, URLs), spawn the **vuln agent** (nuclei, dalfox,

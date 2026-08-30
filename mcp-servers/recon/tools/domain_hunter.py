@@ -1,9 +1,21 @@
 """
 Execute sister-domain discovery for affiliated root domains.
 
+Discovers ALL linked/associated domains using 10 signal sources:
+  - site_scrape:    Homepage links, robots.txt, sitemap.xml
+  - certs:          Certificate transparency (crt.sh)
+  - knowledge_recon: Brand-token crt.sh + Wikidata P856 + TLD variants (.pk, .com.pk, etc.)
+  - dns:            Seed's NS/MX hosts
+  - asn:            Reverse-IP co-location
+  - whois:          RDAP registrant org tokens
+  - certs:          certspotter + crt.sh CT (token search + brand probe)
+  - email_pivot:    Extract emails from site → crt.sh registrant search
+  - spf_dmarc:      Parse SPF includes + DMARC rua for related domains
+  - reverse_ns:     Find domains sharing the same authoritative NS
+
 Args:
     domain: Seed root domain
-    modules: Comma-separated subset of discovery modules
+    modules: Comma-separated subset of discovery modules (default: all 10)
     confidence_min: Minimum confidence tier to report
     additional_args: Additional CLI arguments
 
@@ -94,7 +106,7 @@ def run(
     additional_args: str = "",
     use_recovery: bool = True,
     use_cache: bool = True,
-    exec_timeout: int = 180,
+    exec_timeout: int = 300,
 ) -> dict[str, Any]:
     params = {
         "domain": domain,

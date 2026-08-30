@@ -11,13 +11,19 @@
 # threshold. Signals are counts of findings by type on the engagement blackboard.
 
 triggers:
-  vuln:            # start a vuln agent once recon has surfaced attack surface
+  vuln:            # start a vuln agent once recon has surfaced GENUINE breadth —
+                    # not the first scrap of evidence. A single service/host is not
+                    # "enough attack surface" for a real pass; a lone count-of-1
+                    # threshold let vuln unlock seconds into recon, racing it for
+                    # the same ground instead of complementing a real sweep.
     requires_any:
-      live_hosts: 1
-      services: 1
-      technologies: 1
-      urls: 5
-  exploit:         # start an exploit agent once vuln has found something to chain
+      live_hosts: 3
+      services: 5
+      technologies: 2
+      urls: 15
+  exploit:         # start an exploit agent once vuln has found something to chain —
+                    # one real vuln/credential/secret IS reason enough; unlike vuln's
+                    # breadth requirement, this stays a low bar on purpose.
     requires_any:
       vulnerabilities: 1
       credentials: 1
