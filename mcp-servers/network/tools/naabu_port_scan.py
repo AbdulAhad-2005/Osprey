@@ -25,11 +25,48 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from _core.runner import default_parse, run_tool
 from _core.result import ToolResult
+from _core.runner import default_parse, run_tool
 
 TOOL_NAME = "naabu_port_scan"
 CATEGORY = "network"
+_MAX_INLINE_PORT_EXPANSION = 5000
+
+
+def _normalize_ports(ports: str) -> str:
+    if not ports:
+        return ""
+    expanded: list[str] = []
+    seen: set[int] = set()
+    for token in re.split(r"[,\s]+", ports):
+        token = token.strip()
+        if not token:
+            continue
+        range_match = re.fullmatch(r"(\d{1,5})-(\d{1,5})", token)
+        if range_match:
+            start = int(range_match.group(1))
+            end = int(range_match.group(2))
+            if start < 1 or end > 65535 or start > end:
+                raise ValueError(f"Invalid port range: {token}")
+            if end - start > _MAX_INLINE_PORT_EXPANSION:
+                raise ValueError(
+                    f"Port range {token} is too wide for naabu_port_scan; "
+                    "use top_ports or an approved full scan"
+                )
+            for port in range(start, end + 1):
+                if port not in seen:
+                    seen.add(port)
+                    expanded.append(str(port))
+            continue
+        if not token.isdigit():
+            raise ValueError(f"Invalid port value: {token}")
+        port = int(token)
+        if port < 1 or port > 65535:
+            raise ValueError(f"Invalid port value: {token}")
+        if port not in seen:
+            seen.add(port)
+            expanded.append(str(port))
+    return ",".join(expanded)
 
 
 def build_command(**params: Any) -> str:
@@ -47,6 +84,8 @@ def build_command(**params: Any) -> str:
     if top_match and not top_ports:
         top_ports = top_match.group(1)
         ports = ""
+    elif ports:
+        ports = _normalize_ports(ports)
 
     hosts = [p.strip() for p in re.split(r"[,\s]+", target) if p.strip()]
     if len(hosts) > 1:

@@ -1,8 +1,8 @@
-"""CLI package for the AI Pentest Platform.
+"""CLI package for Osprey.
 
 Initializing stdout/stderr to UTF-8 here ensures rich's glyphs (✓ ✗ — …) never
 crash on Windows consoles that default to cp1252, regardless of how the CLI is
-launched (``python -m cli`` or the ``pentest`` console script).
+launched (``python -m cli`` or the ``osprey`` console script).
 """
 
 from __future__ import annotations

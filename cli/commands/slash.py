@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from typing import TYPE_CHECKING
 
 import httpx
@@ -9,9 +8,17 @@ import httpx
 if TYPE_CHECKING:
     from cli.api.client import APIClient
 
+from cli.session import (
+    cycle_detail_mode,
+    get_detail_mode,
+    set_detail_mode,
+    tool_transcript,
+)
 from cli.ui.display import (
     console,
     consume_agent_stream,
+    print_chat_history,
+    print_command_help,
     print_engagements,
     print_error,
     print_findings,
@@ -20,6 +27,8 @@ from cli.ui.display import (
     print_info,
     print_models,
     print_success,
+    print_tool_detail,
+    print_tool_history,
     print_tools,
 )
 
@@ -33,7 +42,7 @@ def handle_help(args: list[str], client: "APIClient") -> None:
         "/model": "Show active LLM model + key status",
         "/scan [target] [phase] [--mcp|--engine] [--include-low-confidence]": (
             "Bind target + scan. --mcp = LLM-driven (default); "
-            "--engine = autonomous trigger-graph pipeline, no LLM. Prompts if omitted. "
+            "--engine = autonomous trigger-graph pipeline, no LLM. "
             "--include-low-confidence (engine mode) also scans low-confidence origin "
             "candidates the engine holds back by default."
         ),
@@ -52,17 +61,19 @@ def handle_help(args: list[str], client: "APIClient") -> None:
         "/report [--engagement <id>]": (
             "Write a Markdown recon report (seed -> sisters -> subdomains -> IPs -> ports/services/tech, WHOIS/OSINT, vulns) to ./reports/"
         ),
+        "/tool [id]": "List recent tool calls, or open one full command/output transcript",
+        "/output [id]": "Alias for /tool [id]",
+        "/chat": "Show the current engagement's Commander chat thread",
+        "/details [compact|preview|verbose]": "Cycle or set live tool output detail level",
         "/status": "Show current session status (auto-refreshes config)",
         "/config": "Show config (auto-refreshes from .env)",
         "/config reload": "Force backend to re-read .env",
         "/reconnect": "Re-read .env and reconnect to changed API_BASE_URL",
         "/reset": "Clear agent conversation memory for this CLI session",
         "/clear": "Clear the terminal screen",
-        "/exit": "Exit the CLI",
+        "/exit | /quit | /q": "Exit the CLI",
     }
-    print_info("Available commands:")
-    for cmd, desc in commands.items():
-        print_info(f"  {cmd:<28} {desc}")
+    print_command_help(commands)
     print_info("")
     print_info("LLM Setup:")
     print_info("  Set LLM_MODEL and LLM_API_KEY in your .env file to enable the agent.")
@@ -204,9 +215,6 @@ _PHASE_PROMPTS = {
 }
 
 
-_SCAN_MODES = {"mcp", "engine"}
-
-
 def handle_scan(args: list[str], client: "APIClient") -> None:
     """Bind an engagement to the target and run either the LLM-driven agent
     pipeline (mcp mode) or the autonomous trigger-graph engine (engine mode,
@@ -214,7 +222,7 @@ def handle_scan(args: list[str], client: "APIClient") -> None:
     -> subnet pivot -> ports -> services -> OSINT, run to a fixpoint).
 
     Usage: /scan [target] [recon|network|full] [--mcp|--engine]
-    Missing target or mode are asked for interactively.
+    Missing targets are asked for interactively; missing mode defaults to MCP.
     """
     mode = ""
     if "--mcp" in args:
@@ -240,8 +248,7 @@ def handle_scan(args: list[str], client: "APIClient") -> None:
             return
 
     if not mode:
-        choice = input("Mode — [1] mcp (LLM-driven, default) or [2] engine (autonomous, Nessus-style): ").strip()
-        mode = "engine" if choice in ("2", "engine") else "mcp"
+        mode = "mcp"
 
     try:
         data = client.compile_engagement_for_target(target)
@@ -639,10 +646,21 @@ def handle_status(args: list[str], client: "APIClient") -> None:
 
     print_info(f"Backend: {backend_status}")
     print_info(f"API URL:  {client.base_url}")
+    print_info(f"Details:  {get_detail_mode()}")
 
     active = client.active_engagement_id
     if active:
         print_info(f"Engagement: {active}")
+        activity = client.get_pipeline_activity(active)
+        agents_line = activity.get("agents_line")
+        readiness = activity.get("phase_readiness_text")
+        active_agents = activity.get("active_agents") or []
+        if agents_line:
+            print_info(f"Pipeline:   {agents_line}")
+        if readiness:
+            print_info(f"Readiness:  {readiness}")
+        if active_agents:
+            print_info(f"Agents:     {len(active_agents)} active")
     else:
         print_info("Engagement: none — run /scan <target> or /engage new <target>")
 
@@ -656,6 +674,10 @@ def handle_status(args: list[str], client: "APIClient") -> None:
         print_info(f"Tools:     {data.get('tools_available', 0)} available")
     except Exception:
         pass
+    recent = tool_transcript.recent(1)
+    if recent:
+        last = recent[-1]
+        print_info(f"Last tool: #{last.id} {last.tool_name} ({last.status_text})")
 
 
 def handle_config(args: list[str], client: "APIClient") -> None:
@@ -689,6 +711,7 @@ def handle_config(args: list[str], client: "APIClient") -> None:
 
 def handle_reset(args: list[str], client: "APIClient") -> None:
     client.reset_conversation()
+    tool_transcript.clear()
     print_success("Conversation cleared. Next prompt starts a fresh agent thread.")
 
 
@@ -701,6 +724,66 @@ def handle_exit(args: list[str], client: "APIClient") -> None:
     """Placeholder so /exit shows in autocomplete. The actual exit is handled in
     execute_command (which intercepts /exit and returns False before dispatch)."""
     return None
+
+
+def handle_details(args: list[str], client: "APIClient") -> None:
+    if args:
+        try:
+            mode = set_detail_mode(args[0].lower())
+        except ValueError as exc:
+            print_error(str(exc))
+            return
+    else:
+        mode = cycle_detail_mode()
+    print_success(f"Tool detail mode: {mode}")
+
+
+def _read_artifact_text(client: "APIClient", engagement_id: str, path: str) -> str | None:
+    data = client.read_artifact(engagement_id, path, limit=200_000)
+    if not data:
+        return None
+    for key in ("content", "text", "data"):
+        value = data.get(key)
+        if isinstance(value, str):
+            return value
+    return str(data)
+
+
+def handle_tool(args: list[str], client: "APIClient") -> None:
+    if not args:
+        print_tool_history()
+        return
+
+    rec = tool_transcript.get(args[0])
+    if rec is None:
+        print_error(f"No tool call found for {args[0]}.")
+        print_tool_history()
+        return
+
+    engagement_id = client.active_engagement_id
+    stdout_text = None
+    stderr_text = None
+    if engagement_id and rec.stdout_path:
+        stdout_text = _read_artifact_text(client, engagement_id, rec.stdout_path)
+    if engagement_id and rec.stderr_path:
+        stderr_text = _read_artifact_text(client, engagement_id, rec.stderr_path)
+
+    print_tool_detail(rec, stdout_text=stdout_text, stderr_text=stderr_text)
+
+
+def handle_chat(args: list[str], client: "APIClient") -> None:
+    engagement_id = client.active_engagement_id
+    if not engagement_id:
+        print_info("No engagement bound. Run /scan <target> or /engage new <target> first.")
+        return
+    limit = 12
+    if args:
+        try:
+            limit = max(1, min(50, int(args[0])))
+        except ValueError:
+            print_error("Usage: /chat [message-count]")
+            return
+    print_chat_history(client.get_conversation(engagement_id, limit=limit), limit=limit)
 
 
 def handle_reconnect(args: list[str], client: "APIClient") -> None:
@@ -727,12 +810,18 @@ SLASH_COMMANDS: dict[str, tuple[str, "callable"]] = {
     "/engage": ("Manage engagements", handle_engagements),
     "/findings": ("Show findings", handle_findings),
     "/report": ("Write a Markdown recon report to ./reports/", handle_report),
+    "/tool": ("Show or expand tool-call output", handle_tool),
+    "/output": ("Alias for /tool", handle_tool),
+    "/chat": ("Show Commander chat history", handle_chat),
+    "/details": ("Set live tool detail level", handle_details),
     "/status": ("Session status", handle_status),
     "/config": ("Show configuration", handle_config),
     "/reconnect": ("Re-read .env and reconnect to backend", handle_reconnect),
     "/reset": ("Clear agent conversation", handle_reset),
     "/clear": ("Clear screen", handle_clear),
     "/exit": ("Exit the CLI", handle_exit),
+    "/quit": ("Exit the CLI", handle_exit),
+    "/q": ("Exit the CLI", handle_exit),
 }
 
 
@@ -742,7 +831,7 @@ def execute_command(command_line: str, client: "APIClient") -> bool:
     cmd = parts[0].lower()
     args = parts[1:]
 
-    if cmd == "/exit":
+    if cmd in {"/exit", "/quit", "/q"}:
         return False
 
     if cmd in SLASH_COMMANDS:

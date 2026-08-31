@@ -3,11 +3,21 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Any
 
+from rich import box
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.markup import escape
 from rich.panel import Panel
+from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
+
+from cli.branding import APP_NAME, APP_TAGLINE, CLI_COMMAND, LEGACY_CLI_COMMAND
+from cli.session import (
+    ToolRecord,
+    get_detail_mode,
+    tool_transcript,
+)
 
 console = Console()
 
@@ -43,7 +53,10 @@ def print_agent_thinking(message: str) -> None:
 
 
 def print_tool_call(tool_name: str, arguments: dict[str, Any]) -> None:
-    console.print(f"  [bold cyan]>[/] {tool_name}({', '.join(f'{k}={v}' for k, v in arguments.items() if v)})")
+    args = ", ".join(
+        f"{escape(str(k))}={escape(str(v))}" for k, v in arguments.items() if v
+    )
+    console.print(f"  [bold cyan]>[/] {escape(tool_name)}({args})")
 
 
 def _format_tool_args(arguments: dict[str, Any], max_len: int = 80) -> str:
@@ -54,38 +67,127 @@ def _format_tool_args(arguments: dict[str, Any], max_len: int = 80) -> str:
     return text
 
 
+def _tool_label(rec: ToolRecord) -> str:
+    prefix = f"#{rec.id:03d}"
+    phase = f" {rec.phase}" if rec.phase else ""
+    source = "" if rec.source == "commander" else f" [{rec.source}]"
+    return f"{prefix}{phase}{source}"
+
+
+def _status_style(success: bool | None) -> str:
+    if success is None:
+        return "cyan"
+    return "green" if success else "red"
+
+
+def _status_icon(success: bool | None) -> str:
+    if success is None:
+        return "▶"
+    return "✓" if success else "✗"
+
+
+def _quiet_tool(rec: ToolRecord, success: bool | None = None) -> bool:
+    if get_detail_mode() == "verbose":
+        return False
+    return rec.display_quiet and success is not False
+
+
+def _print_result_summary(rec: ToolRecord) -> None:
+    detail_mode = get_detail_mode()
+    if detail_mode == "compact":
+        return
+    if rec.finding_titles:
+        label = "finding" if rec.success is not False else "record"
+        for title in rec.finding_titles[:4]:
+            console.print(f"      [green]{label}[/] [dim]{escape(title[:180])}[/]")
+        remaining = len(rec.finding_titles) - 4
+        if remaining > 0:
+            console.print(f"      [dim]+ {remaining} more {label}(s); open /tool {rec.id}[/]")
+        return
+    if rec.stdout_path or rec.stderr_path:
+        console.print(f"      [dim]output saved; open /tool {rec.id} for full stdout/stderr[/]")
+
+
+def _print_preview_block(rec: ToolRecord) -> None:
+    detail_mode = get_detail_mode()
+    if detail_mode == "compact":
+        return
+    if detail_mode != "verbose" and rec.finding_titles:
+        return
+    legacy_lines = [line for line in rec.preview.strip().splitlines() if line.strip()]
+    lines = legacy_lines if detail_mode == "verbose" else (rec.display_preview or legacy_lines)
+    if not lines:
+        return
+    max_lines = 14 if detail_mode == "verbose" else (6 if rec.success is False else 3)
+    for line in lines[:max_lines]:
+        console.print(f"      [dim]{escape(line[:180])}[/]")
+
+
 def print_run_start(data: dict[str, Any]) -> None:
     target = data.get("target") or "—"
     tools = data.get("tools", 0)
     model = data.get("model", "")
     phase = data.get("phase", "full")
+    table = Table.grid(expand=True)
+    table.add_column(ratio=1)
+    table.add_column(justify="right")
+    table.add_row(
+        Text(f"{APP_NAME} run", style="bold green"),
+        Text(f"{phase} · {tools} tools", style="dim"),
+    )
+    table.add_row(
+        Text(str(target), style="bold"),
+        Text(str(model), style="dim"),
+    )
+    console.print(Panel(table, border_style="green", box=box.ROUNDED, padding=(0, 1)))
+
+
+def print_tool_start_live(
+    tool_name: str, arguments: dict[str, Any], data: dict[str, Any] | None = None
+) -> None:
+    payload = {"tool_name": tool_name, "arguments": arguments, **(data or {})}
+    rec = tool_transcript.start(payload)
+    if _quiet_tool(rec):
+        return
+    args = _format_tool_args(arguments)
+    suffix = f" [dim]{escape(args)}[/]" if args else ""
     console.print(
-        f"[bold green]▶[/] [bold]Agent run[/] "
-        f"[dim]({phase} · target: {target} · {tools} tools · {model})[/]"
+        f"  [cyan]▶[/] [bold cyan]{_tool_label(rec)}[/] "
+        f"[bold]{escape(tool_name)}[/]{suffix}"
     )
 
 
-def print_tool_start_live(tool_name: str, arguments: dict[str, Any]) -> None:
-    args = _format_tool_args(arguments)
-    suffix = f"({args})" if args else "()"
-    console.print(f"  [bold cyan]▶[/] [bold]{tool_name}[/]{suffix}")
-
-
 def print_tool_end_live(tool_name: str, data: dict[str, Any]) -> None:
-    success = data.get("success", False)
-    duration = data.get("duration_seconds", 0)
-    icon = "[green]✓[/]" if success else "[red]✗[/]"
-    status = "ok" if success else "failed"
-    console.print(f"  {icon} [dim]{tool_name}[/] {status} [dim]({duration:.1f}s)[/]")
-    preview = (data.get("preview") or "").strip()
-    if preview:
-        max_lines = 8 if not success else 4
-        for line in preview.splitlines()[:max_lines]:
-            console.print(f"    [dim]{line[:160]}[/]")
+    rec = tool_transcript.end({**data, "tool_name": tool_name})
+    if _quiet_tool(rec, rec.success):
+        return
+    style = _status_style(rec.success)
+    icon = _status_icon(rec.success)
+    findings = f" · {len(rec.finding_titles)} finding(s)" if rec.finding_titles else ""
+    output = " · output saved" if rec.stdout_path or rec.stderr_path else ""
+    cache = " · cache" if rec.cache_hit else ""
+    console.print(
+        f"  [{style}]{icon}[/] [bold {style}]{_tool_label(rec)}[/] "
+        f"[dim]{escape(tool_name)}[/] {rec.status_text} "
+        f"[dim]({rec.duration_seconds:.1f}s{findings}{cache}{output}) · /tool {rec.id}[/]"
+    )
+    _print_result_summary(rec)
+    _print_preview_block(rec)
+    if get_detail_mode() == "verbose" and rec.command:
+        console.print(f"      [dim]$ {escape(rec.command[:220])}[/]")
+
+
+def _friendly_stream_error(message: str) -> str:
+    lowered = message.lower()
+    if "timeout" in lowered and ("litellm" in lowered or "openrouter" in lowered):
+        return "LLM request timed out; Osprey will continue if the pipeline still has work."
+    if "llm completion failed" in lowered:
+        return "LLM completion failed; check /status for model/provider configuration."
+    return message[:240]
 
 
 def print_stream_error(message: str) -> None:
-    console.print(f"  [bold red]✗[/] {message}")
+    console.print(f"  [bold red]✗[/] {escape(_friendly_stream_error(message))}")
 
 
 def print_background_event(source: str, event_type: str, data: dict[str, Any]) -> None:
@@ -95,37 +197,56 @@ def print_background_event(source: str, event_type: str, data: dict[str, Any]) -
     agent's own tool calls); tagged with a `[role]` prefix so it's visually
     distinguishable from the current interactive turn's own output without
     looking like a different, disconnected thing."""
-    label = f"[bold yellow][{source}][/]"
+    label = f"[bold yellow][{escape(source)}][/]"
     if event_type == "tool_start":
+        rec = tool_transcript.start(data, source=source)
+        if _quiet_tool(rec):
+            return
         args = _format_tool_args(data.get("arguments", {}))
-        suffix = f"({args})" if args else "()"
-        console.print(f"{label} [bold cyan]▶[/] [bold]{data.get('tool_name', '?')}[/]{suffix}")
+        suffix = f" [dim]{escape(args)}[/]" if args else ""
+        console.print(
+            f"{label} [cyan]▶[/] [bold cyan]{_tool_label(rec)}[/] "
+            f"[bold]{escape(str(data.get('tool_name', '?')))}[/]{suffix}"
+        )
     elif event_type == "tool_end":
-        success = data.get("success", False)
-        duration = data.get("duration_seconds", 0)
-        icon = "[green]✓[/]" if success else "[red]✗[/]"
-        console.print(f"{label} {icon} [dim]{data.get('tool_name', '?')}[/] ({duration:.1f}s)")
+        rec = tool_transcript.end(data, source=source)
+        if _quiet_tool(rec, rec.success):
+            return
+        style = _status_style(rec.success)
+        icon = _status_icon(rec.success)
+        findings = f" · {len(rec.finding_titles)} finding(s)" if rec.finding_titles else ""
+        output = " · output saved" if rec.stdout_path or rec.stderr_path else ""
+        console.print(
+            f"{label} [{style}]{icon}[/] [bold {style}]{_tool_label(rec)}[/] "
+            f"[dim]{escape(rec.tool_name)}[/] {rec.status_text} "
+            f"[dim]({rec.duration_seconds:.1f}s{findings}{output}) · /tool {rec.id}[/]"
+        )
+        _print_result_summary(rec)
+        _print_preview_block(rec)
     elif event_type in ("pipeline_launched", "phase_triggered", "recon_reopened"):
         detail = data.get("reason") or data.get("phase") or ""
-        console.print(f"{label} [bold magenta]◆[/] {event_type}" + (f" — {detail}" if detail else ""))
+        console.print(f"{label} [bold magenta]◆[/] {event_type}" + (f" — {escape(str(detail))}" if detail else ""))
     elif event_type in ("pipeline_complete", "pipeline_stop", "pipeline_cancelled", "pipeline_error"):
-        console.print(f"{label} [bold]{event_type}[/]")
+        console.print(f"{label} [bold]{escape(event_type)}[/]")
     elif event_type == "assistant":
         content = (data.get("content") or "").strip()
         if content:
-            console.print(f"{label} [dim italic]{content[:200]}[/]")
+            console.print(f"{label} [dim italic]{escape(content[:200])}[/]")
     elif event_type == "error":
-        console.print(f"{label} [bold red]✗[/] {data.get('message', 'error')}")
+        console.print(
+            f"{label} [bold red]✗[/] "
+            f"{escape(_friendly_stream_error(str(data.get('message', 'error'))))}"
+        )
 
 
 def print_commander_decision(data: dict[str, Any]) -> None:
     action = data.get("action", "")
     phase = data.get("next_phase") or ""
     reasoning = (data.get("reasoning") or "").strip()
-    label = f"[bold magenta]◆ commander[/] {action}" + (f" → {phase}" if phase else "")
+    label = f"[bold magenta]◆ commander[/] {escape(str(action))}" + (f" → {escape(str(phase))}" if phase else "")
     console.print(label)
     if reasoning:
-        console.print(f"    [dim]{reasoning[:200]}[/]")
+        console.print(f"    [dim]{escape(reasoning[:200])}[/]")
 
 
 def print_phase_report(phase: str, content: str) -> None:
@@ -166,7 +287,7 @@ def consume_agent_stream(stream: Iterator[tuple[str, dict[str, Any]]]) -> dict[s
             mx = data.get("max", "?")
             print_agent_thinking(f"Open work remains — continuing ({attempt}/{mx})...")
         elif event_type == "tool_start":
-            print_tool_start_live(data.get("tool_name", "?"), data.get("arguments", {}))
+            print_tool_start_live(data.get("tool_name", "?"), data.get("arguments", {}), data)
         elif event_type == "tool_end":
             print_tool_end_live(data.get("tool_name", "?"), data)
         elif event_type == "assistant":
@@ -378,11 +499,119 @@ def print_findings_grouped(data: dict[str, Any]) -> None:
         )
 
 
+def print_tool_history(limit: int = 12) -> None:
+    records = tool_transcript.recent(limit)
+    if not records:
+        print_info("No tool calls in this CLI session yet.")
+        return
+    table = Table(title="Recent Tool Calls", show_header=True, header_style="bold cyan", box=box.SIMPLE)
+    table.add_column("ID", style="bold cyan", no_wrap=True)
+    table.add_column("Tool", style="bold")
+    table.add_column("Status", no_wrap=True)
+    table.add_column("Time", justify="right", no_wrap=True)
+    table.add_column("Args")
+    for rec in records:
+        status = Text(rec.status_text, style=_status_style(rec.success))
+        table.add_row(
+            f"#{rec.id}",
+            rec.tool_name,
+            status,
+            f"{rec.duration_seconds:.1f}s" if rec.success is not None else "running",
+            _format_tool_args(rec.arguments, max_len=72),
+        )
+    console.print(table)
+    print_info("Open one with /tool <id>, for example /tool 3.")
+
+
+def print_tool_detail(
+    rec: ToolRecord,
+    *,
+    stdout_text: str | None = None,
+    stderr_text: str | None = None,
+) -> None:
+    meta = Table.grid(expand=True)
+    meta.add_column(ratio=1)
+    meta.add_column(ratio=1)
+    meta.add_row("Tool", rec.tool_name)
+    meta.add_row("Status", rec.status_text)
+    meta.add_row("Phase", rec.phase or "-")
+    meta.add_row("Source", rec.source or "-")
+    meta.add_row("Duration", f"{rec.duration_seconds:.2f}s")
+    meta.add_row("Return code", "-" if rec.returncode is None else str(rec.returncode))
+    if rec.cache_hit:
+        meta.add_row("Cache", "hit")
+    if rec.finding_titles:
+        meta.add_row("Findings", ", ".join(rec.finding_titles[:8]))
+    if rec.stdout_path:
+        meta.add_row("Stdout path", rec.stdout_path)
+    if rec.stderr_path:
+        meta.add_row("Stderr path", rec.stderr_path)
+    if rec.next_hint:
+        meta.add_row("Next hint", rec.next_hint)
+    console.print(Panel(meta, title=f"Tool #{rec.id}", border_style=_status_style(rec.success), box=box.ROUNDED))
+
+    if rec.arguments:
+        args = json_dump_pretty(rec.arguments)
+        console.print(Panel(Syntax(args, "json", word_wrap=True), title="Arguments", border_style="cyan", box=box.ROUNDED))
+    if rec.command:
+        console.print(Panel(Syntax(rec.command, "bash", word_wrap=True), title="Command", border_style="cyan", box=box.ROUNDED))
+
+    stdout_body = stdout_text if stdout_text is not None else rec.stdout
+    stderr_body = stderr_text if stderr_text is not None else rec.stderr
+    if stdout_body:
+        console.print(Panel(Syntax(stdout_body.rstrip(), "text", word_wrap=True), title="Stdout", border_style="green", box=box.ROUNDED))
+    elif rec.preview:
+        console.print(Panel(escape(rec.preview.rstrip()), title="Preview", border_style="green", box=box.ROUNDED))
+    if stderr_body:
+        console.print(Panel(Syntax(stderr_body.rstrip(), "text", word_wrap=True), title="Stderr", border_style="red", box=box.ROUNDED))
+
+
+def print_chat_history(messages: list[dict[str, Any]], *, limit: int = 12) -> None:
+    if not messages:
+        print_info("No Commander chat history for the active engagement yet.")
+        return
+    shown = messages[-limit:]
+    for msg in shown:
+        role = str(msg.get("role") or "?")
+        content = str(msg.get("content") or "").strip()
+        if not content:
+            continue
+        style = "cyan" if role == "user" else "green"
+        title = "You" if role == "user" else "Commander"
+        body = Markdown(content) if role == "assistant" else Text(content)
+        console.print(Panel(body, title=title, border_style=style, box=box.ROUNDED))
+
+
+def print_command_help(commands: dict[str, str]) -> None:
+    table = Table(
+        title=f"{APP_NAME} Commands",
+        show_header=True,
+        header_style="bold cyan",
+        box=box.ROUNDED,
+    )
+    table.add_column("Command", style="bold cyan", no_wrap=True)
+    table.add_column("What it does")
+    for command, description in commands.items():
+        table.add_row(command, description)
+    console.print(table)
+    print_info("Tip: run /details to cycle live output between compact, preview, and verbose.")
+
+
+def json_dump_pretty(data: Any) -> str:
+    import json
+
+    return json.dumps(data, indent=2, sort_keys=True, default=str)
+
+
 def print_banner() -> None:
     banner = Text()
-    banner.append("AI Pentest Platform", style="bold green")
-    banner.append(" — CLI Operator\n", style="dim")
+    banner.append(APP_NAME, style="bold green")
+    banner.append(f" — {APP_TAGLINE}\n", style="dim")
     banner.append("Type ", style="dim")
     banner.append("/help", style="bold cyan")
-    banner.append(" for commands, or enter a prompt to interact with the agent.\n", style="dim")
-    console.print(Panel(banner, border_style="green", padding=(0, 1)))
+    banner.append(" for commands, ", style="dim")
+    banner.append("/status", style="bold cyan")
+    banner.append(" for session detail, or enter a prompt to talk to the Commander.\n", style="dim")
+    banner.append(f"Launch from anywhere with `{CLI_COMMAND}`", style="dim")
+    banner.append(f" (`{LEGACY_CLI_COMMAND}` still works as an alias).", style="dim")
+    console.print(Panel(banner, border_style="green", box=box.ROUNDED, padding=(0, 1)))

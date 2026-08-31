@@ -1,11 +1,11 @@
-# Autonomous Pentesting Tool
+# Osprey
 
-An autonomous AI penetration testing platform with a FastAPI backend and a Python CLI operator interface.
+Osprey is an autonomous AI penetration testing platform with a FastAPI backend, MCP gateway, and an interactive Python CLI operator interface.
 
 ## Architecture
 
 - `backend/` — FastAPI control plane, API endpoints, database models, workflow logic
-- `cli/` — Python CLI tool (prompt_toolkit) for interacting with the platform
+- `cli/` — Osprey CLI tool (prompt_toolkit + Rich) for interacting with the platform
 - `mcp-servers/` — Capability-based tool adapters for recon, osint, network, web, vuln, …
 - `platform-mcp/` — MCP gateway server connecting AI clients to the platform
 - `docker-compose.yml` — Postgres + (optional) Kali Linux tools + FastAPI backend
@@ -93,7 +93,7 @@ what's present** (see below) and the agent only uses tools it actually has.
 The `requirements.txt` files are generated pinned locks (regenerate with
 `pip-compile pyproject.toml`).
 
-## Run the CLI
+## Run Osprey CLI
 
 Prerequisites: the backend is up, `.env` has `ENABLE_BUILTIN_AGENT=true` (the CLI
 drives the backend's built-in agent; the OpenCode/MCP path does not need this), and
@@ -108,15 +108,17 @@ pip install -e ./cli            # from the repo root (Windows + Linux)
 Run it (connects to `http://localhost:9000`; override with `API_BASE_URL`):
 
 ```bash
-python -m cli                   # or the `pentest` console script
+osprey                          # interactive CLI, from any working directory
+osprey scan example.com         # scriptable scan entry point
+osprey run --target example.com "show me the current attack surface"
 ```
+
+`python -m cli` and the legacy `pentest` console script still work.
 
 > **Engine mode (`/scan <target> --engine`) needs a working tool backend.** It runs
 > scanners with no LLM, so the Kali tools container must be up:
 > `docker compose --profile kali up -d` (or point `KALI_CONTAINER` at your own tools
-> container / set it empty for native host tools). If no backend is available the
-> engine now fails fast with one clear message instead of reporting every tool as
-> failed.
+> container / set it empty for native host tools).
 
 ### CLI commands
 
@@ -132,6 +134,10 @@ python -m cli                   # or the `pentest` console script
 | `/engage new <target>`        | Create a fresh engagement for a target            |
 | `/engage set <id>`            | Bind this session to an existing engagement       |
 | `/findings`                   | Show findings for the active engagement           |
+| `/tool [id]`                  | List recent tool calls or expand one transcript   |
+| `/output [id]`                | Alias for `/tool`                                 |
+| `/chat [count]`               | Show the current Commander chat thread            |
+| `/details [mode]`             | Set live output detail: `compact`, `preview`, or `verbose` |
 | `/status`                     | Backend / model / active engagement status        |
 | `/config` · `/config reload`  | Show config · force backend to re-read `.env`     |
 | `/reconnect`                  | Re-read `.env` and reconnect to `API_BASE_URL`    |

@@ -1,4 +1,4 @@
-"""CLI entry point for the AI Pentest Platform."""
+"""CLI entry point for Osprey."""
 from cli.main import main
 
 if __name__ == "__main__":

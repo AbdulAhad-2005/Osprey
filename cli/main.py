@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import argparse
 import os
 import sys
-import argparse
 import threading
 import time
+
+from cli.branding import APP_NAME, CLI_COMMAND
 
 _DEPS_HINT = """\
 Missing Python dependency: {name}
@@ -16,19 +18,25 @@ Install it into the active environment (from the repo root) with one of:
     # or
     pip install -r cli/requirements.txt
 
-Then run it again with `python -m cli` (or the `pentest` command)."""
+Then run it again with `python -m cli` (or the `osprey` command)."""
 
 try:
     from dotenv import load_dotenv
     from prompt_toolkit import PromptSession
     from prompt_toolkit.completion import Completer, Completion
+    from prompt_toolkit.formatted_text import HTML
     from prompt_toolkit.history import InMemoryHistory
     from prompt_toolkit.patch_stdout import patch_stdout
 
     from cli.api.client import APIClient
     from cli.commands.prompt import handle_prompt
     from cli.commands.slash import SLASH_COMMANDS, execute_command
-    from cli.ui.display import print_background_event, print_banner, print_error, print_info
+    from cli.ui.display import (
+        print_background_event,
+        print_banner,
+        print_error,
+        print_info,
+    )
 except ModuleNotFoundError as exc:
     if exc.name in {"prompt_toolkit", "httpx", "rich", "dotenv", "pydantic"}:
         print(_DEPS_HINT.format(name=exc.name), file=sys.stderr)
@@ -45,6 +53,21 @@ class CommandCompleter(Completer):
             for cmd, (desc, _) in SLASH_COMMANDS.items():
                 if cmd.startswith(text):
                     yield Completion(cmd, start_position=-len(text), display_meta=desc)
+
+
+def _prompt_message(client: APIClient) -> HTML:
+    if client.active_engagement_id:
+        short = client.active_engagement_id[:8]
+        return HTML(f"<ansigreen><b>{CLI_COMMAND}</b></ansigreen> <ansiblue>{short}</ansiblue> ❯ ")
+    return HTML(f"<ansigreen><b>{CLI_COMMAND}</b></ansigreen> ❯ ")
+
+
+def _bottom_toolbar(client: APIClient) -> HTML:
+    engagement = client.active_engagement_id[:8] if client.active_engagement_id else "no engagement"
+    return HTML(
+        f" <b>{APP_NAME}</b>  api {client.base_url}  session {engagement}  "
+        "/help /status /tool N /details "
+    )
 
 
 def _background_event_listener(client: APIClient, stop_event: threading.Event) -> None:
@@ -105,14 +128,18 @@ def _prompt_loop_body(client: APIClient, session) -> None:
     while True:
         if session is not None:
             try:
-                user_input = session.prompt("pentest> ", complete_while_typing=True)
+                user_input = session.prompt(
+                    _prompt_message(client),
+                    complete_while_typing=True,
+                    bottom_toolbar=lambda: _bottom_toolbar(client),
+                )
             except KeyboardInterrupt:
                 continue
             except EOFError:
                 break
         else:
             try:
-                user_input = input("pentest> ")
+                user_input = input(f"{CLI_COMMAND}> ")
             except (EOFError, KeyboardInterrupt):
                 break
 
@@ -144,7 +171,7 @@ def _run_scan_noninteractive(args: argparse.Namespace) -> int:
     point. Binds the target, then drives the conductor the same way the
     interactive `/scan` command does (phase='full' -> the deterministic
     phase_supervisor pipeline; see services/orchestrator.py) — never prompts."""
-    from cli.commands.slash import _PHASE_PROMPTS, _bind_engagement, _api_error_text
+    from cli.commands.slash import _PHASE_PROMPTS, _api_error_text, _bind_engagement
     from cli.ui.display import consume_agent_stream
 
     api_url = os.getenv("API_BASE_URL", "http://localhost:9000")
@@ -162,8 +189,14 @@ def _run_scan_noninteractive(args: argparse.Namespace) -> int:
         )
         return 1
 
+    target = args.target or args.target_arg
+    if not target:
+        print_error("Missing target. Usage: osprey scan <target> [--phase full]")
+        client.close()
+        return 2
+
     try:
-        data = client.compile_engagement_for_target(args.target, force_new=args.force_new)
+        data = client.compile_engagement_for_target(target, force_new=args.force_new)
         _bind_engagement(client, data)
     except Exception as exc:
         print_error(_api_error_text(exc))
@@ -172,14 +205,14 @@ def _run_scan_noninteractive(args: argparse.Namespace) -> int:
     if args.engine:
         from cli.commands.slash import _run_engine_scan
 
-        _run_engine_scan(client, args.target, include_low_confidence=args.include_low_confidence)
+        _run_engine_scan(client, target, include_low_confidence=args.include_low_confidence)
         client.close()
         return 0
 
     phase = args.phase
-    print_info(f"Scanning {args.target} (phase: {phase}) — the agent will report back when done.")
+    print_info(f"Scanning {target} (phase: {phase}) — the agent will report back when done.")
     stream = client.send_prompt_stream(
-        _PHASE_PROMPTS[phase].format(target=args.target),
+        _PHASE_PROMPTS[phase].format(target=target),
         engagement_id=client.active_engagement_id,
         phase=phase,
     )
@@ -195,22 +228,71 @@ def _run_scan_noninteractive(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_prompt_noninteractive(args: argparse.Namespace) -> int:
+    from cli.commands.slash import _api_error_text
+    from cli.ui.display import consume_agent_stream
+
+    prompt = " ".join(args.prompt or []).strip()
+    if not prompt:
+        print_error("Missing prompt. Usage: osprey run \"what should we do next?\"")
+        return 2
+
+    api_url = os.getenv("API_BASE_URL", "http://localhost:9000")
+    client = APIClient(base_url=api_url)
+    if args.target:
+        try:
+            data = client.compile_engagement_for_target(args.target, force_new=args.force_new)
+            client._set_active_engagement(data.get("id") or data.get("engagement_id"))
+        except Exception as exc:
+            print_error(_api_error_text(exc))
+            client.close()
+            return 1
+
+    stream = client.send_prompt_stream(
+        prompt,
+        engagement_id=client.active_engagement_id,
+        phase=args.phase,
+    )
+    final = consume_agent_stream(stream)
+    client.close()
+    if final is None:
+        print_error("Agent stream ended without a final response.")
+        return 1
+    if not final.get("success", True) and final.get("error"):
+        print_error(final["error"])
+        return 1
+    return 0
+
+
 def main() -> None:
     # Load .env so API_BASE_URL and other env vars are available
     load_dotenv()
 
-    parser = argparse.ArgumentParser(prog="pentest", add_help=False)
+    parser = argparse.ArgumentParser(
+        prog=CLI_COMMAND,
+        description=f"{APP_NAME} command-line operator",
+    )
+    parser.add_argument("--version", action="version", version=f"{APP_NAME} CLI 0.1.0")
     subparsers = parser.add_subparsers(dest="command")
     scan_parser = subparsers.add_parser("scan", help="Run a scan non-interactively (scriptable/CI)")
-    scan_parser.add_argument("--target", required=True, help="Domain, IP, CIDR, or URL")
+    scan_parser.add_argument("target_arg", nargs="?", help="Domain, IP, CIDR, or URL")
+    scan_parser.add_argument("--target", help="Domain, IP, CIDR, or URL")
     scan_parser.add_argument("--phase", default="full", choices=_SCAN_PHASES)
     scan_parser.add_argument("--engine", action="store_true", help="Autonomous trigger-graph engine, no LLM")
     scan_parser.add_argument("--include-low-confidence", action="store_true")
     scan_parser.add_argument("--force-new", action="store_true", help="Force a new engagement instead of reusing")
 
-    args, _unknown = parser.parse_known_args()
+    run_parser = subparsers.add_parser("run", help="Send one prompt without opening the REPL")
+    run_parser.add_argument("prompt", nargs=argparse.REMAINDER)
+    run_parser.add_argument("--target", help="Bind or reuse an engagement before sending the prompt")
+    run_parser.add_argument("--phase", default="commander", choices=_SCAN_PHASES)
+    run_parser.add_argument("--force-new", action="store_true", help="Force a new engagement for --target")
+
+    args = parser.parse_args()
     if args.command == "scan":
         sys.exit(_run_scan_noninteractive(args))
+    if args.command == "run":
+        sys.exit(_run_prompt_noninteractive(args))
 
     api_url = os.getenv("API_BASE_URL", "http://localhost:9000")
     client = APIClient(base_url=api_url)

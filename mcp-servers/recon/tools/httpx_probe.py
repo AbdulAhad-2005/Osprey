@@ -28,21 +28,30 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from _core.runner import default_parse, run_tool
+from _core.command_utils import q
 from _core.result import ToolResult
+from _core.runner import default_parse, run_tool
 
 TOOL_NAME = "httpx_probe"
 CATEGORY = "recon"
 
-# The PyPI package `httpx` (a plain backend dependency, used as an HTTP client
-# library — not this tool) installs its own same-named `httpx` console script,
-# which sits ahead of the Go tool on $PATH and would silently shadow it (a
-# Click CLI: "Usage: httpx [OPTIONS] URL", no `-u`/`-l` flags at all) — a
-# well-known name collision in the security-tooling community. Fixed at the
-# source (kali-tools/Dockerfile aliases the real binary to `httpx-toolkit`,
-# Kali's own apt package uses the same name for the same reason), so this
-# wrapper never has to guess an install path at runtime.
-_HTTPX_BIN_EXPR = "httpx-toolkit"
+_HTTPX_RESOLVER = r"""
+HTTPX_BIN=""
+for candidate in httpx-toolkit httpx-pd httpx; do
+  if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -h 2>&1 | grep -q -- '-tech-detect'; then
+    HTTPX_BIN="$(command -v "$candidate")"
+    break
+  fi
+done
+if [ -z "$HTTPX_BIN" ]; then
+  echo "ProjectDiscovery httpx binary not found. Install it as httpx-toolkit/httpx-pd, or ensure the Go httpx binary is ahead of the Python httpx package CLI on PATH." >&2
+  exit 127
+fi
+"""
+
+
+def _httpx_command(argv: str) -> str:
+    return "bash -lc " + q(f"{_HTTPX_RESOLVER}\n\"$HTTPX_BIN\" {argv}".strip())
 
 
 def build_command(**params: Any) -> str:
@@ -87,10 +96,10 @@ def build_command(**params: Any) -> str:
 
     # -l expects a file path; -u accepts a single host/URL.
     if len(lines) == 1 and Path(lines[0]).is_file():
-        return f"{_HTTPX_BIN_EXPR} -l {shlex.quote(lines[0])} {suffix}".strip()
+        return _httpx_command(f"-l {shlex.quote(lines[0])} {suffix}".strip())
 
     if len(lines) == 1:
-        return f"{_HTTPX_BIN_EXPR} -u {shlex.quote(lines[0])} {suffix}".strip()
+        return _httpx_command(f"-u {shlex.quote(lines[0])} {suffix}".strip())
 
     # Multi-target: NEVER stuff 50+ hosts into `httpx -u a b c` (breaks ARG_MAX /
     # docker exec and caused backend 500s). Write a list file then `httpx -l`.
@@ -108,7 +117,7 @@ def build_command(**params: Any) -> str:
             % (list_path, payload)
         )
     )
-    return f"{write_py} && {_HTTPX_BIN_EXPR} -l {shlex.quote(list_path)} {suffix}".strip()
+    return f"{write_py} && {_httpx_command(f'-l {shlex.quote(list_path)} {suffix}'.strip())}"
 
 def parse(result: ToolResult) -> dict[str, Any]:
     return default_parse(result)

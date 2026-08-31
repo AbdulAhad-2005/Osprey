@@ -52,7 +52,7 @@ class APIClient:
             resp = self._client.get(self._url("/api/v1/tools"))
             resp.raise_for_status()
             return resp.json()
-        except httpx.HTTPStatusError:
+        except httpx.HTTPError:
             return []
 
     def list_models(self) -> list[dict[str, Any]]:
@@ -60,7 +60,7 @@ class APIClient:
             resp = self._client.get(self._url("/api/v1/models"))
             resp.raise_for_status()
             return resp.json()
-        except httpx.HTTPStatusError:
+        except httpx.HTTPError:
             return []
 
     def list_engagements(self) -> list[dict[str, Any]]:
@@ -70,6 +70,28 @@ class APIClient:
             return resp.json()
         except httpx.HTTPStatusError:
             return []
+
+    def get_conversation(self, engagement_id: str, *, limit: int = 30) -> list[dict[str, Any]]:
+        try:
+            resp = self._client.get(
+                self._url(f"/api/v1/agent/conversation/{engagement_id}"),
+                params={"limit": limit},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("messages") or []
+        except httpx.HTTPStatusError:
+            return []
+
+    def get_pipeline_activity(self, engagement_id: str) -> dict[str, Any]:
+        try:
+            resp = self._client.get(
+                self._url(f"/api/v1/agent/pipeline-activity/{engagement_id}")
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPError:
+            return {}
 
     def list_findings(
         self, engagement_id: str | None = None, *, q: str = "", limit: int = 100,
@@ -109,7 +131,31 @@ class APIClient:
             resp = self._client.get(self._url(f"/api/v1/engagements/{engagement_id}/report.md"))
             resp.raise_for_status()
             return resp.text
-        except httpx.HTTPStatusError:
+        except httpx.HTTPError:
+            return None
+
+    def read_artifact(
+        self,
+        engagement_id: str,
+        path: str,
+        *,
+        offset: int = 0,
+        limit: int = 200_000,
+    ) -> dict[str, Any] | None:
+        """Read a saved tool artifact slice from the backend/Kali workspace."""
+        try:
+            resp = self._client.get(
+                self._url("/api/v1/hybrid/artifacts/read"),
+                params={
+                    "engagement_id": engagement_id,
+                    "path": path,
+                    "offset": offset,
+                    "limit": limit,
+                },
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPError:
             return None
 
     def list_findings_grouped(

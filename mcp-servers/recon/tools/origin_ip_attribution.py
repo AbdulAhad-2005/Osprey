@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import ipaddress
 import re
-import shlex
 import socket
 import subprocess
 import sys
@@ -40,9 +39,9 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from _core.runner import run_tool
-from _core.result import ToolResult
 from _core.command_utils import q
+from _core.result import ToolResult
+from _core.runner import run_tool
 
 TOOL_NAME = "origin_ip_attribution"
 CATEGORY = "recon"
@@ -325,7 +324,7 @@ def build_command(**params: Any) -> str:
 
     for target in all_targets:
         script_lines.extend([
-            f'echo "=== Resolving "{q(target)}" ==="',
+            f"printf '%s\\n' {q(f'=== Resolving {target} ===')}",
             # Use dig for CNAME+full output, also host for clean A resolution.
             # dig/host print one value per line for a multi-A-record domain —
             # `paste -sd" " -` folds each into a single space-joined line
@@ -340,53 +339,53 @@ def build_command(**params: Any) -> str:
             f'NS_RECORDS=$(dig +short NS {q(target)} 2>/dev/null)',
             f'MX_RECORDS=$(dig +short MX {q(target)} 2>/dev/null)',
             f'SPF_RECORD=$(dig +short TXT {q(target)} 2>/dev/null | grep -i spf | paste -sd" " -)',
-            f'echo "A: $A_RECORDS"',
-            f'echo "A_HOSTS: $A_HOSTS"',
-            f'echo "AAAA: $AAAA_RECORDS"',
-            f'echo "CNAME: $CNAME_RECORD"',
-            f'echo "NS: $NS_RECORDS"',
-            f'echo "MX: $MX_RECORDS"',
-            f'echo "SPF: $SPF_RECORD"',
+            'echo "A: $A_RECORDS"',
+            'echo "A_HOSTS: $A_HOSTS"',
+            'echo "AAAA: $AAAA_RECORDS"',
+            'echo "CNAME: $CNAME_RECORD"',
+            'echo "NS: $NS_RECORDS"',
+            'echo "MX: $MX_RECORDS"',
+            'echo "SPF: $SPF_RECORD"',
         ])
 
         # Resolve MX records to IPs
         # MX format: "10 mail.example.com." — extract 2nd field as hostname
         script_lines.extend([
-            f'echo "=== MX_IPS ==="',
-            f'for mx_host in $(echo "$MX_RECORDS" | awk \'{{print $2}}\' | sed \'s/\\.$//\' | sort -u); do',
-            f'  if [ -n "$mx_host" ] && ! echo "$mx_host" | grep -qE "^[0-9]+$"; then',
-            f'    MX_IP=$(dig +short A "$mx_host" 2>/dev/null | head -1)',
-            f'    if [ -n "$MX_IP" ]; then',
-            f'      echo "MX_IP: $mx_host -> $MX_IP"',
-            f'    fi',
-            f'  fi',
-            f'done',
+            'echo "=== MX_IPS ==="',
+            'for mx_host in $(echo "$MX_RECORDS" | awk \'{print $2}\' | sed \'s/\\.$//\' | sort -u); do',
+            '  if [ -n "$mx_host" ] && ! echo "$mx_host" | grep -qE "^[0-9]+$"; then',
+            '    MX_IP=$(dig +short A "$mx_host" 2>/dev/null | head -1)',
+            '    if [ -n "$MX_IP" ]; then',
+            '      echo "MX_IP: $mx_host -> $MX_IP"',
+            '    fi',
+            '  fi',
+            'done',
         ])
 
         # Probe common subdomains (kept in sync with ORIGIN_SUBDOMAINS Python list)
         sub_list = " ".join(ORIGIN_SUBDOMAINS)
         script_lines.extend([
-            f'echo "=== SUBDOMAIN_IPS ==="',
+            'echo "=== SUBDOMAIN_IPS ==="',
             f'for sub in {sub_list}; do',
             f'  SUB_RAW=$(dig +short A "$sub."{q(target)} 2>/dev/null | tail -1)',
-            f'  SUB_IP=""',
-            f'  if [ -n "$SUB_RAW" ] && echo "$SUB_RAW" | grep -qE \'^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$\'; then',
-            f'    SUB_IP="$SUB_RAW"',
-            f'  elif [ -n "$SUB_RAW" ]; then',
-            f'    CNAME=$(echo "$SUB_RAW" | sed \'s/\\.$//\')',
-            f'    SUB_IP=$(dig +short A "$CNAME" 2>/dev/null | grep -m1 -E \'^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$\' || true)',
-            f'  fi',
-            f'  if [ -n "$SUB_IP" ]; then',
+            '  SUB_IP=""',
+            '  if [ -n "$SUB_RAW" ] && echo "$SUB_RAW" | grep -qE \'^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$\'; then',
+            '    SUB_IP="$SUB_RAW"',
+            '  elif [ -n "$SUB_RAW" ]; then',
+            '    CNAME=$(echo "$SUB_RAW" | sed \'s/\\.$//\')',
+            '    SUB_IP=$(dig +short A "$CNAME" 2>/dev/null | grep -m1 -E \'^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$\' || true)',
+            '  fi',
+            '  if [ -n "$SUB_IP" ]; then',
             f'    echo "SUBDOMAIN_IP: $sub."{q(target)}" -> $SUB_IP"',
-            f'  fi',
-            f'done',
+            '  fi',
+            'done',
         ])
 
         # HTTP headers for CDN detection
         script_lines.extend([
-            f'echo "=== HTTP_HEADERS ==="',
-            f'curl -sI --max-time {timeout} "https://"{q(target)} 2>/dev/null | head -25 || true',
-            f'curl -sI --max-time {timeout} "http://"{q(target)} 2>/dev/null | head -15 || true',
+            'echo "=== HTTP_HEADERS ==="',
+            f"curl -sI --max-time {q(timeout)} {q(f'https://{target}')} 2>/dev/null | head -25 || true",
+            f"curl -sI --max-time {q(timeout)} {q(f'http://{target}')} 2>/dev/null | head -15 || true",
         ])
 
     script_lines.extend([

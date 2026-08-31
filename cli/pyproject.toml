@@ -3,9 +3,9 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pentest-cli"
+name = "osprey-cli"
 version = "0.1.0"
-description = "CLI interface for the Autonomous AI Pentesting Platform"
+description = "CLI interface for Osprey, an autonomous AI pentesting platform"
 license = {text = "AGPL-3.0-or-later"}
 requires-python = ">=3.11"
 dependencies = [
@@ -16,12 +16,14 @@ dependencies = [
 ]
 
 [project.scripts]
+osprey = "cli.main:main"
 pentest = "cli.main:main"
 
 [tool.setuptools]
 # The importable `cli` package lives one level above this pyproject (repo root).
 # Rooting the package dir at the parent makes `pip install -e ./cli` register
-# the repo root on sys.path, so both `python -m cli` (from anywhere) and the `pentest` console script work
+# the repo root on sys.path, so both `python -m cli` (from anywhere) and the
+# `osprey` console script work. `pentest` remains as a compatibility alias.
 package-dir = {"" = ".."}
 
 [tool.setuptools.packages.find]

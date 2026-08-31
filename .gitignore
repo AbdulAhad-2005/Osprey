@@ -33,6 +33,8 @@ Thumbs.db
 
 backend/tests/
 backend/uv.lock/
+uv.lock
+cli/tests
 
 # Local engagement artifacts (sensitive)
 Pentest-Reports/
