@@ -1,0 +1,116 @@
+"""Parallelism config — caps + soft long-tool hints. LLM decides when to branch."""
+
+from __future__ import annotations
+
+import logging
+from functools import lru_cache
+from typing import Any
+
+from osprey.services.config_loader import read_config
+
+logger = logging.getLogger(__name__)
+
+_DEFAULTS: dict[str, Any] = {
+    "max_running_jobs": 4,
+    # Multi-agent pipeline caps (separate slot pool from tool jobs so LLM agents
+    # and background tools don't starve each other):
+    "max_running_agents": 4,      # concurrent AGENT-kind jobs per engagement
+    "agent_spawn_budget": 40,     # total agents an engagement may ever spawn (runaway guard)
+    "max_spawn_depth": 4,         # agent-spawns-agent nesting cap (fork-bomb guard)
+    "suggest_job_timeout_seconds": 120,
+    "long_tools": [
+        "amass_scan",
+        "nmap_syn_scan",
+        "nmap_service_scan",
+        "rustscan_fast_scan",
+        "httpx_probe",
+        "domain_hunter",
+    ],
+    "batch_probe_min_hosts": 8,
+    "batch_probe_min_subdomains": 20,
+    # Active-memory awareness (advisory nudges only — never blocks):
+    # nudge a memory re-sync once this many tools have run since the last consult.
+    "consult_drift_tools": 6,
+}
+
+
+@lru_cache(maxsize=1)
+def load_parallelism() -> dict[str, Any]:
+    data = dict(_DEFAULTS)
+    raw = read_config("parallelism.yaml")
+    if isinstance(raw, dict):
+        data.update(raw)
+    # normalize
+    data["max_running_jobs"] = max(1, min(int(data.get("max_running_jobs") or 4), 16))
+    data["max_running_agents"] = max(1, min(int(data.get("max_running_agents") or 4), 16))
+    data["agent_spawn_budget"] = max(1, min(int(data.get("agent_spawn_budget") or 40), 500))
+    data["max_spawn_depth"] = max(1, min(int(data.get("max_spawn_depth") or 4), 8))
+    data["suggest_job_timeout_seconds"] = max(
+        30, min(int(data.get("suggest_job_timeout_seconds") or 120), 3600)
+    )
+    tools = data.get("long_tools") or []
+    data["long_tools"] = frozenset(str(t).strip() for t in tools if str(t).strip())
+    data["batch_probe_min_hosts"] = max(3, int(data.get("batch_probe_min_hosts") or 8))
+    data["batch_probe_min_subdomains"] = max(5, int(data.get("batch_probe_min_subdomains") or 20))
+    data["consult_drift_tools"] = max(2, int(data.get("consult_drift_tools") or 6))
+    return data
+
+
+def reload_parallelism() -> dict[str, Any]:
+    load_parallelism.cache_clear()
+    return load_parallelism()
+
+
+def max_running_jobs() -> int:
+    return int(load_parallelism()["max_running_jobs"])
+
+
+def max_running_agents() -> int:
+    return int(load_parallelism()["max_running_agents"])
+
+
+def agent_spawn_budget() -> int:
+    return int(load_parallelism()["agent_spawn_budget"])
+
+
+def max_spawn_depth() -> int:
+    return int(load_parallelism()["max_spawn_depth"])
+
+
+def consult_drift_threshold() -> int:
+    return int(load_parallelism()["consult_drift_tools"])
+
+
+def suggest_background(tool_name: str, timeout: int) -> bool:
+    """True when a sync call is often better as a parallel job (hint only)."""
+    cfg = load_parallelism()
+    name = (tool_name or "").strip()
+    if name in cfg["long_tools"]:
+        return True
+    return int(timeout or 0) >= int(cfg["suggest_job_timeout_seconds"])
+
+
+def jobs_header_line(jobs: list[dict[str, Any]] | None, *, max_slots: int | None = None) -> str:
+    """Compact `jobs: 2/4 running [amass, nmap]` for context."""
+    cap = max_slots if max_slots is not None else max_running_jobs()
+    rows = jobs or []
+    active = [
+        j
+        for j in rows
+        if str(j.get("status") or "").lower() in ("queued", "running")
+    ]
+    n = len(active)
+    if not active and not rows:
+        return f"jobs: 0/{cap} running"
+    labels: list[str] = []
+    for j in active[:6]:
+        lab = (j.get("label") or j.get("tool_name") or j.get("kind") or "?").strip()
+        labels.append(lab.split("(")[0][:40])
+    if labels:
+        return f"jobs: {n}/{cap} running [{', '.join(labels)}]"
+    # show recent finished briefly
+    recent = []
+    for j in rows[:3]:
+        lab = (j.get("label") or j.get("tool_name") or "?")[:32]
+        recent.append(f"{lab}:{j.get('status')}")
+    return f"jobs: {n}/{cap} running" + (f" — recent: {', '.join(recent)}" if recent else "")

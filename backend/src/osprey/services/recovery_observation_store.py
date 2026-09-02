@@ -1,0 +1,193 @@
+"""Durable shadow-mode evidence for the execution-recovery classifier.
+
+Deliberately a small dedicated table (same shape as tool_coverage_store), not
+an extension of AuditLog — AuditLog is an in-memory, restart-losing, globally
+capped deque, unsuitable for accumulating the evidence a real enforcement-flip
+decision needs across a whole engagement lifecycle.
+"""
+
+from __future__ import annotations
+
+import threading
+from datetime import datetime, timezone
+
+from pydantic import BaseModel
+from sqlalchemy import select
+
+from osprey.db.session import SessionLocal
+from osprey.models.recovery_observation import RecoveryObservationRow
+
+
+class RecoveryObservation(BaseModel):
+    id: int
+    engagement_id: str
+    run_id: str = ""
+    tool_name: str
+    asset: str = ""
+    error_type: str
+    exit_code: int = 0
+    shadow_strategy: str = ""
+    llm_subsequent_tool: str | None = None
+    llm_subsequent_success: bool | None = None
+    observed_at: datetime | None = None
+    resolved_at: datetime | None = None
+
+
+class RecoveryObservationStore:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+
+    def record(
+        self,
+        *,
+        engagement_id: str,
+        tool_name: str,
+        error_type: str,
+        run_id: str = "",
+        asset: str = "",
+        exit_code: int = 0,
+        shadow_strategy: str = "",
+    ) -> RecoveryObservation | None:
+        """Log a shadow classification decision. Never raises into the caller —
+        this must not be able to break tool execution."""
+        if not engagement_id or not tool_name or not error_type:
+            return None
+        asset_key = (asset or "").strip().lower()
+        with self._lock:
+            db = SessionLocal()
+            try:
+                row = RecoveryObservationRow(
+                    engagement_id=engagement_id,
+                    run_id=run_id or "",
+                    tool_name=tool_name,
+                    asset=asset_key,
+                    error_type=error_type,
+                    exit_code=exit_code,
+                    shadow_strategy=shadow_strategy or "",
+                )
+                db.add(row)
+                db.commit()
+                return _to_model(row)
+            except Exception:
+                db.rollback()
+                raise
+            finally:
+                db.close()
+
+    def backfill_subsequent_action(
+        self,
+        *,
+        engagement_id: str,
+        asset: str,
+        subsequent_tool: str,
+        subsequent_success: bool,
+    ) -> None:
+        """Called on the NEXT tool call touching the same (engagement, asset) —
+        resolves the most recent unresolved observation for that pair with what
+        actually happened next. This is the comparison signal shadow-mode data
+        is useless without: not just "would have done X", but "did X match what
+        the caller did on its own, and did that work." Best-effort — never
+        raises into the caller."""
+        asset_key = (asset or "").strip().lower()
+        if not engagement_id or not asset_key:
+            return
+        with self._lock:
+            db = SessionLocal()
+            try:
+                row = db.scalars(
+                    select(RecoveryObservationRow)
+                    .where(
+                        RecoveryObservationRow.engagement_id == engagement_id,
+                        RecoveryObservationRow.asset == asset_key,
+                        RecoveryObservationRow.resolved_at.is_(None),
+                    )
+                    .order_by(RecoveryObservationRow.observed_at.desc())
+                    .limit(1)
+                ).first()
+                if row is None:
+                    return
+                row.llm_subsequent_tool = subsequent_tool
+                row.llm_subsequent_success = 1 if subsequent_success else 0
+                row.resolved_at = datetime.now(timezone.utc)
+                db.commit()
+            except Exception:
+                db.rollback()
+            finally:
+                db.close()
+
+    def clean_observation_count(self, *, tool_name: str, error_type: str) -> int:
+        """Count observations for this (tool, error_type) where the shadow
+        strategy would NOT have been a false positive on an otherwise-successful
+        run — i.e. the LLM's own subsequent attempt also needed a different
+        approach (didn't succeed by blindly retrying the exact same thing), or
+        no subsequent call was made at all (asset abandoned — also not a false
+        positive). This is the count the flip threshold is measured against."""
+        with self._lock:
+            db = SessionLocal()
+            try:
+                rows = list(
+                    db.scalars(
+                        select(RecoveryObservationRow).where(
+                            RecoveryObservationRow.tool_name == tool_name,
+                            RecoveryObservationRow.error_type == error_type,
+                        )
+                    ).all()
+                )
+            finally:
+                db.close()
+        clean = 0
+        for r in rows:
+            # A false positive looks like: the LLM retried the SAME tool
+            # immediately after and it succeeded — meaning the call was never
+            # actually broken, the classifier misfired.
+            if (
+                r.llm_subsequent_tool == r.tool_name
+                and r.llm_subsequent_success == 1
+            ):
+                continue
+            clean += 1
+        return clean
+
+    def list_for_engagement(self, engagement_id: str, *, limit: int = 200) -> list[RecoveryObservation]:
+        if not engagement_id:
+            return []
+        with self._lock:
+            db = SessionLocal()
+            try:
+                stmt = (
+                    select(RecoveryObservationRow)
+                    .where(RecoveryObservationRow.engagement_id == engagement_id)
+                    .order_by(RecoveryObservationRow.observed_at.desc())
+                    .limit(limit)
+                )
+                rows = list(db.scalars(stmt).all())
+            finally:
+                db.close()
+        return [_to_model(r) for r in rows]
+
+
+def _to_model(row: RecoveryObservationRow) -> RecoveryObservation:
+    return RecoveryObservation(
+        id=row.id,
+        engagement_id=row.engagement_id,
+        run_id=row.run_id,
+        tool_name=row.tool_name,
+        asset=row.asset,
+        error_type=row.error_type,
+        exit_code=row.exit_code,
+        shadow_strategy=row.shadow_strategy,
+        llm_subsequent_tool=row.llm_subsequent_tool,
+        llm_subsequent_success=bool(row.llm_subsequent_success) if row.llm_subsequent_success is not None else None,
+        observed_at=row.observed_at,
+        resolved_at=row.resolved_at,
+    )
+
+
+_store: RecoveryObservationStore | None = None
+
+
+def get_recovery_observation_store() -> RecoveryObservationStore:
+    global _store
+    if _store is None:
+        _store = RecoveryObservationStore()
+    return _store

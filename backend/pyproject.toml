@@ -3,7 +3,7 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pentest-platform-backend"
+name = "osprey-backend"
 version = "0.1.0"
 description = "Backend services for the autonomous AI pentesting platform"
 license = {text = "AGPL-3.0-or-later"}
@@ -43,7 +43,7 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["pentest_platform*"]
+include = ["osprey*"]
 namespaces = true
 
 [tool.pytest.ini_options]

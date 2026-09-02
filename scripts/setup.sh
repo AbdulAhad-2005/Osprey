@@ -21,4 +21,4 @@ pip install -r mcp-servers/requirements.txt
 echo
 echo "Setup complete. Activate the environment with:"
 echo "    source .venv/bin/activate"
-echo "Then run the backend (uvicorn pentest_platform.main:app --port 9000) and Osprey CLI (osprey)."
+echo "Then run the backend (uvicorn osprey.main:app --port 9000) and Osprey CLI (osprey)."

@@ -1,0 +1,204 @@
+"""Convert tool capabilities to OpenAI function-calling format for LiteLLM."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from osprey.schemas.tool_capability import ToolCapability
+from osprey.schemas.tools import ToolCategory, ToolDefinition
+from osprey.services.tool_registry import list_registered_tools
+
+logger = logging.getLogger(__name__)
+
+_JSON_SCHEMA_TYPES: dict[str, str] = {
+    "str": "string",
+    "string": "string",
+    "bool": "boolean",
+    "boolean": "boolean",
+    "int": "integer",
+    "integer": "integer",
+    "float": "number",
+    "number": "number",
+    "array": "array",
+    "list": "array",
+    "object": "object",
+}
+
+
+def _yaml_type_to_json_schema(yaml_type: str) -> str:
+    return _JSON_SCHEMA_TYPES.get(yaml_type, "string")
+
+
+def _build_tool_description(tool: ToolDefinition) -> str:
+    parts = [tool.description]
+    if tool.safety_level.value == "gated":
+        parts.append("[SAFETY: GATED - requires exploitation permission]")
+    elif tool.safety_level.value == "passive":
+        parts.append("[SAFETY: PASSIVE - read-only, safe to run]")
+    parts.append(f"Category: {tool.category.value}")
+    if tool.tags:
+        parts.append(f"Tags: {', '.join(tool.tags)}")
+    return " | ".join(parts)
+
+
+def tool_definition_to_openai(tool: ToolDefinition) -> dict[str, Any]:
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+
+    for param_name, param in tool.parameters.items():
+        if param_name in ("use_recovery", "use_cache", "exec_timeout"):
+            continue
+        prop: dict[str, Any] = {
+            "type": "string",
+            "description": param.description or f"Parameter: {param_name}",
+        }
+        if param.default:
+            prop["description"] += f" (default: {param.default})"
+        properties[param_name] = prop
+        if not param.default:
+            required.append(param_name)
+
+    return {
+        "type": "function",
+        "function": {
+            "name": tool.name,
+            "description": _build_tool_description(tool),
+            "parameters": {
+                "type": "object",
+                "properties": properties,
+                "required": required,
+            },
+        },
+    }
+
+
+def capability_to_openai(cap: ToolCapability, *, compact: bool = False) -> dict[str, Any]:
+    """Convert a recon/network ToolCapability to OpenAI function-calling schema."""
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+
+    for param_name, pspec in cap.parameters.items():
+        if param_name in ("use_recovery", "use_cache", "exec_timeout", "privileged"):
+            continue
+        json_type = _yaml_type_to_json_schema(pspec.type)
+        if compact:
+            prop_desc = pspec.description[:60] if pspec.description else param_name
+        else:
+            prop_desc = pspec.description or f"Parameter: {param_name}"
+            if pspec.default not in (None, ""):
+                prop_desc += f" (default: {pspec.default})"
+        prop: dict[str, Any] = {"type": json_type, "description": prop_desc}
+        properties[param_name] = prop
+        if pspec.required:
+            required.append(param_name)
+
+    if "additional_args" not in properties:
+        properties["additional_args"] = {
+            "type": "string",
+            "description": "Extra CLI flags" if compact else (
+                "Any extra CLI flags from your knowledge. Not limited to catalog examples."
+            ),
+        }
+
+    # compact still means "shorter" (verbose fields get truncated below), it must not mean
+    # "the disambiguation signal is gone" — llm_hints and tags exist specifically to tell the
+    # model when this tool beats a sibling; dropping them left the LLM picking blind across the
+    # highest-tool-count phases (recon: 51, network: 18). Only task/phase (genuinely redundant
+    # inside a call that's already phase-scoped) are compact-only omissions now.
+    parts = [cap.description[:120] if compact else cap.description]
+    if cap.llm_hints:
+        parts.append(cap.llm_hints[:150] if compact else cap.llm_hints)
+    if cap.tags:
+        parts.append(f"Tags: {', '.join(cap.tags[:6])}")
+    if cap.safety_level.value == "gated":
+        parts.append("[SAFETY: GATED - requires exploitation permission]")
+    elif cap.safety_level.value == "passive":
+        parts.append("[SAFETY: PASSIVE]")
+    if not compact:
+        if cap.task:
+            parts.append(f"Task: {cap.task}")
+        parts.append(f"Phase: {cap.phase}")
+    description = " | ".join(parts)
+
+    return {
+        "type": "function",
+        "function": {
+            "name": cap.tool_name,
+            "description": description,
+            "parameters": {
+                "type": "object",
+                "properties": properties,
+                "required": required,
+            },
+        },
+    }
+
+
+def get_tools_for_llm_phase(phase: str, *, compact: bool = False) -> list[dict[str, Any]]:
+    """Full tool catalog for any phase agent — phase skills steer which tools
+    matter, the catalog itself never blocks a tool a phase 'shouldn't' need.
+    An agent that stumbles on something outside its primary lane (a vuln
+    agent finding a new host worth a quick recon check) can act on it
+    immediately instead of being unable to see the tool at all."""
+    from osprey.services.task_registry import list_tool_capabilities
+
+    caps = list_tool_capabilities(phase=None)
+    covered = {c.tool_name for c in caps}
+    result = [capability_to_openai(c, compact=compact) for c in caps]
+    # Any registered tool without a YAML capability entry still gets a usable
+    # (less rich) schema so it's never silently unreachable.
+    for tool in list_registered_tools():
+        if tool.name not in covered:
+            result.append(tool_definition_to_openai(tool))
+    logger.info("Prepared %d tools for LLM phase=%s (compact=%s)", len(result), phase, compact)
+    return result
+
+
+def get_agent_tools(*, compact: bool = True) -> list[dict[str, Any]]:
+    """All recon + network tools for the agent loop."""
+    unavailable = frozenset({"rustscan_fast_scan"})
+    tools = get_tools_for_llm_phase("recon", compact=compact) + get_tools_for_llm_phase(
+        "network", compact=compact
+    )
+    return [tool for tool in tools if tool.get("function", {}).get("name") not in unavailable]
+
+
+def get_tools_for_llm(
+    categories: list[ToolCategory] | None = None,
+) -> list[dict[str, Any]]:
+    tools = list_registered_tools()
+    result = []
+    for tool in tools:
+        if categories and tool.category not in categories:
+            continue
+        result.append(tool_definition_to_openai(tool))
+    logger.info(
+        "Prepared %d tools for LLM (categories: %s)",
+        len(result),
+        [c.value for c in categories] if categories else "all",
+    )
+    return result
+
+
+def get_tools_by_category_for_llm() -> dict[str, list[dict[str, Any]]]:
+    tools = list_registered_tools()
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for tool in tools:
+        cat = tool.category.value
+        grouped.setdefault(cat, []).append(tool_definition_to_openai(tool))
+    return grouped
+
+
+def format_tool_result(tool_name: str, result: Any, max_length: int = 8000) -> str:
+    if result is None:
+        return f"Tool {tool_name} returned no output."
+    result_str = str(result)
+    if len(result_str) <= max_length:
+        return result_str
+    truncated = result_str[:max_length]
+    return (
+        f"{truncated}\n\n"
+        f"[... truncated, {len(result_str) - max_length} chars omitted. "
+        f"Total length: {len(result_str)} chars]"
+    )

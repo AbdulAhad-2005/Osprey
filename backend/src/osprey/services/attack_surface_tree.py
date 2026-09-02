@@ -1,0 +1,304 @@
+"""Build an attack-surface tree per engagement from graph + findings.
+
+No new tables — read-only assembly. Soft/incomplete data is preserved, not forced.
+"""
+
+from __future__ import annotations
+
+from osprey.schemas.attack_surface import (
+    AttackSurfaceStats,
+    AttackSurfaceTree,
+    DomainBranch,
+    HostSurface,
+)
+from osprey.schemas.engagement_graph import AssetType
+from osprey.schemas.finding import Finding, FindingType
+from osprey.services.engagement_graph import get_engagement_graph
+from osprey.services.engagement_store import get_engagement_store
+from osprey.services.findings_store import get_findings_store
+
+_DEFAULT_HOST_CAP = 80
+_DEFAULT_PORT_CAP = 40
+_DEFAULT_SISTER_CAP = 40
+
+
+def build_attack_surface_tree(
+    engagement_id: str,
+    *,
+    run_id: str = "",
+    max_hosts_per_domain: int = _DEFAULT_HOST_CAP,
+    max_sisters: int = _DEFAULT_SISTER_CAP,
+    condensed: bool = False,
+) -> AttackSurfaceTree | None:
+    if not engagement_id:
+        return None
+
+    eng = get_engagement_store().get(engagement_id)
+    if eng is None:
+        return None
+
+    seed = (eng.target or "").lower().strip()
+    findings = get_findings_store().list(
+        engagement_id=engagement_id,
+        run_id=None,  # engagement-wide — do not hide assets behind session run_id
+        limit=5000,
+    )
+    graph = get_engagement_graph()
+    nodes = graph.list_nodes(engagement_id=engagement_id, limit=10_000)
+    edges = graph.list_edges(engagement_id=engagement_id, limit=50_000)
+
+    node_by_id = {n.id: n for n in nodes}
+    resolves: dict[str, list[str]] = {}  # host_node_id -> [ip labels]
+    ports_by_host: dict[str, list[str]] = {}  # host label -> ports
+
+    for e in edges:
+        if e.relationship == "resolves_to":
+            ip_node = node_by_id.get(e.target_id)
+            if ip_node:
+                resolves.setdefault(e.source_id, []).append(ip_node.label)
+        elif e.relationship == "has_port":
+            host_node = node_by_id.get(e.source_id)
+            port_node = node_by_id.get(e.target_id)
+            if host_node and port_node:
+                ports_by_host.setdefault(host_node.label.lower(), []).append(port_node.label)
+
+    # Sister domains from findings (tags / domain_hunter / role) + affiliated_with edges
+    sisters: list[str] = []
+    sister_set: set[str] = set()
+    for f in findings:
+        if not _is_sister(f):
+            continue
+        d = f.title.lower().strip()
+        if d and d not in sister_set and d != seed:
+            sister_set.add(d)
+            sisters.append(d)
+    for e in edges:
+        if e.relationship != "affiliated_with":
+            continue
+        target_node = node_by_id.get(e.target_id)
+        if target_node and target_node.label.lower() not in sister_set:
+            d = target_node.label.lower()
+            if d != seed:
+                sister_set.add(d)
+                sisters.append(d)
+
+    # Index findings by host-ish title
+    services_by_host: dict[str, list[str]] = {}
+    tech_by_host: dict[str, list[str]] = {}
+    cf_hosts: set[str] = set()
+    tags_by_host: dict[str, set[str]] = {}
+
+    for f in findings:
+        host_key = _host_key_from_finding(f)
+        if not host_key:
+            continue
+        tags_by_host.setdefault(host_key, set()).update(f.tags or [])
+        meta = f.metadata or {}
+        if meta.get("is_cloudflare") or meta.get("cloudflare") or "cloudflare" in (f.tags or []):
+            cf_hosts.add(host_key)
+        if f.finding_type == FindingType.SERVICE:
+            services_by_host.setdefault(host_key, []).append(f.title)
+        if f.finding_type == FindingType.TECHNOLOGY:
+            tech_by_host.setdefault(host_key, []).append(f.title)
+        # PORT findings often have target=host
+        if f.finding_type == FindingType.PORT:
+            ports_by_host.setdefault(host_key, []).append(f.title)
+
+    # Collect host labels from graph SUBDOMAIN/HOST + findings
+    all_hosts: set[str] = set()
+    for n in nodes:
+        if n.asset_type in (AssetType.SUBDOMAIN, AssetType.HOST):
+            all_hosts.add(n.label.lower())
+    for f in findings:
+        if f.finding_type in (FindingType.SUBDOMAIN, FindingType.HOST):
+            all_hosts.add(f.title.lower().strip())
+        elif f.finding_type == FindingType.URL:
+            h = _host_from_url(f.title)
+            if h:
+                all_hosts.add(h)
+
+    host_cap = 25 if condensed else max_hosts_per_domain
+    sister_cap = 15 if condensed else max_sisters
+
+    def build_host(label: str) -> HostSurface:
+        nid_candidates = [
+            f"subdomain:{label}",
+            f"host:{label}",
+        ]
+        ips: list[str] = []
+        for nid in nid_candidates:
+            ips.extend(resolves.get(nid, []))
+        # also from finding metadata
+        for f in findings:
+            if f.title.lower() == label and f.metadata.get("ip"):
+                ips.append(str(f.metadata["ip"]))
+        ips = list(dict.fromkeys(ips))
+        ports = list(dict.fromkeys(ports_by_host.get(label, [])))[:_DEFAULT_PORT_CAP]
+        services = list(dict.fromkeys(services_by_host.get(label, [])))[:20]
+        techs = list(dict.fromkeys(tech_by_host.get(label, [])))[:15]
+        cf: bool | None = True if label in cf_hosts else None
+        return HostSurface(
+            host=label,
+            ips=ips,
+            ports=ports,
+            services=services,
+            technologies=techs,
+            cf=cf,
+            tags=sorted(tags_by_host.get(label, set())),
+        )
+
+    def branch_for(domain: str, role: str) -> DomainBranch:
+        subs = sorted(h for h in all_hosts if _under_domain(h, domain) and h != domain)
+        truncated_local = len(subs) > host_cap
+        surfaces = [build_host(h) for h in subs[:host_cap]]
+        direct = build_host(domain) if domain in all_hosts else None
+        incomplete = len(surfaces) == 0 and direct is None
+        return DomainBranch(
+            domain=domain,
+            role=role,
+            subdomains=surfaces,
+            direct=direct,
+            incomplete=incomplete,
+        )
+
+    seed_branch = branch_for(seed, "seed") if seed else None
+    sister_branches = [branch_for(d, "sister") for d in sisters[:sister_cap]]
+
+    claimed: set[str] = set()
+    if seed:
+        claimed.add(seed)
+        claimed.update(h for h in all_hosts if _under_domain(h, seed))
+    for d in sisters:
+        claimed.add(d)
+        claimed.update(h for h in all_hosts if _under_domain(h, d))
+
+    orphans = sorted(h for h in all_hosts if h not in claimed)
+    orphan_cap = 15 if condensed else 40
+    orphan_hosts = [build_host(h) for h in orphans[:orphan_cap]]
+
+    # Stats
+    all_sub_count = 0
+    all_ips: set[str] = set()
+    all_ports: set[str] = set()
+    all_services: set[str] = set()
+
+    def accumulate(br: DomainBranch | None) -> None:
+        nonlocal all_sub_count
+        if br is None:
+            return
+        all_sub_count += len(br.subdomains)
+        for hs in br.subdomains:
+            all_ips.update(hs.ips)
+            all_ports.update(hs.ports)
+            all_services.update(hs.services)
+        if br.direct:
+            all_ips.update(br.direct.ips)
+            all_ports.update(br.direct.ports)
+            all_services.update(br.direct.services)
+
+    accumulate(seed_branch)
+    for br in sister_branches:
+        accumulate(br)
+    for hs in orphan_hosts:
+        all_ips.update(hs.ips)
+        all_ports.update(hs.ports)
+        all_services.update(hs.services)
+
+    truncated = (
+        len(sisters) > sister_cap
+        or (seed_branch is not None and len([h for h in all_hosts if _under_domain(h, seed)]) > host_cap)
+        or len(orphans) > orphan_cap
+    )
+
+    return AttackSurfaceTree(
+        engagement_id=engagement_id,
+        seed=seed,
+        seed_branch=seed_branch,
+        sisters=sister_branches,
+        orphans=orphan_hosts,
+        stats=AttackSurfaceStats(
+            sisters=len(sisters),
+            subdomains=all_sub_count,
+            unique_ips=len(all_ips),
+            open_ports=len(all_ports),
+            services=len(all_services),
+            orphan_hosts=len(orphans),
+        ),
+        truncated=truncated,
+        extra={"run_id": run_id} if run_id else {},
+    )
+
+
+def tree_to_condensed_text(tree: AttackSurfaceTree, *, max_lines: int = 60) -> str:
+    """Compact text for MCP / Commander prompts."""
+    lines = [
+        f"seed={tree.seed} sisters={tree.stats.sisters} "
+        f"subs={tree.stats.subdomains} ips={tree.stats.unique_ips} "
+        f"ports={tree.stats.open_ports} orphans={tree.stats.orphan_hosts}"
+        + (" [truncated]" if tree.truncated else ""),
+    ]
+    if tree.seed_branch:
+        lines.append(f"[seed] {tree.seed_branch.domain}: {len(tree.seed_branch.subdomains)} hosts")
+        for hs in tree.seed_branch.subdomains[:8]:
+            lines.append(_host_line(hs))
+    for br in tree.sisters[:10]:
+        lines.append(f"[sister] {br.domain}: {len(br.subdomains)} hosts" + (" (empty)" if br.incomplete else ""))
+        for hs in br.subdomains[:3]:
+            lines.append(_host_line(hs))
+    if tree.orphans:
+        lines.append(f"[orphans] {len(tree.orphans)} shown / {tree.stats.orphan_hosts} total")
+    if len(lines) > max_lines:
+        return "\n".join(lines[:max_lines]) + f"\n… ({len(lines) - max_lines} more lines omitted)"
+    return "\n".join(lines)
+
+
+def _host_line(hs: HostSurface) -> str:
+    bits = [f"  - {hs.host}"]
+    if hs.ips:
+        bits.append(f"ips={','.join(hs.ips[:3])}")
+    if hs.ports:
+        bits.append(f"ports={','.join(hs.ports[:5])}")
+    if hs.cf:
+        bits.append("cf")
+    return " ".join(bits)
+
+
+def _is_sister(f: Finding) -> bool:
+    if "sister_domain" in (f.tags or []):
+        return True
+    if f.source_tool == "domain_hunter":
+        return True
+    role = str((f.metadata or {}).get("role", "")).lower()
+    return role in ("sister_domain", "sister", "affiliated")
+
+
+def _under_domain(host: str, domain: str) -> bool:
+    h = host.lower().rstrip(".")
+    d = domain.lower().rstrip(".")
+    if not d:
+        return False
+    return h == d or h.endswith("." + d)
+
+
+def _host_from_url(url: str) -> str:
+    try:
+        return url.split("//")[-1].split("/")[0].split(":")[0].lower()
+    except Exception:
+        return ""
+
+
+def _host_key_from_finding(f: Finding) -> str:
+    if f.finding_type in (FindingType.SUBDOMAIN, FindingType.HOST):
+        return f.title.lower().strip()
+    if f.finding_type == FindingType.URL:
+        return _host_from_url(f.title)
+    if f.finding_type in (FindingType.PORT, FindingType.SERVICE):
+        if f.target:
+            return f.target.lower().strip()
+        # host:port
+        if ":" in f.title:
+            return f.title.split(":")[0].lower()
+    meta_host = f.metadata.get("hostname") or f.metadata.get("host")
+    if meta_host:
+        return str(meta_host).lower().strip()
+    return ""

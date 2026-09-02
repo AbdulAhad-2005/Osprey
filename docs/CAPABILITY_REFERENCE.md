@@ -438,7 +438,6 @@ claiming API impact.
 | `escalation_matrix.yaml`   | Internal recovery             | Do not dump chains into normal MCP output    |
 | `recon_network_tools.yaml` | Tool definitions              | Capability catalog, not engagement sequence  |
 | `playbooks.yaml`           | Optional sequences            | LLM may alter, skip, or ignore               |
-| `workflows.yaml`           | Optional structured workflows | Disabled by default for OpenCode mode        |
 
 YAML is intended to be the source of truth.
 
@@ -2286,43 +2285,43 @@ relationship separately until confirmed.
 
 Evidence and findings:
 
-- `backend/src/pentest_platform/schemas/finding.py`
-- `backend/src/pentest_platform/services/evidence.py`
-- `backend/src/pentest_platform/services/findings_store.py`
-- `backend/src/pentest_platform/services/ingest_promoter.py`
-- `backend/src/pentest_platform/services/parsers/freeform_probe.py`
+- `backend/src/osprey/schemas/finding.py`
+- `backend/src/osprey/services/evidence.py`
+- `backend/src/osprey/services/findings_store.py`
+- `backend/src/osprey/services/ingest_promoter.py`
+- `backend/src/osprey/services/parsers/freeform_probe.py`
 
 Graph and cognition:
 
-- `backend/src/pentest_platform/services/engagement_graph.py`
-- `backend/src/pentest_platform/services/operator_memory.py`
-- `backend/src/pentest_platform/services/finding_correlator.py`
-- `backend/src/pentest_platform/services/graph_query.py`
-- `backend/src/pentest_platform/services/crown_jewels.py`
-- `backend/src/pentest_platform/services/evidence_chain.py`
+- `backend/src/osprey/services/engagement_graph.py`
+- `backend/src/osprey/services/operator_memory.py`
+- `backend/src/osprey/services/finding_correlator.py`
+- `backend/src/osprey/services/graph_query.py`
+- `backend/src/osprey/services/crown_jewels.py`
+- `backend/src/osprey/services/evidence_chain.py`
 
 Recall and context:
 
-- `backend/src/pentest_platform/services/operator_recall.py`
-- `backend/src/pentest_platform/services/commander_context.py`
-- `backend/src/pentest_platform/services/open_loops.py`
-- `backend/src/pentest_platform/services/context_delta.py`
-- `backend/src/pentest_platform/services/stdout_index.py`
+- `backend/src/osprey/services/operator_recall.py`
+- `backend/src/osprey/services/commander_context.py`
+- `backend/src/osprey/services/open_loops.py`
+- `backend/src/osprey/services/context_delta.py`
+- `backend/src/osprey/services/stdout_index.py`
 
 Execution:
 
-- `backend/src/pentest_platform/services/tool_execution.py`
-- `backend/src/pentest_platform/services/shell_exec.py`
-- `backend/src/pentest_platform/services/script_exec.py`
-- `backend/src/pentest_platform/services/job_store.py`
-- `backend/src/pentest_platform/services/artifacts.py`
-- `backend/src/pentest_platform/services/command_builder.py`
+- `backend/src/osprey/services/tool_execution.py`
+- `backend/src/osprey/services/shell_exec.py`
+- `backend/src/osprey/services/script_exec.py`
+- `backend/src/osprey/services/job_store.py`
+- `backend/src/osprey/services/artifacts.py`
+- `backend/src/osprey/services/command_builder.py`
 
 Reporting:
 
-- `backend/src/pentest_platform/services/finalize_readiness.py`
-- `backend/src/pentest_platform/services/finalize_rules.py`
-- `backend/src/pentest_platform/services/report_outline.py`
+- `backend/src/osprey/services/finalize_readiness.py`
+- `backend/src/osprey/services/finalize_rules.py`
+- `backend/src/osprey/services/report_outline.py`
 
 Configuration:
 
@@ -2335,7 +2334,7 @@ Configuration:
 MCP/API:
 
 - `platform-mcp/server.py`
-- `backend/src/pentest_platform/api/v1/endpoints/hybrid.py`
+- `backend/src/osprey/api/v1/endpoints/hybrid.py`
 
 ---
 

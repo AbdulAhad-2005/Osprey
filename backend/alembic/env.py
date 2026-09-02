@@ -5,9 +5,9 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from pentest_platform.core.config import get_settings
-from pentest_platform.db.base import Base
-from pentest_platform.models import EngagementRow, RunRow  # noqa: F401
+from osprey.core.config import get_settings
+from osprey.db.base import Base
+from osprey.models import EngagementRow, RunRow  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:

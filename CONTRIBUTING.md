@@ -35,8 +35,8 @@ Enhancement suggestions are tracked as GitHub issues. When creating an issue, pl
 1. **Fork the Repository**: Create your own fork of the repository on GitHub.
 2. **Clone & Set Up**:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/AI-Pentesting-Tool.git
-   cd AI-Pentesting-Tool
+   git clone https://github.com/YOUR_USERNAME/osprey.git
+   cd osprey
    ```
 3. **Create a Feature Branch**:
    ```bash

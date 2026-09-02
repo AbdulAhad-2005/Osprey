@@ -1,0 +1,41 @@
+from __future__ import annotations
+
+from datetime import datetime
+
+from sqlalchemy import DateTime, Index, Integer, String, func
+from sqlalchemy.orm import Mapped, mapped_column
+
+from osprey.db.base import Base
+
+
+class RecoveryObservationRow(Base):
+    """Shadow-mode record of what the execution-recovery classifier would have
+    done, plus what actually happened next (comparison signal) — the durable
+    evidence the enforcement-flip threshold is measured against. Never blocks;
+    populated in shadow mode before any error type is enforced."""
+
+    __tablename__ = "recovery_observations"
+    __table_args__ = (
+        Index("ix_recovery_obs_engagement", "engagement_id"),
+        Index("ix_recovery_obs_tool_error", "tool_name", "error_type"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    engagement_id: Mapped[str] = mapped_column(String(12), nullable=False, default="")
+    run_id: Mapped[str] = mapped_column(String(12), nullable=False, default="")
+    tool_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    asset: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    error_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    exit_code: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    shadow_strategy: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+
+    # Comparison signal — what the caller actually did next, unassisted, and
+    # whether it worked. Backfilled by the next tool_execution call touching
+    # the same (engagement_id, asset). NULL until resolved.
+    llm_subsequent_tool: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    llm_subsequent_success: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 1/0
+
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

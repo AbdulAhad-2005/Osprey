@@ -74,7 +74,7 @@ KALI_CONTAINER=
 Then run the backend (the SQLite schema is created on startup):
 
 ```bash
-uvicorn pentest_platform.main:app --host 0.0.0.0 --port 9000
+uvicorn osprey.main:app --host 0.0.0.0 --port 9000
 ```
 
 Compiled scanners (nmap, subfinder, httpx, nuclei, …) must be on your PATH; the
@@ -216,9 +216,9 @@ Edit `~/.config/opencode/opencode.json` (global config — works in any project)
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "pentest-platform": {
+    "osprey": {
       "type": "local",
-      "command": ["python", "C:\\path\\to\\AI-Pentesting-Tool\\platform-mcp\\server.py"],
+      "command": ["python", "C:\\path\\to\\osprey\\platform-mcp\\server.py"],
       "env": {
         "PENTEST_API_BASE": "http://localhost:9000",
         "PENTEST_QUICK_TIMEOUT": "30",
@@ -231,7 +231,7 @@ Edit `~/.config/opencode/opencode.json` (global config — works in any project)
 }
 ```
 
-Replace `C:\\path\\to` with the absolute path to the project. The global config makes `pentest-platform` tools available in any repository you open with OpenCode. Verify with `/tools` in the chat — you should see all MCP tools listed.
+Replace `C:\\path\\to` with the absolute path to the project. The global config makes `osprey` tools available in any repository you open with OpenCode. Verify with `/tools` in the chat — you should see all MCP tools listed.
 
 ### Claude Desktop (native MCP support)
 
@@ -240,12 +240,12 @@ In Claude Desktop app, go to Settings -> Developer -> Edit Config -> Edit `claud
 ```json
 {
   "mcpServers": {
-    "pentest-platform": {
+    "osprey": {
       "command": "python",
       "args": [
-        "C:\\path\\to\\AI-Pentesting-Tool\\platform-mcp\\server.py"
+        "C:\\path\\to\\osprey\\platform-mcp\\server.py"
       ],
-      "cwd": "C:\\path\\to\\AI-Pentesting-Tool",
+      "cwd": "C:\\path\\to\\osprey",
       "env": {
         "PENTEST_API_BASE": "http://localhost:9000",
         "PENTEST_QUICK_TIMEOUT": "30",
@@ -256,7 +256,7 @@ In Claude Desktop app, go to Settings -> Developer -> Edit Config -> Edit `claud
 }
 ```
 
-Replace `C:\\path\\to` with your actual project path. You should see `pentest-platform` listed as a running MCP server in Claude's settings.
+Replace `C:\\path\\to` with your actual project path. You should see `osprey` listed as a running MCP server in Claude's settings.
 
 ### ChatGPT Desktop
 
@@ -268,7 +268,7 @@ Open Settings → Plugins → MCPs → Add Server
 
 Configure the server as follows.
 
-##### Name: pentest-platform
+##### Name: osprey
 
 ##### Type: STDIO
 
@@ -283,13 +283,13 @@ python
 or preferably your virtual environment:
 
 ```
-C:\path\to\AI-Pentesting-Tool\.venv\Scripts\python.exe
+C:\path\to\osprey\.venv\Scripts\python.exe
 ```
 
 ##### Arguments
 
 ```
-C:\path\to\AI-Pentesting-Tool\platform-mcp\server.py
+C:\path\to\osprey\platform-mcp\server.py
 ```
 
 ##### Environment Variables
@@ -303,7 +303,7 @@ C:\path\to\AI-Pentesting-Tool\platform-mcp\server.py
 ##### Working Directory
 
 ```
-C:\path\to\AI-Pentesting-Tool
+C:\path\to\osprey
 ```
 
 Click **Save**.
@@ -319,16 +319,16 @@ Instead of using the GUI, you can edit ChatGPT Desktop's `config.toml`.
 Add:
 
 ```toml
-[mcp_servers.pentest-platform]
+[mcp_servers.osprey]
 command = "python"
 
 args = [
-    "C:\\path\\to\\AI-Pentesting-Tool\\platform-mcp\\server.py"
+    "C:\\path\\to\\osprey\\platform-mcp\\server.py"
 ]
 
-cwd = "C:\\path\\to\\AI-Pentesting-Tool"
+cwd = "C:\\path\\to\\osprey"
 
-[mcp_servers.pentest-platform.env]
+[mcp_servers.osprey.env]
 PENTEST_API_BASE = "http://localhost:9000"
 PENTEST_QUICK_TIMEOUT = "30"
 PENTEST_HTTP_TIMEOUT = "900"
@@ -337,7 +337,7 @@ PENTEST_HTTP_TIMEOUT = "900"
 If using a virtual environment, replace the command with:
 
 ```toml
-command = "C:\\path\\to\\AI-Pentesting-Tool\\.venv\\Scripts\\python.exe"
+command = "C:\\path\\to\\osprey\\.venv\\Scripts\\python.exe"
 ```
 
 Restart ChatGPT Desktop after editing `config.toml`.
@@ -357,9 +357,9 @@ For the best integrated experience, use **Hermes** or **OpenCode**. **Claude Cod
 
 ## Backend entry points
 
-- `backend/src/pentest_platform/main.py` — FastAPI app
-- `backend/src/pentest_platform/core/config.py` — Runtime settings
-- `backend/src/pentest_platform/api/v1/router.py` — API route registration
+- `backend/src/osprey/main.py` — FastAPI app
+- `backend/src/osprey/core/config.py` — Runtime settings
+- `backend/src/osprey/api/v1/router.py` — API route registration
 - `backend/tests/` — Health check tests
 
 ## Running tests
@@ -382,12 +382,7 @@ Full docs live in [`docs/`](docs/README.md). Quick links:
 
 ## Next steps
 
-See [`docs/STATUS_AND_ROADMAP.md`](docs/STATUS_AND_ROADMAP.md) for the current status and the active reliability plan. Near-term focus: real scope/ROE governance, durable jobs + attempt history, graph/evidence provenance hardening, then phase expansion (web/vuln) and the killchain engine.
-
-## Tools Analyzed
-
-Reference-tool deep dives live in [`Comparative Analysis/`](Comparative%20Analysis/). Summary document:
-https://docs.google.com/document/d/1XqAMlZ9ErRywIHvR0FinwqmysCgSqYzIGtXoqmlsDGc/edit?usp=sharing
+See [`docs/STATUS_AND_ROADMAP.md`](docs/STATUS_AND_ROADMAP.md) for the current status and the active reliability plan. Near-term focus: real scope/ROE governance, durable jobs + attempt history, graph/evidence provenance hardening, and the killchain engine.
 
 ## Contributing
 

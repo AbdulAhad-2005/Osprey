@@ -1,0 +1,254 @@
+"""Parsers for the Playwright browser tools (browser_scrape / browser_flow).
+
+Turn rendered-DOM output into attack-surface findings: client-side routes,
+XHR/fetch API endpoints, form inputs (injection-point candidates), cookie-flag
+issues, mixed content, and a structured trace of driven flows for the LLM to
+reason about (business logic / auth).
+"""
+
+from __future__ import annotations
+
+import json
+from urllib.parse import urlparse
+
+from osprey.schemas.finding import (
+    ClaimSeverity,
+    EvidenceGrade,
+    Finding,
+    FindingConfidence,
+    FindingType,
+)
+
+_INTERESTING = ("/api", "/admin", "/graphql", "/internal", "/upload", "/token",
+                "/oauth", "/sso", "/debug", "/actuator", "/.git", "/config")
+
+
+def _host(url: str) -> str:
+    try:
+        return urlparse(url).netloc.lower()
+    except ValueError:
+        return ""
+
+
+def _load(stdout: str) -> dict | None:
+    text = (stdout or "").strip()
+    start = text.find("{")
+    if start == -1:
+        return None
+    try:
+        data = json.loads(text[start:])
+        return data if isinstance(data, dict) else None
+    except json.JSONDecodeError:
+        return None
+
+
+def _cookie_issue_findings(cookies, *, tool, engagement_id, run_id, target, url):
+    out = []
+    for c in cookies or []:
+        if not isinstance(c, dict):
+            continue
+        name = str(c.get("name") or "")
+        looks_session = any(k in name.lower() for k in ("sess", "sid", "auth", "token", "jwt", "login"))
+        missing = []
+        if c.get("httpOnly") is False:
+            missing.append("HttpOnly")
+        if c.get("secure") is False:
+            missing.append("Secure")
+        same = str(c.get("sameSite") or "").lower()
+        if same in ("", "none"):
+            missing.append("SameSite")
+        if missing and looks_session:
+            out.append(Finding(
+                engagement_id=engagement_id, run_id=run_id, phase="vuln",
+                finding_type=FindingType.VULNERABILITY,
+                title=f"Session cookie '{name}' missing {', '.join(missing)}",
+                description=f"Cookie '{name}' on {url or target} lacks {', '.join(missing)} — "
+                            "session theft / CSRF exposure depending on which flags are absent.",
+                evidence=json.dumps(c, sort_keys=True)[:300],
+                confidence=FindingConfidence.LIKELY, evidence_grade=EvidenceGrade.OBSERVED,
+                claim_severity=ClaimSeverity.MEDIUM,
+                source_tool=tool, target=url or target,
+                metadata={"cookie": name, "missing_flags": ",".join(missing)},
+                tags=[tool, "cookie", "session", "wstg-sess"],
+            ))
+    return out
+
+
+def parse_browser_scrape(stdout, *, engagement_id="", run_id="", target=""):
+    data = _load(stdout)
+    if data is None:
+        return _unparsed(stdout, "browser_scrape", engagement_id, run_id, target)
+    url = str(data.get("final_url") or data.get("url") or target)
+    out: list[Finding] = []
+
+    # Discovered client-side links → URL attack surface.
+    for link in (data.get("links") or [])[:200]:
+        low = str(link).lower()
+        interesting = any(m in low for m in _INTERESTING)
+        tags = ["browser", "rendered_link"]
+        if interesting:
+            tags += ["interesting_path", "injection_point_candidate"]
+        out.append(Finding(
+            engagement_id=engagement_id, run_id=run_id, phase="recon",
+            finding_type=FindingType.URL, title=str(link)[:200],
+            description="Link discovered via rendered DOM (SPA route static crawlers miss)"
+                        if not interesting else "Interesting rendered route",
+            evidence=str(link)[:300], confidence=FindingConfidence.LIKELY,
+            evidence_grade=EvidenceGrade.OBSERVED, source_tool="browser_scrape",
+            target=str(link), metadata={"hostname": _host(link), "url": str(link)}, tags=tags,
+        ))
+
+    # XHR/fetch → live API endpoints (high-value surface).
+    for x in (data.get("xhr") or [])[:200]:
+        xurl = str(x.get("url") or "")
+        if not xurl:
+            continue
+        out.append(Finding(
+            engagement_id=engagement_id, run_id=run_id, phase="recon",
+            finding_type=FindingType.URL, title=f"{x.get('method', 'GET')} {xurl}"[:200],
+            description="Client-side API call captured at runtime (XHR/fetch) — real endpoint the app uses",
+            evidence=json.dumps(x, sort_keys=True)[:300], confidence=FindingConfidence.CONFIRMED,
+            evidence_grade=EvidenceGrade.OBSERVED, source_tool="browser_scrape",
+            target=xurl, metadata={"hostname": _host(xurl), "url": xurl, "method": str(x.get("method") or "GET")},
+            tags=["browser", "xhr", "api", "interesting_path", "injection_point_candidate"],
+        ))
+
+    # Forms → each named input is an injection-point candidate.
+    for form in (data.get("forms") or [])[:60]:
+        action = str(form.get("action") or url)
+        for inp in (form.get("inputs") or []):
+            name = str(inp.get("name") or "")
+            if not name:
+                continue
+            out.append(Finding(
+                engagement_id=engagement_id, run_id=run_id, phase="recon",
+                finding_type=FindingType.OBSERVATION,
+                title=f"Form field '{name}' on {_host(action)}"[:180],
+                description=f"Form input '{name}' ({inp.get('type', 'text')}) via {form.get('method', 'GET')} {action} — injection-point candidate",
+                evidence=f"{name} @ {action}"[:300], confidence=FindingConfidence.LIKELY,
+                evidence_grade=EvidenceGrade.OBSERVED, source_tool="browser_scrape",
+                target=action, metadata={"parameter": name, "url": action, "method": str(form.get("method") or "GET"),
+                                         "input_type": str(inp.get("type") or "")},
+                tags=["browser", "form", "parameter", "injection_point_candidate"],
+            ))
+
+    out.extend(_cookie_issue_findings(data.get("cookies"), tool="browser_scrape",
+               engagement_id=engagement_id, run_id=run_id, target=target, url=url))
+
+    # Mixed content on an HTTPS page.
+    if data.get("mixed_content"):
+        out.append(Finding(
+            engagement_id=engagement_id, run_id=run_id, phase="vuln",
+            finding_type=FindingType.OBSERVATION,
+            title=f"Mixed content on {_host(url)}",
+            description=f"HTTPS page loads {len(data['mixed_content'])} resource(s) over HTTP — integrity/MITM risk.",
+            evidence="; ".join(str(m) for m in data["mixed_content"][:8])[:400],
+            confidence=FindingConfidence.LIKELY, evidence_grade=EvidenceGrade.OBSERVED,
+            source_tool="browser_scrape", target=url, tags=["browser", "mixed_content", "wstg-clnt"],
+        ))
+    return out or _unparsed(stdout, "browser_scrape", engagement_id, run_id, target)
+
+
+def parse_browser_flow(stdout, *, engagement_id="", run_id="", target=""):
+    data = _load(stdout)
+    if data is None:
+        return _unparsed(stdout, "browser_flow", engagement_id, run_id, target)
+    out: list[Finding] = []
+    final_url = str(data.get("final_url") or target)
+    steps = data.get("steps") or []
+    ok = sum(1 for s in steps if s.get("ok"))
+    failed = [s for s in steps if not s.get("ok")]
+
+    # Flow trace summary — the LLM reasons about business-logic outcome from this.
+    out.append(Finding(
+        engagement_id=engagement_id, run_id=run_id, phase="vuln",
+        finding_type=FindingType.OBSERVATION,
+        title=f"Browser flow: {ok}/{len(steps)} steps ok → {final_url}"[:180],
+        description="Driven browser flow result. Interpret against the intended business logic: "
+                    "did a step that SHOULD fail succeed (bypass), or vice versa?",
+        evidence=json.dumps({"steps": steps[:20], "asserts": data.get("asserts"),
+                             "extracted": data.get("extracted")}, sort_keys=True)[:700],
+        confidence=FindingConfidence.LIKELY, evidence_grade=EvidenceGrade.OBSERVED,
+        source_tool="browser_flow", target=final_url,
+        metadata={"steps_ok": ok, "steps_total": len(steps), "final_url": final_url},
+        tags=["browser", "flow", "business-logic"] + (["step_errors"] if failed else []),
+    ))
+
+    # Assertions are business-logic evidence.
+    for a in data.get("asserts") or []:
+        out.append(Finding(
+            engagement_id=engagement_id, run_id=run_id, phase="vuln",
+            finding_type=FindingType.OBSERVATION,
+            title=f"Assert '{str(a.get('text'))[:60]}' present={a.get('present')}",
+            description="Business-logic assertion during the flow (e.g. reached a state that should be gated).",
+            evidence=json.dumps(a, sort_keys=True)[:300], confidence=FindingConfidence.LIKELY,
+            evidence_grade=EvidenceGrade.OBSERVED, source_tool="browser_flow",
+            target=final_url, tags=["browser", "flow", "assertion"],
+        ))
+
+    # Captured API calls during the (possibly authenticated) flow.
+    for r in (data.get("captured_requests") or [])[:120]:
+        rurl = str(r.get("url") or "")
+        if not rurl:
+            continue
+        out.append(Finding(
+            engagement_id=engagement_id, run_id=run_id, phase="recon",
+            finding_type=FindingType.URL, title=f"{r.get('method', 'GET')} {rurl}"[:200],
+            description="API call captured during a driven (possibly authenticated) browser flow.",
+            evidence=json.dumps(r, sort_keys=True)[:300], confidence=FindingConfidence.CONFIRMED,
+            evidence_grade=EvidenceGrade.OBSERVED, source_tool="browser_flow",
+            target=rurl, metadata={"hostname": _host(rurl), "url": rurl, "method": str(r.get("method") or "GET")},
+            tags=["browser", "xhr", "api", "authenticated", "injection_point_candidate"],
+        ))
+
+    # Replayed (tampered) requests — the session-aware repeater. A 2xx on a
+    # request the agent tampered to test IDOR/auth-bypass is strong evidence; the
+    # LLM confirms impact, but surface each replay as an observation with its
+    # status so the outcome is in the graph, not just the raw dump.
+    for r in (data.get("replays") or [])[:60]:
+        rurl = str(r.get("url") or "")
+        if not rurl or r.get("error"):
+            continue
+        status = r.get("status")
+        authorized = isinstance(status, int) and 200 <= status < 300
+        out.append(Finding(
+            engagement_id=engagement_id, run_id=run_id, phase="vuln",
+            finding_type=FindingType.OBSERVATION,
+            title=f"Replay {r.get('method', 'GET')} {rurl} → {status}"[:200],
+            description="Request replayed through the authenticated session (repeater). "
+                        "If this was a tampered/cross-user request that returned 2xx, "
+                        "it may be an IDOR / broken-access-control issue — confirm impact.",
+            evidence=json.dumps({k: r.get(k) for k in ("method", "url", "status", "body_len")},
+                                sort_keys=True)[:400],
+            confidence=FindingConfidence.LIKELY, evidence_grade=EvidenceGrade.OBSERVED,
+            source_tool="browser_flow", target=rurl,
+            metadata={"status": status, "url": rurl, "method": str(r.get("method") or "GET")},
+            tags=["browser", "replay", "repeater"] + (["access-control-candidate"] if authorized else []),
+        ))
+
+    out.extend(_cookie_issue_findings(data.get("cookies"), tool="browser_flow",
+               engagement_id=engagement_id, run_id=run_id, target=target, url=final_url))
+    return out
+
+
+def _unparsed(stdout, tool, engagement_id, run_id, target):
+    stripped = (stdout or "").strip()
+    if not stripped:
+        return []
+    return [Finding(
+        engagement_id=engagement_id, run_id=run_id, phase="recon",
+        finding_type=FindingType.OBSERVATION, title=f"{tool} raw output",
+        description="Unparsed browser output (stored for agent context)",
+        evidence=stripped[:2000], confidence=FindingConfidence.LIKELY,
+        evidence_grade=EvidenceGrade.UNVERIFIED, source_tool=tool, target=target,
+        tags=[tool, "unparsed"],
+    )]
+
+
+def _register_browser_parsers() -> None:
+    from osprey.services.parsers.registry import register_output_parser
+    register_output_parser("browser_scrape", parse_browser_scrape)
+    register_output_parser("browser_flow", parse_browser_flow)
+
+
+_register_browser_parsers()

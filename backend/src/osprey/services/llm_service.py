@@ -1,0 +1,498 @@
+"""LiteLLM wrapper for provider-agnostic LLM calls.
+
+Supports 100+ providers through a single interface:
+  - OpenAI (gpt-4o, gpt-4-turbo, o1, etc.)
+  - Anthropic (claude-sonnet-4-20250514, claude-3-opus, etc.)
+  - Google Gemini (gemini-2.0-flash, gemini-1.5-pro, etc.)
+  - DeepSeek (deepseek-chat, deepseek-reasoner)
+  - Groq (llama-3.1, mixtral, gemma2, compound-mini, etc.)
+  - Grok/xAI (grok-3, grok-2)
+  - Ollama (local models)
+  - AWS Bedrock, Azure, Vertex AI, and more
+
+Usage:
+    llm = get_llm_service()
+    response = await llm.complete(messages=[{"role": "user", "content": "Hello"}])
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import re
+import os
+from typing import Any
+
+import litellm
+from litellm import acompletion
+
+from osprey.core.config import LLMSettings, get_settings
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# LiteLLM global configuration
+# ---------------------------------------------------------------------------
+
+# Do NOT set litellm.api_key globally — it defaults to OpenAI and breaks
+# other providers. Instead, we pass api_key per-call and/or set
+# provider-specific env vars (GROQ_API_KEY, DEEPSEEK_API_KEY, etc.)
+litellm.drop_params = True
+litellm.modify_params = True
+litellm.suppress_debug_info = True
+litellm.turn_off_message_logging = True
+
+
+# ---------------------------------------------------------------------------
+# Supported models registry
+# ---------------------------------------------------------------------------
+
+KNOWN_MODELS: list[dict[str, str]] = [
+    # Groq
+    {"name": "groq/compound-mini", "provider": "groq", "description": "Groq Compound Mini (default)"},
+    {"name": "groq/llama-3.3-70b-versatile", "provider": "groq", "description": "Llama 3.3 70B (Groq, recommended)"},
+    {"name": "groq/llama-3.1-8b-instant", "provider": "groq", "description": "Llama 3.1 8B (Groq, fast)"},
+    {"name": "groq/openai/gpt-oss-120b", "provider": "groq", "description": "GPT-OSS 120B (Groq, 70B successor)"},
+    {"name": "groq/openai/gpt-oss-20b", "provider": "groq", "description": "GPT-OSS 20B (Groq, 8B successor)"},
+    # DeepSeek
+    {"name": "deepseek/deepseek-chat", "provider": "deepseek", "description": "DeepSeek Chat (V3)"},
+    {"name": "deepseek/deepseek-reasoner", "provider": "deepseek", "description": "DeepSeek Reasoner (R1)"},
+    # OpenAI
+    {"name": "openai/gpt-4o", "provider": "openai", "description": "GPT-4o"},
+    {"name": "openai/gpt-4-turbo", "provider": "openai", "description": "GPT-4 Turbo"},
+    {"name": "openai/gpt-4o-mini", "provider": "openai", "description": "GPT-4o Mini"},
+    {"name": "openai/o1", "provider": "openai", "description": "OpenAI o1"},
+    {"name": "openai/o3-mini", "provider": "openai", "description": "OpenAI o3-mini"},
+    # Anthropic
+    {"name": "anthropic/claude-sonnet-4-20250514", "provider": "anthropic", "description": "Claude Sonnet 4"},
+    {"name": "anthropic/claude-3-5-sonnet-20241022", "provider": "anthropic", "description": "Claude 3.5 Sonnet"},
+    {"name": "anthropic/claude-3-5-haiku-20241022", "provider": "anthropic", "description": "Claude 3.5 Haiku"},
+    {"name": "anthropic/claude-3-opus-20240229", "provider": "anthropic", "description": "Claude 3 Opus"},
+    # Google Gemini (Google AI Studio) — current stable models
+    {"name": "gemini/gemini-3.5-flash", "provider": "google", "description": "Gemini 3.5 Flash (recommended, new API keys)"},
+    {"name": "gemini/gemini-3.1-flash-lite", "provider": "google", "description": "Gemini 3.1 Flash-Lite (fast, cheap)"},
+    {"name": "gemini/gemini-2.5-flash", "provider": "google", "description": "Gemini 2.5 Flash (legacy keys only)"},
+    {"name": "gemini/gemini-2.5-pro", "provider": "google", "description": "Gemini 2.5 Pro (legacy keys only)"},
+    # xAI / Grok
+    {"name": "grok/grok-3", "provider": "xai", "description": "Grok 3"},
+    {"name": "grok/grok-2", "provider": "xai", "description": "Grok 2"},
+    # Cloud providers
+    {"name": "vertex_ai/gemini-2.0-flash", "provider": "google", "description": "Gemini via Vertex AI"},
+    {"name": "bedrock/anthropic.claude-3-5-sonnet-20241022-v1:0", "provider": "aws", "description": "Claude via Bedrock"},
+    # Local
+    {"name": "ollama/qwen2.5:14b", "provider": "ollama", "description": "Qwen 2.5 14B (local, recommended)"},
+    {"name": "ollama/qwen2.5:7b", "provider": "ollama", "description": "Qwen 2.5 7B (local, faster)"},
+    {"name": "ollama/llama3.1", "provider": "ollama", "description": "Llama 3.1 (local)"},
+    {"name": "ollama/codellama", "provider": "ollama", "description": "CodeLlama (local)"},
+    {"name": "ollama/mistral", "provider": "ollama", "description": "Mistral (local)"},
+]
+
+# Provider prefix -> LiteLLM env var name.
+# LiteLLM reads these env vars automatically to route API calls.
+# We set them from LLM_API_KEY so users only need one key in .env.
+_PROVIDER_ENV_VAR: dict[str, str] = {
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "google": "GEMINI_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+    "groq": "GROQ_API_KEY",
+    "xai": "XAI_API_KEY",
+    "grok": "XAI_API_KEY",
+    "bedrock": "AWS_ACCESS_KEY_ID",       # uses AWS creds, not a single key
+    "vertex_ai": "GOOGLE_APPLICATION_CREDENTIALS",
+}
+
+# Bare model names (no "provider/" prefix) we can unambiguously attribute to a
+# provider, so they still get key wiring and runtime-dependency checks. Unknown
+# bare names are left alone (custom api_base setups).
+_BARE_MODEL_PROVIDERS: tuple[tuple[str, str], ...] = (
+    ("gemini-", "google"),
+    ("gpt-", "openai"),
+    ("o1", "openai"),
+    ("o3", "openai"),
+    ("claude-", "anthropic"),
+    ("deepseek-", "deepseek"),
+    ("grok-", "xai"),
+)
+
+
+def _provider_of(model: str) -> str:
+    """Provider of a model id: explicit prefix ('groq/compound-mini' → 'groq'),
+    or inferred from a bare name ('gemini-2.5-flash' → 'google') so bare names
+    get the same key wiring and dependency checks as prefixed ones."""
+    if "/" in model:
+        return model.split("/")[0].lower()
+    bare = (model or "").lower()
+    for prefix, provider in _BARE_MODEL_PROVIDERS:
+        if bare.startswith(prefix):
+            return provider
+    return ""
+
+
+# Provider -> Python packages litellm must be able to import to serve it.
+# Key presence alone does NOT make a provider usable: a model that routes to a
+# provider whose runtime deps aren't installed crashes opaquely on the first
+# real completion() call, after a job was already spawned.
+_PROVIDER_RUNTIME_DEPS: dict[str, tuple[str, ...]] = {
+    "google": ("google.auth",),
+    "gemini": ("google.auth",),
+    "vertex_ai": ("google.auth",),
+    "bedrock": ("boto3",),
+    "azure": ("azure.identity",),
+}
+
+
+def _missing_runtime_deps(provider: str) -> list[str]:
+    import importlib.util
+
+    return [
+        module
+        for module in _PROVIDER_RUNTIME_DEPS.get(provider, ())
+        if importlib.util.find_spec(module) is None
+    ]
+
+
+def _is_model_configured(settings: LLMSettings) -> bool:
+    """Return True when the configured model can actually be called:
+    key present AND the provider's runtime dependencies are importable.
+    Key presence alone is not usability — an unrunnable provider must fail
+    once, up front, before a job slot is wasted."""
+    provider = _provider_of(settings.model)
+    if provider == "ollama":
+        # Local Ollama uses api_base; api_key is optional (dummy value is fine).
+        return bool(settings.api_base or settings.api_key)
+    if not settings.api_key:
+        return False
+    return not _missing_runtime_deps(provider)
+
+
+def llm_configured() -> bool:
+    """Whether the backend has a usable LLM configured (LLM_API_KEY/LLM_MODEL
+    in the backend's own .env) — checked before spawning anything that needs
+    it (PhaseAgent via platform_pipeline/platform_spawn_agent) so a missing or
+    unrunnable key fails once, clearly, before wasting a job slot, instead of
+    opaquely mid-run on the first real completion() call. This is the backend's
+    OWN LLM — a separate concern from whatever LLM is driving the MCP session
+    itself, which never touches this check."""
+    return _is_model_configured(get_settings().llm)
+
+
+def llm_configured_reason() -> str:
+    """Precise reason the backend LLM is not usable ("" when it is) — so the
+    failure message says what to fix, not just that something is wrong."""
+    settings = get_settings().llm
+    provider = _provider_of(settings.model)
+    if provider == "ollama":
+        if settings.api_base or settings.api_key:
+            return ""
+        return "Ollama is the configured provider but no LLM_API_BASE/LLM_API_KEY is set"
+    if not settings.api_key:
+        return "LLM_API_KEY is not set in the backend .env"
+    missing = _missing_runtime_deps(provider)
+    if missing:
+        return (
+            f"LLM_MODEL={settings.model} routes to provider '{provider}' whose runtime "
+            f"package(s) are not installed in the backend: {', '.join(missing)} — install "
+            "them, or switch to a model prefix that doesn't need them "
+            "(e.g. gemini/gemini-3.5-flash for Gemini's plain REST API)"
+        )
+    return ""
+
+
+def llm_not_configured_message() -> str:
+    """Guidance for when the backend LLM is unusable — includes the precise
+    reason, and points the driver at the harness pattern (the conductor's
+    readiness snapshot + phase briefs remain fully available either way)."""
+    reason = llm_configured_reason()
+    detail = f" ({reason})" if reason else ""
+    return (
+        "Backend LLM not usable"
+        + detail
+        + " — the conductor's phase-readiness snapshot and ready-to-spawn phase briefs "
+        "remain fully available: drive execution yourself (your own subagents calling "
+        "platform_exec with the full tool catalog and phase skills), or fix the backend "
+        "LLM config to enable autonomous pipeline/spawn-agent operation."
+    )
+
+
+# ---------------------------------------------------------------------------
+# LLM Service
+# ---------------------------------------------------------------------------
+
+class LLMService:
+    """Provider-agnostic LLM service using LiteLLM.
+
+    Handles:
+    - Model configuration and API key management
+    - Chat completion with tool/function calling
+    - Retry logic with exponential backoff
+    - Cost tracking
+    """
+
+    def __init__(self, settings: LLMSettings | None = None) -> None:
+        self._settings = settings or get_settings().llm
+        self._configure_provider()
+
+    def _configure_provider(self) -> None:
+        """Set up API keys and base URLs for the configured provider.
+
+        LiteLLM routes to the correct provider based on the model prefix
+        (e.g. 'groq/...' -> Groq, 'deepseek/...' -> DeepSeek).
+
+        We set the provider-specific env var so LiteLLM picks it up
+        automatically. We also set litellm.api_key as a fallback, but
+        the per-call api_key argument takes priority.
+        """
+        model = self._settings.model
+        api_key = self._settings.api_key
+        api_base = self._settings.api_base
+
+        if not api_key:
+            return
+
+        # Extract provider: explicit prefix, or inferred from a bare model name.
+        provider = _provider_of(model)
+
+        # Set provider-specific env var (this is how LiteLLM discovers keys)
+        env_var = _PROVIDER_ENV_VAR.get(provider, "")
+        if env_var:
+            os.environ[env_var] = api_key
+            logger.info("Set env %s for provider %s", env_var, provider)
+
+        # Also set litellm.api_key as a fallback for unknown providers
+        # Per-call api_key in complete() takes priority over this
+        litellm.api_key = api_key
+
+        # Set custom base URL if provided
+        if api_base:
+            litellm.api_base = api_base
+            os.environ[f"{provider.upper()}_API_BASE"] = api_base
+
+    @property
+    def model(self) -> str:
+        return self._settings.model
+
+    @property
+    def settings(self) -> LLMSettings:
+        return self._settings
+
+    def get_available_models(self) -> list[dict[str, Any]]:
+        """Return list of known models with active status."""
+        active_model = self._settings.model
+        is_configured = _is_model_configured(self._settings)
+        known_names = {m["name"] for m in KNOWN_MODELS}
+
+        models = [
+            {
+                "name": m["name"],
+                "provider": m["provider"],
+                "description": m["description"],
+                "active": m["name"] == active_model and is_configured,
+            }
+            for m in KNOWN_MODELS
+        ]
+
+        # Show the .env model even when it is not in the curated catalog.
+        if active_model and active_model not in known_names:
+            provider = active_model.split("/")[0].lower() if "/" in active_model else "custom"
+            models.insert(
+                0,
+                {
+                    "name": active_model,
+                    "provider": provider,
+                    "description": "Configured in LLM_MODEL (.env)",
+                    "active": is_configured,
+                },
+            )
+
+        return models
+
+    async def complete(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Send a chat completion request.
+
+        Args:
+            messages: List of message dicts with 'role' and 'content'.
+            tools: Optional list of tool schemas (OpenAI format).
+            temperature: Override default temperature.
+            max_tokens: Override default max_tokens.
+            tool_choice: Force a specific tool ('auto', 'required', or specific).
+
+        Returns:
+            The raw LiteLLM completion response as a dict.
+        """
+        args: dict[str, Any] = {
+            "model": self._settings.model,
+            "messages": messages,
+            "temperature": temperature if temperature is not None else self._settings.temperature,
+            "max_tokens": max_tokens or self._settings.max_tokens,
+            "timeout": self._settings.request_timeout,
+        }
+
+        if tools:
+            args["tools"] = tools
+            if tool_choice:
+                args["tool_choice"] = tool_choice
+
+        # Always pass api_key per-call — this overrides litellm.api_key
+        # and ensures the correct provider gets the key, not just OpenAI.
+        if self._settings.api_key:
+            args["api_key"] = self._settings.api_key
+
+        if self._settings.api_base:
+            args["api_base"] = self._settings.api_base
+
+        last_error: Exception | None = None
+        for attempt in range(self._settings.max_retries + 1):
+            try:
+                response = await acompletion(**args)
+                return response.model_dump()
+            except Exception as e:
+                last_error = e
+                err_text = str(e).lower()
+                is_rate_limit = (
+                    "rate_limit" in err_text or "429" in err_text or "too many requests" in err_text
+                )
+                is_transient = (
+                    "503" in err_text
+                    or "unavailable" in err_text
+                    or "high demand" in err_text
+                )
+                is_token_size = "too large" in err_text or "tokens per day" in err_text
+                if (
+                    attempt < self._settings.max_retries
+                    and not is_token_size
+                    and (is_rate_limit or is_transient)
+                ):
+                    wait_s = _parse_retry_seconds(str(e)) or min(2 ** attempt, 15)
+                    logger.warning(
+                        "LLM transient error (attempt %d/%d), waiting %.1fs: %s",
+                        attempt + 1,
+                        self._settings.max_retries + 1,
+                        wait_s,
+                        type(e).__name__,
+                    )
+                    await asyncio.sleep(wait_s)
+                    continue
+                logger.exception("LLM completion failed for model %s", self._settings.model)
+                raise LLMServiceError(f"LLM completion failed: {e}") from e
+
+        logger.exception("LLM completion failed after retries for model %s", self._settings.model)
+        raise LLMServiceError(f"LLM completion failed: {last_error}") from last_error
+
+    async def complete_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        max_rounds: int | None = None,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Run a multi-round tool-calling loop.
+
+        Keeps calling the LLM and executing tools until the model
+        produces a response with no tool calls, or max_rounds is reached.
+
+        Args:
+            messages: Initial conversation messages.
+            tools: Tool schemas in OpenAI format.
+            max_rounds: Max tool-calling rounds (default from settings).
+
+        Returns:
+            Tuple of (final_messages, tool_call_log) where:
+            - final_messages: Full conversation including all tool results.
+            - tool_call_log: List of {tool_name, arguments, result_summary} dicts.
+        """
+        rounds = max_rounds or self._settings.max_agent_turns
+        tool_call_log: list[dict[str, Any]] = []
+
+        for _ in range(rounds):
+            response = await self.complete(messages=messages, tools=tools)
+            choice = response["choices"][0]
+            message = choice["message"]
+
+            # Append assistant message to conversation
+            messages.append(message)
+
+            # If no tool calls, we're done
+            tool_calls = message.get("tool_calls")
+            if not tool_calls:
+                break
+
+            # Execute each tool call and append results
+            for tc in tool_calls:
+                fn = tc["function"]
+                tool_name = fn["name"]
+                tool_args_str = fn.get("arguments", "{}")
+
+                tool_call_log.append({
+                    "tool_name": tool_name,
+                    "arguments": tool_args_str,
+                    "tool_call_id": tc["id"],
+                })
+
+            # Check stop reason
+            finish_reason = choice.get("finish_reason")
+            if finish_reason == "stop":
+                break
+
+        return messages, tool_call_log
+
+
+class LLMServiceError(Exception):
+    """Raised when an LLM service operation fails."""
+
+
+def _parse_retry_seconds(error_text: str) -> float | None:
+    """Extract a provider-suggested retry delay from a rate-limit error message.
+
+    Handles Groq ("Please try again in 12.3s") and Gemini ("retryDelay": "51s").
+    """
+    groq = re.search(r"try again in ([\d.]+)s", error_text, re.IGNORECASE)
+    if groq:
+        return float(groq.group(1)) + 0.5
+
+    gemini = re.search(r'retryDelay"?\s*[:=]\s*"?(\d+)s', error_text, re.IGNORECASE)
+    if gemini:
+        return float(gemini.group(1)) + 0.5
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Module-level singleton with auto-reload detection
+# ---------------------------------------------------------------------------
+
+_llm_service: LLMService | None = None
+_llm_service_config_hash: int = 0
+
+
+def _config_hash(settings: LLMSettings) -> int:
+    """Compute a hash of the LLM settings to detect changes."""
+    return hash((settings.model, settings.api_key, settings.api_base,
+                 settings.max_tokens, settings.temperature,
+                 settings.request_timeout, settings.max_retries, settings.max_agent_turns))
+
+
+def get_llm_service() -> LLMService:
+    """Return the LLM service, recreating it if .env has changed."""
+    global _llm_service, _llm_service_config_hash
+    current = get_settings().llm
+    h = _config_hash(current)
+    if _llm_service is None or h != _llm_service_config_hash:
+        _llm_service = LLMService(settings=current)
+        _llm_service_config_hash = h
+    return _llm_service
+
+
+def reload_llm_service() -> LLMService:
+    """Force-recreate the LLM service from current .env settings."""
+    global _llm_service, _llm_service_config_hash
+    current = get_settings().llm
+    _llm_service = LLMService(settings=current)
+    _llm_service_config_hash = _config_hash(current)
+    return _llm_service

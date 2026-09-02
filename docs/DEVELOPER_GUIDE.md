@@ -38,7 +38,7 @@ FastAPI backend :9000
 | --------------- | ------------------------------------------------------------------- |
 | OpenCode config | Workspace root: `opencode.json` (or global `~/.config/opencode/opencode.json`) |
 | Instructions    | `AGENTS.md` (repo root)                                           |
-| MCP server name | `pentest-platform`                                                |
+| MCP server name | `osprey`                                                |
 | MCP command     | `python` → `platform-mcp/server.py`                             |
 | API base        | `PENTEST_API_BASE=http://localhost:9000`                          |
 
@@ -80,9 +80,9 @@ docker compose up -d
 
 | Service    | Container               | Port                             |
 | ---------- | ----------------------- | -------------------------------- |
-| postgres   | `ai-pentest-postgres` | host`5432` or `5433` → 5432 |
-| kali-tools | `ai-pentest-kali`     | none published                   |
-| backend    | `ai-pentest-backend`  | **9000**                   |
+| postgres   | `osprey-postgres` | host`5432` or `5433` → 5432 |
+| kali-tools | `osprey-kali`     | none published                   |
+| backend    | `osprey-backend`  | **9000**                   |
 
 `platform-mcp` is **not** a compose service — OpenCode starts it.
 
@@ -121,7 +121,7 @@ Trace this path when debugging or optimizing:
 ## 4. Directory map (what lives where)
 
 ```
-AI-Pentesting-Tool/           # repo root
+osprey/           # repo root
 ├── AGENTS.md                 # OpenCode operator prompt
 ├── docker-compose.yml
 ├── .env
@@ -135,11 +135,10 @@ AI-Pentesting-Tool/           # repo root
 │   ├── escalation_matrix.yaml
 │   ├── tech_dispatch.yaml
 │   ├── ingest_rules.yaml
-│   ├── thinking_model.yaml
-│   └── workflows.yaml
+│   └── thinking_model.yaml
 ├── skills/                   # Markdown playbooks
 │   ├── commander/  recon/  network/  summary/  shared/  …
-├── backend/src/pentest_platform/
+├── backend/src/osprey/
 │   ├── main.py
 │   ├── api/v1/               # HTTP routes
 │   ├── services/             # Core logic (tool_execution, engagement_graph, …)
@@ -241,8 +240,8 @@ Read in this order. Do **not** start randomly in `mcp-servers/` or Alembic.
 | 35 | `skills/recon/*`, `skills/network/*`           | Phase playbooks                                 |
 | 36 | `services/skills_loader.py`                      | How skills enter context                        |
 | 37 | `services/fanout.py`                             | Explicit sister fan-out                         |
-| 38 | `config/workflows.yaml` + `workflow_runner.py` | Structured workflows (not OpenCode default)     |
-| 39 | `api/v1/endpoints/agent.py` + orchestrator       | Alternate LiteLLM agent path (not OpenCode MCP) |
+| 38 | `services/commander_pipeline.py`                | Background recon→vuln→exploit pipeline the Commander drives |
+| 39 | `api/v1/endpoints/agent.py` + `services/phase_agent.py` | Opt-in built-in Commander path (not the default MCP harness) |
 
 ---
 
@@ -288,9 +287,9 @@ When optimizing for OpenCode, focus on **platform-mcp + tool_execution + context
 | Store           | What                                                                                           |
 | --------------- | ---------------------------------------------------------------------------------------------- |
 | Postgres tables | `engagements`, `runs`, `findings`, `asset_nodes`, `asset_edges`, `tool_coverage`   |
-| Docker volume   | `ai-pentesting-tool_postgres_data`                                                           |
+| Docker volume   | `osprey_postgres_data`                                                           |
 | View via API    | `/api/v1/engagements/`, `/findings/`, `/engagements/{id}/tree`, `/hybrid/context/full` |
-| View via SQL    | `docker exec -it ai-pentest-postgres psql -U pentest -d pentest`                             |
+| View via SQL    | `docker exec -it osprey-postgres psql -U pentest -d pentest`                             |
 | Not stored      | OpenCode chat history                                                                          |
 
 Readable summary (better than raw tree JSON):

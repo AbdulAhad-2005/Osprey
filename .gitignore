@@ -37,9 +37,7 @@ uv.lock
 cli/tests
 
 # Local engagement artifacts (sensitive)
-Pentest-Reports/
-platform-mcp/Pentest-Reports/
-**/Pentest-Reports/
+reports/
 
 # Third-party reference clones — never shipped; attribution in THIRD_PARTY_NOTICES.md
 other tools/

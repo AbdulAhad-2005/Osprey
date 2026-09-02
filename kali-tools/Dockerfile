@@ -510,5 +510,5 @@ RUN nuclei -update-templates || true
 
 # MCP servers are mounted at /home/mcpuser/mcp-servers via docker-compose volume.
 # The container stays alive; backend runs tools via:
-#   docker exec -i ai-pentest-kali python3 /home/mcpuser/mcp-servers/<cat>/server.py
+#   docker exec -i osprey-kali python3 /home/mcpuser/mcp-servers/<cat>/server.py
 CMD ["sleep", "infinity"]

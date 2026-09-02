@@ -1,0 +1,215 @@
+"""Read engagement artifacts from Kali (/tmp/pentest/<engagement_id>/)."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import re
+import time
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9._@+-]+$")
+_SAFE_PREFIX = re.compile(r"^[A-Za-z0-9._@+-]{1,64}$")
+
+
+def _workdir(engagement_id: str) -> str:
+    eid = (engagement_id or "").strip()
+    if not eid or ".." in eid or "/" in eid or "\\" in eid:
+        raise ValueError("invalid engagement_id")
+    return f"/tmp/pentest/{eid}"
+
+
+def _resolve_path(engagement_id: str, path: str) -> str:
+    """Allow basename or path under engagement workdir only."""
+    work = _workdir(engagement_id)
+    raw = (path or "").strip().replace("\\", "/")
+    if not raw:
+        raise ValueError("path required")
+    if raw.startswith(work + "/"):
+        full = raw
+    elif raw.startswith("/tmp/pentest/"):
+        if not raw.startswith(work + "/"):
+            raise ValueError("artifact path outside engagement workspace")
+        full = raw
+    else:
+        base = raw.rsplit("/", 1)[-1]
+        if not _SAFE_NAME.match(base):
+            raise ValueError("unsafe artifact name")
+        full = f"{work}/{base}"
+    if ".." in full:
+        raise ValueError("path traversal blocked")
+    return full
+
+
+async def list_artifacts(engagement_id: str) -> dict[str, Any]:
+    from osprey.services.mcp_client import get_mcp_client
+
+    work = _workdir(engagement_id)
+    mcp = get_mcp_client()
+    container = mcp._kali_container  # noqa: SLF001
+    proc = await asyncio.create_subprocess_exec(
+        "docker",
+        "exec",
+        container,
+        "bash",
+        "-lc",
+        f"mkdir -p {work}; ls -la {work} 2>/dev/null | head -n 200",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=30)
+    listing = (out_b or b"").decode(errors="replace")
+    err = (err_b or b"").decode(errors="replace")
+    return {
+        "engagement_id": engagement_id,
+        "workdir": work,
+        "listing": listing,
+        "error": err[:500] if proc.returncode not in (0, None) else "",
+        "hint": "platform_artifact(path='….stdout.txt', offset=0, limit=80000)",
+    }
+
+
+async def read_artifact_slice(
+    engagement_id: str,
+    path: str,
+    *,
+    offset: int = 0,
+    limit: int = 80000,
+) -> dict[str, Any]:
+    from osprey.services.mcp_client import get_mcp_client
+
+    full = _resolve_path(engagement_id, path)
+    offset = max(0, int(offset))
+    limit = max(1, min(int(limit), 500_000))
+    mcp = get_mcp_client()
+    container = mcp._kali_container  # noqa: SLF001
+    # Python slice inside Kali — reliable for large files.
+    # Also detect missing files explicitly via pathlib.exists().
+    py = (
+        "import pathlib, sys; p=pathlib.Path(%r); "
+        "exists=p.exists(); "
+        "print('__EXISTS__='+str(exists)); "
+        # NB: a compound `if ...: ...` cannot appear in a ';'-separated one-liner
+        # passed to `python3 -c` (SyntaxError). Use a short-circuit expression.
+        "exists or sys.exit(2); "
+        "data=p.read_bytes(); "
+        "total=len(data); start=%d; end=min(total, start+%d); "
+        "chunk=data[start:end]; "
+        "print('__TOTAL__='+str(total)); print('__START__='+str(start)); "
+        "print('__END__='+str(end)); "
+        "print('__BODY__'); sys.stdout.flush(); sys.stdout.buffer.write(chunk); sys.stdout.buffer.flush()"
+    ) % (full, offset, limit)
+    proc = await asyncio.create_subprocess_exec(
+        "docker",
+        "exec",
+        container,
+        "python3",
+        "-c",
+        py,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=60)
+    raw = out_b or b""
+    err = (err_b or b"").decode(errors="replace")
+    if proc.returncode == 2:
+        return {
+            "ok": False,
+            "path": full,
+            "missing_file": True,
+            "error": f"File not found: {full}",
+        }
+    if proc.returncode != 0:
+        return {
+            "ok": False,
+            "path": full,
+            "error": err[:2000] or f"exit {proc.returncode}",
+        }
+    text = raw.decode(errors="replace")
+    total = 0
+    start = offset
+    end = offset
+    body = ""
+    if "__BODY__" in text:
+        head, body = text.split("__BODY__", 1)
+        body = body.lstrip("\n")
+        for line in head.splitlines():
+            if line.startswith("__TOTAL__="):
+                total = int(line.split("=", 1)[1] or 0)
+            elif line.startswith("__START__="):
+                start = int(line.split("=", 1)[1] or 0)
+            elif line.startswith("__END__="):
+                end = int(line.split("=", 1)[1] or 0)
+    else:
+        body = text
+        total = len(raw)
+        end = offset + len(raw)
+    at_eof = offset >= total
+    return {
+        "ok": True,
+        "path": full,
+        "total_bytes": total,
+        "offset": start,
+        "end": end,
+        "returned_bytes": len(body.encode("utf-8", errors="replace")),
+        "content": body,
+        "truncated": end < total,
+        "next_offset": end if end < total else None,
+        "at_eof": at_eof,
+    }
+
+
+async def write_text_artifact(
+    engagement_id: str,
+    *,
+    prefix: str,
+    content: str,
+    max_bytes: int = 200_000,
+) -> str:
+    """Best-effort save text under engagement workdir; return remote path or ''."""
+    eid = (engagement_id or "").strip()
+    if not eid or not (content or "").strip():
+        return ""
+    pref = re.sub(r"[^A-Za-z0-9._@+-]", "_", (prefix or "out")[:48]) or "out"
+    if not _SAFE_PREFIX.match(pref):
+        pref = "out"
+    stamp = int(time.time())
+    work = _workdir(eid)
+    remote = f"{work}/{pref}_{stamp}.stdout.txt"
+    blob = (content or "").encode("utf-8", errors="replace")[: max(1024, int(max_bytes))]
+    try:
+        from osprey.services.mcp_client import get_mcp_client
+
+        mcp = get_mcp_client()
+        container = mcp._kali_container  # noqa: SLF001
+        mkdir = await asyncio.create_subprocess_exec(
+            "docker",
+            "exec",
+            container,
+            "mkdir",
+            "-p",
+            work,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await asyncio.wait_for(mkdir.communicate(), timeout=20)
+        tee = await asyncio.create_subprocess_exec(
+            "docker",
+            "exec",
+            "-i",
+            container,
+            "tee",
+            remote,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await asyncio.wait_for(tee.communicate(input=blob), timeout=45)
+        if tee.returncode not in (0, None):
+            return ""
+        return remote
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("write_text_artifact failed: %s", exc)
+        return ""

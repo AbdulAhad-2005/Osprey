@@ -36,7 +36,7 @@ The platform is an **AI-assisted pentest lab**, not a fixed stage machine.
                 │ docker exec                 │ SQL
                 ▼                             ▼
 ┌───────────────────────────┐   ┌─────────────────────────────┐
-│  ai-pentest-kali          │   │  Postgres                   │
+│  osprey-kali          │   │  Postgres                   │
 │  mcp-servers + binaries   │   │  engagements, findings,     │
 │  (nmap, subfinder, …)     │   │  asset_nodes / edges, runs  │
 └───────────────────────────┘   └─────────────────────────────┘
@@ -182,8 +182,6 @@ Examples: `web_recon_light`, `network_crown_jewels`, `dns_deep`, `smb_followup`.
 
 Returns ordered steps `{tool, why, suggested_params, fallback}` — **nothing auto-runs**. The LLM may follow, edit, or ignore.
 
-Optional multi-step **workflows** also exist in `config/workflows.yaml` (API/workflow runner); they are not forced in the OpenCode loop.
-
 ---
 
 ## 5. Memory: engagements, findings, graph
@@ -298,7 +296,6 @@ Commander mindset:
 |------|------|
 | `config/recon_network_tools.yaml` | Tasks, params, llm_hints for recon/network |
 | `config/playbooks.yaml` | Advisory sequences |
-| `config/workflows.yaml` | Optional multi-step workflows |
 | `config/escalation_matrix.yaml` | Failure → alternate tools (TRY NEXT) |
 | `config/tech_dispatch.yaml` | Tech signal → suggested next tasks |
 
@@ -336,7 +333,7 @@ Typed catalog tools (reliable, cached, graded)
 
 ## 9. Kali / Docker
 
-- Image: `kali-tools/Dockerfile` → container `ai-pentest-kali`
+- Image: `kali-tools/Dockerfile` → container `osprey-kali`
 - Go tools under `/opt/go/bin`, symlinked to `/usr/local/bin`; `whois` + `rustscan` included
 - Availability checks resolve binaries **inside Kali** (not the backend container)
 - Backend mounts docker.sock to `docker exec` into Kali

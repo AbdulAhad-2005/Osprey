@@ -1,0 +1,271 @@
+"""Rate governor + ban detector — the shared pacing layer for ALL tool calls.
+
+Every execution path (engine, phase agents, direct operator calls) funnels
+through ``tool_execution.execute_tool_request``; that is where this module is
+wired in. Two jobs:
+
+1. Rate governor — a sliding window per (engagement, target). When a target is
+   being hit harder than ``max_calls_per_window`` calls in ``window_seconds``,
+   subsequent calls to it sleep until the window allows another call. This is
+   the difference between a mechanical fan-out (15 hosts x 6 tools = 90 probes
+   in one minute) and the same work politely paced so government/corporate
+   WAFs don't start blocking the engagement mid-pass.
+
+2. Ban detector — after a call returns, its stdout is scanned for the
+   fingerprints WAFs/rate-limiters actually emit (HTTP 429, Cloudflare
+   challenge, "Access denied", "Too Many Requests"…). On detection it records
+   one OBSERVATION finding (deduped per engagement+target) and marks the
+   target with a cooldown, so the governor spreads out — or skips — further
+   probes instead of hammering a now-annoyed edge.
+
+State split by durability need. The sliding call window is in-process only: it
+is touched on the hottest path (every tool call) so a per-call DB round-trip
+would tax every scan, and a 60s pacing window is meaningless after a restart
+anyway — it refills within the window. Ban COOLDOWNS are different: they can run
+~10 minutes, so mark_ban write-throughs the wall-clock expiry to ``target_bans``
+and rehydrate_bans() restores still-active cooldowns at startup.
+
+It is a PACER, never a gate: it never refuses a call outright, it only delays it
+and reports what it saw.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+import time
+from collections import defaultdict, deque
+from functools import lru_cache
+from typing import Any
+
+from osprey.services.config_loader import read_config
+
+logger = logging.getLogger(__name__)
+
+_DEFAULTS: dict[str, Any] = {
+    # Sliding-window pacing: at most this many calls to ONE target within the
+    # window before new calls start sleeping for the remaining window.
+    "max_calls_per_window": 12,
+    "window_seconds": 60.0,
+    # After a ban fingerprint is seen, skip this target entirely for this long.
+    "ban_cooldown_seconds": 600.0,
+    # How long a single delayed call may wait before giving up and running
+    # anyway (a pacer must never deadlock the pass on a hot target).
+    "max_wait_seconds": 30.0,
+    # Skip the rate governor entirely for these tools (cached/passive lookups
+    # that never touch the target's edge or that dedup to a cache hit anyway).
+    "exempt_tools": [
+        "shodan_host_info",
+        "shodan_search",
+        "crt_sh_query",
+        "whois_lookup",
+        "dnsenum_scan",
+        "dnstwist",
+        "asn_enum",
+        "holehe",
+        "phoneinfoga",
+        "email_permute",
+        "maigret",
+        "theharvester",
+        "anew_data_processing",
+    ],
+}
+
+# Fingerprints WAFs/rate-limiters actually emit in tool stdout when a target
+# starts blocking. Deliberately high-precision: bare status codes and bare
+# words ("429", "captcha", "rate limit", "access denied", "503 service
+# unavailable") appear legitimately in URLs, app content and error pages —
+# a URL path of /api/captcha or /429 is NOT proof of a ban. Only strings that
+# can only come from a WAF/rate-limiter response page count: Cloudflare error
+# codes + cf-ray + challenge pages, Imperva/Incapsula policy blocks, and
+# HTTP status lines (the actual response header, not a bare number).
+_BAN_FINGERPRINTS = re.compile(
+    r"error code 10\d\d|cf-ray|attention required|"
+    r"enable javascript and cookies|please enable cookies|verify you are human|"
+    r"request unsuccessful\.|error 1000|origin dns error|"
+    r"blocked by cloudflare|performance & security by cloudflare|"
+    r"access denied by security policy|"
+    r"HTTP/\d\.\d\s+429|HTTP/\d\.\d\s+429 too many requests|"
+    r"HTTP/\d\.\d\s+503|HTTP/\d\.\d\s+502",
+    re.IGNORECASE,
+)
+
+
+class _TargetClock:
+    """Sliding window of call timestamps per target + ban cooldown."""
+
+    def __init__(self) -> None:
+        self.calls: deque[float] = deque()
+        self.ban_until: float = 0.0
+        self.last_ban_signal: str = ""
+
+
+@lru_cache(maxsize=1)
+def _governor_config() -> dict[str, Any]:
+    data = dict(_DEFAULTS)
+    raw = read_config("rate_governor.yaml")
+    if isinstance(raw, dict):
+        data.update(raw)
+    data["max_calls_per_window"] = max(1, int(data.get("max_calls_per_window") or 1))
+    data["window_seconds"] = max(1.0, float(data.get("window_seconds") or 1))
+    data["ban_cooldown_seconds"] = max(0.0, float(data.get("ban_cooldown_seconds") or 0))
+    data["max_wait_seconds"] = max(0.0, float(data.get("max_wait_seconds") or 0))
+    data["exempt_tools"] = frozenset(
+        str(t).strip() for t in (data.get("exempt_tools") or []) if str(t).strip()
+    )
+    return data
+
+
+def reload_governor_config() -> dict[str, Any]:
+    _governor_config.cache_clear()
+    return _governor_config()
+
+
+_CLOCKS: dict[tuple[str, str], _TargetClock] = defaultdict(_TargetClock)
+
+
+def _clock(engagement_id: str, target: str) -> _TargetClock:
+    return _CLOCKS[(engagement_id or "").lower(), (target or "").lower()]
+
+
+def is_exempt(tool_name: str) -> bool:
+    return tool_name in _governor_config()["exempt_tools"]
+
+
+def wait_seconds_for(engagement_id: str, target: str) -> float:
+    """How long the caller should sleep before hitting this target now.
+
+    Combines the sliding-window rate (calls in window / max) and any active
+    ban cooldown. Returns 0 when the target is cold.
+    """
+    cfg = _governor_config()
+    clock = _clock(engagement_id, target)
+    now = time.monotonic()
+    # Prune the window of calls older than the window.
+    cutoff = now - cfg["window_seconds"]
+    while clock.calls and clock.calls[0] < cutoff:
+        clock.calls.popleft()
+
+    wait = 0.0
+    if clock.ban_until > now:
+        wait = max(wait, clock.ban_until - now)
+    overflow = len(clock.calls) - cfg["max_calls_per_window"] + 1
+    if overflow > 0:
+        # The oldest call in the window still has this much life left; wait
+        # until it ages out before adding another.
+        wait = max(wait, clock.calls[0] + cfg["window_seconds"] - now)
+    return min(wait, cfg["max_wait_seconds"])
+
+
+def register_call(engagement_id: str, target: str) -> None:
+    """Record that a call to this target is about to happen (or just did)."""
+    clock = _clock(engagement_id, target)
+    clock.calls.append(time.monotonic())
+
+
+def scan_for_ban(stdout: str) -> str:
+    """Return a short label of the first ban fingerprint found in stdout, or ''."""
+    if not (stdout or "").strip():
+        return ""
+    match = _BAN_FINGERPRINTS.search(stdout)
+    return match.group(0).strip()[:80] if match else ""
+
+
+def mark_ban(engagement_id: str, target: str, fingerprint: str) -> bool:
+    """Apply a cooldown to a target after a ban fingerprint was seen.
+
+    Returns True when this is a NEW ban (caller should record a finding once),
+    False when the target is already cooling down (dedupe). A new ban is
+    write-through'd to the durable ``target_bans`` table so a restart mid-cooldown
+    doesn't wipe it and re-hammer the target.
+    """
+    cfg = _governor_config()
+    clock = _clock(engagement_id, target)
+    if clock.ban_until > time.monotonic():
+        return False
+    cooldown = cfg["ban_cooldown_seconds"]
+    clock.ban_until = time.monotonic() + cooldown
+    clock.last_ban_signal = fingerprint
+    logger.info(
+        "Ban signal %r for %s (engagement %s) — cooling down %.0fs",
+        fingerprint, target, engagement_id, cooldown,
+    )
+    _persist_ban(engagement_id, target, time.time() + cooldown, fingerprint)
+    return True
+
+
+def banned_targets(engagement_id: str) -> list[str]:
+    """Targets currently in cooldown (for reporting/context)."""
+    now = time.monotonic()
+    return sorted(
+        target for (eid, target), clock in _CLOCKS.items()
+        if eid == (engagement_id or "").lower() and clock.ban_until > now
+    )
+
+
+def _persist_ban(engagement_id: str, target: str, ban_until_epoch: float, fingerprint: str) -> None:
+    """Upsert a ban's wall-clock expiry into target_bans. Best-effort — a DB
+    failure never breaks pacing (the in-process cooldown is already set)."""
+    eid = (engagement_id or "").strip()
+    tgt = (target or "").strip().lower()
+    if not eid or not tgt:
+        return
+    try:
+        from osprey.db.session import SessionLocal
+        from osprey.models.target_ban import TargetBanRow
+
+        db = SessionLocal()
+        try:
+            row = db.get(TargetBanRow, (eid, tgt))
+            if row is None:
+                row = TargetBanRow(engagement_id=eid, target=tgt)
+                db.add(row)
+            row.ban_until_epoch = float(ban_until_epoch)
+            row.fingerprint = (fingerprint or "")[:120]
+            db.commit()
+        except Exception:
+            db.rollback()
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def rehydrate_bans() -> int:
+    """Restore still-active ban cooldowns into the in-process clocks at startup.
+
+    monotonic() resets on restart, so the durable row stores a wall-clock expiry;
+    here we convert the remaining time back into a monotonic deadline. Expired rows
+    are deleted. Returns the number of cooldowns restored. Best-effort: never raises.
+    """
+    restored = 0
+    try:
+        from sqlalchemy import select
+
+        from osprey.db.session import SessionLocal
+        from osprey.models.target_ban import TargetBanRow
+
+        now_wall = time.time()
+        now_mono = time.monotonic()
+        db = SessionLocal()
+        try:
+            rows = list(db.scalars(select(TargetBanRow)).all())
+            for row in rows:
+                remaining = float(row.ban_until_epoch or 0.0) - now_wall
+                if remaining <= 0:
+                    db.delete(row)  # expired — clean it up
+                    continue
+                clock = _clock(row.engagement_id, row.target)
+                clock.ban_until = now_mono + remaining
+                clock.last_ban_signal = row.fingerprint or ""
+                restored += 1
+            db.commit()
+        except Exception:
+            db.rollback()
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001
+        logger.debug("rehydrate_bans skipped (non-fatal)", exc_info=True)
+    if restored:
+        logger.info("Restored %d active target ban cooldown(s) on startup", restored)
+    return restored

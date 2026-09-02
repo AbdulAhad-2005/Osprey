@@ -1,0 +1,368 @@
+"""Assemble Commander context — one conductor, read identically by any executor.
+
+No stage enum, no gap-computation machinery. The full tool catalog is always
+available (skills steer which tools matter for a phase; they never block a
+different one). ``phase_readiness`` carries the conductor's evidence-based
+signal (phase_supervisor.phase_readiness_snapshot) — informative, not a gate.
+"""
+
+from __future__ import annotations
+
+import threading
+
+from sqlalchemy import func, select
+
+from osprey.db.session import SessionLocal
+from osprey.models.finding import AssetEdgeRow, AssetNodeRow, FindingRow
+from osprey.schemas.hybrid import CommanderContext
+from osprey.services.attack_surface_tree import (
+    build_attack_surface_tree,
+    tree_to_condensed_text,
+)
+from osprey.services.crown_jewels import rank_crown_jewels
+from osprey.services.context_delta import snapshot_counts
+from osprey.services.engagement_graph import get_engagement_graph
+from osprey.services.escalation_registry import escalation_playbook_markdown
+from osprey.services.findings_store import get_findings_store
+from osprey.services.knowledge_browser import list_skills, skills_index_text
+from osprey.services.network_surface import (
+    build_network_surface,
+    network_surface_text,
+)
+from osprey.services.phase_supervisor import (
+    phase_readiness_snapshot,
+    phase_readiness_text,
+)
+from osprey.services.skills_loader import load_skills_for_agent, load_skills_for_phase
+from osprey.services.tech_dispatch import suggest_dispatch
+from osprey.services.tool_discovery import get_tools_for_llm_phase
+
+
+def _catalog_for_focus(focus: str) -> dict:
+    """Full tool catalog, always — the phase argument only labels the request,
+    it never narrows what's callable (see tool_discovery.get_tools_for_llm_phase)."""
+    return {
+        "focus": focus,
+        "note": "Full tool catalog — every phase can call any registered tool.",
+        "tools": get_tools_for_llm_phase(focus),
+        "shell_hint": (
+            "platform_shell is unrestricted bash (loops/;/$()/redirects OK); "
+            "use it for one-liner batches; platform_script for multi-line scripts."
+        ),
+    }
+
+
+def _skills_for_focus(focus: str) -> str:
+    f = (focus or "auto").strip().lower()
+    if f in ("", "auto", "full"):
+        recon = load_skills_for_phase("recon")
+        network = load_skills_for_phase("network")
+        return f"{recon}\n\n---\n\n{network}".strip()
+    specific = load_skills_for_phase(f, allow_missing=True)
+    if specific:
+        return specific
+    return _skills_for_focus("auto")
+
+
+def _commander_role_guidance() -> str:
+    return load_skills_for_agent("commander")
+
+
+def _active_phases(readiness: dict) -> list[str]:
+    """The phases whose skills belong in front of the LLM right now: recon is
+    always active; each downstream phase is added the moment its evidence
+    threshold unlocks it (per the conductor's readiness snapshot)."""
+    phases = ["recon"]
+    for name, info in (readiness.get("phases") or {}).items():
+        if name != "recon" and isinstance(info, dict) and info.get("unlocked"):
+            phases.append(name)
+    return phases
+
+
+def _active_phase_skills_index(readiness: dict, *, limit: int = 100) -> str:
+    """`name — description` skill index anchored to the conductor's active phases.
+
+    Recon skills show during recon; vuln/web/exploit skills appear the moment
+    those phases unlock — so the LLM can never miss that a relevant skill exists,
+    without the whole 66-skill catalog bloating every context read."""
+    active = _active_phases(readiness)
+    seen: set[str] = set()
+    records: list[dict] = []
+    for phase in [*active, "shared"]:
+        for rec in list_skills(phase=phase):
+            if rec["path"] in seen:
+                continue
+            seen.add(rec["path"])
+            records.append(rec)
+    records = records[:limit]
+    if not records:
+        return skills_index_text(limit=limit)
+    header = (
+        "Skills for the active phase(s) "
+        f"[{', '.join(active)}] — pull full text with platform_skills(path=…):"
+    )
+    lines = [header]
+    for rec in records:
+        lines.append(f"- [{rec['phase']}] {rec['name']} — {rec['description']}")
+    return "\n".join(lines)
+
+
+# Version-keyed context cache. Assembly loads findings + graph several times and
+# builds trees/surfaces on every read; that work only changes when the engagement's
+# memory changes. We cache the assembled packet keyed by a cheap version fingerprint
+# (findings/nodes/edges counts) and, on a hit, refresh just the fast-changing
+# ephemerals (jobs, stdout index, pipeline line, delta). A count change ⇒ miss ⇒
+# rebuild, so the cache is always consistent with what's in the store.
+_CTX_CACHE: dict[tuple[str, str, str], tuple[tuple[int, int, int], CommanderContext]] = {}
+_CTX_CACHE_MAX = 64
+_CTX_LOCK = threading.Lock()
+
+_NO_CHANGE_DELTA = {
+    "first_snapshot": False,
+    "+nodes": 0,
+    "+findings": 0,
+    "+ports": 0,
+    "+urls": 0,
+    "+observed": 0,
+}
+
+
+def _engagement_version(engagement_id: str) -> tuple[int, int, int] | None:
+    """Cheap fingerprint of engagement memory: (findings, nodes, edges) counts.
+    Returns None on any DB error so the caller falls back to an uncached build."""
+    if not engagement_id:
+        return None
+    try:
+        db = SessionLocal()
+        try:
+            f = db.scalar(
+                select(func.count()).select_from(FindingRow).where(
+                    FindingRow.engagement_id == engagement_id
+                )
+            )
+            n = db.scalar(
+                select(func.count()).select_from(AssetNodeRow).where(
+                    AssetNodeRow.engagement_id == engagement_id
+                )
+            )
+            e = db.scalar(
+                select(func.count()).select_from(AssetEdgeRow).where(
+                    AssetEdgeRow.engagement_id == engagement_id
+                )
+            )
+            return (int(f or 0), int(n or 0), int(e or 0))
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _refresh_ephemeral(ctx: CommanderContext, engagement_id: str) -> CommanderContext:
+    """On a cache hit nothing in findings/graph changed, so reuse the expensive
+    packet but re-read the cheap, fast-moving fields (jobs, stdout, pipeline) and
+    zero the delta (there is genuinely nothing new since the last recompute)."""
+    ctx.context_delta = dict(_NO_CHANGE_DELTA)
+    try:
+        from osprey.services.stdout_index import list_stdout_index
+
+        ctx.stdout_index = list_stdout_index(engagement_id, limit=6)
+    except Exception:
+        pass
+    try:
+        from osprey.services.job_store import get_job_store
+        from osprey.services.parallelism_config import jobs_header_line
+
+        jobs = get_job_store().list_for_engagement(engagement_id, limit=12)
+        ctx.background_jobs = [j.model_dump() for j in jobs]
+        ctx.jobs_line = jobs_header_line(ctx.background_jobs)
+    except Exception:
+        pass
+    try:
+        from osprey.services.phase_supervisor import pipeline_status_line
+
+        ctx.pipeline_line = pipeline_status_line(engagement_id)
+    except Exception:
+        pass
+    return ctx
+
+
+def build_commander_context(
+    phase: str = "auto",
+    *,
+    engagement_id: str = "",
+    run_id: str = "",
+) -> CommanderContext:
+    """Single context-assembly entry point — used identically by the MCP path
+    (platform_context) and any other executor calling this service directly.
+
+    Version-cached: an unchanged engagement returns the cached packet with only
+    its ephemerals refreshed, skipping the repeated findings/graph loads and tree
+    builds.
+    """
+    focus = (phase or "auto").strip().lower()
+    version = _engagement_version(engagement_id) if engagement_id else None
+    key = (engagement_id, run_id or "", focus)
+    if version is not None:
+        with _CTX_LOCK:
+            cached = _CTX_CACHE.get(key)
+        if cached is not None and cached[0] == version:
+            return _refresh_ephemeral(cached[1].model_copy(deep=True), engagement_id)
+
+    ctx = _build_commander_context_uncached(focus, engagement_id=engagement_id, run_id=run_id)
+
+    if version is not None:
+        with _CTX_LOCK:
+            if len(_CTX_CACHE) >= _CTX_CACHE_MAX:
+                _CTX_CACHE.clear()
+            _CTX_CACHE[key] = (version, ctx.model_copy(deep=True))
+    return ctx
+
+
+def _build_commander_context_uncached(
+    focus: str,
+    *,
+    engagement_id: str = "",
+    run_id: str = "",
+) -> CommanderContext:
+    graph = get_engagement_graph().summary(engagement_id=engagement_id, run_id=run_id)
+    pivots = list(graph.pivot_hints)
+
+    readiness = (
+        phase_readiness_snapshot(engagement_id, run_id=run_id) if engagement_id else {}
+    )
+    readiness_text = phase_readiness_text(readiness) if readiness else ""
+
+    ctx = CommanderContext(
+        phase=focus,
+        catalog=_catalog_for_focus(focus),
+        skills=_skills_for_focus(focus),
+        role_guidance=_commander_role_guidance(),
+        findings_summary=get_findings_store().structured_summary_for_agent(
+            engagement_id=engagement_id,
+            run_id=None,  # engagement-wide — avoid empty memory after run_id rotate
+        ),
+        graph_summary=graph,
+        escalation_playbook=escalation_playbook_markdown(),
+        dispatch_rules=suggest_dispatch(
+            engagement_id=engagement_id,
+            run_id=run_id,
+            phase=focus,
+        ),
+        active_pivots=pivots[:15],
+        phase_readiness=readiness,
+        phase_readiness_text=readiness_text,
+        note=(
+            f"Focus={focus} (advisory label — full catalog always available). "
+            "phase_readiness is evidence-based: recon is always active, vuln/exploit "
+            "unlock once their thresholds are met. You choose what to do with it."
+        ),
+    )
+    ctx = _attach_tree(
+        ctx,
+        engagement_id=engagement_id,
+        run_id=run_id,
+        include_full_tree=True,
+        include_network_surface=True,
+    )
+    return _attach_elite(ctx, engagement_id=engagement_id, run_id=run_id)
+
+
+# Back-compat alias — the adaptive/full packet is now just the default packet.
+def build_adaptive_commander_context(
+    *,
+    engagement_id: str = "",
+    run_id: str = "",
+) -> CommanderContext:
+    return build_commander_context("auto", engagement_id=engagement_id, run_id=run_id)
+
+
+def build_full_commander_context(
+    *,
+    engagement_id: str = "",
+    run_id: str = "",
+) -> CommanderContext:
+    return build_commander_context("auto", engagement_id=engagement_id, run_id=run_id)
+
+
+def _attach_tree(
+    ctx: CommanderContext,
+    *,
+    engagement_id: str,
+    run_id: str,
+    include_full_tree: bool,
+    include_network_surface: bool,
+) -> CommanderContext:
+    if not engagement_id:
+        return ctx
+    tree = build_attack_surface_tree(
+        engagement_id,
+        run_id=run_id,
+        condensed=True,
+    )
+    if tree is not None:
+        ctx.attack_surface_tree_text = tree_to_condensed_text(tree)
+        if include_full_tree:
+            ctx.attack_surface_tree = tree
+
+    if include_network_surface:
+        ns = build_network_surface(engagement_id, run_id=run_id)
+        if ns is not None:
+            ctx.network_surface_text = network_surface_text(ns)
+            if include_full_tree:
+                ctx.network_surface = ns
+    return ctx
+
+
+def _attach_elite(
+    ctx: CommanderContext,
+    *,
+    engagement_id: str,
+    run_id: str,
+) -> CommanderContext:
+    if not engagement_id:
+        return ctx
+    ctx.skills_index = _active_phase_skills_index(ctx.phase_readiness or {}, limit=100)
+    ctx.crown_jewels = rank_crown_jewels(engagement_id, run_id=run_id, limit=12)
+
+    findings = get_findings_store().list(
+        engagement_id=engagement_id, run_id=run_id or None, limit=5000
+    )
+    nodes = get_engagement_graph().list_nodes(engagement_id=engagement_id, limit=5000)
+    n_ports = sum(1 for n in nodes if str(getattr(n.asset_type, "value", n.asset_type)) == "port")
+    n_urls = sum(1 for n in nodes if str(getattr(n.asset_type, "value", n.asset_type)) == "url")
+    n_obs = sum(
+        1
+        for f in findings
+        if str(getattr(f.evidence_grade, "value", f.evidence_grade or "")).lower() == "observed"
+    )
+    ctx.context_delta = snapshot_counts(
+        engagement_id,
+        nodes=len(nodes),
+        findings=len(findings),
+        ports=n_ports,
+        urls=n_urls,
+        observed=n_obs,
+    )
+    try:
+        from osprey.services.stdout_index import list_stdout_index
+
+        ctx.stdout_index = list_stdout_index(engagement_id, limit=6)
+    except Exception:
+        ctx.stdout_index = {}
+    try:
+        from osprey.services.job_store import get_job_store
+        from osprey.services.parallelism_config import jobs_header_line
+
+        jobs = get_job_store().list_for_engagement(engagement_id, limit=12)
+        ctx.background_jobs = [j.model_dump() for j in jobs]
+        ctx.jobs_line = jobs_header_line(ctx.background_jobs)
+    except Exception:
+        ctx.background_jobs = []
+        ctx.jobs_line = ""
+    try:
+        from osprey.services.phase_supervisor import pipeline_status_line
+
+        ctx.pipeline_line = pipeline_status_line(engagement_id)
+    except Exception:
+        ctx.pipeline_line = ""
+    return ctx

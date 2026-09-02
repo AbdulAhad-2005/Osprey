@@ -1,0 +1,251 @@
+from __future__ import annotations
+
+import logging
+import threading
+from datetime import datetime, timezone
+
+from typing import Any
+import orjson
+from sqlalchemy import delete as sqlalchemy_delete
+from sqlalchemy.orm import Session
+
+from osprey.db.session import SessionLocal
+from osprey.models.engagement import EngagementRow
+from osprey.models.finding import (
+    AssetEdgeRow,
+    AssetNodeRow,
+    FindingOccurrenceRow,
+    FindingRow,
+)
+from osprey.models.recovery_observation import RecoveryObservationRow
+from osprey.models.run import RunRow
+from osprey.models.tool_coverage import ToolCoverageRow
+from osprey.schemas.engagement import (
+    Engagement,
+    EngagementCreateRequest,
+    RulesOfEngagement,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def _encode_roe(roe: RulesOfEngagement) -> str:
+    return orjson.dumps(roe.model_dump()).decode()
+
+
+def _decode_roe(raw: str) -> RulesOfEngagement:
+    if not raw:
+        return RulesOfEngagement()
+    try:
+        data = orjson.loads(raw)
+        return RulesOfEngagement(**data) if isinstance(data, dict) else RulesOfEngagement()
+    except (orjson.JSONDecodeError, TypeError, ValueError):
+        logger.warning("Invalid rules_of_engagement JSON in DB; using defaults")
+        return RulesOfEngagement()
+
+
+def _row_to_engagement(row: EngagementRow) -> Engagement:
+    return Engagement(
+        id=row.id,
+        target=row.target,
+        name=row.name,
+        status=row.status,
+        rules_of_engagement=_decode_roe(row.rules_of_engagement_json),
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        findings_count=row.findings_count,
+        tools_executed=row.tools_executed,
+    )
+
+
+def _apply_engagement(row: EngagementRow, engagement: Engagement) -> None:
+    row.target = engagement.target
+    row.name = engagement.name
+    row.status = engagement.status
+    row.rules_of_engagement_json = _encode_roe(engagement.rules_of_engagement)
+    row.findings_count = engagement.findings_count
+    row.tools_executed = engagement.tools_executed
+    row.updated_at = engagement.updated_at
+
+
+class EngagementStore:
+    """Postgres-backed engagement storage (M0).
+
+    Public API is unchanged from the in-memory version so callers
+    (tool_execution, MCP endpoints) keep working without modification.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+
+    def _session(self) -> Session:
+        return SessionLocal()
+
+    def create(self, request: EngagementCreateRequest) -> Engagement:
+        engagement = Engagement(
+            target=request.target,
+            name=request.name or f"engagement-{request.target}",
+            rules_of_engagement=request.rules_of_engagement or RulesOfEngagement(),
+        )
+        row = EngagementRow(
+            id=engagement.id,
+            target=engagement.target,
+            name=engagement.name,
+            status=engagement.status,
+            rules_of_engagement_json=_encode_roe(engagement.rules_of_engagement),
+            findings_count=engagement.findings_count,
+            tools_executed=engagement.tools_executed,
+            created_at=engagement.created_at,
+            updated_at=engagement.updated_at,
+        )
+        with self._lock:
+            db = self._session()
+            try:
+                db.add(row)
+                db.commit()
+                db.refresh(row)
+                return _row_to_engagement(row)
+            finally:
+                db.close()
+
+    def get(self, engagement_id: str) -> Engagement | None:
+        with self._lock:
+            db = self._session()
+            try:
+                row = db.get(EngagementRow, engagement_id)
+                return _row_to_engagement(row) if row else None
+            finally:
+                db.close()
+
+    def get_latest_by_target(self, target: str) -> Engagement | None:
+        """Most recent engagement for a target domain (multi-run reuse)."""
+        normalized = (target or "").strip().lower().rstrip(".")
+        if not normalized:
+            return None
+        with self._lock:
+            db = self._session()
+            try:
+                row = (
+                    db.query(EngagementRow)
+                    .filter(EngagementRow.target == normalized)
+                    .order_by(EngagementRow.created_at.desc())
+                    .first()
+                )
+                return _row_to_engagement(row) if row else None
+            finally:
+                db.close()
+
+    def list_all(self) -> list[Engagement]:
+        with self._lock:
+            db = self._session()
+            try:
+                rows = db.query(EngagementRow).order_by(EngagementRow.created_at.desc()).all()
+                return [_row_to_engagement(row) for row in rows]
+            finally:
+                db.close()
+
+    def update(self, engagement: Engagement) -> None:
+        engagement.updated_at = datetime.now(timezone.utc)
+        with self._lock:
+            db = self._session()
+            try:
+                row = db.get(EngagementRow, engagement.id)
+                if row is None:
+                    raise KeyError(f"Engagement not found: {engagement.id}")
+                _apply_engagement(row, engagement)
+                db.commit()
+            finally:
+                db.close()
+
+    def delete(self, engagement_id: str) -> dict[str, Any]:
+        with self._lock:
+            db = self._session()
+            try:
+                row = db.get(EngagementRow, engagement_id)
+                if row is None:
+                    return {"deleted": False, "engagement_id": engagement_id, "reason": "not found"}
+                
+                target = row.target
+                db.execute(sqlalchemy_delete(FindingOccurrenceRow).where(FindingOccurrenceRow.engagement_id == engagement_id))
+                db.execute(sqlalchemy_delete(FindingRow).where(FindingRow.engagement_id == engagement_id))
+                db.execute(sqlalchemy_delete(AssetNodeRow).where(AssetNodeRow.engagement_id == engagement_id))
+                db.execute(sqlalchemy_delete(AssetEdgeRow).where(AssetEdgeRow.engagement_id == engagement_id))
+                db.execute(sqlalchemy_delete(RunRow).where(RunRow.engagement_id == engagement_id))
+                db.execute(sqlalchemy_delete(ToolCoverageRow).where(ToolCoverageRow.engagement_id == engagement_id))
+                db.execute(sqlalchemy_delete(RecoveryObservationRow).where(RecoveryObservationRow.engagement_id == engagement_id))
+                db.delete(row)
+                db.commit()
+                return {
+                    "deleted": True,
+                    "engagement_id": engagement_id,
+                    "target": target,
+                }
+            finally:
+                db.close()
+
+    def delete_by_target(self, target: str) -> dict[str, Any]:
+        normalized = (target or "").strip().lower().rstrip(".")
+        if not normalized:
+            return {"deleted": False, "reason": "empty target", "engagements_deleted": 0}
+
+        with self._lock:
+            db = self._session()
+            try:
+                rows = db.query(EngagementRow).filter(EngagementRow.target == normalized).all()
+                if not rows:
+                    return {
+                        "deleted": False,
+                        "target": normalized,
+                        "engagements_deleted": 0,
+                        "reason": f"No engagements found for target '{normalized}'",
+                    }
+
+                engagement_ids = [r.id for r in rows]
+
+                db.execute(sqlalchemy_delete(FindingOccurrenceRow).where(FindingOccurrenceRow.engagement_id.in_(engagement_ids)))
+                db.execute(sqlalchemy_delete(FindingRow).where(FindingRow.engagement_id.in_(engagement_ids)))
+                db.execute(sqlalchemy_delete(AssetNodeRow).where(AssetNodeRow.engagement_id.in_(engagement_ids)))
+                db.execute(sqlalchemy_delete(AssetEdgeRow).where(AssetEdgeRow.engagement_id.in_(engagement_ids)))
+                db.execute(sqlalchemy_delete(RunRow).where(RunRow.engagement_id.in_(engagement_ids)))
+                db.execute(sqlalchemy_delete(ToolCoverageRow).where(ToolCoverageRow.engagement_id.in_(engagement_ids)))
+                db.execute(sqlalchemy_delete(RecoveryObservationRow).where(RecoveryObservationRow.engagement_id.in_(engagement_ids)))
+
+                for row in rows:
+                    db.delete(row)
+
+                db.commit()
+                return {
+                    "deleted": True,
+                    "target": normalized,
+                    "engagements_deleted": len(engagement_ids),
+                    "engagement_ids": engagement_ids,
+                }
+            finally:
+                db.close()
+
+
+    def increment_tools_executed(self, engagement_id: str, by: int = 1) -> None:
+        """Atomic counter bump — does not overwrite findings_count."""
+        if not engagement_id:
+            return
+        with self._lock:
+            db = self._session()
+            try:
+                row = db.get(EngagementRow, engagement_id)
+                if row is None:
+                    return
+                row.tools_executed = int(row.tools_executed or 0) + by
+                row.updated_at = datetime.now(timezone.utc)
+                db.commit()
+            finally:
+                db.close()
+
+
+_store: EngagementStore | None = None
+
+
+def get_engagement_store() -> EngagementStore:
+    global _store
+    if _store is None:
+        _store = EngagementStore()
+    return _store

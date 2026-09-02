@@ -88,9 +88,9 @@ New capability = data + registration, not driver forks.
 
 ---
 
-## 4. Demoted internal surface (path ②)
+## 4. Opt-in internal surface (Executor B)
 
-The built-in agent path (`agent_loop.py`, `orchestrator.py`, `POST /api/v1/agent/chat[/stream]`, SSE events, `platform/adaptation.enrich_tool_result`, `build_phase_handoff`, `build_situational_brief`) is **off by default** (`ENABLE_BUILTIN_AGENT=false`). It reuses the same execution kernel. Documented here only so it is not mistaken for the primary contract; prefer the MCP + HTTP surfaces above.
+The built-in Commander path (`services/phase_agent.py`, `services/commander_pipeline.py`, `services/orchestrator.py`, `POST /api/v1/agent/chat[/stream]`, SSE events) is **off by default** (`enable_builtin_agent=false`). It reuses the same execution kernel. Documented here only so it is not mistaken for the default contract; prefer the MCP + HTTP surfaces above.
 
 ---
 

@@ -1,7 +1,7 @@
 # Status & Roadmap
 
-> **Purpose:** One place to see **what is built, what is in progress, and what is next.** For the detailed plans behind each item, see [`plans/`](./plans/).
-> **Scope of current build:** recon + network / enum phases, OpenCode-driven.
+> **Purpose:** One place to see **what is built, what is in progress, and what is next.**
+> **Scope of current build:** recon, network/enum, web, vuln, exploit, and osint phases, driven by an external MCP harness (default) or the opt-in built-in Commander.
 
 ---
 
@@ -10,13 +10,13 @@
 | Layer | State |
 |-------|-------|
 | OpenCode-as-brain via `platform-mcp` (~50 MCP tools) | ✅ primary path, working |
-| Recon + network typed tools (36) + technology identification | ✅ wired, real runs (scanme.nmap.org, morth.gov.in) |
+| Typed tools across recon / network / web / vuln / exploit / osint | ✅ wired + registered, driven by the conductor |
 | Execution kernel (exec / shell / script / install / jobs / fanout) | ✅ implemented |
 | Findings + engagement graph + evidence-grade severity clamp | ✅ implemented, durable in Postgres |
 | Finalize gate (blocks weak/CVE COMPLETE claims) | ✅ implemented |
-| "Elite Operator" plan — Phases 1–7 | ✅ **DONE** (see [`plans/ELITE_OPERATOR_PHASED_PLAN.md`](./plans/ELITE_OPERATOR_PHASED_PLAN.md)) |
-| Built-in LiteLLM agent loop + CLI + YAML workflows | ⚠️ built but **demoted / flag-off** (`ENABLE_BUILTIN_AGENT=false`, `ENABLE_WORKFLOWS=false`) |
-| `mcp-servers/{web,vuln,exploit,cloud,binary,forensics,creds,api}` | ⚠️ HexStrike wrappers harvested, **not yet wired** to typed MCP tools / catalog / skills |
+| Writable + searchable operator memory (graph, hypotheses, evidence chains) | ✅ implemented |
+| Built-in Commander (LiteLLM) + CLI | ⚠️ opt-in, off by default (`enable_builtin_agent=false`); external MCP harness is the default driver |
+| `mcp-servers/{cloud,binary,forensics,creds,api}` families | ⚠️ wrappers present, **not yet surfaced** as typed MCP tools / skills |
 | Governance / scope enforcement | ❌ permissive stub — approves everything |
 | Durable jobs + execution-attempt history | ❌ process-local; lost on backend restart |
 | Killchain engine · exploit phase · report automation | ❌ not built (vision only) |
@@ -41,7 +41,7 @@ Full detail: [`CAPABILITY_REFERENCE.md`](./CAPABILITY_REFERENCE.md).
 
 ## 3. What is NEXT — active reliability plan
 
-The current active work is the delta plan [`plans/ELITE_RELIABILITY_IMPLEMENTATION_PLAN.md`](./plans/ELITE_RELIABILITY_IMPLEMENTATION_PLAN.md) — it does **not** add features; it hardens the reliability, safety, provenance, and correctness of what Phases 1–7 shipped. Nine phases, handed off one reviewable PR at a time. Highest-impact open items:
+The current active work hardens reliability, safety, provenance, and correctness — it does **not** add features. Highest-impact open items:
 
 | Area | Gap | Reliability phase |
 |------|-----|-------------------|
@@ -63,11 +63,11 @@ Priority order is a proposal, not a commitment.
 
 1. **Memory-as-real-memory / query-back loop.** The graph is written but under-queried. Wanted: a non-hardcoded "checkpoint rhythm at decision boundaries" so the agent revisits graph/hypotheses to probe deeper and avoid stopping early — prerequisite for kill chains.
 2. **Open the phase model.** Replace the hard recon|network split with category-driven context so new phases are **skills + allowlist + optional parser**, not new Python services.
-3. **Wire the harvested web/vuln tools.** Expose `mcp-servers/{web,vuln}` via typed tools + skills.
+3. **Surface the remaining tool families.** Expose `mcp-servers/{cloud,binary,forensics,creds,api}` via typed tools + skills (web/vuln/exploit/osint are already wired).
 4. **Killchain engine + exploit agent.** Graph-driven attack-chain design + a governed exploit phase (needs real governance from reliability Phase 1 first).
 5. **Report automation.** Evidence-based, confirmed-only reports off the graph.
 
-Design north star (from [`plans/`](./plans/) and the improvement notes): *thin gatekeeper, free thinker, durable memory, open phases — methodology in markdown, not duplicated Python.*
+Design north star: *thin gatekeeper, free thinker, durable memory, open phases — methodology in markdown, not duplicated Python.*
 
 ---
 
@@ -83,4 +83,4 @@ Design north star (from [`plans/`](./plans/) and the improvement notes): *thin g
 
 ---
 
-*Consolidated from the former PLATFORM_IMPROVEMENT_PLAN plus the two phased plans in [`plans/`](./plans/). Update this file when a roadmap item lands.*
+*Update this file when a roadmap item lands.*

@@ -1,0 +1,425 @@
+"""Build CLI commands from MCP modules + LLM params/flags."""
+
+from __future__ import annotations
+
+import importlib.util
+import logging
+import re
+import shlex
+import sys
+from pathlib import Path
+from typing import Any
+
+from osprey.schemas.tools import ToolCategory, ToolDefinition
+from osprey.services.target_utils import (
+    looks_like_domain,
+    normalize_ports_value,
+    prefer_ip_for_tool,
+    registrable_apex,
+)
+from osprey.services.tool_registry import get_tool_definition
+
+logger = logging.getLogger(__name__)
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[4]
+_MCP_SERVERS = _PROJECT_ROOT / "mcp-servers"
+# In-Kali path (docker-exec'd, not the backend's own filesystem) — mcp-servers/
+# is bind-mounted to /home/mcpuser/mcp-servers inside osprey-kali (docker-compose.yml).
+_DOMAIN_HUNTER_CLI = "/home/mcpuser/mcp-servers/recon/tools/_domain_hunter_cli.py"
+
+_NMAP_TOOLS = frozenset({
+    "nmap_syn_scan",
+    "nmap_service_scan",
+    "nmap_custom_scan",
+    "nmap_full_port_scan",
+})
+
+_INTERNAL_PARAM_KEYS = frozenset({
+    "use_recovery",
+    "use_cache",
+    "exec_timeout",
+    # Kernel-only knob: intensity profile is resolved into flags in
+    # tool_execution before the command is built; it must never reach build_fn.
+    "profile",
+})
+
+
+def _mcp_category(tool_def: ToolDefinition) -> str:
+    if tool_def.category == ToolCategory.RECON:
+        return "recon"
+    if tool_def.category == ToolCategory.NETWORK:
+        return "network"
+    return tool_def.mcp_server.value
+
+
+def _load_build_command(tool_name: str, category: str):
+    """Import build_command from mcp-servers/<category>/tools/<tool>.py."""
+    module_path = _MCP_SERVERS / category / "tools" / f"{tool_name}.py"
+    if not module_path.exists():
+        return None
+
+    module_name = f"_mcp_tool_{category}_{tool_name}"
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    if spec is None or spec.loader is None:
+        return None
+
+    if str(_MCP_SERVERS) not in sys.path:
+        sys.path.insert(0, str(_MCP_SERVERS))
+
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except ImportError as exc:
+        logger.warning("Failed to import tool module %s: %s", module_path, exc)
+        return None
+    return getattr(module, "build_command", None)
+
+
+def merge_llm_params(
+    params: dict[str, Any],
+    additional_args: str = "",
+    *,
+    freeform_field: str = "additional_args",
+) -> dict[str, Any]:
+    """Merge typed params with free-form LLM flags. No flag whitelist."""
+    merged = {
+        k: v
+        for k, v in params.items()
+        if k not in _INTERNAL_PARAM_KEYS and v is not None and v != ""
+    }
+
+    extra_parts: list[str] = []
+    if additional_args and str(additional_args).strip():
+        extra_parts.append(str(additional_args).strip())
+
+    for alias in ("additional_args", "extra_args", "flags"):
+        if alias in merged and merged[alias]:
+            val = str(merged.pop(alias)).strip()
+            if val and val not in " ".join(extra_parts):
+                extra_parts.append(val)
+
+    combined = " ".join(extra_parts).strip()
+    if combined:
+        if freeform_field == "flags" and "flags" not in merged:
+            merged["flags"] = combined
+        else:
+            existing = str(merged.get(freeform_field, "") or "").strip()
+            merged[freeform_field] = f"{existing} {combined}".strip() if existing else combined
+
+    return merged
+
+
+def _normalize_nmap_flags(flags: str, target: str, *, privileged: bool = False) -> str:
+    """Ensure container-safe defaults and avoid duplicate targets.
+
+    privileged=True means real root (docker exec -u 0 — see mcp_client.py):
+    a raw-socket SYN scan is genuinely available, so an explicit -sS is kept
+    (never downgraded to -sT) and --unprivileged is never added — that flag
+    tells nmap to assume it has no raw-socket access, which would silently
+    defeat the privileged scan even with root and -sS both present. Previously
+    the --unprivileged injection ran unconditionally regardless of
+    `privileged`, so a caller that correctly got sudo + -sS still had nmap
+    told to behave as if neither were true.
+    """
+    cleaned = flags.strip()
+    if target and target in cleaned:
+        cleaned = cleaned.replace(target, "").strip()
+
+    if privileged:
+        if "-s" not in cleaned:
+            cleaned = f"-sS -Pn {cleaned}".strip()
+        elif "-Pn" not in cleaned and "-sn" not in cleaned:
+            cleaned = f"-Pn {cleaned}".strip()
+        return cleaned
+
+    # SYN scan cannot run without root in our Kali container.
+    if "-sS" in cleaned:
+        cleaned = cleaned.replace("-sS", "-sT")
+
+    if "-s" not in cleaned:
+        cleaned = f"-sT -Pn --unprivileged {cleaned}".strip()
+    elif "-Pn" not in cleaned and "-sn" not in cleaned:
+        cleaned = f"-Pn {cleaned}".strip()
+
+    if "--unprivileged" not in cleaned and "-sU" not in cleaned:
+        cleaned = f"--unprivileged {cleaned}".strip()
+
+    return cleaned
+
+
+def _normalize_multi_target(target: str) -> str:
+    """nmap accepts space-separated hosts; agents often pass a comma list.
+
+    Without this, ``target="1.2.3.4,5.6.7.8"`` was handed to nmap as a single
+    host arg → "Failed to resolve" → 0 hosts scanned, yet the run still reported
+    success. Splitting commas into spaces makes multi-host scans actually work.
+    """
+    parts = [p.strip() for p in re.split(r"[,\s]+", target or "") if p.strip()]
+    return " ".join(parts)
+
+
+def _nmap_has_scripts(flags: str) -> bool:
+    low = flags.lower()
+    if "--script" in low:
+        return True
+    return bool(re.search(r"(?:^|\s)-sC(?:\s|$)", flags))
+
+
+_WIDE_RANGE_PORT_THRESHOLD = 20_000  # ports; wide enough sweep to need a much longer per-host budget
+
+
+def _nmap_flags_cover_wide_range(flags: str) -> bool:
+    """True when the port selection is (or is close to) the full 65535-port
+    space — nmap's own '-p-' shorthand, or an explicit wide numeric range —
+    the shapes that legitimately need far longer than a couple of ports do."""
+    low = flags.lower()
+    if re.search(r"(?:^|\s)-p-(?:\s|$)", low):
+        return True
+    m = re.search(r"-p\s*([\d,\-]+)", low)
+    if not m:
+        return False
+    total = 0
+    for part in m.group(1).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            a, b = part.split("-", 1)
+            try:
+                total += max(0, int(b) - int(a) + 1)
+            except ValueError:
+                continue
+        else:
+            total += 1
+    return total >= _WIDE_RANGE_PORT_THRESHOLD
+
+
+def _nmap_script_bound_args(existing: str, *, host_timeout: str = "") -> list[str]:
+    """Cap NSE so vuln/default scripts cannot hang a host forever.
+
+    Previously a flat 90s regardless of scan shape — a full -sV -sC -p- sweep
+    against a rate-limited edge (CloudFront et al.) legitimately needs far
+    longer than 90s to even get through the SYN/connect phase, let alone
+    version+script probes on every open port, so nmap killed every single
+    host with "Host timed out" before producing any result. Now scales to
+    what's actually being asked for (confirmed via the port selection, not
+    guessed): a wide/full range gets a much larger budget by default, a
+    narrow one keeps the short default. ``host_timeout`` lets the caller
+    override explicitly either way; 'none'/'0'/'unlimited'/'off' drops the
+    flag entirely for a genuinely unrestricted run.
+    """
+    extra_l = existing.lower()
+    parts: list[str] = []
+    if "--max-retries" not in extra_l:
+        parts.extend(["--max-retries", "2"])
+    if "--host-timeout" not in extra_l:
+        override = (host_timeout or "").strip()
+        if override.lower() in ("none", "0", "0s", "unlimited", "off"):
+            pass  # explicit opt-out — no host-level cutoff at all
+        else:
+            value = override or ("3600s" if _nmap_flags_cover_wide_range(existing) else "90s")
+            parts.extend(["--host-timeout", value])
+    if "--script-timeout" not in extra_l:
+        parts.extend(["--script-timeout", "300s" if _nmap_flags_cover_wide_range(existing) else "20s"])
+    return parts
+
+
+def _build_nmap_command(tool_name: str, params: dict[str, Any]) -> str:
+    target = _normalize_multi_target(str(params.get("target", "")).strip())
+    extra = (
+        params.get("extra_args")
+        or params.get("additional_args")
+        or params.get("flags")
+        or ""
+    )
+    extra = str(extra).strip()
+    host_timeout = str(params.get("host_timeout", "") or "").strip()
+
+    # Structured ports/top_ports params render their own flag here — this is
+    # the single place nmap's -p/--top-ports gets built, so nothing upstream
+    # (typed tools or a raw platform_exec call) needs to pre-render a flag
+    # string, and two independently-computed flags can never collide.
+    ports_raw = str(params.get("ports", "") or "").strip()
+    top_ports_raw = str(params.get("top_ports", "") or "").strip()
+    if ports_raw and "-p" not in extra and "--ports" not in extra:
+        ports_clean = normalize_ports_value(ports_raw)
+        if ports_clean:
+            extra = f"{extra} -p {ports_clean}".strip() if extra else f"-p {ports_clean}"
+    elif top_ports_raw and "--top-ports" not in extra and "-p" not in extra:
+        extra = f"{extra} --top-ports {top_ports_raw}".strip() if extra else f"--top-ports {top_ports_raw}"
+
+    if tool_name == "nmap_custom_scan":
+        # requires_root=True in the tool registry (matching nmap_syn_scan /
+        # nmap_full_port_scan / masscan_high_speed's existing convention)
+        # means this always executes as real root in the container (docker
+        # exec -u 0 — see mcp_client.py), unconditionally — there is no
+        # unprivileged mode to branch on and no `sudo` prefix needed once
+        # already root via docker exec -u 0. An explicit scan-type flag the
+        # caller wrote (e.g. deliberately choosing -sT to be gentle against a
+        # fragile target) is still honored as-is; only the *default* when
+        # none was given changed, from a forced downgrade to a real SYN scan.
+        flags = _normalize_nmap_flags(
+            str(params.get("flags", extra)).strip(),
+            target,
+            privileged=True,
+        )
+        if _nmap_has_scripts(flags):
+            bound = _nmap_script_bound_args(flags, host_timeout=host_timeout)
+            if bound:
+                flags = f"{flags} {' '.join(bound)}"
+        parts = ["nmap", flags, target]
+        return " ".join(part for part in parts if part)
+
+    if tool_name == "nmap_syn_scan":
+        # requires_root=True in the tool registry means this ALWAYS executes
+        # as root inside the container (docker exec -u 0 — see
+        # mcp_client.py's run_as_root check), independent of any `privileged`
+        # param. Rendering an unprivileged -sT/--unprivileged fallback here
+        # (the old default, since nothing ever set `privileged`) threw away
+        # root access the execution layer already grants — always render a
+        # real SYN scan; no `sudo` prefix needed once already root via
+        # docker exec -u 0 (same reasoning nmap_full_port_scan documents).
+        parts = ["nmap", "-sS"]
+        timing = params.get("timing")
+        if timing:
+            t = str(timing).lstrip("Tt")
+            parts.append(f"-T{t}")
+        if extra:
+            parts.append(extra)
+        parts.append(target)
+        return " ".join(parts)
+
+    if tool_name == "nmap_service_scan":
+        # -sV -sC with nmap defaults (T3, 10 retries, no host/script timeout)
+        # against filtered/CDN ports is a 20–40 minute hang even on a handful of
+        # opens. Bound the scan so version+default-scripts stay a fast follow-up
+        # to naabu, not a second full-timeout probe.
+        parts = ["nmap", "-sV", "-sC", "-Pn", "--unprivileged", "-T4"]
+        parts.extend(_nmap_script_bound_args(extra, host_timeout=host_timeout))
+        if extra:
+            parts.append(extra)
+        parts.append(target)
+        return " ".join(parts)
+
+    if tool_name == "nmap_full_port_scan":
+        # Two-stage full-range pattern: discover every open port at high rate,
+        # then version+script-scan exactly those. Runs as root in the Kali
+        # container (requires_root registry flag → docker exec -u 0), so no
+        # sudo prefix is needed — the container itself is the privilege boundary.
+        min_rate = str(params.get("min_rate", "10000") or "10000").strip()
+        out_file = str(params.get("output_file", "") or "").strip()
+        if not out_file:
+            safe = re.sub(r"[^A-Za-z0-9._-]", "_", target.split()[0])
+            out_file = f"/tmp/nmap_{safe}.scan"
+        sweep = f"nmap -Pn -p- --min-rate {min_rate} {target}"
+        stage2 = (
+            f"nmap -sC -sV -Pn -p "
+            f"$(nmap -Pn -p- --min-rate {min_rate} {target} 2>/dev/null "
+            f"| grep 'open' | cut -d '/' -f 1 | paste -sd ,) {target} -oN {out_file}"
+        )
+        if extra:
+            stage2 = stage2.replace(" -oN ", f" {extra} -oN ")
+        return (
+            f"echo '== full-range port discovery =='; {sweep} 2>&1 "
+            f"| grep -E '^[0-9]+/tcp' | head -100; "
+            f"echo '== service/version scan on open ports =='; {stage2} 2>&1; "
+            f"echo '== output =='; cat {out_file} 2>/dev/null | head -120"
+        )
+
+    raise ValueError(f"Unknown nmap tool: {tool_name}")
+
+
+def _build_domain_hunter_command(params: dict[str, Any]) -> str:
+    """Build the domain-hunter invocation.
+
+    Runs ``python3 _domain_hunter_cli.py`` (self-locating module, no cwd) and
+    writes the CSV to /tmp so it never pollutes the mounted repo — findings
+    are collected from the stdout table/JSON by the parser.
+    """
+    raw = str(params.get("domain", "")).strip()
+    domain = registrable_apex(raw)
+    if not domain or not looks_like_domain(domain):
+        raise ValueError("domain_hunter requires a registrable seed domain")
+
+    parts = ["python3", shlex.quote(_DOMAIN_HUNTER_CLI), "--domain", shlex.quote(domain)]
+
+    modules = str(params.get("modules", "") or "").strip()
+    if modules:
+        parts += ["--modules", shlex.quote(modules)]
+
+    confidence_min = str(params.get("confidence_min", "") or "").strip().lower()
+    if confidence_min in ("low", "medium", "high"):
+        parts += ["--confidence-min", shlex.quote(confidence_min)]
+
+    safe = re.sub(r"[^A-Za-z0-9.]", "_", domain)
+    parts += ["--output", shlex.quote(f"/tmp/domain_hunter_{safe}.csv")]
+
+    extra = str(params.get("additional_args", "") or "").strip()
+    if extra:
+        parts.append(extra)
+
+    return " ".join(parts)
+
+
+def build_command_for_tool(
+    tool_name: str,
+    params: dict[str, Any] | None = None,
+    *,
+    additional_args: str = "",
+    tool_def: ToolDefinition | None = None,
+    freeform_field: str | None = None,
+) -> str:
+    """
+    Single command builder for all execution paths.
+
+    Uses ``build_command()`` from mcp-servers when available.
+    LLM may supply any flags via ``additional_args`` — not restricted to YAML examples.
+    """
+    params = params or {}
+    tool_def = tool_def or get_tool_definition(tool_name)
+    if tool_def is None:
+        raise ValueError(f"Tool not registered: {tool_name}")
+
+    field = freeform_field or "additional_args"
+    merged = merge_llm_params(params, additional_args, freeform_field=field)
+
+    raw_target = str(merged.get("target", merged.get("domain", "")) or "").strip()
+    if raw_target:
+        resolved_target, _ = prefer_ip_for_tool(tool_name, raw_target)
+        if "target" in merged:
+            merged["target"] = resolved_target
+        if "domain" in merged and tool_name in ("nbtscan_netbios", "arp_scan_discovery"):
+            merged["domain"] = resolved_target
+
+    if tool_name in _NMAP_TOOLS:
+        return _build_nmap_command(tool_name, merged)
+
+    category = _mcp_category(tool_def)
+    # Use resolved tool name (not the alias) so _load_build_command finds the correct file.
+    resolved_name = tool_def.name
+    build_fn = _load_build_command(resolved_name, category)
+    if build_fn is None:
+        raise ValueError(
+            f"No build_command for {tool_name} (resolved={resolved_name}) "
+            f"in mcp-servers/{category}/tools/"
+        )
+
+    command = build_fn(**merged)
+    if not command or not str(command).strip():
+        raise ValueError(f"build_command returned empty for {tool_name}")
+
+    logger.debug("Built command for %s: %s", tool_name, command)
+    return str(command).strip()
+
+
+def build_from_proposal(proposal: dict[str, Any] | Any) -> str:
+    """Convenience wrapper for ToolCallProposal-shaped dicts."""
+    if hasattr(proposal, "model_dump"):
+        data = proposal.model_dump()
+    else:
+        data = dict(proposal)
+
+    tool_name = data["tool_name"]
+    params = dict(data.get("params") or {})
+    additional_args = str(data.get("additional_args") or "")
+    return build_command_for_tool(tool_name, params, additional_args=additional_args)

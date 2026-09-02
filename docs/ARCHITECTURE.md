@@ -21,7 +21,7 @@ loop-back on new assets, the tool catalog, per-phase skills, and the shared blac
 LLM. Two interchangeable executors consume that one conductor:
 
 - **Executor A — an external harness** (OpenCode / Claude Code / any MCP client) using its own
-  LLM and subagents, reaching the conductor over the `pentest-platform` MCP tools. No key needed
+  LLM and subagents, reaching the conductor over the `osprey` MCP tools. No key needed
   — the affordable default.
 - **Executor B — the built-in Commander** (`services/phase_agent.py` `phase="commander"`, entered
   via `POST /api/v1/agent/chat[/stream]`). A self-hosted conversational brain running whatever
@@ -62,7 +62,7 @@ into the LLM-free conductor + skills, never into a per-executor service.
                 │ docker exec                        │ SQL
                 ▼                                    ▼
 ┌───────────────────────────┐        ┌──────────────────────────────┐
-│  ai-pentest-kali          │        │  Postgres                    │
+│  osprey-kali          │        │  Postgres                    │
 │  mcp-servers/* + binaries │        │  engagements · runs ·        │
 │  (nmap, subfinder, httpx…)│        │  findings · asset_nodes ·    │
 │                           │        │  asset_edges · tool_coverage │
@@ -78,20 +78,22 @@ into the LLM-free conductor + skills, never into a per-executor service.
 | **Referee** | Scope/governance, scan budget, evidence law, report integrity | `governance`, `scan_budget`, `schemas/finding.py`, `finalize_*` |
 | **Brain (LLM)** | Which tool, what flags, relation meaning, confirmation, stopping | OpenCode + `AGENTS.md` + `skills/` |
 
-This split is the product's core bet: **config owns safety and defaults; cognition belongs to the LLM.** It was synthesized from analyzing Shannon (durable phases + validation rigor), the Shannon OpenCode plugin (LLM-as-orchestrator + Docker tools), Dark-Moon (reactive chaining + `additional_args` freedom + MCP gatekeeper), and HexStrike (broad Kali tool surface + command recipes) — keeping the best of each. See [`HYBRID_PLATFORM_BLUEPRINT.md`](./HYBRID_PLATFORM_BLUEPRINT.md).
+This split is the product's core bet: **config owns safety and defaults; cognition belongs to the LLM.** It was synthesized from analyzing Shannon (durable phases + validation rigor), the Shannon OpenCode plugin (LLM-as-orchestrator + Docker tools), Dark-Moon (reactive chaining + `additional_args` freedom + MCP gatekeeper), and HexStrike (broad Kali tool surface + command recipes) — keeping the best of each.
 
 ---
 
-## 3. The primary path vs the demoted path
+## 3. The two executor paths
 
-There are two LLM-driver paths in the tree. **Only the first is the current product.**
+There are two ways an LLM can drive the platform. Both consume the same LLM-free
+conductor and funnel through the same execution kernel, so they cannot diverge.
 
 | Path | Entry | Status |
 |------|-------|--------|
-| **① OpenCode → platform-mcp → backend** | `platform-mcp/server.py` → `/api/v1/mcp/*` + `/api/v1/hybrid/*` | **Primary.** The brain is external (OpenCode / Claude Desktop / any MCP client). |
-| **② Backend built-in agent loop + CLI** | `POST /api/v1/agent/chat` → `agent_loop.py` (LiteLLM ReAct) + `cli/` | **Demoted.** Off by default (`ENABLE_BUILTIN_AGENT=false`); the YAML `workflow_runner` is likewise off (`ENABLE_WORKFLOWS=false`). Kept for optional local/API driving. |
+| **① External MCP harness → platform-mcp → backend** | `platform-mcp/server.py` → `/api/v1/mcp/*` + `/api/v1/hybrid/*` | **Default.** The brain is external (OpenCode / Claude Desktop / any MCP client); no LLM key needed on the platform. |
+| **② Built-in Commander + CLI** | `POST /api/v1/agent/chat[/stream]` → `services/phase_agent.py` (`phase="commander"`) + `cli/` | **Opt-in.** Off by default (`enable_builtin_agent=false`); set it true to run a self-hosted conversational brain on your own LiteLLM key. |
 
-Both paths funnel through the **same execution kernel** (`tool_execution.py`), so governance, parsing, and memory behave identically regardless of driver. When reasoning about the product, think path ①.
+Both paths funnel through the **same execution kernel** (`services/tool_execution.py`), so
+governance, parsing, and memory behave identically regardless of driver.
 
 ---
 
@@ -112,7 +114,7 @@ Example: the LLM calls `httpx_probe(target="scanme.nmap.org")`.
       d. exec cache                  (same engagement+tool+params within ~1h → cache_hit)
       e. command_builder             (loads mcp-servers/recon/tools/httpx_probe.py)
       f. rate_governor               (paces calls per target; skips banned targets — see §6)
-      g. mcp_client → docker exec ai-pentest-kali → httpx -u scanme.nmap.org …
+      g. mcp_client → docker exec osprey-kali → httpx -u scanme.nmap.org …
          (ban-fingerprint scan on stdout → cooldown + one OBSERVATION finding)
       h. summarize_execution         (parsers → Finding objects) + apply_ingest_rules (YAML)
       i. findings_store + engagement_graph ingest → Postgres
@@ -151,7 +153,7 @@ Every finding carries an `evidence_grade` (`observed` / `inferred` / `unverified
 Markdown skills (methodology) and YAML config (tool catalog, escalation matrix, tech dispatch, ingest rules, thinking-model scoring, playbooks) **advise** the LLM. Everything here is soft except the hard safety rails (scan budget, evidence clamp, finalize gate, shell-metacharacter ban).
 
 ### 5.7 Kali execution (`mcp_client.py` + `kali-tools/`)
-Tools run inside the `ai-pentest-kali` container (NET_RAW/NET_ADMIN for SYN scans). The backend mounts the docker socket and `docker exec`s into Kali. Timed-out processes are killed and reaped so long scans can't leak process slots.
+Tools run inside the `osprey-kali` container (NET_RAW/NET_ADMIN for SYN scans). The backend mounts the docker socket and `docker exec`s into Kali. Timed-out processes are killed and reaped so long scans can't leak process slots.
 
 ---
 
@@ -164,7 +166,7 @@ Tools run inside the `ai-pentest-kali` container (NET_RAW/NET_ADMIN for SYN scan
 | Skills/workflows | **Hints, not mandatory** | Assist like mature tools; don't force a YAML script |
 | Execution paths | **One kernel** | One place for governance/parse/audit; no path drift |
 | Runtime | **Docker Kali sidecar** | Reproducible tool versions, isolation, raw-socket capability |
-| Model | **LiteLLM-agnostic** (demoted path) / any MCP client (primary) | Swap providers without rewriting the platform |
+| Model | **LiteLLM-agnostic** (built-in Commander) / any MCP client (external harness) | Swap providers without rewriting the platform |
 | Memory | **Durable typed graph + evidence grades** | The differentiator none of the reference tools fully have |
 
 **Governance note (accurate current state):** there is **no scope-based governance gate** — the standalone governance engine was removed, and `tool_execution` does not block tools by matching targets against a declared scope. This is deliberate: unrestricted scanning keeps the pentest smooth (real findings often live on the less-guarded sister/sub domains, not the hardened apex). Scope discipline is operator guidance in `AGENTS.md`, not a backend block. What *does* still gate execution: **RulesOfEngagement on exploitation-tier tools** — a `GATED` tool (exploit/creds/destructive) is refused unless the engagement's `allow_exploitation` (and, for destructive calls, `destructive_actions_allowed`) is set. And the one active pacing layer, the **rate governor** (`rate_governor.py`): a per-target sliding-window pacer plus WAF/rate-limit ban detector that *delays* calls and reports bans — it never refuses one. On a clean tool failure the kernel also auto-runs the top fallback (`escalation_matrix.yaml` → `auto_fallback`), and auto-drops to a stealth intensity profile against a target the governor has cooled down. See §5.7.

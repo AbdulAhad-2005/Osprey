@@ -322,7 +322,7 @@ class APIClient:
             return {
                 "error": (
                     f"Request timed out ({exc}). The backend may still be working — "
-                    "check: docker logs -f ai-pentest-backend. "
+                    "check: docker logs -f osprey-backend. "
                     "Use /exit, restart the CLI, then /reset before the next target."
                 ),
             }
@@ -375,7 +375,7 @@ class APIClient:
             yield "error", {
                 "message": (
                     f"Request timed out ({exc}). The backend may still be working — "
-                    "check: docker logs -f ai-pentest-backend"
+                    "check: docker logs -f osprey-backend"
                 ),
             }
             return

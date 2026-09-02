@@ -1,0 +1,283 @@
+"""Universal stdout ingest — promotes structured findings from ANY tool output."""
+
+from __future__ import annotations
+
+import logging
+import re
+from functools import lru_cache
+from typing import Any
+
+from osprey.schemas.finding import (
+    ClaimSeverity,
+    EvidenceGrade,
+    Finding,
+    FindingType,
+    clamp_claim_severity,
+)
+from osprey.services.config_loader import read_config
+
+logger = logging.getLogger(__name__)
+
+_SPA_MARKERS = re.compile(
+    r"(?i)(<!DOCTYPE html|<html[\s>]|<div id=[\"']root[\"']|ng-version=|__NEXT_DATA__|webpackJsonp)",
+)
+
+# Strip ANSI escape sequences from tool output before regex matching.
+# Only parse_dnsx did this previously; now every tool benefits.
+_ANSI_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
+# Rules that should only fire when the source tool has NO dedicated parser are
+# marked `applies_when: no_parser` in config/ingest_rules.yaml — the config is
+# the single source of truth for suppression, so adding a new parser-owned rule
+# never means also editing a Python set here. These are the loose "structural
+# guessing" regexes (reconstructing ports/services/tech/URLs/certs from free
+# text) plus a few whose extraction a parser does better: valuable for
+# platform_shell / platform_script / nikto output, garbage duplicated over
+# output a precise parser already structured (e.g. "nginx" inside a JS bundle as
+# a "Service banner"). Header/CORS/cookie rules carry no flag, so they stay on
+# for every tool (parsers rarely extract those).
+
+
+def _tool_has_parser(source_tool: str) -> bool:
+    """True when a dedicated stdout parser is registered for this tool."""
+    name = (source_tool or "").split(":", 1)[0]  # script:/shell: never have one
+    if not name or source_tool.startswith(("script:", "shell:")):
+        return False
+    try:
+        from osprey.services.parsers.registry import (
+            _OUTPUT_PARSERS,
+            ensure_parsers_loaded,
+        )
+
+        # Idempotent: guarantees phase parser modules have self-registered even
+        # if this runs before app startup wired them (e.g. isolated test/import).
+        ensure_parsers_loaded()
+        return name in _OUTPUT_PARSERS
+    except Exception:
+        return False
+
+
+_JSON_CT = re.compile(r"(?i)content-type:\s*application/json")
+_PATH_API = re.compile(r"(?i)/(api|swagger|graphql|rest)(/|$|\?)")
+_IP_LITERAL_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
+
+
+def _port_from_match(m: "re.Match[str]") -> str:
+    """PORT/SERVICE rules in ingest_rules.yaml (open_port_line, nmap_service_version)
+    both capture the port number as group 1 — the convention their patterns already
+    follow. Without this, PORT/SERVICE findings from the universal ingest rules carry
+    no port metadata, so engagement_graph.py's auto-skeleton edge builder (which
+    requires it) silently skips them — a guaranteed orphan node, not a real gap."""
+    try:
+        g1 = m.group(1)
+    except (IndexError, re.error):
+        return ""
+    return g1 if g1 and g1.isdigit() else ""
+
+
+@lru_cache(maxsize=1)
+def _load_rules() -> list[dict[str, Any]]:
+    # Prefer YAML (source of truth); JSON is optional mirror.
+    data = read_config("ingest_rules.yaml", "ingest_rules.json")
+    return list(data.get("rules") or [])
+
+
+def reload_ingest_rules() -> None:
+    _load_rules.cache_clear()
+
+
+def looks_like_spa_html(text: str) -> bool:
+    sample = (text or "")[:8000]
+    return bool(_SPA_MARKERS.search(sample))
+
+
+def is_strong_http_evidence(text: str, *, path_hint: str = "") -> bool:
+    """True when body/headers prove a real service — not an HTML catch-all."""
+    blob = text or ""
+    if _JSON_CT.search(blob) and "{" in blob:
+        return True
+    if looks_like_spa_html(blob) and _PATH_API.search(path_hint or blob):
+        return False
+    if len(blob.strip()) >= 80 and not looks_like_spa_html(blob):
+        return True
+    lower = blob.lower()
+    markers = ("server:", "www-authenticate", "set-cookie:", "openssh", "banner", "x-powered-by")
+    return any(m in lower for m in markers) and len(blob.strip()) >= 24
+
+
+def apply_ingest_rules(
+    stdout: str,
+    stderr: str = "",
+    *,
+    engagement_id: str,
+    run_id: str = "",
+    source_tool: str = "",
+    target: str = "",
+    persist: bool = True,
+    max_findings: int = 40,
+) -> list[Finding]:
+    """Run YAML rules over combined output; optionally persist + graph ingest."""
+    if not engagement_id:
+        return []
+    blob = "\n".join(x for x in (stdout or "", stderr or "") if x)
+    if not blob.strip():
+        return []
+
+    # Strip ANSI escape sequences so regex rules match clean text.
+    blob = _ANSI_RE.sub("", blob)
+
+    # Hard SPA catch-all demotion signal for API-looking paths in target/URL
+    spa = looks_like_spa_html(blob)
+    path_hint = target or ""
+
+    findings: list[Finding] = []
+    seen_titles: set[str] = set()
+
+    # A tool with its own parser owns its structured extraction — the loose
+    # "guessing" rules only add mis-paired/garbage duplicates over its output.
+    skip_structural = _tool_has_parser(source_tool)
+
+    for rule in _load_rules():
+        if len(findings) >= max_findings:
+            break
+        if skip_structural and rule.get("applies_when") == "no_parser":
+            continue
+        pattern = rule.get("pattern") or ""
+        if not pattern:
+            continue
+        flags = re.M if rule.get("multiline") else 0
+        try:
+            rx = re.compile(pattern, flags | re.I)
+        except re.error:
+            continue
+
+        if rule.get("require_path_hint") and rule.get("path_hint_pattern"):
+            if not re.search(str(rule["path_hint_pattern"]), path_hint + "\n" + blob[:2000], re.I):
+                # Still apply spa rule when HTML shell present
+                if rule.get("id") != "spa_catchall_suspect" or not spa:
+                    if rule.get("id") == "spa_catchall_suspect" and spa and _PATH_API.search(path_hint):
+                        pass
+                    elif rule.get("id") == "spa_catchall_suspect" and spa:
+                        pass
+                    else:
+                        continue
+
+        matches = list(rx.finditer(blob))[:8]
+        for m in matches:
+            if len(findings) >= max_findings:
+                break
+            title = _render_title(rule.get("title_template") or "{match}", m)
+            title = title[:200]
+            if not title or title in seen_titles:
+                continue
+            seen_titles.add(title)
+
+            grade = _grade(rule.get("evidence_grade", "inferred"))
+            sev = _sev(rule.get("claim_severity", "info"))
+            tags = list(rule.get("tags") or [])
+            raw_snip = m.group(0)[:800]
+
+            # SPA false CRITICAL killer
+            if spa and _PATH_API.search(path_hint + title + raw_snip):
+                if "spa_catchall_suspect" not in tags:
+                    tags.append("spa_catchall_suspect")
+                grade = EvidenceGrade.UNVERIFIED
+                sev = ClaimSeverity.INFO
+
+            # Keep observed for real fingerprints; demote weak HTML-only matches
+            if grade == EvidenceGrade.OBSERVED and not is_strong_http_evidence(blob, path_hint=path_hint):
+                if "banner" not in tags and "product_hint" not in tags:
+                    grade = EvidenceGrade.INFERRED
+
+            sev = clamp_claim_severity(grade, sev)
+            ft = _ftype(rule.get("finding_type", "observation"))
+            meta: dict[str, Any] = {"ingest_rule": rule.get("id"), "target": target}
+            if ft == FindingType.TECHNOLOGY:
+                # tech_dispatch.yaml signals (WordPress/Joomla/Drupal/... follow-ups)
+                # match on metadata["technology"] via substring — without this,
+                # every technology-type finding from the generic ingest rules
+                # (WhatWeb/Wappalyzer/version-banner/etc.) is invisible to dispatch.
+                meta["technology"] = title
+            if ft in (FindingType.PORT, FindingType.SERVICE):
+                port_val = _port_from_match(m)
+                if port_val:
+                    meta["port"] = port_val
+                host_val = (target or "").strip()
+                if host_val:
+                    meta["ip" if _IP_LITERAL_RE.match(host_val) else "hostname"] = host_val
+            findings.append(
+                Finding(
+                    engagement_id=engagement_id,
+                    run_id=run_id or "",
+                    finding_type=ft,
+                    title=title,
+                    description=f"Auto-ingest rule={rule.get('id')} via {source_tool}",
+                    evidence=raw_snip,
+                    evidence_grade=grade,
+                    claim_severity=sev,
+                    source_tool=source_tool or "ingest_promoter",
+                    target=target or "",
+                    raw_data=raw_snip,
+                    tags=tags,
+                    metadata=meta,
+                )
+            )
+
+    if spa and _PATH_API.search(path_hint) and not any("spa_catchall_suspect" in (f.tags or []) for f in findings):
+        findings.append(
+            Finding(
+                engagement_id=engagement_id,
+                run_id=run_id or "",
+                finding_type=FindingType.OBSERVATION,
+                title="SPA/HTML catch-all suspected for API-like path — verify JSON body before CRITICAL",
+                description="Universal evidence law: HTML shell on /api|/swagger|/graphql is not an open API.",
+                evidence=blob[:400],
+                evidence_grade=EvidenceGrade.UNVERIFIED,
+                claim_severity=ClaimSeverity.INFO,
+                source_tool=source_tool or "ingest_promoter",
+                target=target or "",
+                raw_data=blob[:400],
+                tags=["auto_ingest", "spa_catchall_suspect"],
+            )
+        )
+
+    if persist and findings:
+        from osprey.services.engagement_graph import get_engagement_graph
+        from osprey.services.findings_store import get_findings_store
+
+        store = get_findings_store()
+        store.add_many(findings)
+        get_engagement_graph().ingest_many(findings)
+        # Cross-finding correlation is READ-ONLY and on-demand now (see
+        # finding_correlator.find_correlations / /hybrid/correlate): the LLM
+        # asks for suggestions and commits the useful ones itself. Nothing is
+        # auto-written into the graph on ingest anymore.
+    return findings
+
+
+def _render_title(template: str, m: re.Match[str]) -> str:
+    title = template.replace("{match}", (m.group(0) or "")[:120].strip())
+    for i in range(1, min(6, len(m.groups()) + 1)):
+        title = title.replace(f"{{g{i}}}", (m.group(i) or "").strip())
+    return " ".join(title.split())
+
+
+def _grade(raw: str) -> EvidenceGrade:
+    try:
+        return EvidenceGrade(str(raw).lower())
+    except Exception:
+        return EvidenceGrade.INFERRED
+
+
+def _sev(raw: str) -> ClaimSeverity:
+    try:
+        return ClaimSeverity(str(raw).lower())
+    except Exception:
+        return ClaimSeverity.INFO
+
+
+def _ftype(raw: str) -> FindingType:
+    try:
+        return FindingType(str(raw).lower())
+    except Exception:
+        return FindingType.OBSERVATION

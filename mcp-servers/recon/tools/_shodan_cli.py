@@ -22,7 +22,7 @@ def _api_key() -> str:
 
 def _get(url: str, params: dict[str, Any], timeout: int = 45) -> Any:
     qs = urlencode(params)
-    req = Request(f"{url}?{qs}", headers={"User-Agent": "pentest-platform-shodan/1.0"})
+    req = Request(f"{url}?{qs}", headers={"User-Agent": "osprey-shodan/1.0"})
     try:
         with urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8", errors="replace"))

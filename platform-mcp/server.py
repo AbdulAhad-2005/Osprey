@@ -133,11 +133,11 @@ _DOMAIN_RE = re.compile(
     r"^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$"
 )
 
-mcp = FastMCP("pentest-platform")
+mcp = FastMCP("osprey")
 
 
 def _log(msg: str) -> None:
-    print(f"[pentest-platform-mcp] {msg}", file=sys.stderr, flush=True)
+    print(f"[osprey-mcp] {msg}", file=sys.stderr, flush=True)
 
 
 def _normalize_target(raw: str) -> str:

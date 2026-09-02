@@ -20,4 +20,4 @@ pip install -r mcp-servers/requirements.txt
 Write-Host ""
 Write-Host "Setup complete. Activate the environment with:"
 Write-Host "    .\.venv\Scripts\Activate.ps1"
-Write-Host "Then run the backend (uvicorn pentest_platform.main:app --port 9000) and Osprey CLI (osprey)."
+Write-Host "Then run the backend (uvicorn osprey.main:app --port 9000) and Osprey CLI (osprey)."

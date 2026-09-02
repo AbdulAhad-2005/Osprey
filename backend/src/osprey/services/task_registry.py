@@ -1,0 +1,193 @@
+"""Load recon/network tasks and tool capabilities from YAML + registry."""
+
+from __future__ import annotations
+
+import logging
+from functools import lru_cache
+from typing import Any
+
+from osprey.schemas.tool_capability import (
+    ParamSpec,
+    PhaseCapabilitiesResponse,
+    TaskDefinition,
+    ToolCapability,
+)
+from osprey.schemas.tools import ToolCategory
+from osprey.services.config_loader import read_config
+from osprey.services.tool_registry import get_tool_definition
+
+logger = logging.getLogger(__name__)
+
+_RECON_NETWORK_CATEGORIES = frozenset(
+    {ToolCategory.RECON, ToolCategory.OSINT, ToolCategory.NETWORK}
+)
+
+
+@lru_cache(maxsize=1)
+def _load_config() -> dict[str, Any]:
+    data = read_config("recon_network_tools.yaml") or {}
+    osint = read_config("osint_tools.yaml") or {}
+    vuln = read_config("vuln_tools.yaml") or {}
+    exploit = read_config("exploit_tools.yaml") or {}
+    # Merge the passive-OSINT, vulnerability-analysis, and exploitation catalogs
+    # into the recon/network catalog so the Commander LLM sees one unified
+    # capability list. Later files win on key collisions, but task/tool ids are
+    # namespaced by design so none collide.
+    tasks = {
+        **(data.get("tasks") or {}), **(osint.get("tasks") or {}),
+        **(vuln.get("tasks") or {}), **(exploit.get("tasks") or {}),
+    }
+    tools = {
+        **(data.get("tools") or {}), **(osint.get("tools") or {}),
+        **(vuln.get("tools") or {}), **(exploit.get("tools") or {}),
+    }
+    return {"tasks": tasks, "tools": tools}
+
+
+def get_task(task_id: str) -> TaskDefinition | None:
+    raw = _load_config().get("tasks", {}).get(task_id)
+    if raw is None:
+        return None
+    return TaskDefinition(id=task_id, **raw)
+
+
+def list_tasks(*, phase: str | None = None) -> list[TaskDefinition]:
+    tasks = []
+    for task_id, raw in _load_config().get("tasks", {}).items():
+        if phase is not None and raw.get("phase") != phase:
+            continue
+        tasks.append(TaskDefinition(id=task_id, **raw))
+    return tasks
+
+
+def get_tool_capability(tool_name: str) -> ToolCapability | None:
+    raw = _load_config().get("tools", {}).get(tool_name)
+    tool_def = get_tool_definition(tool_name)
+    if tool_def is None:
+        return None
+
+    params: dict[str, ParamSpec] = {}
+    if raw:
+        for pname, pspec in raw.get("parameters", {}).items():
+            params[pname] = ParamSpec(**pspec)
+        freeform = raw.get("freeform_args_field", "additional_args")
+        llm_hints = raw.get("llm_hints", "")
+        examples = raw.get("example_calls", [])
+        task = raw.get("task", "")
+        phase = raw.get("phase", tool_def.category.value)
+        default_for_task = raw.get("default_for_task", False)
+        alternatives = raw.get("alternatives", [])
+    else:
+        freeform = "additional_args"
+        llm_hints = tool_def.description
+        examples = []
+        task = ""
+        phase = tool_def.category.value
+        default_for_task = False
+        alternatives = []
+        for pname, pdef in tool_def.parameters.items():
+            if pname in ("use_recovery", "use_cache", "exec_timeout"):
+                continue
+            params[pname] = ParamSpec(
+                type=pdef.type,
+                default=pdef.default,
+                description=pdef.description,
+            )
+
+    if "additional_args" not in params and freeform == "additional_args":
+        params["additional_args"] = ParamSpec(
+            type="string",
+            required=False,
+            default="",
+            description="Any extra CLI flags — LLM may pass flags not listed above.",
+        )
+
+    return ToolCapability(
+        tool_name=tool_name,
+        task=task,
+        phase=phase,
+        safety_level=tool_def.safety_level,
+        executable=tool_def.executable,
+        description=tool_def.description,
+        default_for_task=default_for_task,
+        alternatives=alternatives,
+        parameters=params,
+        freeform_args_field=freeform,
+        llm_hints=llm_hints,
+        example_calls=examples,
+        tags=tool_def.tags,
+    )
+
+
+def list_tool_capabilities(
+    *,
+    phase: str | None = None,
+    task_id: str | None = None,
+) -> list[ToolCapability]:
+    config_tools = _load_config().get("tools", {})
+    names = list(config_tools.keys()) if config_tools else []
+
+    if not names:
+        from osprey.services.tool_registry import list_registered_tools
+
+        names = [
+            t.name
+            for t in list_registered_tools()
+            if t.category in _RECON_NETWORK_CATEGORIES
+        ]
+
+    result: list[ToolCapability] = []
+    for name in names:
+        cap = get_tool_capability(name)
+        if cap is None:
+            continue
+        if phase is not None and cap.phase != phase:
+            continue
+        if task_id is not None and cap.task != task_id:
+            continue
+        result.append(cap)
+    return result
+
+
+def get_tools_for_task(task_id: str) -> list[ToolCapability]:
+    task = get_task(task_id)
+    if task is None:
+        return []
+
+    tools = list_tool_capabilities(task_id=task_id)
+    if tools:
+        return tools
+
+    default_cap = get_tool_capability(task.default_tool)
+    caps = [default_cap] if default_cap else []
+    for alt in task.alternatives:
+        c = get_tool_capability(alt)
+        if c:
+            caps.append(c)
+    return caps
+
+
+def get_phase_capabilities(phase: str) -> PhaseCapabilitiesResponse:
+    return PhaseCapabilitiesResponse(
+        phase=phase,
+        tasks=list_tasks(phase=phase),
+        tools=list_tool_capabilities(phase=phase),
+    )
+
+
+def llm_tool_catalog_for_phase(phase: str) -> dict[str, Any]:
+    """
+    Compact catalog for your friend's LiteLLM function-calling / system prompt.
+
+    Emphasises that additional_args is unrestricted (except shell-metachar ban).
+    """
+    caps = list_tool_capabilities(phase=phase)
+    return {
+        "phase": phase,
+        "note": (
+            "You may pass any valid CLI flags via additional_args (or extra_args/flags for nmap). "
+            "Examples in the catalog are suggestions only — not an exhaustive allowlist."
+        ),
+        "tasks": [t.model_dump() for t in list_tasks(phase=phase)],
+        "tools": [c.model_dump() for c in caps],
+    }

@@ -1,0 +1,23 @@
+"""Cross-phase platform kernel — adaptation, handoff, situational context, digests.
+
+All agents (recon, network, webapp, vuln, …) share this layer.
+Phase-specific logic registers parsers/hints; the pipeline stays one code path.
+"""
+
+from osprey.platform.adaptation import enrich_tool_result
+from osprey.platform.failure_analysis import analyze_failure, format_failure_analysis
+from osprey.platform.handoff import build_phase_handoff, export_structured_findings, handoff_to_prompt
+from osprey.platform.run_context import RunAssistState, tool_call_signature
+from osprey.platform.situational_context import build_situational_brief
+
+__all__ = [
+    "RunAssistState",
+    "build_phase_handoff",
+    "build_situational_brief",
+    "enrich_tool_result",
+    "export_structured_findings",
+    "format_failure_analysis",
+    "handoff_to_prompt",
+    "tool_call_signature",
+]
+

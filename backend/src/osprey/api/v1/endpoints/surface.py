@@ -1,0 +1,28 @@
+"""Surface expansion API — the only HTTP-reachable entry point into the BFS
+expansion engine. Thin wrapper; all logic lives in services/surface_expansion.py.
+"""
+
+from __future__ import annotations
+
+from fastapi import APIRouter
+from pydantic import BaseModel, Field
+
+from osprey.services.surface_expansion import (
+    ExpansionReport,
+    run_expansion_to_fixpoint,
+)
+
+router = APIRouter()
+
+
+class ExpandRequest(BaseModel):
+    engagement_id: str
+    run_id: str = ""
+    max_passes: int = Field(default=5, ge=1, le=20)
+
+
+@router.post("/expand", response_model=ExpansionReport)
+async def expand(request: ExpandRequest) -> ExpansionReport:
+    return await run_expansion_to_fixpoint(
+        engagement_id=request.engagement_id, run_id=request.run_id, max_passes=request.max_passes,
+    )

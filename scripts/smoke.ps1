@@ -7,16 +7,16 @@ $env:PYTHONPATH = $backendSrc
 
 Write-Host "== Import platform kernel ==" -ForegroundColor Cyan
 python -c @"
-from pentest_platform.platform import (
+from osprey.platform import (
     RunAssistState,
     build_phase_handoff,
     build_situational_brief,
     enrich_tool_result,
     export_structured_findings,
 )
-from pentest_platform.platform.adaptation import AdaptationContext
-from pentest_platform.services.parsers.registry import ensure_parsers_loaded, parse_tool_output, digest_tool_output
-from pentest_platform.schemas.tools import ToolExecutionResponse
+from osprey.platform.adaptation import AdaptationContext
+from osprey.services.parsers.registry import ensure_parsers_loaded, parse_tool_output, digest_tool_output
+from osprey.schemas.tools import ToolExecutionResponse
 
 ensure_parsers_loaded()
 
@@ -59,7 +59,7 @@ ctx = AdaptationContext(
     params={'target': '45.33.32.156'},
 )
 # Failure analysis
-from pentest_platform.platform.failure_analysis import FailureContext, analyze_failure, format_failure_analysis
+from osprey.platform.failure_analysis import FailureContext, analyze_failure, format_failure_analysis
 
 fail_ctx = FailureContext(
     tool_name='dnsenum_scan',

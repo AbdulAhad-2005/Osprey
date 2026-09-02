@@ -1,0 +1,164 @@
+"""Bind MCP / API requests to a durable engagement + run (Phase A spine)."""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+
+from osprey.schemas.engagement import EngagementCreateRequest
+from osprey.services.engagement_store import get_engagement_store
+from osprey.services.run_store import get_run_store
+from osprey.services.target_analysis import classify_target
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SessionContext:
+    engagement_id: str
+    run_id: str
+    target: str
+    created_engagement: bool = False
+    switched_target: bool = False
+    previous_target: str = ""
+
+
+def normalize_target(raw: str) -> str:
+    """Canonical engagement key for any target (domain / IP / IPv6 / CIDR /
+    host:port / URL) — the bare host/network, never a port. Single source of
+    truth is target_analysis.classify_target."""
+    spec = classify_target(raw)
+    if spec.engagement_target:
+        return spec.engagement_target
+    # label / invalid: fall back to the tidied raw so callers can still key on it.
+    return (raw or "").strip().lower().rstrip(".")
+
+
+def _bindable_target(value: str) -> bool:
+    return classify_target(value).bindable
+
+
+def bind_target(
+    *,
+    seed_target: str,
+    run_id: str | None = None,
+    force_new: bool = False,
+) -> SessionContext:
+    store = get_engagement_store()
+    runs = get_run_store()
+    target = normalize_target(seed_target)
+    rid = (run_id or "").strip()
+
+    if not target or not _bindable_target(target):
+        raise ValueError(f"Invalid or missing target domain: {seed_target!r}")
+
+    previous = ""
+    existing = None if force_new else store.get_latest_by_target(target)
+    created = False
+
+    if existing is not None:
+        engagement = existing
+    else:
+        engagement = store.create(
+            EngagementCreateRequest(target=target, name=f"engagement-{target}")
+        )
+        created = True
+        logger.info("Created engagement %s for target %s", engagement.id, target)
+
+    if rid:
+        runs.ensure(run_id=rid, engagement_id=engagement.id)
+
+    return SessionContext(
+        engagement_id=engagement.id,
+        run_id=rid,
+        target=engagement.target,
+        created_engagement=created,
+        switched_target=False,
+        previous_target=previous,
+    )
+
+
+def resolve_session(
+    *,
+    engagement_id: str | None = None,
+    run_id: str | None = None,
+    seed_target: str = "",
+) -> SessionContext:
+    """Resolve engagement for context/hybrid calls.
+
+    When ``seed_target`` is set it wins over a stale ``engagement_id`` so the
+    Commander can switch targets dynamically in one OpenCode session.
+    """
+    store = get_engagement_store()
+    runs = get_run_store()
+    eid = (engagement_id or "").strip()
+    rid = (run_id or "").strip()
+    target = normalize_target(seed_target)
+
+    if target and _bindable_target(target):
+        bound = bind_target(seed_target=target, run_id=rid or None)
+        if eid and eid != bound.engagement_id:
+            prev_eng = store.get(eid)
+            prev_label = prev_eng.target if prev_eng else eid
+            return SessionContext(
+                engagement_id=bound.engagement_id,
+                run_id=bound.run_id,
+                target=bound.target,
+                created_engagement=bound.created_engagement,
+                switched_target=True,
+                previous_target=prev_label,
+            )
+        return bound
+
+    if eid:
+        eng = store.get(eid)
+        if eng is None:
+            raise ValueError(f"Engagement not found: {eid}")
+        if rid:
+            runs.ensure(run_id=rid, engagement_id=eid)
+        return SessionContext(
+            engagement_id=eid,
+            run_id=rid,
+            target=eng.target,
+        )
+
+    if rid:
+        bound = runs.get_engagement_id(run_id=rid)
+        if bound:
+            eng = store.get(bound)
+            if eng is not None:
+                return SessionContext(engagement_id=bound, run_id=rid, target=eng.target)
+
+    return SessionContext(engagement_id="", run_id=rid, target=target)
+
+
+def resolve_for_tool_execution(
+    *,
+    engagement_id: str | None,
+    run_id: str | None,
+    seed_target: str,
+    session_target: str = "",
+) -> SessionContext:
+    """Bind tool runs to the active engagement (set via platform_set_target)."""
+    rid = (run_id or "").strip()
+    active = normalize_target(session_target)
+
+    if active and _bindable_target(active):
+        return bind_target(seed_target=active, run_id=rid or None)
+
+    session = resolve_session(
+        engagement_id=engagement_id,
+        run_id=run_id,
+        seed_target=seed_target,
+    )
+    if session.engagement_id:
+        return session
+
+    target = normalize_target(seed_target)
+    if target and _bindable_target(target):
+        return bind_target(seed_target=target, run_id=rid or None)
+
+    raise ValueError(
+        "No active target. Call platform_set_target('example.com') or platform_health(target=...) "
+        "before running tools."
+    )

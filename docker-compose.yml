@@ -1,7 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: ai-pentest-postgres
+    container_name: osprey-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-pentest}
@@ -26,7 +26,7 @@ services:
     profiles: ["kali"]
     build:
       context: ./kali-tools
-    container_name: ai-pentest-kali
+    container_name: osprey-kali
     restart: unless-stopped
     env_file:
       - .env
@@ -50,7 +50,7 @@ services:
   backend:
     build:
       context: ./backend
-    container_name: ai-pentest-backend
+    container_name: osprey-backend
     env_file:
       - .env
     environment:
@@ -60,7 +60,7 @@ services:
       # container name to bring your own tools, or empty ("") to force native
       # host execution. If the named container isn't running, the backend falls
       # back to native automatically.
-      KALI_CONTAINER: ${KALI_CONTAINER:-ai-pentest-kali}
+      KALI_CONTAINER: ${KALI_CONTAINER:-osprey-kali}
       LLM_MODEL: ${LLM_MODEL:-gemini/gemini-3.5-flash}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_API_BASE: ${LLM_API_BASE:-}
@@ -80,7 +80,7 @@ services:
       - "9000:9000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    command: ["uvicorn", "pentest_platform.main:app", "--host", "0.0.0.0", "--port", "9000"]
+    command: ["uvicorn", "osprey.main:app", "--host", "0.0.0.0", "--port", "9000"]
     # Only postgres is a hard dependency. kali-tools is intentionally NOT listed
     # so the stack starts without building the Kali image; the backend detects
     # the container at runtime and uses it when present (see KALI_CONTAINER).

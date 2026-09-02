@@ -1,0 +1,377 @@
+"""Normalize LLM tool arguments before execution — fixes common shape mistakes."""
+
+from __future__ import annotations
+
+import re
+import shlex
+from typing import Any
+from urllib.parse import urlparse
+
+from osprey.services.target_utils import normalize_ports_value
+
+_BOOL_TRUE = frozenset({"true", "1", "yes", "on"})
+_BOOL_FALSE = frozenset({"false", "0", "no", "off", ""})
+
+_BOOL_PARAMS = frozenset(
+    {
+        "privileged",
+        "all_sources",
+        "silent",
+        "tech_detect",
+        "status_code",
+        "probe",
+        "title",
+        "banners",
+        "shares",
+        "users",
+        "forms",
+        "include_subdomains",
+    }
+)
+
+_NMAP_TOOLS = frozenset({"nmap_syn_scan", "nmap_service_scan", "nmap_custom_scan"})
+
+# Primary param the CLI builder expects. Agents freely pass target/domain/host/url.
+_DOMAIN_PRIMARY_TOOLS = frozenset(
+    {
+        "subfinder_scan",
+        "amass_scan",
+        "dnsenum_scan",
+        "fierce_scan",
+        "gau_discovery",
+        "waybackurls_discovery",
+        "domain_hunter",
+        "whois_lookup",
+        "crt_sh_query",
+        "cdn_origin_probe",
+        "shodan_search",
+        "origin_ip_attribution",
+        "email_security_probe",
+    }
+)
+_URL_PRIMARY_TOOLS = frozenset(
+    {
+        "hakrawler_crawl",
+        "katana_crawl",
+        "feroxbuster_scan",
+        "ffuf_scan",
+        "gobuster_scan",
+        "arjun_scan",
+        "x8_parameter_discovery",
+        "well_known_probe",
+        "browser_scrape",
+        # vuln-analysis tools keyed on a URL
+        "wpscan_analyze",
+        "sqlmap_scan",
+        "dalfox_xss_scan",
+        "graphql_cop_scan",
+    }
+)
+_TARGET_PRIMARY_TOOLS = frozenset(
+    {
+        "httpx_probe",
+        "dnsx_resolve",
+        "dnsx_reverse",
+        "asn_enum",
+        "tlsx_inspect",
+        "nmap_syn_scan",
+        "nmap_service_scan",
+        "nmap_custom_scan",
+        "rustscan_fast_scan",
+        "naabu_port_scan",
+        "masscan_high_speed",
+        "netexec_scan",
+        "smbmap_scan",
+        "enum4linux_scan",
+        "enum4linux_ng_advanced",
+        "responder_credential_harvest",
+        "rpcclient_enumeration",
+        "arp_scan_discovery",
+        "nbtscan_netbios",
+        "autorecon_scan",
+        "shodan_host_info",
+        "subdomain_takeover_check",
+        "js_recon",
+        # vuln-analysis tools keyed on a URL/host target
+        "nuclei_scan",
+        "nikto_scan",
+        "jaeles_vulnerability_scan",
+        "sslyze_scan",
+    }
+)
+
+_ALIAS_KEYS = ("target", "domain", "host", "url", "hostname", "ip")
+
+# Tools whose CLI wrapper accepts one of these params in place of the
+# canonical primary — e.g. dnsx_resolve's build_command raises only when
+# *both* target and target_file are empty (mcp-servers/recon/tools/
+# dnsx_resolve.py), so requiring target unconditionally rejects a valid
+# target_file-only call before it ever reaches the CLI.
+_ALT_PRIMARY_SATISFIERS: dict[str, tuple[str, ...]] = {
+    "subdomain_takeover_check": ("subdomains",),
+    "dnsx_resolve": ("target_file",),
+    "dnsx_reverse": ("target_file",),
+}
+
+
+def primary_param_for_tool(tool_name: str) -> str | None:
+    """Return the canonical primary arg name for a tool, if known."""
+    if tool_name in _DOMAIN_PRIMARY_TOOLS:
+        return "domain"
+    if tool_name in _URL_PRIMARY_TOOLS:
+        return "url"
+    if tool_name in _TARGET_PRIMARY_TOOLS or tool_name in _NMAP_TOOLS:
+        return "target"
+    return None
+
+
+def alt_primary_satisfiers(tool_name: str) -> tuple[str, ...]:
+    """Param names that satisfy a tool's primary-param requirement in place
+    of its canonical target/domain/url, per the tool's own CLI wrapper."""
+    return _ALT_PRIMARY_SATISFIERS.get(tool_name, ())
+
+
+def normalize_agent_tool_args(tool_name: str, args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Return cleaned args and human-readable notes about what was fixed."""
+    out = dict(args)
+    notes: list[str] = []
+
+    for key in list(out.keys()):
+        if key in _BOOL_PARAMS:
+            coerced = _coerce_bool(out[key])
+            if coerced is not None and coerced != out[key]:
+                notes.append(f"Coerced {key} from {out[key]!r} to {coerced!r}")
+                out[key] = coerced
+
+    alias_notes = _canonicalize_primary_target(tool_name, out)
+    notes.extend(alias_notes)
+
+    if "ports" in out and tool_name in _NMAP_TOOLS:
+        cleaned = normalize_ports_value(str(out.get("ports", "") or ""))
+        if cleaned != out.get("ports"):
+            notes.append(f"Fixed ports from {out['ports']!r} to {cleaned!r} (no -p prefix in ports param)")
+            out["ports"] = cleaned
+
+    # Groq/models often duplicate flags across fields — merge into one freeform field.
+    # nmap_custom_scan keeps flags as its freeform field; others use additional_args.
+    if tool_name != "nmap_custom_scan":
+        flags = str(out.pop("flags", "") or "").strip()
+    else:
+        flags = ""
+    extra = str(out.pop("additional_args", "") or out.pop("extra_args", "") or "").strip()
+    merged_extra = " ".join(part for part in (flags, extra) if part).strip()
+    if merged_extra:
+        target_field = "flags" if tool_name == "nmap_custom_scan" else "additional_args"
+        existing = str(out.get(target_field, "") or "").strip()
+        combined = " ".join(part for part in (existing, merged_extra) if part).strip()
+        if combined != existing:
+            if flags or extra:
+                notes.append("Merged flags/additional_args into a single field")
+            out[target_field] = combined
+
+    if "additional_args" in out:
+        cleaned_extra, extra_notes = _sanitize_additional_args(tool_name, out)
+        if cleaned_extra != out.get("additional_args", ""):
+            out["additional_args"] = cleaned_extra
+        notes.extend(extra_notes)
+
+    if tool_name in _NMAP_TOOLS and out.get("target"):
+        target = str(out["target"]).strip()
+        if target.startswith("http://") or target.startswith("https://"):
+            host = urlparse(target).hostname
+            if host:
+                notes.append(f"Stripped URL target to hostname {host!r}")
+                out["target"] = host
+
+    return out, notes
+
+
+def _first_alias_value(args: dict[str, Any]) -> tuple[str, str]:
+    """Return (key, value) for the first non-empty target-like param."""
+    for key in _ALIAS_KEYS:
+        value = args.get(key)
+        if value is not None and str(value).strip():
+            return key, str(value).strip()
+    return "", ""
+
+
+def _as_domain(raw: str) -> str:
+    from osprey.services.target_utils import normalize_domain
+
+    return normalize_domain(raw)
+
+
+def _as_url(raw: str) -> str:
+    value = (raw or "").strip()
+    if not value:
+        return ""
+    if value.startswith("http://") or value.startswith("https://"):
+        return value
+    # Bare host/domain → https URL for crawlers/probes that need a scheme.
+    return f"https://{value.lstrip('/')}"
+
+
+def _as_host_target(raw: str) -> str:
+    value = (raw or "").strip()
+    if not value:
+        return ""
+    if value.startswith("http://") or value.startswith("https://"):
+        host = urlparse(value).hostname
+        return host or value
+    # Strip path if someone passed host/path without scheme.
+    if "/" in value and not value.replace(".", "").replace(":", "").isdigit():
+        maybe = value.split("/", 1)[0]
+        if maybe:
+            value = maybe
+    return value
+
+
+def _canonicalize_primary_target(tool_name: str, out: dict[str, Any]) -> list[str]:
+    """Map target/domain/host/url aliases onto the tool's expected primary param."""
+    notes: list[str] = []
+    primary = primary_param_for_tool(tool_name)
+    if not primary:
+        # Still fill whatever aliases we can for unknown tools.
+        if not str(out.get("target", "") or "").strip():
+            src, raw = _first_alias_value(out)
+            if raw and src != "target":
+                out["target"] = raw
+                notes.append(f"Mapped {src}→target ({raw!r})")
+        return notes
+
+    current = str(out.get(primary, "") or "").strip()
+    if current:
+        # Normalize shape of already-correct key.
+        if primary == "domain":
+            normalized = _as_domain(current)
+            if normalized != current:
+                out[primary] = normalized
+                notes.append(f"Normalized domain {current!r} → {normalized!r}")
+        elif primary == "url":
+            normalized = _as_url(current)
+            if normalized != current:
+                out[primary] = normalized
+                notes.append(f"Normalized url {current!r} → {normalized!r}")
+        elif primary == "target" and tool_name in _NMAP_TOOLS:
+            normalized = _as_host_target(current)
+            if normalized != current:
+                out[primary] = normalized
+                notes.append(f"Normalized target {current!r} → {normalized!r}")
+        return notes
+
+    src, raw = _first_alias_value(out)
+    if not raw:
+        return notes
+
+    if primary == "domain":
+        out[primary] = _as_domain(raw)
+    elif primary == "url":
+        out[primary] = _as_url(raw)
+    else:
+        # httpx accepts URL or host; nmap-family wants host/IP.
+        if tool_name == "httpx_probe":
+            out[primary] = raw if ("://" in raw or "/" in raw) else raw
+        else:
+            out[primary] = _as_host_target(raw)
+
+    notes.append(f"Mapped {src}→{primary} ({out[primary]!r})")
+    return notes
+
+
+def _coerce_bool(value: Any) -> bool | Any:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in _BOOL_TRUE:
+            return True
+        if lowered in _BOOL_FALSE:
+            return False
+    return value
+
+
+def _sanitize_additional_args(tool_name: str, args: dict[str, Any]) -> tuple[str, list[str]]:
+    """Remove duplicate or malformed free-form flags when typed args already exist."""
+    raw = str(args.get("additional_args", "") or "").strip()
+    if not raw:
+        return "", []
+
+    try:
+        tokens = shlex.split(raw)
+    except ValueError:
+        # Keep original string if it contains unmatched quotes.
+        return raw, []
+
+    notes: list[str] = []
+    cleaned: list[str] = []
+    i = 0
+
+    value_flags_by_tool: dict[str, dict[str, tuple[str, ...]]] = {
+        "subfinder_scan": {"domain": ("-d", "--domain")},
+        "amass_scan": {"domain": ("-d", "--domain")},
+    }
+    bool_flags_by_tool: dict[str, dict[str, tuple[str, ...]]] = {
+        "subfinder_scan": {
+            "silent": ("-silent",),
+            "all_sources": ("-all",),
+        },
+    }
+
+    value_flags = value_flags_by_tool.get(tool_name, {})
+    bool_flags = bool_flags_by_tool.get(tool_name, {})
+    typed_values = {k: str(args.get(k, "") or "").strip() for k in value_flags}
+    typed_bools = {k: bool(args.get(k)) for k in bool_flags}
+
+    while i < len(tokens):
+        tok = tokens[i]
+        lowered = tok.lower()
+        consumed = False
+
+        for field, flags in value_flags.items():
+            if not typed_values.get(field):
+                continue
+
+            if lowered in flags:
+                if i + 1 < len(tokens) and not tokens[i + 1].startswith("-"):
+                    notes.append(
+                        f"Removed duplicate {tok} {tokens[i + 1]!r} from additional_args (already set via {field})"
+                    )
+                    i += 2
+                else:
+                    notes.append(f"Removed dangling {tok} from additional_args (missing value)")
+                    i += 1
+                consumed = True
+                break
+
+            for flag in flags:
+                prefix = f"{flag}="
+                if lowered.startswith(prefix):
+                    notes.append(f"Removed duplicate {tok} from additional_args (already set via {field})")
+                    i += 1
+                    consumed = True
+                    break
+            if consumed:
+                break
+
+        if consumed:
+            continue
+
+        removed_bool = False
+        for field, flags in bool_flags.items():
+            if typed_bools.get(field) and lowered in flags:
+                notes.append(f"Removed duplicate {tok} from additional_args (already set via {field}=true)")
+                i += 1
+                removed_bool = True
+                break
+        if removed_bool:
+            continue
+
+        cleaned.append(tok)
+        i += 1
+
+    rendered = " ".join(shlex.quote(t) if re.search(r"\s", t) else t for t in cleaned).strip()
+    return rendered, notes

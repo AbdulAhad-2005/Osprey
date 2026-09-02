@@ -1,0 +1,134 @@
+"""Tech dispatch — signal → task suggestions from graph + findings."""
+
+from __future__ import annotations
+
+import logging
+from functools import lru_cache
+from typing import Any
+
+from osprey.schemas.finding import FindingType
+from osprey.schemas.hybrid import DispatchSuggestion
+from osprey.services.config_loader import read_config
+from osprey.services.engagement_graph import get_engagement_graph
+from osprey.services.findings_store import get_findings_store
+
+logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1)
+def _load() -> dict[str, Any]:
+    data = read_config("tech_dispatch.yaml")
+    return data or {"signals": []}
+
+
+def suggest_dispatch(
+    *,
+    engagement_id: str = "",
+    run_id: str = "",
+    phase: str | None = None,
+) -> list[DispatchSuggestion]:
+    findings = get_findings_store().list(engagement_id=engagement_id, run_id=run_id, limit=500)
+    graph = get_engagement_graph().summary(engagement_id=engagement_id, run_id=run_id)
+    suggestions: list[DispatchSuggestion] = []
+
+    for rule in _load().get("signals", []):
+        match = rule.get("match", {})
+        dispatch = rule.get("dispatch", {})
+        if not dispatch:
+            continue
+
+        if not _matches(match, findings, graph, engagement_id):
+            continue
+
+        suggestions.append(
+            DispatchSuggestion(
+                signal=str(rule.get("id", "")),
+                task_id=str(dispatch.get("task_id", "")),
+                default_tool=str(dispatch.get("default_tool", "")),
+                alternatives=list(dispatch.get("alternatives") or []),
+                skill_file=str(dispatch.get("skill_file", "")),
+                reason=str(dispatch.get("reason", "")),
+                priority=int(dispatch.get("priority", 0)),
+            )
+        )
+
+    suggestions.sort(key=lambda s: s.priority, reverse=True)
+    return suggestions
+
+
+def _matches(
+    match: dict[str, Any],
+    findings: list,
+    graph,
+    engagement_id: str,
+) -> bool:
+    ftype = match.get("finding_type")
+    if ftype:
+        typed = [f for f in findings if f.finding_type.value == ftype]
+        min_count = int(match.get("min_count", 1))
+        max_count = match.get("max_count")
+        if len(typed) < min_count:
+            return False
+        if max_count is not None and len(typed) > int(max_count):
+            return False
+
+    missing = match.get("missing_finding_type")
+    if missing:
+        if any(f.finding_type.value == missing for f in findings):
+            return False
+
+    # Match on a finding tag (e.g. injection_point_candidate) with a min count.
+    tag = match.get("has_tag")
+    if tag:
+        min_tagged = int(match.get("min_count", 1))
+        tagged = sum(1 for f in findings if tag in (f.tags or []))
+        if tagged < min_tagged:
+            return False
+
+    meta_key = match.get("metadata_key")
+    if meta_key:
+        meta_contains = match.get("metadata_contains", "").lower()
+        meta_value = str(match.get("metadata_value", ""))
+        # No contains/value → treat as an existence check (any finding whose
+        # metadata carries a non-empty value for this key).
+        existence_only = not meta_contains and not meta_value
+        found = False
+        for f in findings:
+            val = str(f.metadata.get(meta_key, "")).lower()
+            if existence_only:
+                if val:
+                    found = True
+                    break
+                continue
+            if meta_contains and meta_contains in val:
+                found = True
+                break
+            if meta_value and val == meta_value.lower():
+                found = True
+                break
+        if not found:
+            return False
+
+    if match.get("graph_query") == "siblings_same_ip":
+        min_siblings = int(match.get("min_siblings", 2))
+        for sub in graph.subdomains[:10]:
+            sib = get_engagement_graph().siblings_same_ip(sub, engagement_id=engagement_id)
+            if len(sib.siblings) >= min_siblings:
+                return True
+        return False
+
+    if match.get("has_live_hosts") and not graph.live_hosts:
+        return False
+
+    phases_complete = match.get("phases_complete")
+    if phases_complete:
+        # heuristic: task ids implied by finding types present
+        task_signals = {
+            "subdomain_enumeration": any(f.finding_type == FindingType.SUBDOMAIN for f in findings),
+            "live_host_probing": any(f.finding_type == FindingType.URL for f in findings),
+        }
+        for phase in phases_complete:
+            if not task_signals.get(phase, False):
+                return False
+
+    return True

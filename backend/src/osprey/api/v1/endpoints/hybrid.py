@@ -1,0 +1,364 @@
+"""Hybrid orchestration API — the conductor's context/memory surface."""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, HTTPException, Query
+
+from osprey.schemas.engagement_graph import GraphSummary, SiblingHostResponse
+from osprey.schemas.hybrid import (
+    CommanderContext,
+    EscalationQuery,
+    EscalationSuggestion,
+)
+from osprey.services.commander_context import build_commander_context
+from osprey.services.engagement_graph import get_engagement_graph
+from osprey.services.escalation_registry import suggest_escalations
+from osprey.services.run_store import get_run_store
+from osprey.services.session_context import resolve_session
+from osprey.services.tech_dispatch import suggest_dispatch
+
+router = APIRouter()
+
+
+@router.get("/context", response_model=CommanderContext)
+def commander_context_auto(
+    engagement_id: str | None = Query(default=None),
+    run_id: str | None = Query(default=None),
+    seed_target: str | None = Query(default=None),
+) -> CommanderContext:
+    """Evidence-first context (same as /context/auto). No phase required."""
+    return commander_context(
+        "auto",
+        engagement_id=engagement_id,
+        run_id=run_id,
+        seed_target=seed_target,
+    )
+
+
+@router.get("/context/{phase}", response_model=CommanderContext)
+def commander_context(
+    phase: str = "auto",
+    engagement_id: str | None = Query(default=None),
+    run_id: str | None = Query(default=None),
+    seed_target: str | None = Query(default=None, description="Target domain for session bind"),
+) -> CommanderContext:
+    """Commander packet. Full tool catalog + phase skills + the conductor's
+    evidence-based phase-readiness signal — no stage checklist, no gate."""
+    focus = (phase or "auto").strip().lower()
+    try:
+        session = resolve_session(
+            engagement_id=engagement_id,
+            run_id=run_id,
+            seed_target=seed_target or "",
+        )
+        if not session.engagement_id:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "engagement_id required. Call platform_set_target / platform_health first, "
+                    "or pass seed_target."
+                ),
+            )
+        if session.run_id:
+            get_run_store().ensure(run_id=session.run_id, engagement_id=session.engagement_id)
+        ctx = build_commander_context(
+            focus,
+            engagement_id=session.engagement_id,
+            run_id=session.run_id or run_id or "",
+        )
+        if session.switched_target:
+            switch_msg = (
+                f"Target switched to {session.target} (engagement {session.engagement_id}). "
+                f"Prior target was {session.previous_target}. Storage is isolated per engagement."
+            )
+            ctx.note = f"{switch_msg} {ctx.note or ''}".strip()
+        return ctx
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
+
+
+@router.get("/phase-readiness")
+def phase_readiness(
+    engagement_id: str = Query(..., min_length=1),
+    run_id: str | None = Query(default=None),
+) -> dict:
+    """The conductor's evidence-based phase state — recon always active,
+    vuln/exploit unlock once their thresholds are met. Informative, not a gate."""
+    from osprey.services.phase_supervisor import (
+        phase_readiness_snapshot,
+        phase_readiness_text,
+    )
+
+    snapshot = phase_readiness_snapshot(engagement_id, run_id=run_id or "")
+    return {**snapshot, "text": phase_readiness_text(snapshot)}
+
+
+@router.post("/correlate")
+def correlate_now(body: dict) -> dict:
+    """Read-only cross-finding correlation — returns candidate links/tags.
+
+    Never writes to the graph. The caller (LLM) reviews the suggestions and
+    commits the useful ones via platform_graph_link / platform_tag_asset.
+    """
+    from osprey.services.finding_correlator import find_correlations
+
+    eid = str(body.get("engagement_id") or "").strip()
+    if not eid:
+        raise HTTPException(400, detail="engagement_id required")
+    return find_correlations(
+        eid,
+        seed_target=str(body.get("seed_target") or ""),
+    )
+
+
+@router.get("/stdout-index")
+def stdout_index(
+    engagement_id: str = Query(..., min_length=1),
+    limit: int = Query(default=8, ge=1, le=24),
+) -> dict:
+    """Recent tool artifact paths + snippets (context stays small)."""
+    from osprey.services.stdout_index import list_stdout_index
+
+    return list_stdout_index(engagement_id, limit=limit)
+
+
+@router.get("/artifacts")
+async def artifacts_list(
+    engagement_id: str = Query(..., min_length=1),
+) -> dict:
+    from osprey.services.artifacts import list_artifacts
+
+    try:
+        return await list_artifacts(engagement_id)
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
+
+
+@router.get("/artifacts/read")
+async def artifacts_read(
+    engagement_id: str = Query(..., min_length=1),
+    path: str = Query(..., min_length=1),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=80000, ge=1, le=500_000),
+) -> dict:
+    from osprey.services.artifacts import read_artifact_slice
+
+    try:
+        return await read_artifact_slice(
+            engagement_id, path, offset=offset, limit=limit
+        )
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
+
+
+@router.post("/escalation/suggest", response_model=list[EscalationSuggestion])
+def escalation_suggest(query: EscalationQuery) -> list[EscalationSuggestion]:
+    return suggest_escalations(query)
+
+
+@router.get("/dispatch/suggest", response_model=list)
+def dispatch_suggest(
+    engagement_id: str | None = Query(default=None),
+    run_id: str | None = Query(default=None),
+    phase: str | None = Query(default=None),
+) -> list:
+    return suggest_dispatch(engagement_id=engagement_id or "", run_id=run_id or "", phase=phase)
+
+
+@router.get("/graph/summary", response_model=GraphSummary)
+def graph_summary(
+    engagement_id: str | None = Query(default=None),
+    run_id: str | None = Query(default=None),
+) -> GraphSummary:
+    eid = (engagement_id or "").strip()
+    if not eid:
+        return GraphSummary(
+            engagement_id="",
+            run_id=run_id or "",
+            node_count=0,
+            edge_count=0,
+            pivot_hints=["engagement_id required — call platform_health() to bind session"],
+        )
+    return get_engagement_graph().summary(engagement_id=eid, run_id=run_id or "")
+
+
+@router.get("/graph/siblings", response_model=SiblingHostResponse)
+def graph_siblings(
+    host: str = Query(..., min_length=1),
+    engagement_id: str | None = Query(default=None),
+) -> SiblingHostResponse:
+    return get_engagement_graph().siblings_same_ip(host, engagement_id=engagement_id or "")
+
+
+@router.get("/graph/query")
+def graph_query(
+    engagement_id: str = Query(..., min_length=1),
+    asset_type: str = Query(default=""),
+    contains: str = Query(default=""),
+    limit: int = Query(default=80, ge=1, le=500),
+    from_asset: str = Query(default="", description="Set with max_hops for multi-hop traversal instead of type/contains filter"),
+    max_hops: int = Query(default=0, ge=0, le=6),
+) -> dict:
+    """Filter engagement graph nodes by type and label substring, OR (when
+    from_asset + max_hops are set) do a multi-hop undirected traversal from
+    that asset — SQL-level per-hop queries, not a full graph load."""
+    from osprey.services.graph_query import query_graph
+
+    return query_graph(
+        engagement_id,
+        asset_type=asset_type,
+        contains=contains,
+        limit=limit,
+        from_asset=from_asset,
+        max_hops=max_hops,
+    )
+
+
+@router.post("/graph/link")
+def graph_link(body: dict) -> dict:
+    """Operator-named graph edge (cognition write-back). Non-observed → hypothesis_ prefix."""
+    from osprey.services.operator_memory import link_assets
+
+    try:
+        return link_assets(
+            engagement_id=str(body.get("engagement_id") or ""),
+            source=str(body.get("source") or ""),
+            target=str(body.get("target") or ""),
+            relation=str(body.get("relation") or ""),
+            evidence=str(body.get("evidence") or ""),
+            evidence_grade=str(body.get("evidence_grade") or "inferred"),
+            run_id=str(body.get("run_id") or ""),
+            seed_target=str(body.get("seed_target") or ""),
+            derived_from=body.get("derived_from"),
+        )
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
+
+
+@router.post("/graph/link-many")
+def graph_link_many(body: dict) -> dict:
+    """Bulk operator graph edges — one call persists N relationships.
+
+    Same evidence contract as /graph/link (evidence required, non-observed →
+    hypothesis_ prefix); just batched so an LLM never skips persistence because
+    N separate calls felt like too much overhead.
+    """
+    from osprey.services.operator_memory import link_assets_many
+
+    try:
+        return link_assets_many(
+            engagement_id=str(body.get("engagement_id") or ""),
+            evidence=str(body.get("evidence") or ""),
+            evidence_grade=str(body.get("evidence_grade") or "inferred"),
+            run_id=str(body.get("run_id") or ""),
+            seed_target=str(body.get("seed_target") or ""),
+            derived_from=body.get("derived_from"),
+            source=str(body.get("source") or ""),
+            relation=str(body.get("relation") or ""),
+            targets=body.get("targets"),
+            links=body.get("links"),
+        )
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
+
+
+@router.post("/tag-asset")
+def tag_asset_endpoint(body: dict) -> dict:
+    """Runtime crown-jewel tag (role + boost) without editing thinking_model.yaml."""
+    from osprey.services.operator_memory import tag_asset
+
+    try:
+        boost_raw = body.get("boost", 0)
+        boost_i = int(boost_raw) if boost_raw is not None else 0
+        return tag_asset(
+            engagement_id=str(body.get("engagement_id") or ""),
+            asset=str(body.get("asset") or ""),
+            role=str(body.get("role") or ""),
+            boost=boost_i,
+            reason=str(body.get("reason") or ""),
+            run_id=str(body.get("run_id") or ""),
+            seed_target=str(body.get("seed_target") or ""),
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
+
+@router.post("/think")
+def think_endpoint(body: dict) -> dict:
+    """Persist optional operator hypothesis into findings memory."""
+    from osprey.services.operator_memory import record_think
+
+    try:
+        return record_think(
+            engagement_id=str(body.get("engagement_id") or ""),
+            hypothesis=str(body.get("hypothesis") or ""),
+            plan=str(body.get("plan") or ""),
+            evidence=str(body.get("evidence") or ""),
+            next_tool=str(body.get("next_tool") or ""),
+            run_id=str(body.get("run_id") or ""),
+            seed_target=str(body.get("seed_target") or ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
+
+
+@router.get("/crown-jewels")
+def crown_jewels(
+    engagement_id: str = Query(..., min_length=1),
+    run_id: str | None = Query(default=None),
+    limit: int = Query(default=15, ge=1, le=50),
+) -> dict:
+    from osprey.services.crown_jewels import rank_crown_jewels
+
+    ranked = rank_crown_jewels(engagement_id, run_id=run_id or "", limit=limit)
+    return {"engagement_id": engagement_id, "count": len(ranked), "crown_jewels": ranked}
+
+
+@router.get("/report-outline")
+def report_outline(
+    engagement_id: str = Query(..., min_length=1),
+    run_id: str | None = Query(default=None),
+) -> dict:
+    """Observed / inferred / hypotheses / crown jewels — structure for trusted reports."""
+    from osprey.services.report_outline import build_report_outline
+
+    return build_report_outline(engagement_id, run_id=run_id or "")
+
+
+@router.get("/memory-search")
+def memory_search_endpoint(
+    engagement_id: str = Query(..., min_length=1),
+    q: str = Query(..., min_length=1, description="Free-text query"),
+    run_id: str | None = Query(default=None),
+    limit: int = Query(default=40, ge=5, le=80),
+) -> dict:
+    """Wide flashlight over findings + graph + attempts — LLM interprets."""
+    from osprey.services.operator_recall import memory_search
+
+    return memory_search(engagement_id, q, run_id=run_id or "", limit=limit)
+
+
+@router.get("/evidence-chain")
+def evidence_chain_endpoint(
+    engagement_id: str = Query(..., min_length=1),
+    finding_id: str = Query(..., min_length=1),
+    depth: int = Query(default=4, ge=1, le=8),
+) -> dict:
+    """Walk derived_from parents/children for one finding."""
+    from osprey.services.operator_recall import evidence_chain
+
+    return evidence_chain(engagement_id, finding_id, depth=depth)
+
+
+@router.get("/attempts")
+def attempts_endpoint(
+    engagement_id: str = Query(..., min_length=1),
+    asset: str = Query(default=""),
+    contains: str = Query(default=""),
+    limit: int = Query(default=40, ge=1, le=100),
+) -> dict:
+    """Advisory tool-attempt history near an asset — never a skip order."""
+    from osprey.services.operator_recall import attempts_for_asset
+
+    return attempts_for_asset(
+        engagement_id, asset=asset, contains=contains, limit=limit
+    )

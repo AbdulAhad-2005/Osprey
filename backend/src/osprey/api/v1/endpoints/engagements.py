@@ -1,0 +1,318 @@
+from __future__ import annotations
+
+from typing import Any
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import PlainTextResponse
+
+from osprey.schemas.attack_surface import AttackSurfaceTree
+from osprey.schemas.engagement import (
+    Engagement,
+    EngagementCreateRequest,
+    EngagementResolveResponse,
+    EngagementResponse,
+)
+from osprey.schemas.fanout import FanoutSisterRequest, FanoutSisterResponse
+from osprey.schemas.network_surface import NetworkSurfaceSummary
+from osprey.services.attack_surface_tree import build_attack_surface_tree
+from osprey.services.markdown_report import build_recon_markdown
+from osprey.services.engagement_store import get_engagement_store
+from osprey.services.fanout import enumerate_pending_sisters
+from osprey.services.fanout_assets import FanoutAssetsRequest, FanoutAssetsResponse, fanout_assets
+from osprey.services.network_surface import build_network_surface
+from osprey.services.run_store import get_run_store
+from osprey.services.session_context import normalize_target
+from osprey.services.target_analysis import TargetAnalysis, analyze_target
+from osprey.services.visualization import get_visualization
+from osprey.services.report_generator import build_report_data
+from osprey.services.tool_coverage_store import (
+    ToolCoverageRecord,
+    get_tool_coverage_store,
+)
+
+router = APIRouter()
+
+
+@router.get(
+    "/analyze-target",
+    response_model=TargetAnalysis,
+    summary="Analyze incomplete/ambiguous targets before binding",
+)
+def analyze_engagement_target(
+    target: str = Query(..., min_length=1, description="Raw user input e.g. zong or example.com"),
+    probe_dns: bool = Query(default=True),
+) -> TargetAnalysis:
+    """If the user says 'zong', return candidates and ask — do not bind yet."""
+    return analyze_target(target, probe_dns=probe_dns)
+
+
+@router.get("/", response_model=list[EngagementResponse], summary="List all engagements")
+def list_engagements() -> list[EngagementResponse]:
+    store = get_engagement_store()
+    return [_to_response(e) for e in store.list_all()]
+
+
+@router.post("/", response_model=EngagementResponse, status_code=201, summary="Create an engagement")
+def create_engagement(request: EngagementCreateRequest) -> EngagementResponse:
+    store = get_engagement_store()
+    engagement = store.create(request)
+    return _to_response(engagement)
+
+
+@router.post("/resolve", response_model=EngagementResolveResponse, summary="Get or create engagement for target")
+def resolve_engagement(request: EngagementCreateRequest) -> EngagementResolveResponse:
+    """Bind a root FQDN to an engagement — reuse latest unless force_new.
+
+    Incomplete names (e.g. 'zong') are rejected with analysis candidates —
+    call /analyze-target and ask the user first.
+    """
+    store = get_engagement_store()
+    analysis = analyze_target(request.target, probe_dns=True)
+    if analysis.needs_clarification or analysis.status != "ready":
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "target_needs_clarification",
+                "analysis": analysis.model_dump(),
+            },
+        )
+    target = analysis.ready_domain
+    if not target:
+        raise HTTPException(status_code=400, detail="target is required")
+
+    created = False
+    if request.force_new:
+        engagement = store.create(
+            EngagementCreateRequest(
+                target=target,
+                name=request.name or f"engagement-{target}",
+                rules_of_engagement=request.rules_of_engagement,
+            )
+        )
+        created = True
+    else:
+        existing = store.get_latest_by_target(target)
+        if existing is not None:
+            engagement = existing
+        else:
+            engagement = store.create(
+                EngagementCreateRequest(
+                    target=target,
+                    name=request.name or f"engagement-{target}",
+                    rules_of_engagement=request.rules_of_engagement,
+                )
+            )
+            created = True
+
+    base = _to_response(engagement)
+    return EngagementResolveResponse(
+        **base.model_dump(),
+        created=created,
+        reused=not created,
+    )
+
+
+@router.post(
+    "/{engagement_id}/runs/ensure",
+    summary="Idempotently bind a run_id to this engagement",
+)
+def ensure_run(engagement_id: str, body: dict[str, str]) -> dict[str, str]:
+    store = get_engagement_store()
+    if store.get(engagement_id) is None:
+        raise HTTPException(status_code=404, detail=f"Engagement not found: {engagement_id}")
+    run_id = (body.get("run_id") or "").strip()
+    if not run_id:
+        raise HTTPException(status_code=400, detail="run_id is required")
+    get_run_store().ensure(run_id=run_id, engagement_id=engagement_id)
+    return {"engagement_id": engagement_id, "run_id": run_id, "status": "bound"}
+
+
+@router.get("/{engagement_id}", response_model=EngagementResponse, summary="Get engagement by ID")
+def read_engagement(engagement_id: str) -> EngagementResponse:
+    store = get_engagement_store()
+    engagement = store.get(engagement_id)
+    if engagement is None:
+        raise HTTPException(status_code=404, detail=f"Engagement not found: {engagement_id}")
+    return _to_response(engagement)
+
+
+@router.get(
+    "/{engagement_id}/tree",
+    response_model=AttackSurfaceTree,
+    summary="Attack-surface tree for this engagement",
+)
+def engagement_attack_surface_tree(
+    engagement_id: str,
+    run_id: str | None = Query(default=None),
+    condensed: bool = Query(default=False, description="Smaller tree for LLM context"),
+) -> AttackSurfaceTree:
+    """Best-effort seed → sisters → hosts → IPs → ports (per engagement, never mixes targets)."""
+    tree = build_attack_surface_tree(
+        engagement_id,
+        run_id=run_id or "",
+        condensed=condensed,
+    )
+    if tree is None:
+        raise HTTPException(status_code=404, detail=f"Engagement not found: {engagement_id}")
+    return tree
+
+
+@router.get(
+    "/{engagement_id}/report.md",
+    response_class=PlainTextResponse,
+    summary="Human-readable Markdown recon report (seed -> sisters -> subdomains -> IPs -> ports/services/tech, WHOIS/OSINT, vulnerabilities)",
+)
+def engagement_recon_markdown(engagement_id: str) -> PlainTextResponse:
+    md = build_recon_markdown(engagement_id)
+    if md is None:
+        raise HTTPException(status_code=404, detail=f"Engagement not found: {engagement_id}")
+    return PlainTextResponse(content=md, media_type="text/markdown")
+
+
+@router.get(
+    "/{engagement_id}/network-surface",
+    response_model=NetworkSurfaceSummary,
+    summary="Per-IP ports_known / services_known for this engagement",
+)
+def engagement_network_surface(
+    engagement_id: str,
+    run_id: str | None = Query(default=None),
+) -> NetworkSurfaceSummary:
+    """Soft network granularity — missing services often means unparsed output."""
+    store = get_engagement_store()
+    if store.get(engagement_id) is None:
+        raise HTTPException(status_code=404, detail=f"Engagement not found: {engagement_id}")
+    summary = build_network_surface(engagement_id, run_id=run_id or "")
+    if summary is None:
+        raise HTTPException(status_code=404, detail=f"Engagement not found: {engagement_id}")
+    return summary
+
+
+@router.get(
+    "/{engagement_id}/tool-coverage",
+    response_model=list[ToolCoverageRecord],
+    summary="Soft tool coverage marks for this engagement",
+)
+def engagement_tool_coverage(
+    engagement_id: str,
+    tool_name: str | None = Query(default=None),
+) -> list[ToolCoverageRecord]:
+    """Advisory only — recording a tool here never blocks re-running it."""
+    store = get_engagement_store()
+    if store.get(engagement_id) is None:
+        raise HTTPException(status_code=404, detail=f"Engagement not found: {engagement_id}")
+    return get_tool_coverage_store().list_for_engagement(engagement_id, tool_name=tool_name)
+
+
+@router.post(
+    "/{engagement_id}/actions/enumerate-pending-sisters",
+    response_model=FanoutSisterResponse,
+    summary="Explicit fan-out: subfinder on sister_unenumerated gaps",
+)
+async def action_enumerate_pending_sisters(
+    engagement_id: str,
+    body: FanoutSisterRequest | None = None,
+) -> FanoutSisterResponse:
+    """Opt-in only. Default dry_run=true. Execute only with dry_run=false and confirm=true.
+
+    Does **not** auto-chain after domain_hunter and never runs httpx/nmap.
+    """
+    try:
+        return await enumerate_pending_sisters(engagement_id, body or FanoutSisterRequest())
+    except ValueError as exc:
+        detail = str(exc)
+        code = 404 if "not found" in detail.lower() else 400
+        raise HTTPException(status_code=code, detail=detail) from exc
+
+
+@router.post(
+    "/{engagement_id}/actions/fanout-assets",
+    response_model=FanoutAssetsResponse,
+    summary="Run one catalog tool across an explicit asset list",
+)
+async def action_fanout_assets(
+    engagement_id: str,
+    body: FanoutAssetsRequest | None = None,
+) -> FanoutAssetsResponse:
+    """Opt-in batch. Default dry_run. You supply assets (from crown jewels / graph query)."""
+    store = get_engagement_store()
+    if store.get(engagement_id) is None:
+        raise HTTPException(status_code=404, detail=f"Engagement not found: {engagement_id}")
+    try:
+        return await fanout_assets(engagement_id, body or FanoutAssetsRequest())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get(
+    "/{engagement_id}/visualization",
+    summary="Attack-surface visualization (Mermaid / Cytoscape JSON / tree)",
+)
+def engagement_visualization(
+    engagement_id: str,
+    format: str = Query(default="mermaid", description="mermaid | json | tree"),
+    max_nodes: int = Query(default=200, ge=10, le=1000),
+    max_edges: int = Query(default=400, ge=10, le=2000),
+    node_type: str = Query(default="", description="Filter to one asset type (e.g. host, subdomain)"),
+    exclude_urls: bool = Query(default=True, description="Exclude static-asset URL noise"),
+) -> dict[str, Any]:
+    """Render the engagement graph as Mermaid syntax, Cytoscape JSON, or a hierarchical tree."""
+    store = get_engagement_store()
+    if store.get(engagement_id) is None:
+        raise HTTPException(status_code=404, detail=f"Engagement not found: {engagement_id}")
+    return get_visualization(
+        engagement_id,
+        format=format,
+        max_nodes=max_nodes,
+        max_edges=max_edges,
+        node_type=node_type,
+        exclude_urls=exclude_urls,
+    )
+
+
+@router.get(
+    "/{engagement_id}/report-data",
+    summary="Structured report data for LLM consumption",
+)
+def engagement_report_data(
+    engagement_id: str,
+) -> dict[str, Any]:
+    """Metrics, severity breakdown, findings by severity, infra notes, topology — for report writing."""
+    store = get_engagement_store()
+    if store.get(engagement_id) is None:
+        raise HTTPException(status_code=404, detail=f"Engagement not found: {engagement_id}")
+    return build_report_data(engagement_id)
+
+
+@router.delete("/by-target", summary="Delete all engagements and associated data for a domain target")
+def delete_engagements_by_target(
+    target: str = Query(..., min_length=1, description="Target domain e.g. example.com"),
+) -> dict[str, Any]:
+    store = get_engagement_store()
+    res = store.delete_by_target(target)
+    if not res.get("deleted"):
+        raise HTTPException(status_code=404, detail=res.get("reason") or f"No engagements found for '{target}'")
+    return res
+
+
+@router.delete("/{engagement_id}", summary="Delete an engagement and all its data")
+def delete_engagement(engagement_id: str) -> dict[str, Any]:
+    store = get_engagement_store()
+    res = store.delete(engagement_id)
+    if not res.get("deleted"):
+        raise HTTPException(status_code=404, detail=f"Engagement not found: {engagement_id}")
+    return res
+
+
+
+def _to_response(e: Engagement) -> EngagementResponse:
+    return EngagementResponse(
+        id=e.id,
+        target=e.target,
+        name=e.name,
+        status=e.status,
+        rules_of_engagement=e.rules_of_engagement,
+        created_at=e.created_at,
+        updated_at=e.updated_at,
+        findings_count=e.findings_count,
+        tools_executed=e.tools_executed,
+    )
