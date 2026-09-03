@@ -108,6 +108,9 @@ forwarded into the tools container automatically.
 | Tool(s) | Env var | Get a key |
 | ------- | ------- | --------- |
 | `shodan_search`, `shodan_host_info` | `SHODAN_API_KEY` | https://account.shodan.io |
+| `intelx_scan` — email/subdomain harvest | `INTELX_API_KEY` | https://intelx.io/account?tab=developer |
+| `intelx_scan` — **leaked credentials** (Identity API) | `INTELX_IDENTITY_API_KEY` | IntelX Identity Portal licence |
+| `resecurity_scan` — leaked credentials | `RESECURITY_API_KEY` (+ optional `RESECURITY_API_BASE`/`RESECURITY_ENDPOINT`) | https://resecurity.com |
 
 ## Dependencies (pip)
 
