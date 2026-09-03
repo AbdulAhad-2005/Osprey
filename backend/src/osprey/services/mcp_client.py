@@ -28,9 +28,28 @@ _MCP_SERVERS_DIR = Path(__file__).resolve().parents[4] / "mcp-servers"
 # (The docker-exec one-shot path uses ``communicate()`` and is unaffected.)
 _STDIO_LIMIT = 64 * 1024 * 1024
 
-# Forward selected OSINT secrets into Kali on each docker exec (compose env alone
-# is not enough if the key was added after the container started).
-_KALI_ENV_FORWARD = ("SHODAN_API_KEY",)
+# Forward selected OSINT / credential-intel secrets into Kali on each docker exec
+# (compose env alone is not enough if the key was added after the container
+# started). Private overlays (e.g. Hawkeye's creds-manager) add their own env
+# names via OSPREY_KALI_ENV_FORWARD (comma-separated) — no code change needed.
+_KALI_ENV_FORWARD_BASE = (
+    "SHODAN_API_KEY",
+    "INTELX_API_KEY",
+    "INTELX_IDENTITY_API_KEY",
+    "INTELX_API_BASE",
+    "INTELX_IDENTITY_BASE",
+    "RESECURITY_API_KEY",
+    "RESECURITY_API_BASE",
+    "RESECURITY_ENDPOINT",
+    "RESECURITY_QUERY_PARAM",
+    "RESECURITY_AUTH_HEADER",
+    "RESECURITY_AUTH_SCHEME",
+)
+_KALI_ENV_FORWARD = _KALI_ENV_FORWARD_BASE + tuple(
+    name.strip()
+    for name in (os.environ.get("OSPREY_KALI_ENV_FORWARD") or "").split(",")
+    if name.strip()
+)
 
 # Execution PATH for `docker exec` into Kali. A bare `docker exec` (and a non-login
 # `bash -c`) does NOT source the mcpuser profile, so it misses ~/.local/bin — where

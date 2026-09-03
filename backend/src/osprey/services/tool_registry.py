@@ -281,6 +281,26 @@ OSINT_TOOLS: list[ToolDefinition] = [
        {"name": _p("", "Full person name"),
         "domain": _p("", "Corporate domain"),
         **_COMMON_PARAMS}),
+    _t("intelx_scan", ToolCategory.OSINT, "python3", ToolSafetyLevel.PASSIVE,
+       "Intelligence X breach-intel: phonebook harvest (emails / subdomains / URLs for "
+       "a domain) plus leaked account records (user+password) via the Identity API. "
+       "Mints EMAIL / SUBDOMAIN / CREDENTIAL findings; leaked creds are INFERRED leads "
+       "(breach data, verify against the live target). Needs INTELX_API_KEY "
+       "(+ INTELX_IDENTITY_API_KEY for leaked credentials).",
+       ["osint", "passive", "credentials", "breach", "emails", "intelx"],
+       {"target": _p("", "Domain / email / selector to look up"),
+        "mode": _p("all", "phonebook | leaks | all"),
+        "limit": _p("200", "Max results"),
+        **_COMMON_PARAMS}),
+    _t("resecurity_scan", ToolCategory.OSINT, "python3", ToolSafetyLevel.PASSIVE,
+       "Resecurity credential-intel lookup — leaked credentials + emails for a domain / "
+       "email / selector. Mints CREDENTIAL / EMAIL findings (breach leads, INFERRED). "
+       "Configurable connector: needs RESECURITY_API_KEY (+ optional RESECURITY_API_BASE / "
+       "RESECURITY_ENDPOINT for your account).",
+       ["osint", "passive", "credentials", "breach", "resecurity"],
+       {"target": _p("", "Domain / email / selector to look up"),
+        "limit": _p("100", "Max results"),
+        **_COMMON_PARAMS}),
 ]
 
 # ---- NETWORK (15 tools) ---------------------------------------------------
@@ -848,6 +868,21 @@ ALL_TOOL_DEFINITIONS: tuple[ToolDefinition, ...] = tuple(
     + FORENSICS_TOOLS
 )
 
+# Optional private-overlay tool definitions (e.g. Hawkeye's creds-manager).
+# Absent in public Osprey — a missing module is a no-op, not an error. The
+# private module exports ADDITIONAL_TOOL_DEFINITIONS (and optionally
+# ADDITIONAL_ALIASES, merged into _TOOL_ALIASES below).
+try:  # pragma: no cover - overlay only present in the private (Hawkeye) repo
+    from osprey.services import tool_registry_private as _tool_registry_private
+
+    _EXTRA_TOOL_DEFINITIONS = tuple(
+        getattr(_tool_registry_private, "ADDITIONAL_TOOL_DEFINITIONS", ()) or ()
+    )
+    if _EXTRA_TOOL_DEFINITIONS:
+        ALL_TOOL_DEFINITIONS = ALL_TOOL_DEFINITIONS + _EXTRA_TOOL_DEFINITIONS
+except ImportError:
+    _tool_registry_private = None
+
 # Build lookup tables
 _TOOL_BY_NAME: dict[str, ToolDefinition] = {t.name: t for t in ALL_TOOL_DEFINITIONS}
 _TOOLS_BY_CATEGORY: dict[ToolCategory, list[ToolDefinition]] = {}
@@ -1078,7 +1113,17 @@ _TOOL_ALIASES: dict[str, str] = {
     "contact_harvest": "web_contact_harvest",
     "email_permutation": "email_permute",
     "email_permutator": "email_permute",
+    # ── Credential-harvesting short names ──
+    "intelx": "intelx_scan",
+    "intelligencex": "intelx_scan",
+    "intelx_search": "intelx_scan",
+    "resecurity": "resecurity_scan",
+    "resecurity_lookup": "resecurity_scan",
 }
+
+# Merge optional private-overlay aliases (Hawkeye). No-op in public Osprey.
+if "_tool_registry_private" in dir() and _tool_registry_private is not None:
+    _TOOL_ALIASES.update(getattr(_tool_registry_private, "ADDITIONAL_ALIASES", {}) or {})
 
 
 def resolve_tool_name(name: str) -> str:

@@ -22,6 +22,8 @@ TYPED_OSINT_TOOLS: tuple[str, ...] = (
     "phoneinfoga",
     "email_permute",
     "exiftool_extract",
+    "intelx_scan",
+    "resecurity_scan",
 )
 
 _TOOL_BLURBS: dict[str, str] = {
@@ -41,6 +43,18 @@ _TOOL_BLURBS: dict[str, str] = {
         "Extract author/software/GPS metadata from a document (file_path= to a file "
         "already on Kali, e.g. one metagoofil downloaded). Author/creator tags become "
         "PERSON leads — pivot them with email_permute / maigret."
+    ),
+    "intelx_scan": (
+        "CREDENTIAL HARVEST — Intelligence X breach intel for a domain (target=): "
+        "phonebook harvest (emails/subdomains/URLs) + leaked account records "
+        "(user+password) via the Identity API. Mints EMAIL/SUBDOMAIN/CREDENTIAL "
+        "findings; leaked creds are INFERRED leads to verify. mode=phonebook|leaks|all. "
+        "Needs INTELX_API_KEY (+ INTELX_IDENTITY_API_KEY for creds)."
+    ),
+    "resecurity_scan": (
+        "CREDENTIAL HARVEST — Resecurity breach intel: leaked credentials + emails for "
+        "a domain/email (target=). Mints CREDENTIAL/EMAIL findings (leads to verify). "
+        "Needs RESECURITY_API_KEY."
     ),
 }
 

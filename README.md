@@ -82,6 +82,27 @@ keyless custom Python tools (domain_hunter, js_recon, subdomain_takeover, contac
 harvest, …) work from `mcp-servers/requirements.txt` alone. **`/tools` shows exactly
 what's present** (see below) and the agent only uses tools it actually has.
 
+## Optional API keys
+
+Most tools are keyless. A few tap external intel services — set their keys in `.env`
+(see [`.env.example`](.env.example)) to unlock them; leave blank to skip. Keys are
+forwarded into the Kali container automatically.
+
+| Tool(s) | Env var | Get a key |
+| ------- | ------- | --------- |
+| `shodan_search`, `shodan_host_info` | `SHODAN_API_KEY` | https://account.shodan.io |
+| `intelx_scan` — email/subdomain harvest | `INTELX_API_KEY` | https://intelx.io/account?tab=developer |
+| `intelx_scan` — **leaked credentials** (Identity API) | `INTELX_IDENTITY_API_KEY` | IntelX Identity Portal licence |
+| `resecurity_scan` — leaked credentials | `RESECURITY_API_KEY` (+ optional `RESECURITY_API_BASE`/`RESECURITY_ENDPOINT`) | https://resecurity.com |
+
+**Credential harvesting.** `intelx_scan` and `resecurity_scan` pull leaked
+credentials, emails and identities for a target during recon — they surface as
+`EMAIL`/`SUBDOMAIN`/`CREDENTIAL` findings (the leaked values are shown, not masked),
+link to their host in the engagement graph, and any credential is automatically
+promoted to a `credential_bruteforce` candidate for the exploit phase. Breach-DB
+leaks are stored as leads to verify; a credential you scrape live off the target, or
+confirm working, outranks them. See the `credential-harvesting` skill.
+
 ## Dependencies (pip)
 
 `pyproject.toml` is the source of truth for each package's declared dependencies:

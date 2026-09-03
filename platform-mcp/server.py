@@ -2814,6 +2814,16 @@ _log(f"registered {_TYPED_BROWSER_COUNT} typed browser-automation tools")
 _TYPED_EXPLOIT_COUNT = register_typed_exploit_tools(mcp, execute=_typed_execute)
 _log(f"registered {_TYPED_EXPLOIT_COUNT} typed exploitation/creds/cloud-exploit tools")
 
+# Optional private-overlay typed tools (e.g. Hawkeye's creds-manager). Absent in
+# public Osprey — a missing module is a no-op, not an error.
+try:
+    from typed_private import register_typed_private_tools  # type: ignore
+
+    _TYPED_PRIVATE_COUNT = register_typed_private_tools(mcp, execute=_typed_execute)
+    _log(f"registered {_TYPED_PRIVATE_COUNT} typed private-overlay tools")
+except ImportError:
+    pass
+
 
 if __name__ == "__main__":
     _log(f"session run_id={SESSION_RUN_ID} (dynamic target — call platform_set_target first)")
