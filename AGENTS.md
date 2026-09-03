@@ -132,6 +132,12 @@ When a domain lands (reorder/skip when evidence already covers it):
 
 1. Widen — sisters (`domain_hunter`) + subs (subfinder / amass / crt) — more than one source if thin
 2. Passive internet — `shodan_search` / `shodan_host_info` when keyed (leads, then verify)
+2b. Credential/identity leaks (when keyed) — `intelx_scan` / `resecurity_scan` harvest a
+   domain's leaked emails and credentials; they become EMAIL / CREDENTIAL findings and each
+   credential auto-queues a `credential_bruteforce` candidate for exploit. **Treat a breach-DB
+   leak as a lead to verify** — a credential you scrape live off the target, or confirm
+   working, outranks it. Never mask the value; the leaked credential *is* the finding. Test
+   reuse across services and sibling hosts. (See the `credential-harvesting` skill.)
 3. Live — httpx / fanout / **jobs** in parallel as names appear
 4. Map — resolve → IP groups → CDN/WAF vs origin-looking; takeover check on dangling CNAMEs
 5. Ports/services — `naabu_port_scan` → version on interesting opens; **fallback** if a tool fails
@@ -245,6 +251,14 @@ with `platform_exec`. Same for the heavy
 - **A failed/empty/404/cache-hit result gets ONE short sentence, not a re-synthesis of
   everything else open.** State the result plainly and stop. Save the thorough synthesis
   for turns where you actually have something substantive to report.
+- **If a tool reports `tool_unavailable` / "not available in your execution environment",
+  the operator's setup has no working tool backend — STOP and surface it.** Tell the user
+  the exact fix from the message (start the Kali tools container, or run Osprey local — Path
+  C — for host tools), and check `platform_health` / `platform_tools` for the mode and what
+  IS runnable. Do **not** silently fall back to running scanners with your own shell outside
+  Osprey — that bypasses the memory graph, evidence grading and report, and hides a broken
+  setup from the user. Use `platform_shell`/`platform_script` only for a genuine catalog gap,
+  never as a substitute for a tool backend that just isn't wired up.
 - **Storage is automatic — the platform, not you, transcribes tool output.** Typed tools,
   `platform_shell`, AND `platform_script` all auto-ingest every fact they emit: parsers +
   universal ingest rules run on their stdout and write typed findings + graph nodes/edges the

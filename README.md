@@ -15,7 +15,12 @@ into a tools container (`KALI_CONTAINER`), or, when no such container is running
 executes them **natively on the host**. So you can run the full Kali image, bring
 your own tools, or run entirely without Docker.
 
-## Setup — pick the path that fits you (Path A is preferable as it provides all tools integration platform needs)
+## Setup — pick the path that fits you
+
+Quick guide:
+- **Want it to just work, don't mind a one-time heavy build?** → **Path A** (full Docker + Kali, all tools included — preferable).
+- **Have your own tools *container*?** → **Path B** (lean Docker, point `KALI_CONTAINER` at it).
+- **Want to use tools already on your machine, or no Docker at all?** → **Path C** (fully local). This is the right choice for host tools — a containerized backend (Path B) cannot reach them.
 
 All three paths start the same way:
 
@@ -37,25 +42,37 @@ docker compose --profile kali up --build
 > No WSL / VirtualBox needed on Windows — the tools run inside the container,
 > reached over the Docker socket. Postgres is on host port 5433, backend on 9000.
 
-### Path B — Lean Docker + bring your own tools (skip the Kali build)
+### Path B — Lean Docker + your own tools container (skip the Kali build)
 
-Already have the tools (native Kali, or your own container) and don't want to build
-the image? Start just Postgres + backend:
+Already have a tools container (a native Kali image, or your own) and don't want to
+build ours? Start just Postgres + backend, then point the backend at that container:
 
 ```bash
 docker compose up --build           # note: no --profile kali
 ```
 
-Then in `.env` either:
-- point `KALI_CONTAINER=<your-container-name>` at a running tools container, or
-- set `KALI_CONTAINER=` (empty) to run tools directly on the host.
+```
+# in .env — the name of your already-running tools container:
+KALI_CONTAINER=<your-tools-container-name>
+```
 
-If the named container isn't running, the backend falls back to native execution
-automatically.
+The backend `docker exec`s each tool into that container (it mounts the Docker
+socket for this), so the container must be running on the same Docker daemon.
 
-### Path C — Fully local, no Docker
+> **Important — Path B needs a tools *container*, not host tools.** The backend
+> itself runs inside a container here, so it can only reach tools in another
+> container it can `docker exec` into — it **cannot** run binaries installed on your
+> host machine, and there is no automatic "fall back to host tools". If
+> `KALI_CONTAINER` is unset or its container isn't running, only the built-in Python
+> tools work and every compiled scanner returns *"not available in your execution
+> environment"* (with the fix). **To use the tools already installed on your host,
+> use Path C** — a native backend, which runs them directly. `/tools` and
+> `/health` show your real execution mode and what's runnable.
 
-Virtualenv at the repo root, SQLite instead of Postgres, tools on your host PATH:
+### Path C — Fully local, no Docker (uses your host's own tools)
+
+The path for running Osprey against tools already on your machine, with no Docker at
+all. Virtualenv at the repo root, SQLite instead of Postgres, tools on your host PATH:
 
 ```bash
 # creates .venv, installs backend[dev] + cli + native tool deps
@@ -86,22 +103,11 @@ what's present** (see below) and the agent only uses tools it actually has.
 
 Most tools are keyless. A few tap external intel services — set their keys in `.env`
 (see [`.env.example`](.env.example)) to unlock them; leave blank to skip. Keys are
-forwarded into the Kali container automatically.
+forwarded into the tools container automatically.
 
 | Tool(s) | Env var | Get a key |
 | ------- | ------- | --------- |
 | `shodan_search`, `shodan_host_info` | `SHODAN_API_KEY` | https://account.shodan.io |
-| `intelx_scan` — email/subdomain harvest | `INTELX_API_KEY` | https://intelx.io/account?tab=developer |
-| `intelx_scan` — **leaked credentials** (Identity API) | `INTELX_IDENTITY_API_KEY` | IntelX Identity Portal licence |
-| `resecurity_scan` — leaked credentials | `RESECURITY_API_KEY` (+ optional `RESECURITY_API_BASE`/`RESECURITY_ENDPOINT`) | https://resecurity.com |
-
-**Credential harvesting.** `intelx_scan` and `resecurity_scan` pull leaked
-credentials, emails and identities for a target during recon — they surface as
-`EMAIL`/`SUBDOMAIN`/`CREDENTIAL` findings (the leaked values are shown, not masked),
-link to their host in the engagement graph, and any credential is automatically
-promoted to a `credential_bruteforce` candidate for the exploit phase. Breach-DB
-leaks are stored as leads to verify; a credential you scrape live off the target, or
-confirm working, outranks them. See the `credential-harvesting` skill.
 
 ## Dependencies (pip)
 

@@ -748,24 +748,50 @@ def platform_delete_engagement(target: str = "", engagement_id: str = "") -> str
 
 
 @mcp.tool()
+def _execution_readiness_line() -> str:
+    """One-line tool-execution readiness (docker/native + whether tools can run).
+
+    Surfaces the "no tool backend" state (e.g. a containerized backend with no
+    Kali container and no host tools) so the operator learns it here instead of
+    discovering it as silently-empty scan results.
+    """
+    try:
+        status = _get("/api/v1/health/execution", timeout=8)
+    except Exception:
+        return ""
+    if not isinstance(status, dict):
+        return ""
+    ready = status.get("ready", True)
+    degraded = status.get("degraded", False)
+    mode = status.get("mode", "?")
+    message = (status.get("message") or "").strip()
+    icon = "✅" if (ready and not degraded) else "⚠️"
+    lead = f"{icon} Tool execution: mode={mode}, ready={ready}" + (", degraded=true" if degraded else "") + "."
+    return f"{lead} {message}".strip() if message else lead
+
+
 def platform_health(target: str = "") -> str:
     """
-    Check backend health. Pass target= when the user names scope (may be short name).
-    Short names trigger clarification — same as platform_set_target.
+    Check backend health + tool-execution readiness. Pass target= when the user
+    names scope (may be short name). Short names trigger clarification.
     """
     def _run() -> str:
         health = _get("/health", timeout=10)
+        readiness = _execution_readiness_line()
+        health_block = _block("Platform Health", health)
+        if readiness:
+            health_block = f"{health_block}\n\n{readiness}"
         if target.strip():
             clarified = _analyze_or_bind(target)
             if clarified.startswith("## Target needs clarification"):
                 return clarified
-            return f"{_session_header()}\n\n{_block('Platform Health', health)}\n\n{clarified}"
+            return f"{_session_header()}\n\n{health_block}\n\n{clarified}"
         if not _SESSION_ENGAGEMENT_ID:
             return (
                 "ERROR: No active target. Pass target='example.com' or a short name "
                 "like target='zong' (will ask you to clarify), or call platform_set_target."
             )
-        return f"{_session_header()}\n\n{_block('Platform Health', health)}"
+        return f"{_session_header()}\n\n{health_block}"
 
     result = _safe(_run)
     if result.startswith("ERROR"):
@@ -1777,12 +1803,16 @@ def platform_tools(query: str = "", category: str = "") -> str:
             if not cat and isinstance(t.get("tool"), dict):
                 cat = t["tool"].get("category", "")
             installed = t.get("installed")
+            hint = t.get("install_hint") or ""
+            if not hint and isinstance(t.get("tool"), dict):
+                hint = t["tool"].get("install_hint", "")
             normalized.append(
                 {
                     "name": name,
                     "description": (desc or "")[:100],
                     "category": cat,
                     "installed": installed,
+                    "install_hint": (hint or "")[:160],
                 }
             )
         tools = normalized
@@ -1799,18 +1829,26 @@ def platform_tools(query: str = "", category: str = "") -> str:
             flag = "OK" if t.get("installed") is True else (
                 "MISSING" if t.get("installed") is False else "?"
             )
-            lines.append(f"- [{flag}] {name}  [{cat}]  {desc}")
+            # For a MISSING tool, show how to install it (hexstrike-style) so the
+            # operator can answer "what else can I install for Osprey?".
+            suffix = ""
+            if flag == "MISSING" and t.get("install_hint"):
+                suffix = f"  — install: {t['install_hint']}"
+            lines.append(f"- [{flag}] {name}  [{cat}]  {desc}{suffix}")
         lines = lines[:120]
         ok_n = sum(1 for ln in lines if ln.startswith("- [OK]"))
         miss_n = sum(1 for ln in lines if ln.startswith("- [MISSING]"))
+        readiness = _execution_readiness_line()
         return (
             "### OPERATOR MIRROR — TOOL CATALOG\n"
             f"{_session_header() if _SESSION_ENGAGEMENT_ID else '(bind target optional for catalog)'}\n"
-            f"Showing {len(lines)} tools (OK={ok_n} MISSING_IN_KALI={miss_n})"
+            + (readiness + "\n" if readiness else "")
+            + f"Showing {len(lines)} tools (OK={ok_n} MISSING={miss_n})"
             + (f" matching {query!r}" if q else "")
-            + "\nPrefer [OK] tools. Typed recon/network tools are also registered on MCP "
-            "(subfinder_scan, nmap_*, rustscan_fast_scan, …). "
-            "For [MISSING], use platform_shell/platform_script or platform_install.\n\n"
+            + "\n[OK] = runnable in your current execution environment; [MISSING] = not "
+            "installed there (install per the hint, or `platform_install`, after asking "
+            "the user). Compiled scanners are MISSING when no tools container/host tools "
+            "are reachable — see README Path A/C.\n\n"
             + ("\n".join(lines) if lines else "(none — try empty query)")
             + "\n\nAliases: subfinder→subfinder_scan, amass→amass_scan, dnsenum→dnsenum_scan, "
             "httpx→httpx_probe, nmap→nmap_syn_scan, whois→whois_lookup, masscan→masscan_high_speed.\n"

@@ -81,6 +81,69 @@ def _detect_soft_failure(stdout: str, stderr: str) -> str:
     return ""
 
 
+def _tool_unavailable_response(tool_def) -> "ToolExecutionResponse | None":
+    """Preflight: if a catalog tool's binary is not reachable in the current
+    execution environment, return one actionable diagnostic instead of running a
+    doomed command that returns empty output.
+
+    This closes the "Path B" trap: a backend running inside a container with no
+    Kali tools container has no scanners, and a container cannot reach binaries
+    installed on the host — so every compiled tool would otherwise fail silently,
+    the operator sees empty results, and an external harness may quietly fall back
+    to running tools outside Osprey. Pure-Python tools (executable python3/bash,
+    present in the backend image) stay available and are never gated here.
+    """
+    from osprey.services.tool_registry import get_tool
+
+    avail = get_tool(tool_def.name)
+    if avail is None or avail.installed:
+        return None  # available in this environment (or unknown) — let it run
+
+    from osprey.services.mcp_client import get_mcp_client
+
+    status = get_mcp_client().execution_status()
+    mode = status.get("mode", "native")
+    parts = [
+        f"Tool '{tool_def.name}' ({tool_def.executable}) is NOT available in your "
+        f"execution environment (mode={mode}).",
+        (status.get("message") or "").strip(),
+    ]
+    if mode == "container-local":
+        # Backend is in a container with no Kali container — it cannot reach host
+        # tools, and installing into the ephemeral backend image is pointless.
+        parts.append(
+            "Fix: start the tools container — `docker compose --profile kali up -d` — "
+            "or point KALI_CONTAINER at a running tools container. A containerized "
+            "backend cannot use tools installed on the host; to use host tools instead, "
+            "run Osprey fully local (README Path C)."
+        )
+    elif mode == "docker":
+        # Kali is running but this specific tool isn't in it.
+        parts.append(
+            f"Fix: add it to the tools container — `platform_install` — or {tool_def.install_hint}"
+        )
+    else:  # native (host execution)
+        parts.append(
+            f"Fix: install it on this host — {tool_def.install_hint} — or run the Kali "
+            "tools container (`docker compose --profile kali up -d`)."
+        )
+    parts.append(
+        "Run platform_tools() to see exactly which tools ARE available here, and "
+        "platform_install to add a missing one. Do NOT silently run tools outside "
+        "Osprey — surface this to the user so they can fix their setup."
+    )
+    msg = "\n".join(p for p in parts if p)
+    return ToolExecutionResponse(
+        tool_name=tool_def.name,
+        success=False,
+        command="",
+        error=f"tool_unavailable: {tool_def.name} is not installed in the execution environment",
+        stderr=msg,
+        next_hint=msg,
+        hybrid={"tool_unavailable": True, "execution_status": status},
+    )
+
+
 async def execute_tool_request(
     request: ToolExecutionRequest, *, _fallback_depth: int = 0
 ) -> ToolExecutionResponse:
@@ -110,6 +173,12 @@ async def execute_tool_request(
     # future alias correctly consolidates under one name everywhere, instead
     # of each call site needing its own alias-awareness.
     request.tool_name = tool_def.name
+
+    # Preflight: refuse a catalog tool the current environment cannot run, with one
+    # actionable message, instead of executing a doomed command that returns empty.
+    unavailable = _tool_unavailable_response(tool_def)
+    if unavailable is not None:
+        return unavailable
 
     target = extract_target(request.params)
 

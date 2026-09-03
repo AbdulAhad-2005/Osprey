@@ -296,52 +296,81 @@ class MCPClient:
                 return {
                     "mode": "docker",
                     "ready": True,
+                    "degraded": False,
                     "container": self._kali_container,
                     "missing": [],
                     "message": f"Kali tools container '{self._kali_container}' is running.",
                 }
             # Configured for docker but the container is down -> execution falls
-            # back to native inside the backend container, which ships no
-            # scanners. Only "ready" if the host PATH happens to have them.
+            # back to running "natively" *inside the backend container*, which ships
+            # no scanners and (being a container) cannot reach tools on the host.
             missing = _missing_core()
-            if len(missing) < len(_CORE_ENGINE_TOOLS):
+            present = [t for t in _CORE_ENGINE_TOOLS if t not in missing]
+            if not missing:
                 return {
-                    "mode": "native",
+                    "mode": "container-local",
                     "ready": True,
+                    "degraded": False,
+                    "container": self._kali_container,
+                    "missing": [],
+                    "message": (
+                        f"Kali container '{self._kali_container}' is not running; core tools "
+                        "are present in the backend image."
+                    ),
+                }
+            if present:
+                # Partial: a few tools happen to be in the backend image, but most
+                # scanners are missing — the classic "lean docker, no Kali" trap
+                # where scans come back almost empty. Flag it as degraded even
+                # though *something* runs, so it never reads as a healthy setup.
+                return {
+                    "mode": "container-local",
+                    "ready": True,
+                    "degraded": True,
                     "container": self._kali_container,
                     "missing": missing,
                     "message": (
-                        f"Kali container '{self._kali_container}' is not running; using "
-                        "native host execution (some core tools present)."
+                        f"DEGRADED: Kali container '{self._kali_container}' is not running, so tools "
+                        f"run inside the backend container — only {', '.join(present)} present; "
+                        f"{', '.join(missing)} are MISSING, so most scans return nothing. A "
+                        "containerized backend cannot use host tools. Fix: start the tools "
+                        "container (docker compose --profile kali up -d), or run Osprey fully "
+                        "local (README Path C) to use host tools."
                     ),
                 }
             return {
-                "mode": "native",
+                "mode": "container-local",
                 "ready": False,
+                "degraded": True,
                 "container": self._kali_container,
                 "missing": missing,
                 "message": (
-                    f"Kali tools container '{self._kali_container}' is not running and no core "
-                    f"scanners are on PATH ({', '.join(missing)}). Every tool will fail. "
-                    "Start the tools container with:  docker compose --profile kali up -d"
+                    f"Kali tools container '{self._kali_container}' is not running and the backend "
+                    f"container has no scanners ({', '.join(missing)}). Every compiled tool will "
+                    "fail. A containerized backend cannot reach host tools. Fix: start the tools "
+                    "container (docker compose --profile kali up -d), or run Osprey fully local "
+                    "(README Path C)."
                 ),
             }
 
-        # Native mode explicitly requested (KALI_CONTAINER unset/empty).
+        # Native mode explicitly requested (KALI_CONTAINER unset/empty) — this one
+        # really is host execution, so host PATH is the source of truth.
         missing = _missing_core()
-        ready = len(missing) < len(_CORE_ENGINE_TOOLS)
+        present = [t for t in _CORE_ENGINE_TOOLS if t not in missing]
+        ready = bool(present)
         return {
             "mode": "native",
             "ready": ready,
+            "degraded": ready and bool(missing),
             "container": "",
             "missing": missing,
             "message": (
                 "Native host execution."
-                + (f" Missing core tools: {', '.join(missing)}." if missing else " Core tools present.")
+                + (f" Missing core tools on PATH: {', '.join(missing)} — install them for full coverage." if missing else " Core tools present.")
                 if ready
                 else (
                     f"Native host execution but no core scanners on PATH ({', '.join(missing)}). "
-                    "Install them or run the kali-tools container."
+                    "Install them (see README Path C) or run the kali-tools container."
                 )
             ),
         }
