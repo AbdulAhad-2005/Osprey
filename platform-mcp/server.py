@@ -454,6 +454,26 @@ def _render_expansion_report(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _bind_next_recipe(engagement_id: str, target: str) -> str:
+    """Copy-paste next steps after bind — filled engagement_id for weak models."""
+    eid = (engagement_id or "").strip() or _SESSION_ENGAGEMENT_ID
+    tgt = (target or "").strip() or _SESSION_TARGET
+    return (
+        "---\n"
+        f"**NEXT (do now — engagement_id=`{eid}`):**\n"
+        f"1. `platform_pipeline(action='start', engagement_id='{eid}')`\n"
+        "2. Spawn a **recon** subagent (native Task/subagent preferred) using that "
+        "response's brief **verbatim** — do not rewrite the methodology. Include "
+        f"`engagement_id='{eid}'` in the brief and on every tool call.\n"
+        f"3. Prefer typed tools for `{tgt}` (e.g. `subfinder_scan`, `httpx_probe`, "
+        "`naabu_port_scan`) — not host bash for catalog tools.\n"
+        f"4. Work that may exceed ~90s → `platform_job_start(..., engagement_id='{eid}')`.\n"
+        "\n"
+        "Nothing auto-runs from bind. Strong models may pivot; weak models should "
+        "follow this recipe in order."
+    )
+
+
 def _analyze_or_bind(raw: str, *, force_new: bool = False) -> str:
     """Analyze first; bind only when status=ready."""
     analysis = _get(
@@ -479,27 +499,9 @@ def _analyze_or_bind(raw: str, *, force_new: bool = False) -> str:
             "Target changed — prior findings in this chat were for a different "
             "engagement. Use platform_context for the NEW target only."
         )
-    parts.append(
-        "Next: platform_pipeline(action='start') returns a ready-to-spawn recon "
-        "subagent brief — call it now (no backend key required; you supply the "
-        "brain via your own native subagent mechanism)."
-    )
-    # No auto-fire: platform_set_target only binds. The connecting LLM (this
-    # session) decides what runs next — call typed tools directly, or opt
-    # into platform_pipeline/platform_spawn_agent/platform_expand explicitly
-    # when backend-autonomous help is actually wanted. A prior version of
-    # this function auto-started platform_pipeline here, which meant a
-    # server-side PhaseAgent tried to run through the BACKEND's own LLM
-    # config — a second, usually-unconfigured "brain" that failed opaquely
-    # whenever the real driver was an external MCP client (this one) with no
-    # reason for the backend to also hold an LLM key. Removed outright rather
-    # than made conditional: even when the backend LLM IS configured,
-    # silently starting an independent agent that calls tools concurrently
-    # with whatever this session is doing is the same "why is it running
-    # feroxbuster nobody asked for" problem, just gated on an env var instead
-    # of always-on. platform_pipeline/platform_spawn_agent/platform_expand
-    # remain fully available — nothing about their capability changed, only
-    # whether the platform ever calls them without being asked.
+    # No auto-fire: platform_set_target only binds. Recipe below is advisory
+    # text so weak models have a filled-in next call; strong models may pivot.
+    parts.append(_bind_next_recipe(info.get("engagement_id") or "", info.get("target") or ""))
     return "\n\n".join(parts)
 
 
@@ -656,6 +658,15 @@ def platform_pipeline(action: str = "start", engagement_id: str = "") -> str:
             parts.append(text)
         else:
             parts.append(_block("Pipeline", data))
+        if act in ("start", "status"):
+            parts.append(
+                "---\n"
+                f"**NEXT:** Spawn unlocked phase subagent(s) with the brief(s) above "
+                f"**verbatim** — pass `engagement_id='{eid}'` in the brief and on every "
+                "tool call. After they report: `platform_findings` / "
+                f"`platform_pipeline(action='status', engagement_id='{eid}')`. "
+                "Prefer these; pivot only with an evidenced lead."
+            )
         return "\n\n".join(parts)
 
     return _safe(_run)
@@ -1029,6 +1040,98 @@ def platform_artifact(path: str = "", offset: int = 0, limit: int = 80000) -> st
     return _safe(_run)
 
 
+def _pin_kw(engagement_id: str) -> str:
+    eid = (engagement_id or "").strip() or _SESSION_ENGAGEMENT_ID
+    return f"engagement_id='{eid}'" if eid else ""
+
+
+def _format_tool_call_hint(tool_name: str, engagement_id: str, *, extra: str = "") -> str:
+    """One-line typed-tool call sketch with engagement_id pinned."""
+    pin = _pin_kw(engagement_id)
+    args = f"..., {pin}" if pin else "..."
+    base = f"`{tool_name}({args})`"
+    return f"{base} — {extra}" if extra else base
+
+
+def _format_next_steps(data: dict[str, Any], *, engagement_id: str = "") -> str:
+    """Concrete NEXT footer for weak models; advisory — strong models may pivot."""
+    eid = (engagement_id or "").strip() or _SESSION_ENGAGEMENT_ID
+    pin = _pin_kw(eid)
+    hybrid = data.get("hybrid") if isinstance(data.get("hybrid"), dict) else {}
+    steps: list[str] = []
+
+    # Hard stop: catalog tool missing from Kali — do not invent host bash.
+    if hybrid.get("tool_unavailable") or (
+        isinstance(data.get("error"), str)
+        and "not available in your execution environment" in (data.get("error") or "").lower()
+    ):
+        steps.append(
+            "`platform_health()` / `platform_tools()` — STOP; tell the user the "
+            "tool backend is broken. Do not fall back to host bash for catalog tools."
+        )
+        return (
+            "---\n**NEXT (do these):**\n"
+            + "\n".join(f"{i}. {s}" for i, s in enumerate(steps, 1))
+            + "\nPrefer these; pivot only with an evidenced lead."
+        )
+
+    if data.get("timed_out"):
+        job = f"`platform_job_start(tool=..., {pin})`" if pin else "`platform_job_start(tool=...)`"
+        steps.append(f"{job} — this call timed out; re-run as a background job, then `platform_job_poll`.")
+
+    if data.get("cache_hit"):
+        refresh = f"force_refresh=true, {pin}" if pin else "force_refresh=true"
+        steps.append(f"Reuse this result, change params, or retry with `{refresh}`.")
+
+    alt = (data.get("alternative_tool_suggested") or "").strip()
+    if alt and (not data.get("success") or data.get("timed_out")):
+        steps.append(_format_tool_call_hint(alt, eid, extra="kernel-suggested fallback"))
+
+    for sug in (hybrid.get("escalation_suggestions") or [])[:2]:
+        if not isinstance(sug, dict):
+            continue
+        tname = (sug.get("tool_name") or "").strip()
+        if not tname or tname == alt:
+            continue
+        reason = (sug.get("reason") or sug.get("action") or "").strip()
+        steps.append(_format_tool_call_hint(tname, eid, extra=reason[:120] if reason else "escalation"))
+
+    for sug in (hybrid.get("dispatch_suggestions") or [])[:2]:
+        if not isinstance(sug, dict):
+            continue
+        tname = (sug.get("default_tool") or "").strip()
+        if not tname:
+            continue
+        reason = (sug.get("reason") or sug.get("signal") or "").strip()
+        hint = _format_tool_call_hint(tname, eid, extra=reason[:120] if reason else "dispatch")
+        if hint not in steps:
+            steps.append(hint)
+
+    for pivot in (hybrid.get("graph_pivots") or [])[:2]:
+        if isinstance(pivot, str) and pivot.strip():
+            steps.append(f"Graph pivot: {pivot.strip()[:160]}")
+
+    titles = data.get("finding_titles") or []
+    success = bool(data.get("success"))
+    status_call = (
+        f"`platform_pipeline(action='status', {pin})`" if pin else "`platform_pipeline(action='status')`"
+    )
+    ctx_call = f"`platform_context({pin})`" if pin else "`platform_context()`"
+
+    if success and titles and len(steps) < 3:
+        steps.append(f"{status_call} — check whether vuln/exploit unlocked or recon should reopen.")
+    if success and not titles and not data.get("cache_hit") and len(steps) < 2:
+        steps.append(f"{ctx_call} — empty/thin result; re-orient before repeating the same call.")
+
+    if not steps:
+        steps.append(f"{ctx_call} or {status_call} — pick the next typed probe from readiness / gaps.")
+
+    lines = ["---", "**NEXT (prefer these; pivot only with an evidenced lead):**"]
+    for i, s in enumerate(steps[:4], 1):
+        lines.append(f"{i}. {s}")
+    return "\n".join(lines)
+
+
 def _format_exec_result(data: dict[str, Any], *, engagement_id: str = "", target: str = "") -> str:
     stdout = data.get("stdout") or ""
     stderr = data.get("stderr") or ""
@@ -1048,9 +1151,11 @@ def _format_exec_result(data: dict[str, Any], *, engagement_id: str = "", target
     # Without a digest (tool has no registered parser), keep the generous cap
     # since raw stdout is the only signal available for that tool.
     digest = str(hybrid_meta.get("digest") or "")
-    stdout_cap = 2500 if digest else 12000
-    head_cap = 1800 if digest else 6000
-    tail_cap = 700 if digest else 3000
+    # Tighter caps help weak models (less context flood); digests + artifacts
+    # still carry the full signal. No digest → keep a larger preview.
+    stdout_cap = 2000 if digest else 8000
+    head_cap = 1400 if digest else 4500
+    tail_cap = 500 if digest else 2000
 
     if len(stdout) <= stdout_cap:
         stdout_show = stdout
@@ -1062,7 +1167,7 @@ def _format_exec_result(data: dict[str, Any], *, engagement_id: str = "", target
             + " — platform_artifact]…\n\n"
             + stdout[-tail_cap:]
         )
-    stderr_show = stderr if len(stderr) <= 8000 else stderr[:8000] + "\n…[stderr truncated]…"
+    stderr_show = stderr if len(stderr) <= 4000 else stderr[:4000] + "\n…[stderr truncated]…"
 
     parts = [
         "### OPERATOR MIRROR — EXECUTION",
@@ -1106,10 +1211,7 @@ def _format_exec_result(data: dict[str, Any], *, engagement_id: str = "", target
         parts.append(f"**Note:** {data['next_hint']}")
     if arts:
         parts.append(_block("Full output on disk (Kali)", arts))
-    parts.append(
-        "\n---\n"
-        "You decide the next move. platform_context for phase status when useful."
-    )
+    parts.append(_format_next_steps(data, engagement_id=engagement_id))
     return "\n".join(parts)
 
 def _execute_catalog_tool(

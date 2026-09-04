@@ -36,7 +36,8 @@ Start here based on what you need:
   what's next (memory query-back, open phase model, killchain engine).
 
 ## Related material outside `docs/`
-- **[../AGENTS.md](../AGENTS.md)** — the operator prompt (the LLM's actual instructions).
+- **[../AGENTS.md](../AGENTS.md)** — thin operator card (always-on LLM instructions).
+- **[../AGENTS_REFERENCE.md](../AGENTS_REFERENCE.md)** — full operator contract (on-demand / humans).
 - **[../README.md](../README.md)** — setup, quickstart, and MCP client configuration.
 - **[../config/README.md](../config/README.md)** — the YAML "referee" config (catalog,
   escalation, ingest, thinking model).

@@ -63,7 +63,8 @@ OpenCode loads `opencode.json` → MCP server `platform-mcp/server.py` → `PENT
 | `config/` | Tool catalog YAML, playbooks, workflows, escalation, tech dispatch |
 | `skills/` | Methodology markdown (assistive, not auto-run) |
 | `scripts/` | Smoke tests (`smoke_recon_network.py`, …) |
-| `AGENTS.md` | Primary LLM contract (loaded by OpenCode) |
+| `AGENTS.md` | Thin operator card (loaded by OpenCode / Cursor) |
+| `AGENTS_REFERENCE.md` | Full operator contract (on-demand; was the old AGENTS.md body) |
 | `opencode.json` | MCP wiring + timeouts |
 | `docker-compose.yml` | postgres + kali-tools + backend |
 
@@ -268,9 +269,15 @@ This is the platform’s main advantage over “raw HexStrike JSON → COMPLETE.
 
 ## 7. Skills & assistance (how the LLM is guided)
 
-### 7.1 `AGENTS.md` (primary)
+### 7.1 `AGENTS.md` (primary) + `AGENTS_REFERENCE.md`
 
-Loaded by OpenCode as instructions. Defines:
+`AGENTS.md` is a short always-on card (bind → pipeline → typed tools → jobs → pin
+`engagement_id` → follow `NEXT` footers). The previous long contract lives in
+`AGENTS_REFERENCE.md` and in `platform_skills` — so weak models are not drowned
+in methodology text every turn. Tool mirrors append concrete `NEXT` steps
+(advisory; strong models may pivot).
+
+Loaded by OpenCode as instructions. The card defines:
 
 - Tool preference table
 - Evidence grades + finalize rules
