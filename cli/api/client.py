@@ -225,6 +225,32 @@ class APIClient:
         except httpx.HTTPError:
             return {"ready": True, "mode": "unknown", "message": ""}
 
+    def list_learned_skills(self) -> dict[str, Any]:
+        resp = self._client.get(self._url("/api/v1/capabilities/learned-skills"))
+        resp.raise_for_status()
+        return resp.json()
+
+    def add_learned_skill(self, payload: dict[str, Any]) -> dict[str, Any]:
+        resp = self._client.post(
+            self._url("/api/v1/capabilities/learned-skills/add"), json=payload
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def approve_learned_skill(self, proposal_id: str) -> dict[str, Any]:
+        resp = self._client.post(
+            self._url(f"/api/v1/capabilities/learned-skills/{proposal_id}/approve")
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def reject_learned_skill(self, proposal_id: str) -> dict[str, Any]:
+        resp = self._client.delete(
+            self._url(f"/api/v1/capabilities/learned-skills/{proposal_id}")
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def start_expansion_job(
         self, engagement_id: str, *, run_id: str = "", max_passes: int = 5,
         include_low_confidence: bool = False,

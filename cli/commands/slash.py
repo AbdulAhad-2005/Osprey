@@ -815,6 +815,7 @@ SLASH_COMMANDS: dict[str, tuple[str, "callable"]] = {
     "/chat": ("Show Commander chat history", handle_chat),
     "/details": ("Set live tool detail level", handle_details),
     "/status": ("Session status", handle_status),
+    "/skill": ("Review/approve LLM-proposed learned skills", handle_skill),
     "/config": ("Show configuration", handle_config),
     "/reconnect": ("Re-read .env and reconnect to backend", handle_reconnect),
     "/reset": ("Clear agent conversation", handle_reset),
@@ -823,6 +824,96 @@ SLASH_COMMANDS: dict[str, tuple[str, "callable"]] = {
     "/quit": ("Exit the CLI", handle_exit),
     "/q": ("Exit the CLI", handle_exit),
 }
+
+
+def _parse_skill_frontmatter(text: str) -> tuple[dict[str, str], str]:
+    """Minimal `--- key: value ---` frontmatter parse (mirrors the backend)."""
+    stripped = text.lstrip("﻿")
+    if not stripped.startswith("---"):
+        return {}, text
+    lines = stripped.splitlines()
+    meta: dict[str, str] = {}
+    body_start = None
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            body_start = i + 1
+            break
+        if ":" in lines[i]:
+            k, _, v = lines[i].partition(":")
+            meta[k.strip()] = v.strip().strip('"').strip("'")
+    if body_start is None:
+        return {}, text
+    return meta, "\n".join(lines[body_start:]).lstrip("\n")
+
+
+def handle_skill(args: list[str], client: "APIClient") -> None:
+    """Operator surface for the learned-skills tier: add your own, or review/approve
+    the LLM's proposals."""
+    sub = (args[0].lower() if args else "list")
+    try:
+        if sub == "add" and len(args) > 1:
+            import os
+            path = " ".join(args[1:]).strip().strip('"')
+            if not os.path.isfile(path):
+                print_error(f"File not found: {path}")
+                return
+            meta, body = _parse_skill_frontmatter(open(path, encoding="utf-8").read())
+            if not meta.get("phase") or not meta.get("description"):
+                print_error(
+                    "The .md needs frontmatter with at least `phase:` and `description:` "
+                    "(and ideally `name:`). See any file under skills/ for the format."
+                )
+                return
+            payload = {
+                "name": meta.get("name") or os.path.splitext(os.path.basename(path))[0],
+                "phase": meta["phase"],
+                "description": meta["description"],
+                "content": body,
+                "tags": [t.strip() for t in meta.get("tags", "").strip("[]").split(",") if t.strip()],
+            }
+            r = client.add_learned_skill(payload)
+            print_success(f"Added — active at skills/{r.get('path')} ({r.get('phase')} phase).")
+            return
+        if sub == "list":
+            data = client.list_learned_skills()
+            props = data.get("proposals", [])
+            active = data.get("active", [])
+            if not props and not active:
+                print_info(
+                    "No learned skills yet. When enable_learned_skills=true, the LLM proposes "
+                    "them (platform_propose_skill); you approve them here."
+                )
+                return
+            if props:
+                print_info(f"Pending proposals ({len(props)}) — /skill show <id>, then /skill approve|reject <id>:")
+                for p in props:
+                    print(f"  [{p['id']}] [{p['phase']}] {p['name']} — {p['description']}")
+            if active:
+                print_info(f"Active learned skills ({len(active)}):")
+                for a in active:
+                    print(f"  {a['name']} [{a['phase']}] — {a['description']}")
+        elif sub == "show" and len(args) > 1:
+            data = client.list_learned_skills()
+            p = next((x for x in data.get("proposals", []) if x["id"] == args[1]), None)
+            if not p:
+                print_error(f"No pending proposal with id {args[1]}.")
+                return
+            print(f"[{p['phase']}] {p['name']}\n{p['description']}\n\n{p['content']}")
+            if p.get("evidence"):
+                print(f"\nGrounded in: {p['evidence']}")
+        elif sub == "approve" and len(args) > 1:
+            r = client.approve_learned_skill(args[1])
+            print_success(f"Approved — now active at skills/{r.get('path')} ({r.get('phase')} phase).")
+        elif sub == "reject" and len(args) > 1:
+            client.reject_learned_skill(args[1])
+            print_info(f"Rejected proposal {args[1]}.")
+        else:
+            print_info(
+                "Usage: /skill add <file.md>  (author your own, goes live immediately) | "
+                "/skill list | /skill show <id> | /skill approve <id> | /skill reject <id>"
+            )
+    except Exception as exc:  # noqa: BLE001 — surface the API error text
+        print_error(_api_error_text(exc))
 
 
 def execute_command(command_line: str, client: "APIClient") -> bool:

@@ -228,6 +228,14 @@ tags: [web, graphql, idor]
   decide whether to open the skill. Make it concrete (when to use it + what it does).
 - No restart or code change needed — the registry re-reads `skills/` on each request.
 
+**Learned skills (runtime).** You don't have to hand-place files. The agent can
+capture a reusable technique it discovers with `platform_propose_skill` (you approve
+it with `/skill approve <id>` in the CLI), and you can author one yourself in one
+step with `/skill add <file.md>`. These land in a git-ignored, user-local
+`skills/learned/` (never committed or shipped), indexed like any other skill. The
+tier is on by default (`enable_learned_skills`); LLM proposals always wait for your
+approval, and a proposal is rejected if it just restates a skill you already have.
+
 Verify it's indexed: `GET /api/v1/capabilities/skills-index?phase=web` (or
 `platform_skills(phase="web")` from an MCP harness) — your skill's `name` and
 `description` should appear.
