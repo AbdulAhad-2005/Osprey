@@ -2545,6 +2545,50 @@ def platform_skills(path: str = "", phase: str = "", query: str = "") -> str:
 
 
 @mcp.tool()
+def platform_propose_skill(
+    name: str = "",
+    phase: str = "",
+    description: str = "",
+    content: str = "",
+    tags: str = "",
+    evidence: str = "",
+) -> str:
+    """
+    Propose a NEW operator-local skill capturing a reusable technique you learned.
+
+    Use this ONLY for genuinely novel, transferable methodology — a bypass/chain/
+    playbook that worked and will help on FUTURE targets. NOT for: a merge or
+    restatement of existing skills (you can already read several skills at once via
+    platform_skills), and NOT for per-target facts (those belong in the engagement
+    graph via platform_think / platform_record_finding).
+
+    The proposal is INERT until the operator approves it (it is never auto-active,
+    never committed, never shipped). Cite what it worked against in evidence=.
+
+    name= short kebab title · phase= recon|network|web|vuln|exploit|osint|commander|shared
+    description= one line (when to use it + what it does) · content= the methodology
+    (markdown) · tags= comma-separated · evidence= the engagement facts it's grounded in.
+    """
+    def _run() -> str:
+        body = {
+            "name": name.strip(), "phase": phase.strip(), "description": description.strip(),
+            "content": content, "evidence": evidence.strip(),
+            "tags": [t.strip() for t in tags.split(",") if t.strip()],
+            "engagement_id": _SESSION_ENGAGEMENT_ID or "",
+        }
+        data = _post("/api/v1/capabilities/learned-skills/propose", body)
+        return (
+            "### OPERATOR MIRROR — SKILL PROPOSED\n"
+            f"id={data.get('id')} slug={data.get('slug')} phase={data.get('phase')}\n"
+            f"{data.get('note', '')}\n"
+            "It is NOT active yet — tell the user it awaits their approval "
+            "(/skill approve <id> in the CLI). Continue the engagement meanwhile."
+        )
+
+    return _safe(_run)
+
+
+@mcp.tool()
 def platform_config(name: str = "") -> str:
     """
     Read allowlisted platform YAML/JSON (playbooks, ingest_rules, recon_network_tools, …).

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from osprey.schemas.tool_call import ToolCallProposal, ToolCallValidationResult
 from osprey.schemas.tool_capability import PhaseCapabilitiesResponse, ToolCapability
@@ -67,11 +68,14 @@ def all_tools(
 
 @router.get("/skills/{phase}")
 def skills_for_phase(phase: str) -> dict[str, str]:
-    if phase not in ("recon", "network", "shared"):
-        raise HTTPException(404, detail="Phase must be recon, network, or shared")
+    """Full skill text for any phase (recon/network/web/vuln/exploit/osint/…).
+
+    Not restricted to a fixed phase list — the platform spans every phase now, and
+    a missing phase dir simply yields the always-relevant shared methodology.
+    """
     if phase == "shared":
         return {"content": load_shared_context()}
-    return {"content": load_skills_for_phase(phase)}
+    return {"content": load_skills_for_phase(phase, allow_missing=True)}
 
 
 @router.get("/skills-index")
@@ -127,6 +131,70 @@ def skills_for_task(task_id: str) -> dict[str, str]:
 def validate_proposal(proposal: ToolCallProposal) -> ToolCallValidationResult:
     """Validate LLM tool proposal before execution (permissive flags)."""
     return validate_tool_call(proposal)
+
+
+class ProposeSkillRequest(BaseModel):
+    name: str
+    phase: str
+    description: str
+    content: str
+    tags: list[str] = Field(default_factory=list)
+    engagement_id: str = ""
+    evidence: str = ""
+
+
+@router.post("/learned-skills/propose")
+def propose_learned_skill(req: ProposeSkillRequest) -> dict:
+    """Propose a new operator-local learned skill (inert until approved).
+
+    Gated by `enable_learned_skills`. Validates shape and rejects anything too
+    similar to an existing skill — a learned skill must be a genuinely new
+    technique, not a merge/restatement of the shipped library.
+    """
+    from osprey.core.config import get_settings
+    from osprey.services.learned_skills import LearnedSkillError, propose_skill
+
+    if not get_settings().enable_learned_skills:
+        raise HTTPException(403, detail="Learned skills are disabled (set enable_learned_skills=true).")
+    try:
+        prop = propose_skill(
+            name=req.name, phase=req.phase, description=req.description,
+            content=req.content, tags=req.tags, engagement_id=req.engagement_id,
+            evidence=req.evidence,
+        )
+    except LearnedSkillError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
+    return {"status": "proposed", "id": prop["id"], "slug": prop["slug"], "phase": prop["phase"],
+            "note": "Pending operator approval — it is not active until approved."}
+
+
+@router.get("/learned-skills")
+def learned_skills() -> dict:
+    """List pending proposals and active (approved) learned skills."""
+    from osprey.services.learned_skills import list_learned, list_proposals
+
+    return {"proposals": list_proposals(), "active": list_learned()}
+
+
+@router.post("/learned-skills/{proposal_id}/approve")
+def approve_learned_skill(proposal_id: str) -> dict:
+    """Operator gate: render an approved proposal into an active learned skill."""
+    from osprey.services.learned_skills import LearnedSkillError, approve_proposal
+
+    try:
+        return {"status": "approved", **approve_proposal(proposal_id)}
+    except LearnedSkillError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
+
+
+@router.delete("/learned-skills/{proposal_id}")
+def reject_learned_skill(proposal_id: str) -> dict:
+    """Operator gate: discard a pending proposal."""
+    from osprey.services.learned_skills import reject_proposal
+
+    if not reject_proposal(proposal_id):
+        raise HTTPException(404, detail=f"No proposal with id: {proposal_id}")
+    return {"status": "rejected", "id": proposal_id}
 
 
 @router.post("/build-command")

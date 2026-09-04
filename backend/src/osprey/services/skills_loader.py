@@ -91,7 +91,7 @@ def load_skills_for_phase(
     return "\n\n---\n\n".join(p for p in parts if p)
 
 
-def phase_skill_index(phase: str, *, limit: int = 80) -> str:
+def phase_skill_index(phase: str, *, limit: int = 200) -> str:
     """`name — description` index for a phase (plus shared methodology).
 
     The description-indexed surface an agent reads to decide *which* skill to pull.

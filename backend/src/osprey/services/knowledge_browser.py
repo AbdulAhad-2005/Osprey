@@ -191,7 +191,7 @@ def get_config(name: str) -> dict | None:
     }
 
 
-def skills_index_text(*, phase: str = "", limit: int = 80) -> str:
+def skills_index_text(*, phase: str = "", limit: int = 200) -> str:
     """`name — description` index. Pass phase= to surface only that phase's skills
     (plus always-relevant shared/commander methodology), so the conductor can
     anchor skills to the active phase instead of dumping the whole catalog."""

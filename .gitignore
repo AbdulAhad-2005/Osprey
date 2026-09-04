@@ -44,3 +44,6 @@ other tools/
 hexstrike-ai/
 strix/
 shannon/
+
+# Learned-skills tier — operator-local, never shipped/synced
+skills/learned/
