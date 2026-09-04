@@ -103,9 +103,9 @@ class Settings(BaseSettings):
         description="Load phase-overview + shared skills instead of full skill dump",
     )
     # Learned-skills tier: let the LLM PROPOSE a new operator-local skill (gated by
-    # human approval, stored git-ignored in skills/learned/). Off by default.
+    # human approval, stored git-ignored in skills/learned/). On by default.
     enable_learned_skills: bool = Field(
-        default=False,
+        default=True,
         description="Enable platform_propose_skill + the operator-approved learned-skills tier",
     )
     # Write→run scripts (python/bash) inside Kali.

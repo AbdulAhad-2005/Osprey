@@ -230,6 +230,13 @@ class APIClient:
         resp.raise_for_status()
         return resp.json()
 
+    def add_learned_skill(self, payload: dict[str, Any]) -> dict[str, Any]:
+        resp = self._client.post(
+            self._url("/api/v1/capabilities/learned-skills/add"), json=payload
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def approve_learned_skill(self, proposal_id: str) -> dict[str, Any]:
         resp = self._client.post(
             self._url(f"/api/v1/capabilities/learned-skills/{proposal_id}/approve")

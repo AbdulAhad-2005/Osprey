@@ -187,8 +187,33 @@ def reject_proposal(pid: str) -> bool:
     return True
 
 
+def _write_active(
+    *, slug: str, phase: str, description: str, content: str,
+    tags: list[str] | None, evidence: str = "",
+) -> dict[str, Any]:
+    """Render a validated skill into the active, indexed learned-skills dir."""
+    _LEARNED_DIR.mkdir(parents=True, exist_ok=True)
+    tg = [t.strip() for t in (tags or []) if t.strip()][:8]
+    if "learned" not in tg:
+        tg.append("learned")
+    frontmatter = (
+        "---\n"
+        f"name: {slug}\n"
+        f"description: \"{description.replace(chr(34), chr(39))}\"\n"
+        f"phase: {phase}\n"
+        f"tags: [{', '.join(tg)}]\n"
+        "source: learned\n"
+        "---\n\n"
+    )
+    body = content.strip() + "\n"
+    if evidence:
+        body += f"\n> Grounded in engagement evidence: {evidence}\n"
+    (_LEARNED_DIR / f"{slug}.md").write_text(frontmatter + body, encoding="utf-8")
+    return {"path": f"learned/{slug}.md", "name": slug, "phase": phase}
+
+
 def approve_proposal(pid: str) -> dict[str, Any]:
-    """Render an approved proposal into an active, indexed learned skill."""
+    """Render an approved LLM proposal into an active, indexed learned skill."""
     prop = get_proposal(pid)
     if prop is None:
         raise LearnedSkillError(f"no proposal with id '{pid}'.")
@@ -198,27 +223,30 @@ def approve_proposal(pid: str) -> dict[str, Any]:
         prop["slug"], prop["name"], prop["description"],
         _first_heading(prop["content"]), exclude_pid=pid,
     )
-
-    _LEARNED_DIR.mkdir(parents=True, exist_ok=True)
-    tags = list(prop.get("tags") or [])
-    if "learned" not in tags:
-        tags.append("learned")
-    frontmatter = (
-        "---\n"
-        f"name: {prop['slug']}\n"
-        f"description: \"{prop['description'].replace(chr(34), chr(39))}\"\n"
-        f"phase: {prop['phase']}\n"
-        f"tags: [{', '.join(tags)}]\n"
-        "source: learned\n"
-        "---\n\n"
+    res = _write_active(
+        slug=prop["slug"], phase=prop["phase"], description=prop["description"],
+        content=prop["content"], tags=prop.get("tags"), evidence=prop.get("evidence", ""),
     )
-    body = prop["content"].strip() + "\n"
-    if prop.get("evidence"):
-        body += f"\n> Grounded in engagement evidence: {prop['evidence']}\n"
-    dest = _LEARNED_DIR / f"{prop['slug']}.md"
-    dest.write_text(frontmatter + body, encoding="utf-8")
     _proposal_path(pid).unlink(missing_ok=True)
-    return {"path": f"learned/{prop['slug']}.md", "name": prop["slug"], "phase": prop["phase"]}
+    return res
+
+
+def add_skill(
+    *, name: str, phase: str, description: str, content: str,
+    tags: list[str] | None = None, evidence: str = "",
+) -> dict[str, Any]:
+    """Operator-direct add — validate + write straight to active (no proposal step).
+
+    The operator is both author and approver here, so a learned skill they author
+    themselves needs no separate approval gate (unlike an LLM proposal). Same
+    validation + duplicate/similarity guards still apply.
+    """
+    slug, phase = _validate(name, phase, description, content)
+    _reject_if_duplicate(slug, name.strip(), description.strip(), _first_heading(content))
+    return _write_active(
+        slug=slug, phase=phase, description=description.strip(),
+        content=content, tags=tags, evidence=evidence.strip(),
+    )
 
 
 def list_learned() -> list[dict[str, Any]]:

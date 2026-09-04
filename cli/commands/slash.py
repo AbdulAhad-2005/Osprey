@@ -826,10 +826,54 @@ SLASH_COMMANDS: dict[str, tuple[str, "callable"]] = {
 }
 
 
+def _parse_skill_frontmatter(text: str) -> tuple[dict[str, str], str]:
+    """Minimal `--- key: value ---` frontmatter parse (mirrors the backend)."""
+    stripped = text.lstrip("﻿")
+    if not stripped.startswith("---"):
+        return {}, text
+    lines = stripped.splitlines()
+    meta: dict[str, str] = {}
+    body_start = None
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            body_start = i + 1
+            break
+        if ":" in lines[i]:
+            k, _, v = lines[i].partition(":")
+            meta[k.strip()] = v.strip().strip('"').strip("'")
+    if body_start is None:
+        return {}, text
+    return meta, "\n".join(lines[body_start:]).lstrip("\n")
+
+
 def handle_skill(args: list[str], client: "APIClient") -> None:
-    """Operator gate for the learned-skills tier: review/approve/reject LLM proposals."""
+    """Operator surface for the learned-skills tier: add your own, or review/approve
+    the LLM's proposals."""
     sub = (args[0].lower() if args else "list")
     try:
+        if sub == "add" and len(args) > 1:
+            import os
+            path = " ".join(args[1:]).strip().strip('"')
+            if not os.path.isfile(path):
+                print_error(f"File not found: {path}")
+                return
+            meta, body = _parse_skill_frontmatter(open(path, encoding="utf-8").read())
+            if not meta.get("phase") or not meta.get("description"):
+                print_error(
+                    "The .md needs frontmatter with at least `phase:` and `description:` "
+                    "(and ideally `name:`). See any file under skills/ for the format."
+                )
+                return
+            payload = {
+                "name": meta.get("name") or os.path.splitext(os.path.basename(path))[0],
+                "phase": meta["phase"],
+                "description": meta["description"],
+                "content": body,
+                "tags": [t.strip() for t in meta.get("tags", "").strip("[]").split(",") if t.strip()],
+            }
+            r = client.add_learned_skill(payload)
+            print_success(f"Added — active at skills/{r.get('path')} ({r.get('phase')} phase).")
+            return
         if sub == "list":
             data = client.list_learned_skills()
             props = data.get("proposals", [])
@@ -864,7 +908,10 @@ def handle_skill(args: list[str], client: "APIClient") -> None:
             client.reject_learned_skill(args[1])
             print_info(f"Rejected proposal {args[1]}.")
         else:
-            print_info("Usage: /skill list | /skill show <id> | /skill approve <id> | /skill reject <id>")
+            print_info(
+                "Usage: /skill add <file.md>  (author your own, goes live immediately) | "
+                "/skill list | /skill show <id> | /skill approve <id> | /skill reject <id>"
+            )
     except Exception as exc:  # noqa: BLE001 — surface the API error text
         print_error(_api_error_text(exc))
 

@@ -155,7 +155,7 @@ def propose_learned_skill(req: ProposeSkillRequest) -> dict:
     from osprey.services.learned_skills import LearnedSkillError, propose_skill
 
     if not get_settings().enable_learned_skills:
-        raise HTTPException(403, detail="Learned skills are disabled (set enable_learned_skills=true).")
+        raise HTTPException(403, detail="Learned skills are disabled (set enable_learned_skills=true to enable).")
     try:
         prop = propose_skill(
             name=req.name, phase=req.phase, description=req.description,
@@ -166,6 +166,25 @@ def propose_learned_skill(req: ProposeSkillRequest) -> dict:
         raise HTTPException(400, detail=str(exc)) from exc
     return {"status": "proposed", "id": prop["id"], "slug": prop["slug"], "phase": prop["phase"],
             "note": "Pending operator approval — it is not active until approved."}
+
+
+@router.post("/learned-skills/add")
+def add_learned_skill(req: ProposeSkillRequest) -> dict:
+    """Operator-direct add — author a learned skill straight to active (no approval).
+
+    For the operator (a trusted author): validated + duplicate-guarded like a
+    proposal, but written active immediately since the operator is the approver.
+    The LLM path is propose→approve; this is the human's one-step path.
+    """
+    from osprey.services.learned_skills import LearnedSkillError, add_skill
+
+    try:
+        return {"status": "added", **add_skill(
+            name=req.name, phase=req.phase, description=req.description,
+            content=req.content, tags=req.tags, evidence=req.evidence,
+        )}
+    except LearnedSkillError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
 
 
 @router.get("/learned-skills")
