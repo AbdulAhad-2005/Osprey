@@ -277,36 +277,13 @@ async def execute_tool_request(
     request.params = dict(validation.normalized_params)
     target = extract_target(request.params) or target
 
-    # Component 2 — pre-flight chunking. Must run BEFORE enforce_scan_budget,
-    # not as a reaction to its refusal: enforce_scan_budget raises synchronously
-    # before any tool ever executes, so there is no failure to "recover from"
-    # for the wide-range case — width has to be detected and split here, ahead
-    # of the budget check, not caught after it. A routine wide-range request
-    # (not a genuinely large/unusual one — see chunk_port_range's own cap)
-    # transparently becomes N job-store-managed chunks with no human
-    # interruption; confirm_expensive remains untouched as the gate for
-    # anything chunk_port_range correctly declines to auto-split.
-    from osprey.services.scan_budget import is_truthy
-
-    if not is_truthy(request.params.get("confirm_expensive")):
-        deferred = await _maybe_dispatch_chunked(request, session, target)
-        if deferred is not None:
-            return deferred
-
-    # Expensive full-range / wide port scans: ask human first (unless confirm_expensive).
-    from osprey.services.scan_budget import enforce_scan_budget
-
-    try:
-        enforce_scan_budget(
-            tool_name=request.tool_name,
-            params=request.params,
-            additional_args=request.additional_args or "",
-        )
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=str(exc),
-        ) from exc
+    # Wide port ranges are transparently split into background-job chunks so a
+    # slow scan can't time out as one giant call. This is a reliability aid
+    # a full -p- (which exceeds the chunk cap by design) simply runs as one
+    # direct scan.
+    deferred = await _maybe_dispatch_chunked(request, session, target)
+    if deferred is not None:
+        return deferred
 
     # Recon/network: always enable recovery suggestions.
     if tool_def.category.value in ("recon", "network"):
@@ -822,8 +799,8 @@ async def _maybe_dispatch_chunked(
     """Component 2 pre-flight: if this is a routine wide port-range request on
     a chunkable tool, split it into narrow chunks and queue each as a job —
     return an immediate deferred response instead of ever attempting the wide
-    call as one shot. None = not a chunkable-wide request; caller proceeds to
-    the normal enforce_scan_budget path unchanged.
+    call as one shot. None = not a chunkable-wide request; caller runs the tool
+    directly (including a genuine full 1-65535 sweep — there is no budget gate).
 
     Deliberately returns immediately rather than blocking for chunks to
     finish: a slow full-range scan can run for hours, which would just

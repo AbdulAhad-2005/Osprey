@@ -40,4 +40,4 @@ If finalize is BLOCKED, deepen **or** ship PARTIAL. Never invent COMPLETE from c
 ## Anti-narrow
 
 Do **not** treat this file as stages. Do **not** re-run the same failing tool.
-Do **not** widen to full port range without asking. Do invent when the catalog is thin.
+Widen to a full port range when it's worth it (allowed, no gate); prefer targeted for speed. Do invent when the catalog is thin.

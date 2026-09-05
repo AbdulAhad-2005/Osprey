@@ -295,8 +295,8 @@ on you — the platform tracks and surfaces evidence, it doesn't grade your repo
 ## Time & scope (embedded budget)
 
 - Prefer fast/narrow: empty nmap ports (defaults), `--top-ports 1000`, or `ports=1-1000` / known opens.
-- **Never** start full `1-65535` / `-p-` (or multi-hour sweeps) on your own — **ask the human first**.
-  After they OK, retry with `confirm_expensive=true`. The API blocks full-range without that.
+- Full `1-65535` / `-p-` is allowed — prefer top-ports 1-1000 first for speed, escalate to a full sweep when it's worth it. Honor an explicit operator constraint (e.g.
+  "no full port scan"). Wide ranges auto-chunk into background jobs so they don't time out.
 - On timeout/fail: shrink (one IP, fewer ports, jobs) — do not “fix” by widening the scan.
 
 ## Timeouts

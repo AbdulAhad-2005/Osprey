@@ -27,6 +27,7 @@ from typing import Any, Callable
 from osprey.schemas.engagement_graph import AssetType
 from osprey.schemas.tools import ToolExecutionRequest
 from osprey.services.engagement_graph import get_engagement_graph
+from osprey.services.target_utils import looks_like_domain
 from osprey.services.tool_execution import execute_tool_request
 
 logger = logging.getLogger(__name__)
@@ -51,10 +52,9 @@ def _classify_ips_by_cdn(ip_list: list[str]) -> dict[str, str | None]:
 
     return {ip: _classify_ip(ip) for ip in ip_list}
 
-# Stays under scan_budget's confirm-required thresholds (--top-ports is always
-# allowed; nmap's no-confirm port cap is 2000) while still covering the vast
-# majority of commonly-open ports — "fast" and "sees all major ports", not a
-# full 1-65535 sweep (that's a deliberate, separate, confirm_expensive action).
+# A fast, broad default that still covers the vast majority of commonly-open
+# ports — "fast" and "sees all major ports". A full 1-65535 sweep is a separate,
+# deliberate action (allowed); fast-scan stays intentionally narrow.
 _NMAP_TOP_PORTS = 2000
 _NMAP_MIN_RATE = 1000
 # Origin IPs get TWO passes, not one. --min-rate forces a packet-rate floor
@@ -168,7 +168,19 @@ async def run_fast_scan(
         "subfinder_scan", {"domain": target, "silent": True},
         engagement_id=engagement_id, run_id=run_id, timeout=180,
     )
-    subdomains = sorted({t.strip().lower() for t in (sub_resp.finding_titles or []) if t.strip()})
+    # finding_titles is a mixed bag — it can carry non-host observations (e.g. a
+    # tool's "raw output (ok)" fallback title). Keep only real, in-scope hostnames,
+    # or garbage like "amass_scan raw output (ok)" would be joined into the next
+    # tool's target and rejected as a shell metacharacter, killing the whole scan.
+    subdomains = sorted(
+        {
+            h
+            for t in (sub_resp.finding_titles or [])
+            if (h := t.strip().lower())
+            and looks_like_domain(h)
+            and (h == apex or h.endswith("." + apex))
+        }
+    )
     report.subdomains_found = len(subdomains)
     hosts = sorted({apex, *subdomains})
 

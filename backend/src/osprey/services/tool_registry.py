@@ -345,9 +345,8 @@ NETWORK_TOOLS: list[ToolDefinition] = [
     _t("masscan_high_speed", ToolCategory.NETWORK, "masscan", ToolSafetyLevel.ACTIVE,
        "High-speed Internet-scale port scanning.",
        ["ports", "fast-scan", "mass-scan"],
-       {"target": _p("", "Target IP/CIDR"), "ports": _p("1-1000", "Port range (full 1-65535 needs confirm_expensive)"),
+       {"target": _p("", "Target IP/CIDR"), "ports": _p("1-1000", "Port range (full 1-65535 allowed)"),
         "rate": _p("1000", "Packets per second"), "banners": _p("false", "Grab banners"),
-        "confirm_expensive": _p("false", "After human OK for full-range only"),
         **_COMMON_PARAMS},
        requires_root=True),
     _t("netexec_scan", ToolCategory.NETWORK, "nxc", ToolSafetyLevel.ACTIVE,
@@ -401,10 +400,9 @@ NETWORK_TOOLS: list[ToolDefinition] = [
     _t("nmap_full_port_scan", ToolCategory.NETWORK, "nmap", ToolSafetyLevel.ACTIVE,
        "Two-stage full-range scan: nmap -Pn -p- --min-rate 10000 port discovery, "
        "then -sC -sV on every open port. Requires root (raw sockets for the "
-       "high-rate full sweep); gated by confirm_expensive.",
+       "high-rate full sweep). Runs the full range directly — no gate.",
        ["ports", "services", "full-range", "versions"],
        {"target": _p("", "Target IP/hostname"), "min_rate": _p("10000", "SYN packets/sec for the full sweep"),
-        "confirm_expensive": _p("false", "Full-range sweep — requires explicit human OK"),
         "output_file": _p("", "Optional -oN output path in Kali (default /tmp/nmap_<target>.scan)"),
         **_COMMON_PARAMS},
        requires_root=True),

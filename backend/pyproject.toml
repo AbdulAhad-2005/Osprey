@@ -37,6 +37,12 @@ dev = [
     "pytest>=8.2,<9.0",
     "ruff>=0.6,<1.0",
 ]
+# LiteLLM cannot call gemini/* models (the default provider) without the Google SDK. 
+# Docker installs it already; for a native install using Gemini, run
+# `pip install -e ./backend[gemini]` (or switch LLM_MODEL to another provider).
+gemini = [
+    "google-generativeai>=0.8",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

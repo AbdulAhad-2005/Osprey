@@ -134,7 +134,6 @@ def _build_params(
     subdomains: str = "",
     input_data: str = "",
     additional_args: str = "",
-    confirm_expensive: str = "",
     privileged: bool = False,
     host_timeout: str = "",
 ) -> dict[str, Any]:
@@ -161,8 +160,6 @@ def _build_params(
         params["input_data"] = input_data.strip()
     if additional_args.strip():
         params["additional_args"] = additional_args.strip()
-    if confirm_expensive.strip():
-        params["confirm_expensive"] = confirm_expensive.strip()
     if privileged:
         params["privileged"] = "true"
     if host_timeout.strip():
@@ -197,8 +194,7 @@ def register_typed_recon_network_tools(
                 subdomains: str = "",
                 input_data: str = "",
                 additional_args: str = "",
-                confirm_expensive: str = "",
-                privileged: bool = False,
+                            privileged: bool = False,
                 host_timeout: str = "",
                 timeout_seconds: int = 0,
                 engagement_id: str = "",
@@ -216,7 +212,6 @@ def register_typed_recon_network_tools(
                     subdomains=subdomains,
                     input_data=input_data,
                     additional_args="",
-                    confirm_expensive=confirm_expensive,
                     privileged=privileged,
                     host_timeout=host_timeout,
                 )

@@ -255,20 +255,6 @@ async def execute_shell_request(
         raw_command = None
         pipeline = argv[1] if argv and argv[0] == "__pipeline__" else None
 
-    from osprey.services.scan_budget import enforce_scan_budget
-
-    tool_label = "shell:bash" if settings.enable_unrestricted_shell else (
-        f"shell:{argv[0] if argv and argv[0] != '__pipeline__' else 'pipeline'}"
-    )
-    try:
-        enforce_scan_budget(
-            tool_name=tool_label,
-            params={},
-            command=command,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
     session = resolve_session(engagement_id=engagement_id, run_id=run_id, seed_target="")
     if not session.engagement_id:
         raise HTTPException(

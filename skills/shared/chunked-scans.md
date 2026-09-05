@@ -22,7 +22,7 @@ Never treat the note as an order. Max concurrent jobs = `config/parallelism.yaml
 
 ## Chunked port / host sketch
 
-Respect scan_budget: no silent `1-65535` / `-p-` without asking the operator.
+Wide `1-65535` / `-p-` ranges auto-chunk into background jobs (no gate); a full sweep runs directly. Prefer narrow ranges for speed.
 
 ```python
 # platform_script — adapt IPs and port sets yourself
