@@ -330,18 +330,18 @@ async def execute_shell_request(
                 response.stderr or "",
                 engagement_id=session.engagement_id,
                 run_id=session.run_id or run_id or "",
-                source_tool=tool_label,
+                source_tool=response.tool_name,
                 target=eng.target,
                 persist=True,
             )
             titles = [f.title for f in findings] + [f.title for f in ingested]
             response.finding_titles = list(dict.fromkeys(titles))
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Findings ingest failed for %s: %s", tool_label, exc)
+            logger.warning("Findings ingest failed for %s: %s", response.tool_name, exc)
         try:
             get_tool_coverage_store().record(
                 engagement_id=session.engagement_id,
-                tool_name=tool_label,
+                tool_name=response.tool_name,
                 asset=eng.target,
                 run_id=session.run_id or "",
                 findings_count=len(response.finding_titles or []),
