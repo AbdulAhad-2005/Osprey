@@ -16,7 +16,6 @@ from cli.session import (
 )
 from cli.ui.display import (
     console,
-    consume_agent_stream,
     print_chat_history,
     print_command_help,
     print_engagements,
@@ -104,19 +103,37 @@ def handle_models(args: list[str], client: "APIClient") -> None:
 
 
 def handle_model(args: list[str], client: "APIClient") -> None:
-    """Show active model info (auto-refreshes from .env)."""
+    """Show both models in play: the CLI's own driving model (what runs your
+    prompts, in this process) and the backend's (what the deterministic
+    `--engine` path's dynamic-fallback ingestion classifier uses, if
+    configured — a separate, optional concern from what's driving you)."""
+    _print_cli_model_status()
+    print_info("")
     _reload_backend_config(client)
     try:
         resp = client._client.get(f"{client.base_url}/api/v1/models/active")
         resp.raise_for_status()
         data = resp.json()
-        print_info(f"Model:       {data.get('model', '?')}")
-        print_info(f"API Key:     {'configured' if data.get('has_api_key') else 'NOT SET'}")
-        print_info(f"Custom Base: {data.get('has_custom_base', False)}")
-        print_info(f"Max Tokens:  {data.get('max_tokens', '?')}")
-        print_info(f"Temperature: {data.get('temperature', '?')}")
+        print_info(f"Backend model:       {data.get('model', '?')}")
+        print_info(f"Backend API Key:     {'configured' if data.get('has_api_key') else 'NOT SET'}")
+        print_info(f"Backend Custom Base: {data.get('has_custom_base', False)}")
+        print_info(f"Backend Max Tokens:  {data.get('max_tokens', '?')}")
+        print_info(f"Backend Temperature: {data.get('temperature', '?')}")
     except Exception as exc:
         print_error(str(exc))
+
+
+def _print_cli_model_status() -> None:
+    """The model actually driving your prompts — independent of whatever the
+    backend's own .env has configured (see cli/agent/llm.py)."""
+    from cli.agent.llm import CLIModelConfig, LLMNotConfiguredError
+
+    try:
+        config = CLIModelConfig.from_env()
+        print_info(f"CLI driving model:   {config.model}")
+        print_info("CLI API Key:         configured")
+    except LLMNotConfiguredError:
+        print_info("CLI driving model:   NOT CONFIGURED — set LLM_MODEL and LLM_API_KEY in your own .env")
 
 
 def handle_engagements(args: list[str], client: "APIClient") -> None:
@@ -261,17 +278,10 @@ def handle_scan(args: list[str], client: "APIClient") -> None:
         _run_engine_scan(client, target, include_low_confidence=include_low_confidence)
         return
 
+    from cli.commands.prompt import handle_prompt
+
     print_info(f"Scanning {target} (phase: {phase}) — the agent will report back when done.")
-    stream = client.send_prompt_stream(
-        _PHASE_PROMPTS[phase].format(target=target),
-        engagement_id=client.active_engagement_id,
-        phase=phase,
-    )
-    final = consume_agent_stream(stream)
-    if final is None:
-        print_error("Agent stream ended without a final response.")
-    elif not final.get("success", True) and final.get("error"):
-        print_error(final["error"])
+    handle_prompt(_PHASE_PROMPTS[phase].format(target=target), client)
 
 
 def _run_engine_scan(client: "APIClient", target: str, *, include_low_confidence: bool = False) -> None:
@@ -664,14 +674,17 @@ def handle_status(args: list[str], client: "APIClient") -> None:
     else:
         print_info("Engagement: none — run /scan <target> or /engage new <target>")
 
-    # Show agent status
+    _print_cli_model_status()
+
+    # Backend model — a separate, optional concern (drives the deterministic
+    # --engine path's dynamic-fallback ingestion classifier, if configured).
     try:
         resp = client._client.get(f"{client.base_url}/api/v1/agent/status")
         resp.raise_for_status()
         data = resp.json()
-        print_info(f"Model:     {data.get('model', '?')}")
-        print_info(f"Model OK:  {'yes' if data.get('model_active') else 'no — set LLM_API_KEY'}")
-        print_info(f"Tools:     {data.get('tools_available', 0)} available")
+        print_info(f"Backend model: {data.get('model', '?')}")
+        print_info(f"Backend OK:    {'yes' if data.get('model_active') else 'no — not configured'}")
+        print_info(f"Tools:         {data.get('tools_available', 0)} available")
     except Exception:
         pass
     recent = tool_transcript.recent(1)
@@ -681,7 +694,9 @@ def handle_status(args: list[str], client: "APIClient") -> None:
 
 
 def handle_config(args: list[str], client: "APIClient") -> None:
-    """Show config and optionally reload from .env."""
+    """Show BACKEND config and optionally reload its .env — the deterministic
+    --engine path's own settings. Your own driving model is separate; see
+    /model or /status."""
     if args and args[0] == "reload":
         try:
             resp = client._client.post(f"{client.base_url}/api/v1/config/reload")
@@ -699,12 +714,12 @@ def handle_config(args: list[str], client: "APIClient") -> None:
         resp = client._client.get(f"{client.base_url}/api/v1/config")
         resp.raise_for_status()
         data = resp.json()
-        print_info(f"Model:        {data.get('model', '?')}")
-        print_info(f"API Key:      {'configured' if data.get('has_api_key') else 'NOT SET'}")
-        print_info(f"Custom Base:  {data.get('has_custom_base', False)}")
-        print_info(f"Max Tokens:   {data.get('max_tokens', '?')}")
-        print_info(f"Temperature:  {data.get('temperature', '?')}")
-        print_info(f"Max Turns:    {data.get('max_agent_turns', '?')}")
+        print_info(f"Backend Model:        {data.get('model', '?')}")
+        print_info(f"Backend API Key:      {'configured' if data.get('has_api_key') else 'NOT SET'}")
+        print_info(f"Backend Custom Base:  {data.get('has_custom_base', False)}")
+        print_info(f"Backend Max Tokens:   {data.get('max_tokens', '?')}")
+        print_info(f"Backend Temperature:  {data.get('temperature', '?')}")
+        print_info(f"Backend Max Turns:    {data.get('max_agent_turns', '?')}")
     except Exception as exc:
         print_error(str(exc))
 
@@ -772,9 +787,13 @@ def handle_tool(args: list[str], client: "APIClient") -> None:
 
 
 def handle_chat(args: list[str], client: "APIClient") -> None:
-    engagement_id = client.active_engagement_id
-    if not engagement_id:
-        print_info("No engagement bound. Run /scan <target> or /engage new <target> first.")
+    """Show this CLI session's own agent conversation. Lives entirely in the
+    CLI's own Runner (cli/agent/loop.py) now — there is no separate
+    server-side thread to fetch, so this reflects exactly what your next
+    prompt will see as context, no more and no less."""
+    runner = getattr(client, "agent_runner", None)
+    if runner is None or not runner.messages:
+        print_info("No conversation yet in this session. Send a prompt first.")
         return
     limit = 12
     if args:
@@ -783,7 +802,8 @@ def handle_chat(args: list[str], client: "APIClient") -> None:
         except ValueError:
             print_error("Usage: /chat [message-count]")
             return
-    print_chat_history(client.get_conversation(engagement_id, limit=limit), limit=limit)
+    shown = [m for m in runner.messages if m.get("role") in ("user", "assistant") and m.get("content")]
+    print_chat_history(shown, limit=limit)
 
 
 def handle_reconnect(args: list[str], client: "APIClient") -> None:
@@ -797,33 +817,6 @@ def handle_reconnect(args: list[str], client: "APIClient") -> None:
     old_url = client.base_url
     client.reconnect(base_url=new_url)
     print_success(f"Reconnected: {old_url} -> {new_url}")
-
-
-SLASH_COMMANDS: dict[str, tuple[str, "callable"]] = {
-    "/help": ("Show help", handle_help),
-    "/health": ("Check backend health", handle_health),
-    "/tools": ("List MCP tools", handle_tools),
-    "/models": ("List LLM models", handle_models),
-    "/model": ("Show active model", handle_model),
-    "/scan": ("Bind target + run full agent scan", handle_scan),
-    "/fast-scan": ("Deterministic no-LLM scan: whois+subs+SANs+IPs+CDN-classify+httpx+nmap+takeover", handle_fast_scan),
-    "/engage": ("Manage engagements", handle_engagements),
-    "/findings": ("Show findings", handle_findings),
-    "/report": ("Write a Markdown recon report to ./reports/", handle_report),
-    "/tool": ("Show or expand tool-call output", handle_tool),
-    "/output": ("Alias for /tool", handle_tool),
-    "/chat": ("Show Commander chat history", handle_chat),
-    "/details": ("Set live tool detail level", handle_details),
-    "/status": ("Session status", handle_status),
-    "/skill": ("Review/approve LLM-proposed learned skills", handle_skill),
-    "/config": ("Show configuration", handle_config),
-    "/reconnect": ("Re-read .env and reconnect to backend", handle_reconnect),
-    "/reset": ("Clear agent conversation", handle_reset),
-    "/clear": ("Clear screen", handle_clear),
-    "/exit": ("Exit the CLI", handle_exit),
-    "/quit": ("Exit the CLI", handle_exit),
-    "/q": ("Exit the CLI", handle_exit),
-}
 
 
 def _parse_skill_frontmatter(text: str) -> tuple[dict[str, str], str]:
@@ -914,6 +907,33 @@ def handle_skill(args: list[str], client: "APIClient") -> None:
             )
     except Exception as exc:  # noqa: BLE001 — surface the API error text
         print_error(_api_error_text(exc))
+
+
+SLASH_COMMANDS: dict[str, tuple[str, "callable"]] = {
+    "/help": ("Show help", handle_help),
+    "/health": ("Check backend health", handle_health),
+    "/tools": ("List MCP tools", handle_tools),
+    "/models": ("List LLM models", handle_models),
+    "/model": ("Show active model", handle_model),
+    "/scan": ("Bind target + run full agent scan", handle_scan),
+    "/fast-scan": ("Deterministic no-LLM scan: whois+subs+SANs+IPs+CDN-classify+httpx+nmap+takeover", handle_fast_scan),
+    "/engage": ("Manage engagements", handle_engagements),
+    "/findings": ("Show findings", handle_findings),
+    "/report": ("Write a Markdown recon report to ./reports/", handle_report),
+    "/tool": ("Show or expand tool-call output", handle_tool),
+    "/output": ("Alias for /tool", handle_tool),
+    "/chat": ("Show Commander chat history", handle_chat),
+    "/details": ("Set live tool detail level", handle_details),
+    "/status": ("Session status", handle_status),
+    "/skill": ("Review/approve LLM-proposed learned skills", handle_skill),
+    "/config": ("Show configuration", handle_config),
+    "/reconnect": ("Re-read .env and reconnect to backend", handle_reconnect),
+    "/reset": ("Clear agent conversation", handle_reset),
+    "/clear": ("Clear screen", handle_clear),
+    "/exit": ("Exit the CLI", handle_exit),
+    "/quit": ("Exit the CLI", handle_exit),
+    "/q": ("Exit the CLI", handle_exit),
+}
 
 
 def execute_command(command_line: str, client: "APIClient") -> bool:

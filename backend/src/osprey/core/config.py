@@ -92,11 +92,6 @@ class Settings(BaseSettings):
     temporal_address: str = "localhost:7233"
     llm: LLMSettings = Field(default_factory=LLMSettings)
 
-    # Prefer OpenCode MCP path; built-in LiteLLM agent is optional/legacy.
-    enable_builtin_agent: bool = Field(
-        default=False,
-        description="Enable POST /api/v1/agent/chat LiteLLM commander (off by default)",
-    )
     # Condensed skills in commander context (overview + shared only).
     slim_context_skills: bool = Field(
         default=True,

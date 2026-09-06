@@ -433,20 +433,16 @@ def _expansion_running(engagement_id: str) -> bool:
 
 def start_pipeline(engagement_id: str, run_id: str = "") -> dict[str, Any]:
     """Read the conductor's phase-readiness state — always read-only,
-    regardless of backend LLM configuration. Any caller (an external harness
-    over MCP, or a direct API call) drives execution itself — its own
-    subagents, or platform_spawn_agent for a one-off backend-driven agent —
-    using this signal; nothing here ever spawns anything automatically.
-
-    Genuine backend-autonomous execution (no external harness in the loop at
-    all) is a separate, CLI/GUI-only path: orchestrator.run_agent(phase='full')
-    via POST /api/v1/agent/chat, gated by enable_builtin_agent + a configured
-    backend key, calling run_pipeline() directly — never reachable from here,
-    by design, so an MCP-connected session can never have a second LLM spawned
-    on its behalf just because a key happens to be configured for an unrelated
-    session (the bug this function used to have: it branched on llm_configured()
-    alone, so a key configured for a CLI/GUI session silently hijacked any
-    MCP-connected harness's platform_pipeline(action='start') call too).
+    regardless of backend LLM configuration. Every driver — an external
+    harness over MCP, or the CLI's own local agent loop (cli/agent/) —
+    supplies its own brain and drives execution itself using this signal:
+    its own native subagents (the CLI: cli/agent/loop.py's spawn_subagents;
+    a harness: its own Task mechanism), or platform_spawn_agent for a
+    one-off backend-driven agent. Nothing here ever spawns anything
+    automatically — this function used to branch on llm_configured() alone,
+    so a backend key configured for one session could silently hijack any
+    other MCP-connected harness's platform_pipeline(action='start') call;
+    that branch was removed outright, not made conditional.
     """
     eid = (engagement_id or "").strip()
     if not eid:

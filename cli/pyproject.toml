@@ -13,6 +13,15 @@ dependencies = [
     "httpx>=0.27,<1.0",
     "rich>=13.0,<14.0",
     "python-dotenv>=1.0,<2.0",
+    # Multi-provider LLM calling for the CLI's own local agent loop
+    # (cli/agent/) — the CLI supplies its own driving model/key now, the
+    # same library the backend uses, called independently (a shared
+    # third-party dependency, not shared application logic).
+    "litellm>=1.50,<2.0",
+    # The mcp SDK's own FastMCP.tool() decorator is what platform-mcp/server.py
+    # uses to register tools — cli/agent/tools.py imports that module directly
+    # and reads its tool schemas off the same registry.
+    "mcp>=1.28.0",
 ]
 
 [project.scripts]

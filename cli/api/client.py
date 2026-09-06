@@ -30,9 +30,13 @@ class APIClient:
         self.base_url = (base_url or os.getenv("API_BASE_URL", "http://localhost:9000")).rstrip("/")
         self._timeout = httpx.Timeout(3600.0, connect=30.0)
         self._client = httpx.Client(timeout=self._timeout, follow_redirects=True)
-        self._conversation_history: list[dict[str, Any]] = []
         self._run_id: str | None = None
         self._engagement_id: str | None = None
+        # The CLI's own local agent loop (cli/agent/loop.py) — lazily created
+        # and attached by cli/commands/prompt.py, lives here so it persists
+        # across prompts within one CLI session (follow-up questions keep
+        # full context) without APIClient needing to know its shape.
+        self.agent_runner: Any = None
 
     def _url(self, path: str) -> str:
         return f"{self.base_url}{path}"
@@ -305,54 +309,6 @@ class APIClient:
         resp.raise_for_status()
         return resp.json()
 
-    def _build_chat_payload(
-        self, prompt: str, engagement_id: str | None, phase: str
-    ) -> dict[str, Any]:
-        """Shared request body for the /agent/chat[/stream] endpoints."""
-        payload: dict[str, Any] = {"prompt": prompt, "phase": phase}
-        if engagement_id:
-            payload["engagement_id"] = engagement_id
-        if self._conversation_history:
-            payload["conversation_history"] = list(self._conversation_history)
-        if self._run_id:
-            payload["run_id"] = self._run_id
-        return payload
-
-    def send_prompt(
-        self, prompt: str, engagement_id: str | None = None, phase: str = "commander"
-    ) -> dict[str, Any]:
-        """Send a prompt to the agent and return the full response."""
-        payload = self._build_chat_payload(prompt, engagement_id, phase)
-        try:
-            resp = self._client.post(self._url("/api/v1/agent/chat"), json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            if data.get("run_id"):
-                self._run_id = data["run_id"]
-            if data.get("engagement_id"):
-                # The backend's frictionless binding may have created/resolved an
-                # engagement from a plain free-text prompt (no /scan or /engage
-                # ceremony) — mirror it here so /report, /findings etc. know
-                # what the Commander already bound, instead of reporting
-                # "no engagement" for work that actually happened.
-                self._set_active_engagement(data["engagement_id"])
-            response_text = data.get("response", "")
-            if response_text and data.get("success", True):
-                self._conversation_history.append({"role": "user", "content": prompt})
-                self._conversation_history.append({"role": "assistant", "content": response_text})
-            return data
-        except httpx.HTTPStatusError as exc:
-            detail = _error_detail(exc)
-            return {"error": f"Request failed: {exc.response.status_code}" + (f" — {detail}" if detail else "")}
-        except httpx.TimeoutException as exc:
-            return {
-                "error": (
-                    f"Request timed out ({exc}). The backend may still be working — "
-                    "check: docker logs -f osprey-backend. "
-                    "Use /exit, restart the CLI, then /reset before the next target."
-                ),
-            }
-
     def _iter_sse_lines(self, resp: httpx.Response) -> Iterator[tuple[str, dict[str, Any]]]:
         """Shared SSE line-parser — both the per-message stream and the
         persistent events stream speak the same `event:`/`data:` wire format."""
@@ -375,59 +331,13 @@ class APIClient:
         if data_lines:
             yield event_type, json.loads("".join(data_lines))
 
-    def send_prompt_stream(
-        self,
-        prompt: str,
-        engagement_id: str | None = None,
-        phase: str = "commander",
-    ) -> Iterator[tuple[str, dict[str, Any]]]:
-        """Stream agent events from SSE. Yields (event_type, data) until done."""
-        payload = self._build_chat_payload(prompt, engagement_id, phase)
-        final_data: dict[str, Any] | None = None
-
-        try:
-            with self._client.stream(
-                "POST",
-                self._url("/api/v1/agent/chat/stream"),
-                json=payload,
-            ) as resp:
-                resp.raise_for_status()
-                for event_type, data in self._iter_sse_lines(resp):
-                    if event_type == "done":
-                        final_data = data
-                    yield event_type, data
-
-        except httpx.TimeoutException as exc:
-            yield "error", {
-                "message": (
-                    f"Request timed out ({exc}). The backend may still be working — "
-                    "check: docker logs -f osprey-backend"
-                ),
-            }
-            return
-        except httpx.HTTPStatusError as exc:
-            detail = _error_detail(exc)
-            yield "error", {"message": f"Request failed: {exc.response.status_code}" + (f" — {detail}" if detail else "")}
-            return
-
-        if final_data and final_data.get("success", True):
-            response_text = final_data.get("response", "")
-            if response_text:
-                self._conversation_history.append({"role": "user", "content": prompt})
-                self._conversation_history.append({"role": "assistant", "content": response_text})
-            if final_data.get("run_id"):
-                self._run_id = final_data["run_id"]
-            if final_data.get("engagement_id"):
-                # Same as send_prompt: a free-text prompt may have implicitly
-                # bound/created an engagement server-side — mirror it here.
-                self._set_active_engagement(final_data["engagement_id"])
-
     def stream_events(self, engagement_id: str) -> Iterator[tuple[str, dict[str, Any]]]:
         """The persistent live-activity stream for one engagement — opened
-        ONCE and kept open for as long as the session cares about it, not
-        per-message like `send_prompt_stream`. Shows the Commander's own
-        turns AND every background pipeline / spawned phase agent's tool
-        calls as they happen, tagged by `source` in each event's data — the
+        ONCE and kept open for as long as the session cares about it, unlike
+        a per-message request. Shows every background pipeline / spawned
+        phase agent's tool calls as they happen (the CLI's own foreground
+        loop, cli/agent/loop.py, renders its own turn directly and doesn't
+        need this), tagged by `source` in each event's data — the
         fix for "background work is invisible": a harness has exactly one
         live activity feed, this is it. No read timeout — the connection is
         meant to sit open indefinitely; the caller decides when to stop
@@ -457,7 +367,14 @@ class APIClient:
             return {}
 
     def reset_conversation(self) -> None:
-        self._conversation_history.clear()
+        """Clear the CLI's own agent conversation. Actually resets now — the
+        old version only cleared a local mirror while the backend's own
+        conversation thread stayed intact, so a follow-up prompt silently
+        kept the "reset" history. There is no server-side thread anymore:
+        the CLI's Runner (cli/agent/loop.py) is the one place conversation
+        state lives, so clearing it here is a real, complete reset."""
+        if self.agent_runner is not None:
+            self.agent_runner.reset()
         self._run_id = None
 
     def reconnect(self, base_url: str | None = None) -> None:
@@ -471,3 +388,6 @@ class APIClient:
 
     def close(self) -> None:
         self._client.close()
+        loop = getattr(self, "agent_loop", None)
+        if loop is not None and not loop.is_closed():
+            loop.close()

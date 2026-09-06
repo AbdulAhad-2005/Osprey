@@ -935,6 +935,23 @@ def _kali_which_cached(executable: str) -> str | None:
     return _kali_which(executable)
 
 
+def reload_tool_availability() -> None:
+    """Clear the process-lifetime tool-availability cache.
+
+    Unlike every other cached config in this codebase (parallelism, ingest
+    rules, escalation matrix, phase-pipeline thresholds — each has a
+    `reload_*()`/`cache_clear()` this file's own `@lru_cache` had none), a
+    tool's installed/missing status was cached forever once first checked,
+    with no way to refresh it short of restarting the whole backend process —
+    so starting the Kali container *after* the backend had already cached a
+    tool as missing left it reporting "not installed" indefinitely, even
+    though the container now has it. Wired into `POST /config/reload` so the
+    existing "make the backend look again" action actually covers this too.
+    """
+    _kali_which_cached.cache_clear()
+    _projectdiscovery_httpx_cached.cache_clear()
+
+
 def _kali_projectdiscovery_httpx() -> str | None:
     import os
     import subprocess

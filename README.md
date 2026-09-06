@@ -125,9 +125,10 @@ The `requirements.txt` files are generated pinned locks (regenerate with
 
 ## Run Osprey CLI
 
-Prerequisites: the backend is up, `.env` has `ENABLE_BUILTIN_AGENT=true` (the CLI
-drives the backend's built-in agent; the OpenCode/MCP path does not need this), and
-`LLM_API_KEY`/`LLM_MODEL` are set.
+Prerequisites: the backend is up, and `LLM_MODEL`/`LLM_API_KEY` are set in the
+CLI's own `.env` (any LiteLLM-supported provider). The CLI runs its own local
+agent loop — the same tool surface OpenCode/Claude drive via MCP, with your
+own key — it does not depend on any backend-side agent config.
 
 If you used `scripts/setup.*`, the CLI is already installed. Otherwise:
 

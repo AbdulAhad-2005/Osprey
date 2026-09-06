@@ -136,7 +136,15 @@ _DOMAIN_RE = re.compile(
 mcp = FastMCP("osprey")
 
 
+_QUIET = os.environ.get("PENTEST_MCP_QUIET", "").strip().lower() in ("1", "true", "yes")
+
+
 def _log(msg: str) -> None:
+    """Debug trace — written for an MCP host's own hidden stderr log stream.
+    A caller that renders its own interactive output (the CLI) sets
+    PENTEST_MCP_QUIET so this doesn't also land in a live terminal."""
+    if _QUIET:
+        return
     print(f"[osprey-mcp] {msg}", file=sys.stderr, flush=True)
 
 

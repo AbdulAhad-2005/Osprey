@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
 from typing import Any
 
 from rich import box
@@ -32,24 +31,6 @@ def print_success(message: str) -> None:
 
 def print_info(message: str) -> None:
     console.print(f"[dim]{message}[/]")
-
-
-def print_response(data: dict[str, Any]) -> None:
-    if "error" in data and not data.get("response"):
-        print_error(data["error"])
-        return
-    if "response" in data:
-        # Show tool calls summary if present
-        tool_calls = data.get("tool_calls", [])
-        if tool_calls:
-            print_tool_calls_summary(tool_calls, data.get("model", ""), data.get("duration_seconds", 0))
-        console.print(Markdown(data["response"]))
-        return
-    console.print(Panel(str(data), title="Response"))
-
-
-def print_agent_thinking(message: str) -> None:
-    console.print(f"[dim italic]{message}[/]")
 
 
 def print_tool_call(tool_name: str, arguments: dict[str, Any]) -> None:
@@ -123,25 +104,6 @@ def _print_preview_block(rec: ToolRecord) -> None:
         console.print(f"      [dim]{escape(line[:180])}[/]")
 
 
-def print_run_start(data: dict[str, Any]) -> None:
-    target = data.get("target") or "—"
-    tools = data.get("tools", 0)
-    model = data.get("model", "")
-    phase = data.get("phase", "full")
-    table = Table.grid(expand=True)
-    table.add_column(ratio=1)
-    table.add_column(justify="right")
-    table.add_row(
-        Text(f"{APP_NAME} run", style="bold green"),
-        Text(f"{phase} · {tools} tools", style="dim"),
-    )
-    table.add_row(
-        Text(str(target), style="bold"),
-        Text(str(model), style="dim"),
-    )
-    console.print(Panel(table, border_style="green", box=box.ROUNDED, padding=(0, 1)))
-
-
 def print_tool_start_live(
     tool_name: str, arguments: dict[str, Any], data: dict[str, Any] | None = None
 ) -> None:
@@ -184,10 +146,6 @@ def _friendly_stream_error(message: str) -> str:
     if "llm completion failed" in lowered:
         return "LLM completion failed; check /status for model/provider configuration."
     return message[:240]
-
-
-def print_stream_error(message: str) -> None:
-    console.print(f"  [bold red]✗[/] {escape(_friendly_stream_error(message))}")
 
 
 def print_background_event(source: str, event_type: str, data: dict[str, Any]) -> None:
@@ -237,106 +195,6 @@ def print_background_event(source: str, event_type: str, data: dict[str, Any]) -
             f"{label} [bold red]✗[/] "
             f"{escape(_friendly_stream_error(str(data.get('message', 'error'))))}"
         )
-
-
-def print_commander_decision(data: dict[str, Any]) -> None:
-    action = data.get("action", "")
-    phase = data.get("next_phase") or ""
-    reasoning = (data.get("reasoning") or "").strip()
-    label = f"[bold magenta]◆ commander[/] {escape(str(action))}" + (f" → {escape(str(phase))}" if phase else "")
-    console.print(label)
-    if reasoning:
-        console.print(f"    [dim]{escape(reasoning[:200])}[/]")
-
-
-def print_phase_report(phase: str, content: str) -> None:
-    """Render an intermediate per-phase report as it streams in."""
-    if not content.strip():
-        return
-    console.print()
-    console.print(f"[bold cyan]── {phase} phase report ──[/]")
-    console.print(Markdown(content))
-
-
-def print_phase_done(data: dict[str, Any]) -> None:
-    phase = data.get("phase", "?")
-    ok = data.get("success", False)
-    icon = "[green]✓[/]" if ok else "[yellow]∅[/]"
-    calls = data.get("tool_calls")
-    suffix = f" [dim]({calls} tool calls)[/]" if calls is not None else ""
-    reason = data.get("reason")
-    if reason:
-        suffix += f" [dim]— {reason}[/]"
-    console.print(f"{icon} [bold]{phase}[/] phase complete{suffix}")
-
-
-def consume_agent_stream(stream: Iterator[tuple[str, dict[str, Any]]]) -> dict[str, Any] | None:
-    """Render live agent events in the terminal (OpenCode-style). Returns final done payload."""
-    final: dict[str, Any] | None = None
-    last_phase_report = ""
-
-    for event_type, data in stream:
-        if event_type == "run_start":
-            print_run_start(data)
-        elif event_type in ("status",):
-            print_agent_thinking(data.get("message", "Working..."))
-        elif event_type == "commander_decision":
-            print_commander_decision(data)
-        elif event_type == "forced_continue":
-            attempt = data.get("attempt", "?")
-            mx = data.get("max", "?")
-            print_agent_thinking(f"Open work remains — continuing ({attempt}/{mx})...")
-        elif event_type == "tool_start":
-            print_tool_start_live(data.get("tool_name", "?"), data.get("arguments", {}), data)
-        elif event_type == "tool_end":
-            print_tool_end_live(data.get("tool_name", "?"), data)
-        elif event_type == "assistant":
-            # Per-phase narration (phase=recon/network) is shown live; the final
-            # phase="full" report is skipped here because the `done` payload
-            # carries the same text and prints it once at the end.
-            if data.get("phase") not in (None, "", "full"):
-                content = data.get("content", "")
-                last_phase_report = content
-                print_phase_report(data.get("phase", ""), content)
-        elif event_type == "phase_done":
-            print_phase_done(data)
-        elif event_type == "error":
-            print_stream_error(data.get("message", "Unknown error"))
-        elif event_type == "done":
-            final = data
-
-    if final:
-        tool_calls = final.get("tool_calls", [])
-        if tool_calls:
-            print_tool_calls_summary(
-                tool_calls,
-                final.get("model", ""),
-                final.get("duration_seconds", 0),
-            )
-        response = final.get("response", "")
-        # Avoid double-printing when the final report equals the last per-phase report we already rendered (single-phase runs).
-        if response and response.strip() != last_phase_report.strip():
-            console.print()
-            console.print(Markdown(response))
-    return final
-
-
-def print_tool_calls_summary(tool_calls: list[dict[str, Any]], model: str, duration: float) -> None:
-    if not tool_calls:
-        return
-    table = Table(title="Agent Execution Summary", show_header=True, header_style="bold cyan")
-    table.add_column("Tool", style="bold")
-    table.add_column("Status")
-    table.add_column("Duration")
-    for tc in tool_calls:
-        status = Text("OK", style="green") if tc.get("success") else Text("FAIL", style="red")
-        dur = f"{tc.get('duration_seconds', 0):.1f}s"
-        table.add_row(tc.get("tool_name", "?"), status, dur)
-    # Summary row
-    total = len(tool_calls)
-    ok = sum(1 for tc in tool_calls if tc.get("success"))
-    console.print(table)
-    console.print(f"[dim]Model: {model} | Tools: {ok}/{total} succeeded | Time: {duration:.1f}s[/]")
 
 
 def print_health(data: dict[str, Any]) -> None:

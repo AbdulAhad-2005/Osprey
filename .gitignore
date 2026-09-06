@@ -47,3 +47,7 @@ shannon/
 
 # Learned-skills tier — operator-local, never shipped/synced
 skills/learned/
+
+# Internal audit notes — documents live/unpatched security gaps; keep local
+# until fixed, never in shared history
+docs/AUDIT_FINDINGS_LOG.md

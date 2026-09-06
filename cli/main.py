@@ -74,11 +74,11 @@ def _background_event_listener(client: APIClient, stop_event: threading.Event) -
     """Persistent tail of the engagement's one live activity stream — the fix
     for background pipeline / spawned phase-agent work being invisible. Runs
     for the whole interactive session, following whichever engagement is
-    currently active (switches when the user's own prompt binds a new one),
-    and prints everything the *current* turn's own `send_prompt_stream` isn't
-    already showing (tagged `source == "commander"` there — skipped here to
-    avoid printing the same tool call twice). "Background" work becomes
-    visible the instant it happens, not only when asked about.
+    currently active (switches when the user's own prompt binds a new one).
+    The CLI's own foreground loop (cli/agent/loop.py) renders its own turn
+    directly and never publishes onto this stream, so everything shown here
+    is genuinely background work. "Background" work becomes visible the
+    instant it happens, not only when asked about.
     """
     watched: str | None = None
     while not stop_event.is_set():
@@ -91,10 +91,7 @@ def _background_event_listener(client: APIClient, stop_event: threading.Event) -
             for event_type, data in client.stream_events(eid):
                 if stop_event.is_set() or client.active_engagement_id != watched:
                     break
-                source = data.get("source", "")
-                if source == "commander":
-                    continue
-                print_background_event(source, event_type, data)
+                print_background_event(data.get("source", ""), event_type, data)
         except Exception:
             pass
         if stop_event.is_set():
@@ -171,8 +168,8 @@ def _run_scan_noninteractive(args: argparse.Namespace) -> int:
     point. Binds the target, then drives the conductor the same way the
     interactive `/scan` command does (phase='full' -> the deterministic
     phase_supervisor pipeline; see services/orchestrator.py) — never prompts."""
+    from cli.commands.prompt import handle_prompt
     from cli.commands.slash import _PHASE_PROMPTS, _api_error_text, _bind_engagement
-    from cli.ui.display import consume_agent_stream
 
     api_url = os.getenv("API_BASE_URL", "http://localhost:9000")
     client = APIClient(base_url=api_url)
@@ -211,26 +208,14 @@ def _run_scan_noninteractive(args: argparse.Namespace) -> int:
 
     phase = args.phase
     print_info(f"Scanning {target} (phase: {phase}) — the agent will report back when done.")
-    stream = client.send_prompt_stream(
-        _PHASE_PROMPTS[phase].format(target=target),
-        engagement_id=client.active_engagement_id,
-        phase=phase,
-    )
-    final = consume_agent_stream(stream)
+    handle_prompt(_PHASE_PROMPTS[phase].format(target=target), client)
     client.close()
-
-    if final is None:
-        print_error("Agent stream ended without a final response.")
-        return 1
-    if not final.get("success", True) and final.get("error"):
-        print_error(final["error"])
-        return 1
     return 0
 
 
 def _run_prompt_noninteractive(args: argparse.Namespace) -> int:
+    from cli.commands.prompt import handle_prompt
     from cli.commands.slash import _api_error_text
-    from cli.ui.display import consume_agent_stream
 
     prompt = " ".join(args.prompt or []).strip()
     if not prompt:
@@ -248,19 +233,8 @@ def _run_prompt_noninteractive(args: argparse.Namespace) -> int:
             client.close()
             return 1
 
-    stream = client.send_prompt_stream(
-        prompt,
-        engagement_id=client.active_engagement_id,
-        phase=args.phase,
-    )
-    final = consume_agent_stream(stream)
+    handle_prompt(prompt, client)
     client.close()
-    if final is None:
-        print_error("Agent stream ended without a final response.")
-        return 1
-    if not final.get("success", True) and final.get("error"):
-        print_error(final["error"])
-        return 1
     return 0
 
 
@@ -285,7 +259,6 @@ def main() -> None:
     run_parser = subparsers.add_parser("run", help="Send one prompt without opening the REPL")
     run_parser.add_argument("prompt", nargs=argparse.REMAINDER)
     run_parser.add_argument("--target", help="Bind or reuse an engagement before sending the prompt")
-    run_parser.add_argument("--phase", default="commander", choices=_SCAN_PHASES)
     run_parser.add_argument("--force-new", action="store_true", help="Force a new engagement for --target")
 
     args = parser.parse_args()

@@ -10,6 +10,7 @@ from osprey.services.llm_service import (
     llm_configured_reason,
     reload_llm_service,
 )
+from osprey.services.tool_registry import reload_tool_availability
 
 router = APIRouter()
 
@@ -72,10 +73,14 @@ def set_llm_config(update: LLMConfigUpdate) -> dict:
 def config_reload() -> dict:
     """Re-read .env and recreate the LLM service.
 
-    Call this after changing LLM_MODEL, LLM_API_KEY, etc. in .env.
+    Call this after changing LLM_MODEL, LLM_API_KEY, etc. in .env — or after
+    starting/stopping the Kali tools container, since tool availability is
+    also cached for the backend's process lifetime and has no other refresh
+    path (see `tool_registry.reload_tool_availability`).
     """
     reload_settings()
     llm = reload_llm_service()
+    reload_tool_availability()
     settings = llm.settings
     return {
         "status": "reloaded",

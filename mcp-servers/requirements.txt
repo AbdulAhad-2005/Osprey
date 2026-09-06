@@ -10,7 +10,7 @@
 # by pip — provide them via your OS package manager / Kali, or run the kali
 # profile. `/tools` (CLI) and platform_tools (MCP) show which are present.
 
-mcp>=1.2.0
+mcp>=1.2.0,<2
 
 # Custom-tool runtime deps (keyless — the "works on a laptop" set)
 requests>=2.28
