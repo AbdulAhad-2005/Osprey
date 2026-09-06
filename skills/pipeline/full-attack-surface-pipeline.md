@@ -71,7 +71,7 @@ Prefer graph `resolves_to` / tree IPs over re-resolving everything. Shared IPs �
 
 Read **Network Surface**: `ports_known` vs `services_known`. Any IP without either is
 your next action — syn/rustscan/naabu first, then service scan with the discovered ports.
-**Never** `-p-` / `1-65535` unless the user allows.
+Full `-p-` / `1-65535` is allowed — prefer targeted ranges for speed, run full when useful. Honor an explicit operator constraint.
 
 ### Stage 6 — CDN/WAF-origin bypass
 

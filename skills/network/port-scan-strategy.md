@@ -29,4 +29,4 @@ scan — still verify live.
 Read CURRENT SITUATION before each tool. Do not run SMB tools without 139/445 in evidence.
 Use targeted port lists from findings when a wide scan already failed or timed out.
 The container is unprivileged — prefer `-sT` / `--unprivileged` over raw SYN, and `-Pn` when a host blocks ping.
-Never start full `1-65535` on your own — ask the human first.
+Full `1-65535` is allowed and runs without a gate — prefer top-ports/1-1000 first for speed, escalate to full when it's worth it. Honor an explicit operator "no full scan" constraint.

@@ -181,30 +181,45 @@ def _valid_target(value: str) -> bool:
         return False
 
 
+# One shared, pooled client reused across all calls. Opening a fresh
+# httpx.Client per call (as before) meant a new TCP connect + teardown every
+# tool call; over a long, highly-parallel session that piles up sockets in
+# TIME_WAIT and file descriptors, which is a source of "connection closed"
+# flakiness under load. httpx.Client is safe to share across FastMCP's worker
+# threads, and keep-alive pooling makes repeated calls to the backend cheap.
+_HTTP_CLIENT: httpx.Client | None = None
+
+
+def _client() -> httpx.Client:
+    global _HTTP_CLIENT
+    if _HTTP_CLIENT is None:
+        _HTTP_CLIENT = httpx.Client(
+            base_url=API_BASE,
+            timeout=QUICK_TIMEOUT,
+            limits=httpx.Limits(max_connections=32, max_keepalive_connections=16),
+        )
+    return _HTTP_CLIENT
+
+
 def _get(path: str, *, params: dict[str, Any] | None = None, timeout: float = QUICK_TIMEOUT) -> dict[str, Any]:
-    with httpx.Client(base_url=API_BASE, timeout=timeout) as client:
-        resp = client.get(path, params=params or {})
-        resp.raise_for_status()
-        return resp.json()
+    resp = _client().get(path, params=params or {}, timeout=min(float(timeout), HTTP_TIMEOUT))
+    resp.raise_for_status()
+    return resp.json()
 
 
 def _post(path: str, body: dict[str, Any] | list[Any], *, timeout: float = QUICK_TIMEOUT) -> dict[str, Any]:
-    # Cap to HTTP_TIMEOUT so we never wait forever if caller passes a huge value
-    timeout = min(float(timeout), HTTP_TIMEOUT)
-    with httpx.Client(base_url=API_BASE, timeout=timeout) as client:
-        resp = client.post(path, json=body)
-        resp.raise_for_status()
-        return resp.json()
+    # Cap to HTTP_TIMEOUT so we never wait forever if caller passes a huge value.
+    resp = _client().post(path, json=body, timeout=min(float(timeout), HTTP_TIMEOUT))
+    resp.raise_for_status()
+    return resp.json()
 
 
 def _delete(path: str, *, params: dict[str, Any] | None = None, timeout: float = QUICK_TIMEOUT) -> dict[str, Any]:
-    timeout = min(float(timeout), HTTP_TIMEOUT)
-    with httpx.Client(base_url=API_BASE, timeout=timeout) as client:
-        resp = client.delete(path, params=params or {})
-        resp.raise_for_status()
-        if resp.status_code == 204 or not resp.content:
-            return {"status": "deleted"}
-        return resp.json()
+    resp = _client().delete(path, params=params or {}, timeout=min(float(timeout), HTTP_TIMEOUT))
+    resp.raise_for_status()
+    if resp.status_code == 204 or not resp.content:
+        return {"status": "deleted"}
+    return resp.json()
 
 
 
