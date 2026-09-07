@@ -39,10 +39,6 @@ def _register_harvested_tools() -> None:
 
 _register_harvested_tools()
 
-# nmap tools are special-cased in the backend's command_builder.py (container
-# privilege handling) rather than routed through a per-tool build_command
-# module, so there is nothing to harvest/register here for them.
-
 
 if __name__ == "__main__":
     mcp.run()

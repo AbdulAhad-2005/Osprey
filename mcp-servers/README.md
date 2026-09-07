@@ -25,12 +25,15 @@ Only **real CLI pentest tools** are exposed — not AI helpers, dashboards, or s
 | **binary** | 15 | gdb, ghidra, angr, radare2, ropgadget, checksec |
 | **forensics** | 6 | volatility, foremost, exiftool, steghide, hashpump |
 
-**Hero nmap (3):** `nmap_syn_scan`, `nmap_service_scan`, `nmap_custom_scan` — command
-building is special-cased in the backend's `command_builder.py::_build_nmap_command`
-(handles unprivileged-container flag rewriting), not routed through a per-tool
-`tools/*.py` adapter here.
+**nmap (4):** `nmap_syn_scan`, `nmap_service_scan`, `nmap_custom_scan`,
+`nmap_full_port_scan` — normal `network/tools/*.py` adapters like every other
+tool, sharing flag/timeout-scaling logic from `network/tools/_nmap_common.py`.
+Previously special-cased in the backend's `command_builder.py`, reachable
+only via the docker-exec path — the one tool of ~120 that didn't work in
+native/no-Docker mode. Now harvested the same way everything else is, in
+every execution mode.
 
-**Total MCP-exposed tools: 90** (87 catalog + 3 nmap).
+**Total MCP-exposed tools: 91** (87 catalog + 4 nmap).
 
 ### Deliberately excluded
 
@@ -38,7 +41,7 @@ building is special-cased in the backend's `command_builder.py::_build_nmap_comm
 |---|---|
 | AI wrappers, bug-bounty workflows, telemetry, `execute_command`, file/process ops | Not pentest tools — the platform provides these as governed primitives, not catalog tools |
 | `jwt_analyzer` | Pure Python logic — no CLI binary |
-| `nmap_scan`, `nmap_advanced_scan` | Superseded by the `command_builder.py` nmap special-case |
+| `nmap_scan`, `nmap_advanced_scan` | Superseded by the four dedicated nmap tools above |
 
 ## Layout
 
