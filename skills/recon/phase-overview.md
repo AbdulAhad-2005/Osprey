@@ -1,7 +1,7 @@
 ---
-name: phase-overview
+name: recon-overview
 description: "Recon phase overview: map the external attack surface before intrusive testing, adapting to the target kind (domain, IP, IPv6, CIDR, or host:port)."
-phase: recon
+phases: [recon]
 tags: [recon, overview]
 ---
 

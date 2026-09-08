@@ -1,7 +1,7 @@
 ---
 name: internal-subnet-sweep
 description: "Assess an internal CIDR by composing existing primitives (platform_fanout_assets plus CIDR-capable scanners); no dedicated subnet-scan tool is needed."
-phase: network
+phases: [network]
 tags: [network, cidr, internal]
 ---
 

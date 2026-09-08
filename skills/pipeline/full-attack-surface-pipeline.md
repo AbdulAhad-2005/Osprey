@@ -1,7 +1,7 @@
 ---
 name: full-attack-surface-pipeline
 description: "Methodology for widening a seed domain into a full attack-surface map: a suggested order (not autopilot), with the graph and tree as the source of truth for coverage."
-phase: pipeline
+phases: [pipeline]
 tags: [pipeline, methodology]
 ---
 

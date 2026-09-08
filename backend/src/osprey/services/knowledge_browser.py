@@ -51,7 +51,11 @@ def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
 
     Returns (metadata, body). Metadata parsing is intentionally minimal (no PyYAML
     dependency for such a flat schema): ``key: value`` scalars and ``tags: [a, b]``
-    lists. Files without frontmatter return ({}, original text).
+    lists. A value may continue onto following lines — any line that is indented
+    or has no ``key:`` of its own is appended (space-joined) to the previous
+    key's value, so a long ``description:`` or a wrapped ``tags: [a, b,\\n  c]``
+    reads naturally instead of forcing everything onto one line. Files without
+    frontmatter return ({}, original text).
     """
     stripped = text.lstrip("﻿")
     if not stripped.startswith("---"):
@@ -61,19 +65,30 @@ def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
         return {}, text
     meta: dict[str, str] = {}
     body_start = None
+    last_key: str | None = None
     for i in range(1, len(lines)):
         if lines[i].strip() == "---":
             body_start = i + 1
             break
         raw = lines[i]
-        if not raw.strip() or ":" not in raw:
+        if not raw.strip():
+            continue
+        if last_key is not None and (":" not in raw or raw[:1].isspace()):
+            meta[last_key] = (meta[last_key] + " " + raw.strip()).strip()
             continue
         key, _, value = raw.partition(":")
-        meta[key.strip()] = value.strip().strip('"').strip("'")
+        key = key.strip()
+        meta[key] = value.strip().strip('"').strip("'")
+        last_key = key
     if body_start is None:
         return {}, text
     body = "\n".join(lines[body_start:]).lstrip("\n")
     return meta, body
+
+
+def _parse_list_field(meta: dict[str, str], key: str) -> list[str]:
+    """Parse a `key: [a, b]` or `key: a, b` frontmatter scalar into a list."""
+    return [v.strip() for v in (meta.get(key) or "").strip("[]").split(",") if v.strip()]
 
 
 def _skill_record(path: Path) -> dict:
@@ -83,32 +98,60 @@ def _skill_record(path: Path) -> dict:
     folder = rel.split("/", 1)[0] if "/" in rel else ""
     name = meta.get("name") or path.stem
     description = meta.get("description") or _first_heading(body) or path.stem.replace("-", " ")
-    tags = [t.strip() for t in (meta.get("tags") or "").strip("[]").split(",") if t.strip()]
+    tags = _parse_list_field(meta, "tags")
+    # `phases:` (list) is the only schema — a skill can serve more than one
+    # phase (e.g. a Kerberoasting skill is both credential-access and
+    # active-directory); scripts/lint_skills.py errors on a file missing it.
+    # Folder name is a runtime-only safety net (never treat as valid input) so
+    # one malformed file can't take the whole skills index down with it.
+    phases = _parse_list_field(meta, "phases") or [folder]
+    mitre = _parse_list_field(meta, "mitre")
+    requires_tools = _parse_list_field(meta, "requires_tools")
     return {
         "path": rel,
         "name": name,
-        "phase": meta.get("phase") or folder,
+        "phase": phases[0],
+        "phases": phases,
         "description": description,
         "title": _first_heading(body) or path.stem.replace("-", " "),
         "tags": tags,
+        "mitre": mitre,
+        "requires_tools": requires_tools,
         "chars": len(text),
     }
 
 
 def list_skills(*, phase: str = "", query: str = "") -> list[dict]:
-    """Index all skills with name + description + phase + tags."""
+    """Index all skills with name + description + phases + tags.
+
+    Only top-level skill files and `<domain>/SKILL.md` router files are
+    indexed — a domain's `reference/*.md` deep-dives are deliberately excluded
+    so they stay pull-only-when-relevant (never bloat the index).
+    """
     if not _SKILLS_DIR.exists():
         return []
     phase = (phase or "").strip().lower()
     query = (query or "").strip().lower()
     out: list[dict] = []
     for path in sorted(_SKILLS_DIR.rglob("*.md")):
+        rel_parts = path.relative_to(_SKILLS_DIR).parts
+        if "reference" in rel_parts[:-1]:
+            continue
+        if len(rel_parts) > 2 and path.name != "SKILL.md":
+            continue
         rec = _skill_record(path)
-        if phase and rec["phase"] != phase and not rec["path"].startswith(phase + "/"):
+        if phase and phase not in rec["phases"] and not rec["path"].startswith(phase + "/"):
             continue
         if query:
             hay = " ".join(
-                [rec["path"], rec["name"], rec["description"], rec["title"], " ".join(rec["tags"])]
+                [
+                    rec["path"],
+                    rec["name"],
+                    rec["description"],
+                    rec["title"],
+                    " ".join(rec["tags"]),
+                    " ".join(rec["mitre"]),
+                ]
             ).lower()
             if query not in hay:
                 continue

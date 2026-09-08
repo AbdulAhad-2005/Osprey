@@ -1,7 +1,7 @@
 ---
 name: identity-and-auth
 description: "Identity and authentication testing (WSTG-IDENT/ATHN): script-driven account enumeration and password-policy checks, plus browser_flow for login/reset/lockout flows."
-phase: web
+phases: [web]
 tags: [web, auth, identity]
 ---
 

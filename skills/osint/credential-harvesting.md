@@ -1,7 +1,7 @@
 ---
 name: credential-harvesting
 description: "Harvest leaked credentials, emails and identities for a domain from breach intel (intelx_scan, resecurity_scan) during recon, store them as CREDENTIAL findings, and feed verified ones into exploitation."
-phase: osint
+phases: [osint]
 tags: [osint, credentials, breach, exploitation]
 ---
 

@@ -68,13 +68,25 @@ def _commander_role_guidance() -> str:
     return load_skills_for_agent("commander")
 
 
+# Phases the conductor never auto-spawns/unlocks (only vuln/exploit get a
+# readiness-driven "unlocked" flag, per phase_supervisor._DOWNSTREAM_PHASES) —
+# without listing them here, the commander would never be shown these skill
+# names exist unless it already knew to ask by name. Cheap to always include:
+# this only adds name+description index lines, never eager full-text.
+_ALWAYS_VISIBLE_PHASES = (
+    "recon", "network", "web", "osint",
+    "privesc", "credential-access", "lateral-movement", "persistence",
+    "active-directory", "defense-evasion", "exfiltration", "post-exploitation",
+)
+
+
 def _active_phases(readiness: dict) -> list[str]:
-    """The phases whose skills belong in front of the LLM right now: recon is
-    always active; each downstream phase is added the moment its evidence
-    threshold unlocks it (per the conductor's readiness snapshot)."""
-    phases = ["recon"]
+    """The phases whose skills belong in front of the LLM right now: the
+    always-visible phases above, plus any downstream phase the moment its
+    evidence threshold unlocks it (per the conductor's readiness snapshot)."""
+    phases = list(_ALWAYS_VISIBLE_PHASES)
     for name, info in (readiness.get("phases") or {}).items():
-        if name != "recon" and isinstance(info, dict) and info.get("unlocked"):
+        if name not in phases and isinstance(info, dict) and info.get("unlocked"):
             phases.append(name)
     return phases
 
@@ -103,7 +115,7 @@ def _active_phase_skills_index(readiness: dict, *, limit: int = 100) -> str:
     )
     lines = [header]
     for rec in records:
-        lines.append(f"- [{rec['phase']}] {rec['name']} — {rec['description']}")
+        lines.append(f"- [{', '.join(rec['phases'])}] {rec['name']} — {rec['description']}")
     return "\n".join(lines)
 
 

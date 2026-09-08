@@ -1,7 +1,7 @@
 ---
 name: verification-and-severity
 description: "Severity discipline: evidence grade caps severity (platform clamp); verify scanner output before rating so reports are not a wall of unverified criticals."
-phase: vuln
+phases: [vuln]
 tags: [vuln, severity, verification]
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: chunked-scans
 description: "Keep the session moving: push long probes into background jobs and split large host lists into shortlists/batches, inventing chunk size from evidence and scope."
-phase: shared
+phases: [shared]
 tags: [methodology, parallelism, jobs]
 ---
 

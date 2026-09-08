@@ -1,7 +1,7 @@
 ---
-name: phase-overview
+name: web-overview
 description: "Web-application testing phase overview mapped to OWASP WSTG: when to reach for a tool, a browser, or a platform_script; follow evidence rather than a fixed stage."
-phase: web
+phases: [web]
 tags: [web, overview, wstg]
 ---
 

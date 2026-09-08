@@ -1,7 +1,7 @@
 ---
 name: finding-confidence
 description: "Confidence grading for findings: confirmed vs likely vs hypothesis, with honesty rules so passive signals are not inflated to critical."
-phase: shared
+phases: [shared]
 tags: [methodology, findings, confidence]
 ---
 

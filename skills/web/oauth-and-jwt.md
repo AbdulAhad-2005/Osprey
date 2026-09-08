@@ -1,7 +1,7 @@
 ---
 name: oauth-and-jwt
 description: "OAuth/OIDC and JWT testing (WSTG-ATHN/SESS), the account-takeover class: discovery via well_known_probe/script, login via browser_flow, token forging/replay via script."
-phase: web
+phases: [web]
 tags: [web, oauth, jwt]
 ---
 

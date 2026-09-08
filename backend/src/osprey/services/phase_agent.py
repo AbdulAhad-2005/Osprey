@@ -14,6 +14,7 @@ from osprey.core.config import get_settings
 from osprey.platform.situational_context import build_situational_brief
 from osprey.schemas.agent_run import PhaseBrief, PhaseHandoff, ToolSummary
 from osprey.schemas.engagement import Engagement
+from osprey.schemas.jobs import AGENT_ROLES
 from osprey.services.agent_arg_normalizer import normalize_agent_tool_args
 from osprey.services.agent_assist import AssistState
 from osprey.services.agent_common import (
@@ -62,13 +63,17 @@ logger = logging.getLogger(__name__)
 
 _UNAVAILABLE = frozenset({"rustscan_fast_scan"})
 
-# Phases a PhaseAgent / spawned sub-agent may run. recon/network/exploit are the
-# original set; vuln/web/osint/custom extend it for the multi-agent phase
-# pipeline. Tool catalog per phase comes from get_tools_for_llm_phase (vuln/web
-# → VULN+WEBAPP; recon/network → their own; osint/custom → recon+network).
-_AGENT_PHASES = frozenset(
-    {"recon", "network", "vuln", "web", "exploit", "osint", "custom", "commander"}
-)
+# Phases a PhaseAgent / spawned sub-agent may run. Every phase gets the same
+# full tool catalog (get_tools_for_llm_phase doesn't filter by phase — an
+# agent that stumbles onto something outside its lane can still act on it);
+# what actually differs per phase is which skills/<phase>/ digest gets loaded
+# into the system prompt. Derived from AGENT_ROLES (the single source of
+# truth for "what phases exist") plus "commander" — the root agent isn't a
+# spawnable *role* (it's the one PhaseAgent every engagement always has), but
+# it is a valid *phase* for this same run() method. Two independently
+# hardcoded copies of this set already drifted out of sync once (found via
+# the active-directory spawn test) — don't reintroduce a second copy.
+_AGENT_PHASES = frozenset(AGENT_ROLES) | {"commander"}
 
 
 def _max_parallel_tool_calls() -> int:

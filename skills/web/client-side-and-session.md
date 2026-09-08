@@ -1,7 +1,7 @@
 ---
 name: client-side-and-session
 description: "Client-side and session testing (WSTG-CLNT/SESS/ATHZ): DOM XSS, session, and authorization issues that need the real DOM or a real session via browser tools."
-phase: web
+phases: [web]
 tags: [web, dom-xss, session]
 ---
 

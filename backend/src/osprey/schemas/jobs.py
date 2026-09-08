@@ -23,9 +23,16 @@ class JobKind(StrEnum):
     FAST_SCAN = "fast_scan"
 
 
-# Roles a spawned agent can take. Each maps to a phase tool-catalog inside
-# PhaseAgent; "custom" runs with recon tools + a free-form task.
-AGENT_ROLES = ("recon", "network", "vuln", "web", "exploit", "osint", "custom")
+# Roles a spawned agent can take. Every phase agent gets the full tool catalog
+# (get_tools_for_llm_phase does not filter by phase) — a role's real effect is
+# which skills/<role>/ directory gets eagerly loaded into its system prompt
+# (see phase_agent._build_phase_system_prompt / skills_loader). "custom" runs
+# with a free-form task and no phase-specific skill digest.
+AGENT_ROLES = (
+    "recon", "network", "vuln", "web", "exploit", "osint", "custom",
+    "privesc", "credential-access", "lateral-movement", "persistence",
+    "active-directory", "defense-evasion", "exfiltration", "post-exploitation",
+)
 
 
 class JobStatus(StrEnum):

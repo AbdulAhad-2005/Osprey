@@ -1,7 +1,7 @@
 ---
 name: email-people-harvest
 description: "Harvest a domain or company's public email and people surface with theHarvester, seeded by web_contact_harvest, pivoting to email_permute for candidate addresses."
-phase: osint
+phases: [osint]
 tags: [osint, email, people]
 ---
 

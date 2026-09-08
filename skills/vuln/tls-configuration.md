@@ -1,7 +1,7 @@
 ---
 name: tls-configuration
 description: "TLS/SSL configuration testing with sslyze on HTTPS hosts (handshake, protocols, ciphers); passive and fast."
-phase: vuln
+phases: [vuln]
 tags: [vuln, tls]
 ---
 

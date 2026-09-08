@@ -184,6 +184,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     gdb checksec binwalk radare2 ropper \
     # ── Forensics ──
     exiftool foremost steghide \
+    # ── Reverse shells / netcat variants ──
+    ncat socat \
     # ── Utilities ──
     binutils
 
@@ -411,6 +413,30 @@ RUN retry-cmd 5 sh -c 'rm -rf /opt/hashpump && git clone --depth 1 https://githu
     && make \
     && cp hashpump /usr/local/bin/ \
     || true
+
+# ── ysoserial (Java deserialization gadget chains) ──
+RUN set -eux; \
+    mkdir -p /opt/ysoserial; \
+    YSOSERIAL_URL="$(python3 /usr/local/bin/gh-latest-asset.py frohoff/ysoserial 'ysoserial-all.jar' '')"; \
+    wget -q --tries=5 --waitretry=5 --timeout=30 "$YSOSERIAL_URL" -O /opt/ysoserial/ysoserial.jar; \
+    printf '#!/bin/sh\nexec java -jar /opt/ysoserial/ysoserial.jar "$@"\n' > /usr/local/bin/ysoserial; \
+    chmod +x /usr/local/bin/ysoserial; \
+    java -jar /opt/ysoserial/ysoserial.jar 2>&1 | head -1 || true
+
+# ── interactsh (OAST callback server) ──
+RUN set -eux; \
+    INTERACTSH_URL="$(python3 /usr/local/bin/gh-latest-asset.py projectdiscovery/interactsh 'interactsh-linux_amd64.zip' '')"; \
+    wget -q --tries=5 --waitretry=5 --timeout=30 "$INTERACTSH_URL" -O /tmp/interactsh.zip; \
+    unzip -q /tmp/interactsh.zip -d /tmp/interactsh; \
+    install -m 0755 /tmp/interactsh/interactsh /usr/local/bin/interactsh-client; \
+    rm -rf /tmp/interactsh /tmp/interactsh.zip; \
+    interactsh-client -h 2>&1 | head -1 || true
+
+# ── PHPGGC (PHP deserialization gadget chains) ──
+RUN retry-cmd 5 sh -c 'rm -rf /opt/phpggc && git clone --depth 1 https://github.com/ambionics/phpggc.git /opt/phpggc' \
+    && printf '#!/bin/sh\nexec php /opt/phpggc/phpggc "$@"\n' > /usr/local/bin/phpggc \
+    && chmod +x /usr/local/bin/phpggc \
+    && php /opt/phpggc/phpggc --help 2>&1 | head -1 || true
 
 # ── docker-bench-security ──
 RUN retry-cmd 5 sh -c 'rm -rf /opt/docker-bench-security && git clone --depth 1 https://github.com/docker/docker-bench-security.git /opt/docker-bench-security' \

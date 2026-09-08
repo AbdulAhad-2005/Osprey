@@ -1,7 +1,7 @@
 ---
 name: network-vuln-scan
 description: "Network-side vulnerability scanning via nmap NSE vuln/vulners against already-open ports and services; the network counterpart to nuclei."
-phase: vuln
+phases: [vuln]
 tags: [vuln, network, nmap]
 ---
 

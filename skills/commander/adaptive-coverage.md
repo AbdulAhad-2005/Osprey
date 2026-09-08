@@ -1,7 +1,7 @@
 ---
 name: adaptive-coverage
 description: "After each meaningful result, ask what a skilled operator would ask next; turn soft coverage gaps into judgment about what to probe rather than following a fixed phase script."
-phase: commander
+phases: [commander]
 tags: [methodology, coverage]
 ---
 

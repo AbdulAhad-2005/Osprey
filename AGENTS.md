@@ -120,6 +120,15 @@ retries, and ingests findings for you.
 `email_security_probe` · `shodan_search` `shodan_host_info` `intelx_scan` `resecurity_scan`
 (passive/breach intel).
 
+**Exploitation/web→shell:** `shell_handler` `shell_stabilize` (listener + session) ·
+`cmd_injection_exploit` (cmd injection → RCE/shell) · `sqli_exploit` (SQLi → webshell) ·
+`fileupload_exploit` (upload → webshell) · `ssrf_exploit` (SSRF → cloud/RCE) ·
+`ssti_exploit` (SSTI → RCE) · `lfi_exploit` (LFI → RCE) · `persist_access` (persistence) ·
+`post_exploit_enum` (post-exploit enum) · `searchsploit_lookup` `metasploit_run`
+`msfvenom_generate` `pwntools_exploit` (CVE/binary) · `hydra_attack` `hashcat_crack`
+`john_crack` (creds) · `hashpump_attack` (hash ext) · `pacu_exploitation` (AWS) ·
+`responder_credential_harvest` (LLMNR/NBT-NS).
+
 **Memory/planning — reach for these like any other tool:**
 - **Where are we?** → `platform_context` (phase status, crown jewels, jobs, delta, skills index).
 - **Phase tactics** → `platform_skills` (pull a skill's full text by `path`).

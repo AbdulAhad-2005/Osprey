@@ -1,7 +1,7 @@
 ---
 name: technology-identification
 description: "Identify the target's tech stack (CMS, frameworks, servers, JS libraries, CDNs, languages) to guide targeted security testing."
-phase: recon
+phases: [recon]
 tags: [recon, fingerprint]
 ---
 

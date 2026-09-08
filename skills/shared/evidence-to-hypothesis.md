@@ -1,7 +1,7 @@
 ---
 name: evidence-to-hypothesis
 description: "Universal evidence-to-hypothesis loop for unfamiliar products: expand, observe, hypothesize, verify — no per-vendor skill packs required."
-phase: shared
+phases: [shared]
 tags: [methodology, reasoning]
 ---
 

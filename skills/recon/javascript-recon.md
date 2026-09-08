@@ -1,7 +1,7 @@
 ---
 name: javascript-recon
 description: "Mine bundled and inline JavaScript for API routes, secrets, and cloud assets with js_recon; run on every live app host, especially SPAs where the real surface hides."
-phase: recon
+phases: [recon]
 tags: [recon, javascript, secrets]
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: planning-rules
 description: "Judgment helpers for planning: prefer live evidence over hostname keywords, parsed findings over chat memory, and pick the next step that closes a concrete gap."
-phase: commander
+phases: [commander]
 tags: [methodology, planning]
 ---
 

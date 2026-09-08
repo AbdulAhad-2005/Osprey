@@ -1,7 +1,7 @@
 ---
 name: advanced-injection-classes
 description: "Advanced injection classes (SSRF, SSTI, XXE, deserialization, NoSQL, open-redirect, mass-assignment): class-specific methodology beyond SQLi/XSS, often via platform_script or browser_flow."
-phase: vuln
+phases: [vuln]
 tags: [vuln, injection, ssrf]
 ---
 

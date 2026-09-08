@@ -1,7 +1,7 @@
 ---
 name: subdomain-takeover
 description: "Spot dangling CNAMEs pointing at unclaimed SaaS across a subdomain/host list with subdomain_takeover_check."
-phase: recon
+phases: [recon]
 tags: [recon, takeover]
 ---
 

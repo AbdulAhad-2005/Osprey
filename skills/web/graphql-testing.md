@@ -1,7 +1,7 @@
 ---
 name: graphql-testing
 description: "GraphQL-specific testing with graphql_cop_scan when a /graphql endpoint is found: introspection, batching, and GraphQL weaknesses."
-phase: web
+phases: [web]
 tags: [web, graphql, api]
 ---
 

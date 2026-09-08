@@ -1,7 +1,7 @@
 ---
 name: business-logic
 description: "Business-logic testing (WSTG-BUSLOGIC): reason about the rules the app should enforce and test them with browser_flow and replayed requests; the highest-value web testing."
-phase: web
+phases: [web]
 tags: [web, business-logic]
 ---
 

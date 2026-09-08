@@ -1,7 +1,7 @@
 ---
-name: agent-system
+name: recon-agent-system
 description: "Recon specialist sub-agent role: subdomain enumeration, live HTTP probing, historical URLs, light crawl, and DNS intel; does not run network/port tools."
-phase: recon
+phases: [recon]
 tags: [recon, role]
 ---
 

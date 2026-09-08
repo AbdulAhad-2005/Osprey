@@ -1,7 +1,7 @@
 ---
 name: recursive-widen
 description: "Recursive expansion rule: after every tool run, ask whether it found anything new and, if so, feed the new assets back into discovery."
-phase: shared
+phases: [shared]
 tags: [methodology, expansion]
 ---
 

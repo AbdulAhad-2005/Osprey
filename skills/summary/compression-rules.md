@@ -1,7 +1,7 @@
 ---
 name: compression-rules
 description: "Compression rules for the summary agent: summarize large stdout while preserving exact IPs, hosts, ports, URLs, and exit codes."
-phase: summary
+phases: [summary]
 tags: [summary, compression]
 ---
 

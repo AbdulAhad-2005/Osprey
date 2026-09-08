@@ -1,7 +1,7 @@
 ---
 name: content-and-js-recon
 description: "Map the live application attack surface (paths, parameters, endpoints, secrets) on hosts confirmed up, prioritizing crown jewels; content, parameter, JS and policy-file recon."
-phase: recon
+phases: [recon]
 tags: [recon, content, javascript]
 ---
 

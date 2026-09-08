@@ -1,7 +1,7 @@
 ---
 name: escalation-playbook
 description: "What to do when a tool fails, times out, returns thin results, or hits a WAF: the kernel auto-runs the top fallback on clean failures; consult escalations before marking a branch exhausted."
-phase: shared
+phases: [shared]
 tags: [methodology, recovery, escalation]
 ---
 

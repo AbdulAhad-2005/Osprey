@@ -1,7 +1,7 @@
 ---
 name: username-pivot
 description: "Pivot from a username or handle to a cross-platform footprint using maigret (3000+ sites), then follow linked accounts."
-phase: osint
+phases: [osint]
 tags: [osint, username]
 ---
 

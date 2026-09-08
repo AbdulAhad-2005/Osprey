@@ -1,7 +1,7 @@
 ---
 name: asset-discovery-breadth
 description: "Breadth-before-depth asset discovery: enumerate wide (forgotten hosts, staging, acquisitions) before deep-diving a few, so the winning host is never left unprobed."
-phase: recon
+phases: [recon]
 tags: [recon, discovery, breadth]
 ---
 

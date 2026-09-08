@@ -1,7 +1,7 @@
 ---
 name: engagement-dry-run
 description: "A wide reminder of what elite looks like on a fresh engagement (soft instincts, not a gate): freedom to skip, reorder, and invent as evidence decides."
-phase: shared
+phases: [shared]
 tags: [methodology, instincts]
 ---
 

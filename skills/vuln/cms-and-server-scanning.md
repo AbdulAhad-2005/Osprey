@@ -1,7 +1,7 @@
 ---
 name: cms-and-server-scanning
 description: "High-yield web scans once a host is fingerprinted: nikto for server misconfiguration and wpscan_analyze for WordPress."
-phase: vuln
+phases: [vuln]
 tags: [vuln, cms, nikto]
 ---
 

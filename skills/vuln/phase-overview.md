@@ -1,7 +1,7 @@
 ---
-name: phase-overview
+name: vuln-overview
 description: "Vulnerability-analysis phase overview: turn the recon-mapped surface into confirmed, severity-rated findings by scanning what the evidence points at."
-phase: vuln
+phases: [vuln]
 tags: [vuln, overview]
 ---
 

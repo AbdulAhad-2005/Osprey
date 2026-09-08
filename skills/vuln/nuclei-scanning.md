@@ -1,7 +1,7 @@
 ---
 name: nuclei-scanning
 description: "Template-based vulnerability scanning with nuclei_scan against a live, tech-fingerprinted host; the default first vuln move."
-phase: vuln
+phases: [vuln]
 tags: [vuln, nuclei]
 ---
 

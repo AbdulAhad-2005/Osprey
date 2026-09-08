@@ -1,7 +1,7 @@
 ---
 name: browser-automation
 description: "Browser automation with browser_scrape (one-shot SPA render plus attack-surface extract) and browser_flow (authenticated multi-step session with a live-DOM snapshot loop and a session-aware HTTP repeater) for authenticated, client-side, and access-control testing."
-phase: web
+phases: [web]
 tags: [web, browser, spa]
 ---
 

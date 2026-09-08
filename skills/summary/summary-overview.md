@@ -1,7 +1,7 @@
 ---
 name: summary-overview
 description: "Summary agent role: compress tool output for other agents with no tools of its own, preserving structured facts exactly."
-phase: summary
+phases: [summary]
 tags: [summary, role]
 ---
 

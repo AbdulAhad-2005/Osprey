@@ -1,7 +1,7 @@
 ---
 name: commander-overview
 description: "Elite operator mindset for the Commander: trust the engagement graph and findings as ground truth, treat hints and playbooks as advisory, and drive tools with reasoning rather than a fixed playbook."
-phase: commander
+phases: [commander]
 tags: [methodology, commander]
 ---
 
