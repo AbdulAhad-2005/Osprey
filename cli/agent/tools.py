@@ -73,30 +73,94 @@ def load_server(api_base_url: str) -> Any:
     return _server
 
 
-def get_tool_schemas() -> list[dict[str, Any]]:
-    """OpenAI-style function-calling schema for every registered tool.
+# The bootstrap set for budget-constrained providers (see get_tool_schemas'
+# budget_tokens param) — small enough to fit almost any free-tier limit, and
+# sufficient on its own to reach every OTHER registered tool indirectly:
+# platform_tools searches the full catalog by name/keyword, platform_exec
+# invokes any tool found that way by name + a loose params_json (no
+# structured schema required — see its own docstring). Nothing outside this
+# set becomes uncallable when trimmed; it's one extra round trip (search,
+# then invoke) instead of a direct structured call. call_tool() below always
+# resolves against the FULL tool manager regardless of what schemas were
+# ever advertised to the model, so this is genuinely just a smaller menu,
+# never a smaller capability.
+_BOOTSTRAP_TOOL_NAMES = frozenset(
+    {
+        "platform_context",
+        "platform_set_target",
+        "platform_shell",
+        "platform_script",
+        "platform_exec",
+        "platform_tools",
+        "platform_findings",
+        "platform_skills",
+    }
+)
+
+# Rough chars-per-token used only to size the trimmed schema list against a
+# provider's token-per-minute budget — a soft estimate, not a tokenizer;
+# the margin below (see get_tool_schemas) absorbs the slop.
+_CHARS_PER_TOKEN_ESTIMATE = 4
+
+
+def _schema_for(tool: Any) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": tool.name,
+            "description": (tool.description or "")[:1024],
+            "parameters": tool.parameters or {"type": "object", "properties": {}},
+        },
+    }
+
+
+def get_tool_schemas(*, budget_tokens: int = 0) -> list[dict[str, Any]]:
+    """OpenAI-style function-calling schema for registered tools.
 
     Sourced from FastMCP's own tool manager — the exact schema an external
     MCP harness already sees via `tools/list`. Not regenerated, not a second
     schema builder.
+
+    budget_tokens=0 (default): every registered tool, exactly as always —
+    this is the whole catalog, unfiltered, for any model/provider with
+    enough context and per-minute-token budget to take it (which is most of
+    them; this was the CLI's only behavior before budget_tokens existed, and
+    stays byte-for-byte identical when the operator hasn't opted into a
+    limit). budget_tokens>0: a provider-imposed ceiling (set via
+    LLM_TOOL_SCHEMA_BUDGET_TOKENS in .env, for a specific free-tier limit
+    that's smaller than the full catalog) — send the bootstrap set in full,
+    then fill the remaining budget with as many other tools as fit. Never
+    silently drops capability: search (platform_tools) + generic invoke
+    (platform_exec) reach everything not sent directly.
     """
     server = _SERVER_MODULE
     if server is None:
         raise RuntimeError("load_server() must be called before get_tool_schemas()")
 
+    all_tools = list(server.mcp._tool_manager.list_tools())
+    if budget_tokens <= 0:
+        return [_schema_for(tool) for tool in all_tools]
+
+    # 10% margin: the schema list isn't the only thing counted against a
+    # per-minute token budget — the conversation history and the model's own
+    # response share it too.
+    remaining_chars = int(budget_tokens * _CHARS_PER_TOKEN_ESTIMATE * 0.9)
+
+    bootstrap = [t for t in all_tools if t.name in _BOOTSTRAP_TOOL_NAMES]
+    rest = [t for t in all_tools if t.name not in _BOOTSTRAP_TOOL_NAMES]
+
     schemas: list[dict[str, Any]] = []
-    for tool in server.mcp._tool_manager.list_tools():
-        schemas.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": (tool.description or "")[:1024],
-                    "parameters": tool.parameters
-                    or {"type": "object", "properties": {}},
-                },
-            }
-        )
+    for tool in bootstrap:
+        schema = _schema_for(tool)
+        schemas.append(schema)
+        remaining_chars -= len(str(schema))
+    for tool in rest:
+        schema = _schema_for(tool)
+        cost = len(str(schema))
+        if cost > remaining_chars:
+            continue
+        schemas.append(schema)
+        remaining_chars -= cost
     return schemas
 
 

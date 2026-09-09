@@ -35,9 +35,26 @@ line, not a re-synthesis of everything else open. Stop and report when the
 surface is genuinely exhausted, or ask the operator whether to go deeper.
 """
 
+# Only appended when the operator has set LLM_TOOL_SCHEMA_BUDGET_TOKENS (a
+# specific provider's free-tier token-per-minute cap is smaller than the
+# full tool catalog — see cli/agent/tools.py's get_tool_schemas()). Every
+# other tool still exists and is still callable; this is the one thing that
+# changes about how you reach them.
+_TOOL_BUDGET_POLICY = """\
 
-async def build_system_prompt(engagement_id: str) -> str:
+Your tool list below is a SUBSET, not the full catalog — this session is on a \
+provider with a smaller per-call token budget than the whole tool set needs. \
+Nothing is missing permanently: call `platform_tools(query="...")` to search \
+the full catalog by name or keyword, then `platform_exec(tool="<name>", \
+params_json="{...}")` to run whatever it finds, even though it wasn't in your \
+initial list. Use the tools already in front of you first; reach for search \
+only when you need something that genuinely isn't there.
+"""
+
+
+async def build_system_prompt(engagement_id: str, *, tool_budget_active: bool = False) -> str:
     ctx = await platform_tools.call_tool(
         "platform_context", {"engagement_id": engagement_id} if engagement_id else {}
     )
-    return f"{_POLICY}\n---\n{ctx}"
+    policy = _POLICY + (_TOOL_BUDGET_POLICY if tool_budget_active else "")
+    return f"{policy}\n---\n{ctx}"

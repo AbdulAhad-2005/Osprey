@@ -99,7 +99,9 @@ class Runner:
         self.messages = []
 
     def _tool_schemas(self) -> list[dict[str, Any]]:
-        schemas = platform_tools.get_tool_schemas()
+        schemas = platform_tools.get_tool_schemas(
+            budget_tokens=self.config.tool_schema_budget_tokens
+        )
         if self._allow_spawn:
             schemas.append(_SPAWN_TOOL_SCHEMA)
         return schemas
@@ -119,6 +121,15 @@ class Runner:
 
         try:
             for _turn in range(_MAX_TURNS):
+                # Signals the start of the one genuinely silent gap in this
+                # loop — everything else (tool calls, worker sub-events) has
+                # its own start/end events already; the model call itself
+                # (seconds, sometimes 10+ with the retry-with-backoff in
+                # complete()) previously had zero visible feedback. The
+                # renderer is responsible for turning this into a spinner and
+                # clearing it on whatever event comes next — this loop stays
+                # UI-agnostic, same as every other Event here.
+                yield Event("llm_call_start", {})
                 try:
                     response = await complete(
                         config=self.config, messages=self.messages, tools=tool_schemas

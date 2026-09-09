@@ -90,13 +90,36 @@ def handle_prompt(prompt: str, client: "APIClient") -> None:
 async def _drive(prompt: str, client: "APIClient", runner: Runner) -> None:
     system_prompt = ""
     if not runner.messages:
-        system_prompt = await build_system_prompt(client.active_engagement_id or "")
+        system_prompt = await build_system_prompt(
+            client.active_engagement_id or "",
+            tool_budget_active=runner.config.tool_schema_budget_tokens > 0,
+        )
 
+    # The one genuinely silent gap in a turn — the model call itself (seconds,
+    # sometimes 10+ with complete()'s own retry-with-backoff) had zero visible
+    # feedback before this: the loop yields "llm_call_start" right before each
+    # call and nothing else until it returns, so from here it either looked
+    # frozen or, worse, looked like the previous line was the final answer.
+    # Owned entirely here (not in cli/agent/loop.py) — that module stays
+    # UI-agnostic, this is the one place that already renders everything.
+    thinking = console.status("[dim]Thinking…[/]", spinner="dots")
+    spinner_on = False
     try:
         async for event in runner.run(prompt, system_prompt=system_prompt):
+            if event.type == "llm_call_start":
+                if not spinner_on:
+                    thinking.start()
+                    spinner_on = True
+                continue
+            if spinner_on:
+                thinking.stop()
+                spinner_on = False
             _render(event)
     except asyncio.CancelledError:
         raise
+    finally:
+        if spinner_on:
+            thinking.stop()
 
 
 _BOILERPLATE_LINE_RE = re.compile(r"^(#{1,6}\s|target:|engagement_id:|run_id:)", re.I)
