@@ -19,7 +19,10 @@ import time
 from urllib.parse import urljoin, urlparse
 
 
-def _run(url: str, *, timeout_ms: int, wait_until: str, screenshot_path: str, max_items: int) -> dict:
+def _run(
+    url: str, *, timeout_ms: int, wait_until: str, screenshot_path: str, max_items: int,
+    proxy_port: int = 0,
+) -> dict:
     from playwright.sync_api import sync_playwright  # provisioned in the image
 
     result: dict = {
@@ -33,11 +36,15 @@ def _run(url: str, *, timeout_ms: int, wait_until: str, screenshot_path: str, ma
     base_is_https = urlparse(url).scheme == "https"
     mixed: set[str] = set()
 
+    launch_kwargs: dict = {
+        "headless": True,
+        "args": ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+    }
+    if proxy_port:
+        launch_kwargs["proxy"] = {"server": f"http://127.0.0.1:{proxy_port}"}
+
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
-        )
+        browser = p.chromium.launch(**launch_kwargs)
         context = browser.new_context(ignore_https_errors=True)
         page = context.new_page()
 
@@ -163,10 +170,13 @@ def main() -> int:
                     choices=["load", "domcontentloaded", "networkidle", "commit"])
     ap.add_argument("--screenshot", default="")
     ap.add_argument("--max-items", type=int, default=300)
+    ap.add_argument("--proxy-port", type=int, default=0,
+                     help="Route this session through a proxy_start capture instance")
     args = ap.parse_args()
     try:
         out = _run(args.url, timeout_ms=args.timeout_ms, wait_until=args.wait_until,
-                   screenshot_path=args.screenshot, max_items=args.max_items)
+                   screenshot_path=args.screenshot, max_items=args.max_items,
+                   proxy_port=args.proxy_port)
     except Exception as exc:  # noqa: BLE001
         out = {"url": args.url, "errors": [f"fatal: {exc}"], "links": [], "forms": [], "xhr": []}
     print(json.dumps(out))

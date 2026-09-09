@@ -5,6 +5,7 @@ import os
 import sys
 import threading
 import time
+from contextlib import nullcontext
 
 from cli.branding import APP_NAME, CLI_COMMAND
 
@@ -107,13 +108,23 @@ def _prompt_loop(client: APIClient, session) -> None:
     )
     listener.start()
     try:
-        # raw=True is required, not cosmetic: prompt_toolkit's default (False)
+        # patch_stdout only exists to interleave the background listener
+        # thread's output correctly with prompt_toolkit's own cursor/prompt-
+        # line management — with no PromptSession (piped/non-TTY stdin, the
+        # plain input() fallback below), there's nothing of prompt_toolkit's
+        # to interleave with, and patch_stdout unconditionally tries to open
+        # a real console output handle even then. On Windows that raises
+        # NoConsoleScreenBufferError for any piped/CI/redirected run (a
+        # narrower terminal reporting itself as xterm-256color without a real
+        # Win32 console buffer, e.g. Git Bash/MSYS) — the interactive REPL
+        # was simply unusable non-interactively. raw=True (below, when it IS
+        # used) is required, not cosmetic: prompt_toolkit's default (False)
         # strips/escapes VT100 sequences before printing, which turns rich's
         # ANSI-styled output (colors, bold) into literal garbage like
         # "?[2;3m" instead of rendering it — raw=True passes escape codes
-        # through untouched so the background listener's output interleaves
-        # correctly with the interactive prompt without corrupting either.
-        with patch_stdout(raw=True):
+        # through untouched.
+        stdout_ctx = patch_stdout(raw=True) if session is not None else nullcontext()
+        with stdout_ctx:
             _prompt_loop_body(client, session)
     finally:
         stop_event.set()

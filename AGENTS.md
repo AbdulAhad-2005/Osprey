@@ -118,16 +118,17 @@ retries, and ingests findings for you.
 `katana_crawl` (history/crawl) · `feroxbuster_scan` `ffuf_scan` `gobuster_scan` (content) ·
 `arjun_scan` (hidden params) · `js_recon` (JS endpoints/secrets) · `well_known_probe`
 `email_security_probe` · `shodan_search` `shodan_host_info` `intelx_scan` `resecurity_scan`
-(passive/breach intel).
+(passive/breach intel) · `web_search` (free DuckDuckGo search, no API key — fresh CVE PoC/
+writeup hunting when searchsploit's offline DB is empty, general technique research).
 
-**Exploitation/web→shell:** `shell_handler` `shell_stabilize` (listener + session) ·
-`cmd_injection_exploit` (cmd injection → RCE/shell) · `sqli_exploit` (SQLi → webshell) ·
-`fileupload_exploit` (upload → webshell) · `ssrf_exploit` (SSRF → cloud/RCE) ·
-`ssti_exploit` (SSTI → RCE) · `lfi_exploit` (LFI → RCE) · `persist_access` (persistence) ·
-`post_exploit_enum` (post-exploit enum) · `searchsploit_lookup` `metasploit_run`
-`msfvenom_generate` `pwntools_exploit` (CVE/binary) · `hydra_attack` `hashcat_crack`
-`john_crack` (creds) · `hashpump_attack` (hash ext) · `pacu_exploitation` (AWS) ·
-`responder_credential_harvest` (LLMNR/NBT-NS).
+**Exploitation:** `searchsploit_lookup` `metasploit_run` `msfvenom_generate`
+`pwntools_exploit` (CVE/binary) · `hydra_attack` `hashcat_crack` `john_crack` (creds) ·
+`hashpump_attack` (hash ext) · `pacu_exploitation` (AWS) ·
+`responder_credential_harvest` (LLMNR/NBT-NS). Web injection → shell (cmd injection,
+SQLi, file upload, SSRF, SSTI, LFI, deserialization) has no dedicated tools — drive
+`sqlmap_scan`/`curl`/`ysoserial`/`PHPGGC`/`interactsh-client` yourself via
+`platform_shell`/`platform_script`; see `skills/exploit/shell-management.md` for the
+session pattern (nohup+log for listeners, tmux for interactive sessions).
 
 **Memory/planning — reach for these like any other tool:**
 - **Where are we?** → `platform_context` (phase status, crown jewels, jobs, delta, skills index).

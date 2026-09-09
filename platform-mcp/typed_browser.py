@@ -16,6 +16,7 @@ def register_typed_browser_tools(mcp: Any, *, execute: Callable[..., str]) -> in
         url: str,
         wait_until: str = "networkidle",
         screenshot: bool = True,
+        proxy_port: int = 0,
         additional_args: str = "",
         timeout_seconds: int = 240,
         engagement_id: str = "",
@@ -24,17 +25,22 @@ def register_typed_browser_tools(mcp: Any, *, execute: Callable[..., str]) -> in
         client-side routes (SPA links), XHR/fetch API endpoints the app calls at runtime,
         forms + inputs (injection-point candidates), cookie security flags, mixed content,
         and a full-page screenshot. Use on any React/Vue/Angular/Next app before deeper
-        testing. wait_until=networkidle waits for XHR to settle.
+        testing. wait_until=networkidle waits for XHR to settle. proxy_port= routes this
+        session through a proxy_start capture instance (its returned port) for full passive
+        traffic capture beyond this call's own XHR list — see proxy_flows/proxy_replay.
         engagement_id= pins the call to a specific engagement."""
         params: dict[str, Any] = {"url": url, "wait_until": wait_until}
         if not screenshot:
             params["screenshot"] = "false"
+        if proxy_port:
+            params["proxy_port"] = proxy_port
         return execute("browser_scrape", params, additional_args=additional_args,
                        timeout_seconds=timeout_seconds, engagement_id=engagement_id)
 
     def browser_flow(
         steps: str,
         url: str = "",
+        proxy_port: int = 0,
         additional_args: str = "",
         timeout_seconds: int = 300,
         engagement_id: str = "",
@@ -54,10 +60,16 @@ def register_typed_browser_tools(mcp: Any, *, execute: Callable[..., str]) -> in
         Returns the per-step trace, captured API calls (with headers+body, replayable),
         snapshots, replays, extracted values, assertions and final cookies. Example: log in,
         capture GET /api/orders/123, replay it as /api/orders/124, check for 2xx (IDOR).
+        proxy_port= routes this whole session through a proxy_start capture instance for a
+        full passive history beyond this one flow (see proxy_flows/proxy_replay) — use when
+        you want to browse organically across several separate calls, not just this one
+        declared step sequence.
         engagement_id= pins the engagement."""
         params: dict[str, Any] = {"steps": steps}
         if url.strip():
             params["url"] = url.strip()
+        if proxy_port:
+            params["proxy_port"] = proxy_port
         return execute("browser_flow", params, additional_args=additional_args,
                        timeout_seconds=timeout_seconds, engagement_id=engagement_id)
 

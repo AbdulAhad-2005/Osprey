@@ -2,6 +2,10 @@
   "binaries": [
     "nmap",
     "ncat",
+    "socat",
+    "tmux",
+    "interactsh-client",
+    "mitmdump",
     "masscan",
     "rustscan",
     "naabu",

@@ -31,6 +31,7 @@ def _t(
     parameters: dict[str, ToolParameter] | None = None,
     install_hint: str | None = None,
     requires_root: bool = False,
+    requires_python_module: str | None = None,
 ) -> ToolDefinition:
     mcp_server = CATEGORY_TO_MCP_SERVER[category]
     return ToolDefinition(
@@ -44,6 +45,7 @@ def _t(
         mcp_server=mcp_server,
         parameters=parameters or {},
         requires_root=requires_root,
+        requires_python_module=requires_python_module,
     )
 
 
@@ -180,6 +182,14 @@ RECON_TOOLS: list[ToolDefinition] = [
        {"ip": _p("", "IPv4 address"), "target": _p("", "Alias for ip"),
         **_COMMON_PARAMS},
        install_hint="Set SHODAN_API_KEY in .env; forwarded into kali-tools."),
+    _t("web_search", ToolCategory.RECON, "python3", ToolSafetyLevel.PASSIVE,
+       "Free general web search (DuckDuckGo HTML endpoint, no API key). Fresh CVE PoC/writeup "
+       "hunting once a version is fingerprinted — searchsploit's offline Exploit-DB lags real "
+       "disclosures and misses most GitHub-only PoCs; also current technique/advisory research.",
+       ["search", "cve", "poc", "osint", "passive"],
+       {"query": _p("", "Search query, e.g. 'CVE-2026-12345 exploit poc'"),
+        "limit": _p("10", "Max results (1-25)"),
+        **_COMMON_PARAMS}),
     _t("subdomain_takeover_check", ToolCategory.RECON, "python3", ToolSafetyLevel.PASSIVE,
        "Check hosts for dangling CNAME / unclaimed SaaS takeover fingerprints.",
        ["takeover", "cname", "dns", "passive"],
@@ -472,16 +482,66 @@ WEB_TOOLS: list[ToolDefinition] = [
        "attack surface static crawlers miss.",
        ["browser", "spa", "render", "xhr", "forms", "screenshot"],
        {"url": _p("", "Target URL"), "wait_until": _p("networkidle", "load/domcontentloaded/networkidle"),
-        "screenshot": _p("true", "Capture screenshot"), **_COMMON_PARAMS},
-       install_hint="Playwright + Chromium (in the Kali image)."),
+        "screenshot": _p("true", "Capture screenshot"),
+        "proxy_port": _p("0", "Route through a proxy_start capture instance (its port)"),
+        **_COMMON_PARAMS},
+       install_hint="pip3 install playwright && python3 -m playwright install --with-deps chromium",
+       requires_python_module="playwright"),
     _t("browser_flow", ToolCategory.WEBAPP, "python3", ToolSafetyLevel.ACTIVE,
        "Declarative browser flow (Playwright): execute a step sequence in one Chromium session "
        "(login, authenticated nav, business-logic tests). steps= JSON list of "
        "goto/fill/click/press/wait/select/extract/assert_text/screenshot/set_header/set_cookie.",
        ["browser", "auth", "session", "business-logic", "flow"],
        {"steps": _p("", "JSON list of step objects"), "url": _p("", "Optional start URL"),
+        "proxy_port": _p("0", "Route through a proxy_start capture instance (its port)"),
         **_COMMON_PARAMS},
-       install_hint="Playwright + Chromium (in the Kali image)."),
+       install_hint="pip3 install playwright && python3 -m playwright install --with-deps chromium",
+       requires_python_module="playwright"),
+    _t("proxy_start", ToolCategory.WEBAPP, "mitmdump", ToolSafetyLevel.PASSIVE,
+       "Start full-session passive traffic capture (mitmdump) for an engagement — captures "
+       "EVERYTHING sent through it across as many separate calls as you make, unlike "
+       "browser_flow's own captured_requests (scoped to one step sequence). Idempotent. Point "
+       "browser_flow/browser_scrape's proxy_port= at the returned port, or route platform_shell "
+       "curl/sqlmap through it with -x http://127.0.0.1:<port> -k.",
+       ["proxy", "capture", "mitmproxy", "traffic"],
+       {"engagement_id": _p("", "This engagement's id (required)"), **_COMMON_PARAMS},
+       install_hint="pip install mitmproxy"),
+    _t("proxy_stop", ToolCategory.WEBAPP, "python3", ToolSafetyLevel.PASSIVE,
+       "Stop full-session traffic capture for an engagement and free its port. Run at "
+       "engagement end to avoid a leaked mitmdump holding its port.",
+       ["proxy", "capture", "mitmproxy", "cleanup"],
+       {"engagement_id": _p("", "The engagement whose capture to stop (required)"), **_COMMON_PARAMS}),
+    _t("proxy_flows", ToolCategory.WEBAPP, "python3", ToolSafetyLevel.PASSIVE,
+       "List/filter traffic captured by proxy_start (host/method/URL-substring/min-status "
+       "filters). Compact rows (method, url, status, timing) — use proxy_flow_detail for full "
+       "headers+body on one flow.",
+       ["proxy", "capture", "history", "traffic"],
+       {"engagement_id": _p("", "The engagement whose capture to read (required)"),
+        "host": _p("", "Substring filter on request host"),
+        "method": _p("", "Exact filter on HTTP method"),
+        "contains": _p("", "Substring filter on the full URL"),
+        "min_status": _p("0", "Only flows with status_code >= this"),
+        "limit": _p("100", "Max rows returned, most recent first"),
+        **_COMMON_PARAMS}),
+    _t("proxy_flow_detail", ToolCategory.WEBAPP, "python3", ToolSafetyLevel.PASSIVE,
+       "Full detail (both directions' headers + body) for one flow_id from proxy_flows.",
+       ["proxy", "capture", "detail"],
+       {"engagement_id": _p("", "The engagement whose capture to read (required)"),
+        "flow_id": _p("", "The flow_id from a proxy_flows row (required)"),
+        **_COMMON_PARAMS}),
+    _t("proxy_replay", ToolCategory.WEBAPP, "python3", ToolSafetyLevel.ACTIVE,
+       "Re-send a captured flow (from proxy_flows), optionally tampered — the repeater half of "
+       "the capture workflow for IDOR/auth-bypass/param-pollution testing. Works against any "
+       "captured flow standalone, browser session long closed or not (unlike browser_flow's own "
+       "session-bound replay step, which needs a live Playwright session's cookies).",
+       ["proxy", "capture", "replay", "repeater", "idor"],
+       {"engagement_id": _p("", "The engagement whose capture to read (required)"),
+        "flow_id": _p("", "The flow_id to replay (required)"),
+        "method_override": _p("", "Replace the HTTP method"),
+        "url_override": _p("", "Replace the URL"),
+        "headers_json": _p("", "JSON object of headers to override/add"),
+        "body_override": _p("", "Replace the request body"),
+        **_COMMON_PARAMS}),
     _t("graphql_cop_scan", ToolCategory.WEBAPP, "graphql-cop", ToolSafetyLevel.ACTIVE,
        "GraphQL security audit via graphql-cop: introspection exposure, field suggestions, "
        "query batching/aliasing DoS, GET-based mutations, CSRF, deep recursion.",
@@ -559,7 +619,8 @@ WEB_TOOLS: list[ToolDefinition] = [
        "JS libraries, analytics, CDNs, and web servers with version detection.",
        ["technology", "fingerprinting", "wappalyzer"],
        {"target": _p("", "Target URL or domain"), **_COMMON_PARAMS},
-       install_hint="pip3 install python-Wappalyzer"),
+       install_hint="pip3 install python-Wappalyzer",
+       requires_python_module="Wappalyzer"),
     _t("tech_stack_analyze", ToolCategory.WEBAPP, "python3", ToolSafetyLevel.PASSIVE,
        "Comprehensive technology stack analysis — combines WhatWeb + Wappalyzer + HTTP header "
        "analysis + JS bundle scan + favicon/robots/404 probes + TLS cert metadata. Produces unified "
@@ -569,7 +630,8 @@ WEB_TOOLS: list[ToolDefinition] = [
         "aggression": _p("3", "WhatWeb aggression level (1-4)"),
         "verbose": _p("false", "Enable verbose output"),
         **_COMMON_PARAMS},
-       install_hint="Requires whatweb and python-Wappalyzer in Kali container."),
+       install_hint="Requires whatweb and python-Wappalyzer in Kali container.",
+       requires_python_module="Wappalyzer"),
 ]
 
 # ---- VULN (2 tools) -------------------------------------------------------
@@ -709,162 +771,24 @@ EXPLOIT_TOOLS: list[ToolDefinition] = [
        ["exploitation", "python", "automation"],
        {"script_content": _p("", "Python exploit script content"),
         "target_host": _p("", "Target host"), "target_port": _p("0", "Target port"),
-        **_COMMON_PARAMS}),
-    _t("shell_handler", ToolCategory.EXPLOIT, "ncat", ToolSafetyLevel.GATED,
-       "Listen for incoming reverse/bind shells and stabilize sessions. GATED — requires "
-       "RulesOfEngagement.allow_exploitation. mode: 'reverse' (listen for reverse shell), "
-       "bind' (connect to bind shell). protocol: 'tcp', 'udp'.",
-       ["shells", "reverse-shell", "bind-shell", "listener"],
-       {"mode": _p("reverse", "Listener mode (reverse/bind)"),
-        "lhost": _p("0.0.0.0", "Listen host"),
-        "lport": _p("4444", "Listen port"),
-        "protocol": _p("tcp", "Protocol (tcp/udp)"),
-        **_COMMON_PARAMS}),
-    _t("shell_stabilize", ToolCategory.EXPLOIT, "python3", ToolSafetyLevel.GATED,
-       "Stabilize a raw shell into a fully interactive TTY. GATED — requires "
-       "RulesOfEngagement.allow_exploitation. method: 'python' (Python PTY), "
-       "'script' (script command), 'rlwrap' (rlwrap wrapper).",
-       ["shells", "tty", "stabilization"],
-       {"method": _p("python", "Stabilization method (python/script/rlwrap)"),
-        "python_path": _p("", "Path to python binary"),
-        "lhost": _p("", "LHOST for stabilize payload"),
-        "lport": _p("0", "LPORT for stabilize payload"),
-        **_COMMON_PARAMS}),
-    _t("cmd_injection_exploit", ToolCategory.EXPLOIT, "curl", ToolSafetyLevel.GATED,
-       "Exploit command injection to achieve RCE or reverse shell. GATED — requires "
-       "RulesOfEngagement.allow_exploitation. method: 'cmd' (execute and return output), "
-       "'reverse' (reverse shell), 'bind' (bind shell), 'webshell' (drop webshell).",
-       ["command-injection", "rce", "exploitation"],
-       {"url": _p("", "Target URL with injection point"),
-        "param": _p("", "Vulnerable parameter"),
-        "method": _p("cmd", "Exploitation method (cmd/reverse/bind/webshell)"),
-        "payload_type": _p("bash", "Payload type (bash/python/nc)"),
-        "lhost": _p("", "LHOST for reverse shell"),
-        "lport": _p("0", "LPORT for reverse shell"),
-        "bypass_waf": _p("false", "Enable WAF bypass encoding"),
-        "oast_domain": _p("", "OAST callback domain for blind detection"),
-        "detection_method": _p("output", "Detection method (output/oast/time)"),
-        **_COMMON_PARAMS}),
-    _t("sqli_exploit", ToolCategory.EXPLOIT, "sqlmap", ToolSafetyLevel.GATED,
-       "SQL injection to webshell/RCE. GATED — requires "
-       "RulesOfEngagement.allow_exploitation. method: 'outfile' (MySQL INTO OUTFILE), "
-       "'xp_cmdshell' (MSSQL), 'copy_to_program' (PostgreSQL), 'stacked' (stacked queries).",
-       ["sqli", "sql-injection", "exploitation"],
-       {"url": _p("", "Target URL with injection point"),
-        "param": _p("", "Vulnerable parameter"),
-        "db_type": _p("mysql", "Database type (mysql/mssql/postgresql)"),
-        "method": _p("outfile", "Exploitation method"),
-        "webroot": _p("/var/www/html", "Web root path"),
-        "webshell_type": _p("php", "Webshell type"),
-        "webshell_name": _p("", "Custom webshell filename"),
-        **_COMMON_PARAMS}),
-    _t("fileupload_exploit", ToolCategory.EXPLOIT, "curl", ToolSafetyLevel.GATED,
-       "Exploit file upload to get shell/webshell. GATED — requires "
-       "RulesOfEngagement.allow_exploitation. method: 'webshell' (upload webshell), "
-       "'reverse' (upload reverse shell), 'bind' (upload bind shell).",
-       ["file-upload", "exploitation", "webshell"],
-       {"url": _p("", "Target upload URL"),
-        "method": _p("webshell", "Exploitation method (webshell/reverse/bind)"),
-        "bypass_technique": _p("double_extension", "Bypass technique"),
-        "webshell_type": _p("php", "Webshell type"),
-        "file_param": _p("", "File upload parameter name"),
-        **_COMMON_PARAMS}),
-    _t("ssrf_exploit", ToolCategory.EXPLOIT, "curl", ToolSafetyLevel.GATED,
-       "SSRF to RCE/cloud metadata/file read. GATED — requires "
-       "RulesOfEngagement.allow_exploitation. method: 'cloud_metadata' (AWS/Azure/GCP), "
-       "'internal_service' (reach internal services), 'file_read' (file:// protocol), "
-       "'reverse' (SSRF to reverse shell), 'protocol_smuggle' (gopher/dict/file).",
-       ["ssrf", "exploitation", "cloud-metadata"],
-       {"url": _p("", "Target URL with SSRF"),
-        "param": _p("", "SSRF parameter"),
-        "method": _p("cloud_metadata", "Exploitation method"),
-        "cloud_provider": _p("aws", "Cloud provider (aws/azure/gcp)"),
-        "internal_target": _p("", "Internal target to reach"),
-        "file_path": _p("", "File to read via file://"),
-        "protocol": _p("", "Protocol for smuggling (gopher/dict/file/smb)"),
-        "oast_domain": _p("", "OAST callback domain"),
-        **_COMMON_PARAMS}),
-    _t("ssti_exploit", ToolCategory.EXPLOIT, "curl", ToolSafetyLevel.GATED,
-       "Server-Side Template Injection to RCE. GATED — requires "
-       "RulesOfEngagement.allow_exploitation. engine: jinja2, twig, freemarker, "
-       "mako, erb, velocity. method: 'command' (execute), 'reverse' (reverse shell), "
-       "'file_read' (read file), 'file_write' (write file).",
-       ["ssti", "template-injection", "exploitation"],
-       {"url": _p("", "Target URL with SSTI"),
-        "param": _p("", "Vulnerable parameter"),
-        "engine": _p("jinja2", "Template engine"),
-        "method": _p("command", "Exploitation method"),
-        "payload": _p("", "Custom payload"),
-        "lhost": _p("", "LHOST for reverse shell"),
-        "lport": _p("0", "LPORT for reverse shell"),
-        **_COMMON_PARAMS}),
-    _t("lfi_exploit", ToolCategory.EXPLOIT, "curl", ToolSafetyLevel.GATED,
-       "LFI to RCE via log poisoning, PHP filter chain, or proc self environ. GATED — "
-       "requires RulesOfEngagement.allow_exploitation. method: 'log_poisoning', "
-       "'php_filter', 'proc_self', 'pearcmd'.",
-       ["lfi", "path-traversal", "exploitation"],
-       {"url": _p("", "Target URL with LFI"),
-        "param": _p("", "Vulnerable parameter"),
-        "method": _p("log_poisoning", "Exploitation method"),
-        "log_path": _p("/var/log/apache2/access.log", "Log file path to poison"),
-        "poison_payload": _p("", "Payload to inject into logs"),
-        "filter_chain": _p("", "PHP filter chain"),
-        **_COMMON_PARAMS}),
-    _t("persist_access", ToolCategory.EXPLOIT, "python3", ToolSafetyLevel.GATED,
-       "Establish persistent access after exploitation. GATED — requires "
-       "RulesOfEngagement.allow_exploitation AND destructive_actions_allowed.",
-       ["persistence", "exploitation"],
-       {"method": _p("", "Persistence method (ssh_key/cron/systemd/rc_local/registry/scheduled_task)"),
-        "target": _p("", "Target host"),
-        "session_id": _p("", "Existing session ID"),
-        "pub_key": _p("", "SSH public key"),
-        "schedule": _p("", "Cron schedule"),
-        "command": _p("", "Command to persist"),
-        "service_name": _p("", "Service name"),
-        "payload_path": _p("", "Payload path"),
-        "registry_key": _p("", "Windows registry key"),
-        "registry_name": _p("", "Registry value name"),
-        "task_name": _p("", "Scheduled task name"),
-        **_COMMON_PARAMS}),
-    _t("post_exploit_enum", ToolCategory.EXPLOIT, "python3", ToolSafetyLevel.GATED,
-       "Post-exploitation enumeration via established session. GATED — requires "
-       "RulesOfEngagement.allow_exploitation. tasks: system,network,users,credentials,suid,"
-       "writable,processes,services,container,kubernetes.",
-       ["post-exploitation", "enumeration"],
-       {"session_id": _p("", "Existing session ID"),
-        "tasks": _p("system,network,users,credentials", "Comma-separated task list"),
-        "custom_commands": _p("", "Additional commands to run"),
-        "container_aware": _p("false", "Enumerate Docker/container environment"),
-        "kubernetes_aware": _p("false", "Enumerate K8s service account/API"),
-        **_COMMON_PARAMS}),
-    _t("deserialization_exploit", ToolCategory.EXPLOIT, "python3", ToolSafetyLevel.GATED,
-       "Insecure deserialization to RCE via gadget chains. GATED — requires "
-       "RulesOfEngagement.allow_exploitation. framework: java, php, python, dotnet.",
-       ["deserialization", "exploitation", "gadget-chain"],
-       {"url": _p("", "Target URL"),
-        "param": _p("", "Vulnerable parameter"),
-        "framework": _p("java", "Framework (java/php/python/dotnet)"),
-        "method": _p("gadget_chain", "Method (gadget_chain/rce/file_read/oob)"),
-        "gadget": _p("", "Specific gadget chain name"),
-        "command": _p("", "Command to execute"),
-        "oast_domain": _p("", "OAST callback for blind detection"),
-        **_COMMON_PARAMS}),
-    _t("php_filter_chain", ToolCategory.EXPLOIT, "python3", ToolSafetyLevel.GATED,
-       "PHP filter chain generator for LFI exploitation. GATED — requires "
-       "RulesOfEngagement.allow_exploitation. method: 'file_read', 'rce', 'log_poison'.",
-       ["php", "filter-chain", "exploitation"],
-       {"url": _p("", "Target URL"),
-        "param": _p("", "LFI parameter"),
-        "method": _p("file_read", "Method (file_read/rce/log_poison)"),
-        "target_file": _p("/etc/passwd", "File to read"),
-        "command": _p("", "Command for RCE method"),
-        **_COMMON_PARAMS}),
-    _t("oast_callback", ToolCategory.EXPLOIT, "interactsh-client", ToolSafetyLevel.PASSIVE,
-       "Generate OAST callback domain for blind vulnerability detection. Uses "
-       "interactsh-client. Not gated — read-only detection tool.",
-       ["oast", "blind", "callback", "detection"],
-       {"protocol": _p("http", "Callback protocol (http/dns/smtp/ftp)"),
-        **_COMMON_PARAMS}),
+        **_COMMON_PARAMS},
+       install_hint="pip3 install pwntools",
+       requires_python_module="pwn"),
+    # EXPLOIT_WEB_TOOLS: removed 2026-09-09. 13 per-vulnerability-class wrappers
+    # (shell_handler, shell_stabilize, cmd_injection_exploit, sqli_exploit,
+    # fileupload_exploit, ssrf_exploit, ssti_exploit, lfi_exploit, persist_access,
+    # post_exploit_enum, deserialization_exploit, php_filter_chain, oast_callback)
+    # were 4 layers of scaffolding (typed wrapper + registry entry + YAML task +
+    # output parser) around build_command() cores that mostly just echo'd curl/
+    # sqlmap one-liners the LLM already writes better itself via platform_shell —
+    # and in the cases actually inspected, one was broken (oast_callback backgrounds
+    # its listener without capturing the domain it exists to produce) and one was a
+    # stub dressed as output (php_filter_chain's "rce" method printed hint text, not
+    # a generated chain). No dedicated per-CVE-class exploit tools exist in Strix
+    # either — every one of these vuln classes is driven through one persistent
+    # terminal there. See skills/exploit/shell-management.md for the
+    # platform_shell session pattern (nohup+log for fire-and-forget listeners,
+    # tmux for real interactive sessions) that replaces shell_handler/stabilize.
 ]
 
 # ---- API (3 tools) --------------------------------------------------------
@@ -923,7 +847,9 @@ BINARY_TOOLS: list[ToolDefinition] = [
        ["symbolic-execution", "binary", "analysis"],
        {"binary": _p("", "Binary path"), "script_content": _p("", "Python script content"),
         "find_address": _p("", "Target address to find"),
-        **_COMMON_PARAMS}),
+        **_COMMON_PARAMS},
+       install_hint="pip3 install angr",
+       requires_python_module="angr"),
     _t("objdump_analyze", ToolCategory.BINARY, "objdump", ToolSafetyLevel.PASSIVE,
        "Disassemble and inspect binary.",
        ["disassembly", "binary", "analysis"],
@@ -1088,6 +1014,52 @@ def _kali_which_cached(executable: str) -> str | None:
     return _kali_which(executable)
 
 
+def _kali_python_importable(module: str) -> bool | None:
+    """Check whether a Python module imports inside the Kali tools container.
+
+    Returns None (not True/False) when Docker isn't reachable at all, so the
+    caller can fall through to a host-side check instead of wrongly reporting
+    "not installed" for native mode.
+    """
+    import os
+    import subprocess
+
+    mod = (module or "").strip()
+    if not mod or not all(part.isidentifier() for part in mod.split(".")):
+        return None
+    container = os.getenv("KALI_CONTAINER", "osprey-kali").strip()
+    if not container:
+        return None
+    try:
+        proc = subprocess.run(
+            ["docker", "exec", container, "python3", "-c", f"import {mod}"],
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+        return proc.returncode == 0
+    except Exception:
+        return None
+
+
+def _host_python_importable(module: str) -> bool:
+    """Check whether a Python module imports on the backend's own host (native mode)."""
+    import importlib.util
+
+    try:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, ModuleNotFoundError, ValueError):
+        return False
+
+
+@lru_cache(maxsize=256)
+def _python_module_importable_cached(module: str) -> bool:
+    kali_result = _kali_python_importable(module)
+    if kali_result is not None:
+        return kali_result
+    return _host_python_importable(module)
+
+
 def reload_tool_availability() -> None:
     """Clear the process-lifetime tool-availability cache.
 
@@ -1103,6 +1075,7 @@ def reload_tool_availability() -> None:
     """
     _kali_which_cached.cache_clear()
     _projectdiscovery_httpx_cached.cache_clear()
+    _python_module_importable_cached.cache_clear()
 
 
 def _kali_projectdiscovery_httpx() -> str | None:
@@ -1168,9 +1141,16 @@ def _with_availability(tool: ToolDefinition) -> ToolAvailability:
         executable_path = _kali_which_cached(tool.executable)
         if executable_path is None:
             executable_path = shutil.which(tool.executable)
+    installed = executable_path is not None
+    # executable='python3' is present on essentially every image — that alone
+    # doesn't mean a python3-wrapped tool's REAL dependency (playwright,
+    # Wappalyzer, pwn, angr, ...) is there. Only trust the executable check
+    # alone when the tool doesn't declare one of these.
+    if installed and tool.requires_python_module:
+        installed = _python_module_importable_cached(tool.requires_python_module)
     return ToolAvailability(
         **tool.model_dump(),
-        installed=executable_path is not None,
+        installed=installed,
         executable_path=executable_path,
     )
 

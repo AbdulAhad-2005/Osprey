@@ -54,6 +54,7 @@ def build_command(**params: Any) -> str:
 
     timeout_ms = int(params.get("timeout_ms") or 30000)
     additional_args = str(params.get("additional_args") or "").strip()
+    proxy_port = params.get("proxy_port")
 
     parts = [
         "python3", _cli_expr(),
@@ -65,6 +66,11 @@ def build_command(**params: Any) -> str:
         if "://" not in url:
             url = "https://" + url
         parts += ["--url", shlex.quote(url)]
+    if proxy_port:
+        # Route this Chromium session through a proxy_start capture instance —
+        # ignore_https_errors is already set on the context (see _run below),
+        # so no CA install step is needed for the browser side.
+        parts += ["--proxy-port", str(int(proxy_port))]
     cmd = " ".join(parts)
     if additional_args:
         cmd += f" {additional_args}"
@@ -80,6 +86,7 @@ def run(
     url: str = "",
     target: str = "",
     timeout_ms: int = 30000,
+    proxy_port: int = 0,
     additional_args: str = "",
     use_recovery: bool = True,
     use_cache: bool = False,
@@ -87,7 +94,7 @@ def run(
 ) -> dict[str, Any]:
     params = {
         "url": url or target, "steps": steps, "timeout_ms": timeout_ms,
-        "additional_args": additional_args,
+        "proxy_port": proxy_port, "additional_args": additional_args,
     }
     return run_tool(
         TOOL_NAME, build_command(**params), params=params, timeout=exec_timeout,

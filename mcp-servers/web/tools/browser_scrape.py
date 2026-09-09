@@ -50,6 +50,7 @@ def build_command(**params: Any) -> str:
     max_items = int(params.get("max_items") or 300)
     screenshot = str(params.get("screenshot", "true")).strip().lower() in ("1", "true", "yes", "on")
     additional_args = str(params.get("additional_args") or "").strip()
+    proxy_port = params.get("proxy_port")
 
     parts = [
         "python3", _cli_expr(),
@@ -58,6 +59,8 @@ def build_command(**params: Any) -> str:
         "--wait-until", shlex.quote(wait_until),
         "--max-items", str(max_items),
     ]
+    if proxy_port:
+        parts += ["--proxy-port", str(int(proxy_port))]
     if screenshot:
         shot = f"{_SHOT_DIR}/scrape_{int(time.time())}_{uuid.uuid4().hex[:6]}.png"
         parts += ["--screenshot", shlex.quote(shot)]
@@ -78,6 +81,7 @@ def run(
     wait_until: str = "networkidle",
     max_items: int = 300,
     screenshot: bool = True,
+    proxy_port: int = 0,
     additional_args: str = "",
     use_recovery: bool = True,
     use_cache: bool = True,
@@ -85,7 +89,8 @@ def run(
 ) -> dict[str, Any]:
     params = {
         "url": url or target, "timeout_ms": timeout_ms, "wait_until": wait_until,
-        "max_items": max_items, "screenshot": screenshot, "additional_args": additional_args,
+        "max_items": max_items, "screenshot": screenshot, "proxy_port": proxy_port,
+        "additional_args": additional_args,
     }
     return run_tool(
         TOOL_NAME, build_command(**params), params=params, timeout=exec_timeout,

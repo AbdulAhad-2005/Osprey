@@ -206,16 +206,32 @@ def print_health(data: dict[str, Any]) -> None:
     console.print(table)
 
 
-def print_tools(tools: list[dict[str, Any]]) -> None:
+def print_tools(tools: list[dict[str, Any]], *, show_all: bool = False) -> None:
     if not tools:
         print_info("No tools registered yet. MCP servers will populate this list.")
         return
+
+    missing = [t for t in tools if not t.get("installed")]
+    installed_count = len(tools) - len(missing)
+    color = "green" if not missing else "yellow"
+    console.print(
+        f"[bold {color}]{installed_count}/{len(tools)} tools installed[/bold {color}]"
+        + (f" — {len(missing)} missing" if missing else "")
+    )
+
+    if not show_all:
+        if missing:
+            _print_missing_tools_table(missing)
+        print_info("Run '/tools --all' to see every registered tool, installed or not.")
+        return
+
     table = Table(title="Available Tools", show_header=True, header_style="bold cyan")
     table.add_column("Name", style="bold")
     table.add_column("Category")
     table.add_column("Status")
     table.add_column("Safety")
     table.add_column("Description")
+    table.add_column("Install")
     for tool in tools:
         installed = tool.get("installed")
         status = Text("installed", style="green") if installed else Text("missing", style="yellow")
@@ -225,6 +241,21 @@ def print_tools(tools: list[dict[str, Any]]) -> None:
             status,
             tool.get("safety_level", "-"),
             tool.get("description", "-"),
+            "-" if installed else (tool.get("install_hint") or "-"),
+        )
+    console.print(table)
+
+
+def _print_missing_tools_table(missing: list[dict[str, Any]]) -> None:
+    table = Table(title="Missing Tools", show_header=True, header_style="bold yellow")
+    table.add_column("Name", style="bold")
+    table.add_column("Category")
+    table.add_column("Install")
+    for tool in missing:
+        table.add_row(
+            tool.get("name", "unknown"),
+            tool.get("category", "-"),
+            tool.get("install_hint") or f"Install {tool.get('executable', tool.get('name', ''))}.",
         )
     console.print(table)
 

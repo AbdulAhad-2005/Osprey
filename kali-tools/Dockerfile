@@ -32,6 +32,16 @@ ENV PATH="/home/mcpuser/.local/bin:${GOPATH}/bin:/usr/local/go/bin:${PATH}"
 ENV CFLAGS="-std=gnu17 -D_DEFAULT_SOURCE"
 ENV CXXFLAGS="-std=gnu++17 -D_DEFAULT_SOURCE"
 
+# gh-latest-asset.py (defined below) resolves GitHub release assets for
+# terrascan/ghidra/ysoserial/interactsh. Unauthenticated api.github.com calls
+# are capped at 60/hour per source IP, which a shared NAT egress (Docker
+# Desktop, CI runners) can exhaust across unrelated builds. Pass a token as a
+# build secret (never baked into a layer, unlike --build-arg) to raise that to
+# 5000/hour; every call site degrades to unauthenticated + a WARN skip when
+# none is supplied, so this is optional:
+#   docker build --secret id=github_token,env=GITHUB_TOKEN -t osprey-kali kali-tools/
+# or, from a file: --secret id=github_token,src=./gh_token.txt
+
 # This image makes several hundred external network calls over the course of a
 # build (apt, go modules, pip/pipx, git clone, GitHub releases/API) across what
 # can be an hour-plus wall clock — a single transient blip anywhere in that
@@ -127,6 +137,7 @@ pin a specific version instead of tracking latest.
 """
 import fnmatch
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -136,10 +147,21 @@ repo, pattern = sys.argv[1], sys.argv[2]
 tag = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else ""
 url = f"https://api.github.com/repos/{repo}/releases/" + (f"tags/{tag}" if tag else "latest")
 
+# Unauthenticated api.github.com calls are capped at 60/hour PER SOURCE IP —
+# Docker Desktop's shared NAT egress IP means this quota is shared with every
+# other build on the same network, and four call sites in this Dockerfile
+# alone can exhaust it in one run. A token raises the cap to 5000/hour.
+# Optional and backward compatible: falls back to unauthenticated when no
+# token is supplied (see `docker build --secret id=github_token,...` below).
+token = os.environ.get("GITHUB_TOKEN", "").strip()
+req = urllib.request.Request(url)
+if token:
+    req.add_header("Authorization", f"Bearer {token}")
+
 raw = None
 for attempt in range(5):
     try:
-        raw = urllib.request.urlopen(url, timeout=20).read()
+        raw = urllib.request.urlopen(req, timeout=20).read()
         break
     except (urllib.error.URLError, TimeoutError) as exc:
         if attempt == 4:
@@ -186,6 +208,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     exiftool foremost steghide \
     # ── Reverse shells / netcat variants ──
     ncat socat \
+    # ── Session persistence for shell-management skill (detached listeners,
+    #    send-keys/capture-pane across separate platform_shell calls) ──
+    tmux \
     # ── Utilities ──
     binutils
 
@@ -199,9 +224,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # ─── 3. Go tools (install individually for build resilience) ─────────────────
 RUN mkdir -p /opt/go
 RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+    retry-cmd 3 go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
 RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    go install github.com/projectdiscovery/httpx/cmd/httpx@latest
+    retry-cmd 3 go install github.com/projectdiscovery/httpx/cmd/httpx@latest
 # The pip package `httpx` (a plain backend HTTP-client dependency, not this tool)
 # installs its own same-named CLI into /home/mcpuser/.local/bin, which sits ahead
 # of $GOPATH/bin on PATH (see ENV PATH below) so it always shadows this real
@@ -210,21 +235,21 @@ RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.c
 # at build time so no wrapper ever has to guess an install path at runtime.
 RUN ln -sf "$GOPATH/bin/httpx" "$GOPATH/bin/httpx-toolkit"
 RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    go install github.com/projectdiscovery/katana/cmd/katana@latest
+    retry-cmd 3 go install github.com/projectdiscovery/katana/cmd/katana@latest
 RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    go install github.com/lc/gau/v2/cmd/gau@latest
+    retry-cmd 3 go install github.com/lc/gau/v2/cmd/gau@latest
 RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    go install github.com/tomnomnom/waybackurls@latest
+    retry-cmd 3 go install github.com/tomnomnom/waybackurls@latest
 RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    go install github.com/tomnomnom/anew@latest
+    retry-cmd 3 go install github.com/tomnomnom/anew@latest
 RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    go install github.com/hakluke/hakrawler@latest
+    retry-cmd 3 go install github.com/hakluke/hakrawler@latest
 RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    go install github.com/hahwul/dalfox/v2@latest
+    retry-cmd 3 go install github.com/hahwul/dalfox/v2@latest
 # jaeles — signature-based web vuln scanner (jaeles_vulnerability_scan). Was
 # registered in the platform but missing from the image ("jaeles: command not found").
 RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    go install github.com/jaeles-project/jaeles@latest
+    retry-cmd 3 go install github.com/jaeles-project/jaeles@latest
 # x8 — hidden-parameter brute-forcer (Rust). Built via cargo; guarded so a slow
 # or failing build doesn't break the image (the tool degrades to "not found",
 # which the platform's recovery handles).
@@ -342,6 +367,14 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && python3 -m playwright install --with-deps chromium \
     && chmod -R a+rX /opt/pw-browsers
 
+# ─── 4b2. mitmproxy — full-session passive traffic capture for proxy_start/
+# proxy_flows/proxy_replay (browser_flow/browser_scrape opt into routing
+# through it via proxy_port=). Own layer: heavier dependency set (h2, wsproto,
+# kaitaistruct) than the rest of the pip block above, isolated so it doesn't
+# invalidate that layer's cache when bumped independently. ──
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install --break-system-packages mitmproxy
+
 # ─── 4c. Ruby gem tools ──────────────────────────────────────────────────────
 RUN gem install one_gadget
 
@@ -385,27 +418,32 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # as a Go binary via GitHub releases. Pass TERRASCAN_VERSION (a release tag,
 # e.g. v1.19.9) to pin instead of tracking latest. ──
 ARG TERRASCAN_VERSION=""
-RUN set -eux; \
+RUN --mount=type=secret,id=github_token,required=false \
+    (set -eux; \
+    export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)"; \
     TS_URL="$(python3 /usr/local/bin/gh-latest-asset.py tenable/terrascan '*_Linux_x86_64.tar.gz' "$TERRASCAN_VERSION")"; \
     wget -q --tries=5 --waitretry=5 --timeout=30 "$TS_URL" -O /tmp/terrascan.tar.gz; \
     tar -xzf /tmp/terrascan.tar.gz -C /tmp terrascan; \
     install -m 0755 /tmp/terrascan /usr/local/bin/terrascan; \
     rm -f /tmp/terrascan.tar.gz /tmp/terrascan; \
-    terrascan version
+    terrascan version) \
+    || echo "WARN: terrascan install failed (rate limit or network), skipping"
 
 # ── ghidra (headless) — requires the JDK 21 installed in the system-base layer
 # above; Ghidra bundles no JVM of its own. Pass GHIDRA_VERSION (the release TAG,
 # e.g. Ghidra_12.1.2_build — not a bare version number) to pin instead of
 # tracking latest. ──
 ARG GHIDRA_VERSION=""
-RUN set -eux; \
+RUN --mount=type=secret,id=github_token,required=false \
+    (set -eux; \
+    export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)"; \
     GH_URL="$(python3 /usr/local/bin/gh-latest-asset.py NationalSecurityAgency/ghidra '*.zip' "$GHIDRA_VERSION")"; \
     wget -q --tries=5 --waitretry=5 --timeout=30 "$GH_URL" -O /tmp/ghidra.zip; \
     unzip -q /tmp/ghidra.zip -d /opt/; \
     ln -s /opt/ghidra_*/ghidraRun /usr/local/bin/ghidra; \
     ln -s /opt/ghidra_*/support/analyzeHeadless /usr/local/bin/analyzeHeadless; \
-    rm /tmp/ghidra.zip \
-    || true
+    rm /tmp/ghidra.zip) \
+    || echo "WARN: ghidra install failed (rate limit or network), skipping"
 
 # ── hashpump (hash length extension) ──
 RUN retry-cmd 5 sh -c 'rm -rf /opt/hashpump && git clone --depth 1 https://github.com/leapsecurity/HashPump.git /opt/hashpump' \
@@ -415,24 +453,44 @@ RUN retry-cmd 5 sh -c 'rm -rf /opt/hashpump && git clone --depth 1 https://githu
     || true
 
 # ── ysoserial (Java deserialization gadget chains) ──
-RUN set -eux; \
+RUN --mount=type=secret,id=github_token,required=false \
+    (set -eux; \
+    export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)"; \
     mkdir -p /opt/ysoserial; \
     YSOSERIAL_URL="$(python3 /usr/local/bin/gh-latest-asset.py frohoff/ysoserial 'ysoserial-all.jar' '')"; \
     wget -q --tries=5 --waitretry=5 --timeout=30 "$YSOSERIAL_URL" -O /opt/ysoserial/ysoserial.jar; \
     printf '#!/bin/sh\nexec java -jar /opt/ysoserial/ysoserial.jar "$@"\n' > /usr/local/bin/ysoserial; \
     chmod +x /usr/local/bin/ysoserial; \
-    java -jar /opt/ysoserial/ysoserial.jar 2>&1 | head -1 || true
+    java -jar /opt/ysoserial/ysoserial.jar 2>&1 | head -1) \
+    || echo "WARN: ysoserial install failed (rate limit or network), skipping"
 
 # ── interactsh (OAST callback server) ──
-RUN set -eux; \
-    INTERACTSH_URL="$(python3 /usr/local/bin/gh-latest-asset.py projectdiscovery/interactsh 'interactsh-linux_amd64.zip' '')"; \
+# Asset name is "interactsh-client_<version>_linux_amd64.zip" — includes both
+# the "-client" suffix and the version segment (ProjectDiscovery's standard
+# toolname_version_os_arch convention across their whole suite), not the bare
+# "interactsh-linux_amd64.zip" this used to glob for. Guarded with || true like
+# the other nice-to-have (non-core) tools in this file (x8, prowler, falco) —
+# a future asset-naming change on their end shouldn't block the whole image.
+RUN --mount=type=secret,id=github_token,required=false \
+    (set -eux; \
+    export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)"; \
+    INTERACTSH_URL="$(python3 /usr/local/bin/gh-latest-asset.py projectdiscovery/interactsh 'interactsh-client_*_linux_amd64.zip' '')"; \
     wget -q --tries=5 --waitretry=5 --timeout=30 "$INTERACTSH_URL" -O /tmp/interactsh.zip; \
     unzip -q /tmp/interactsh.zip -d /tmp/interactsh; \
-    install -m 0755 /tmp/interactsh/interactsh /usr/local/bin/interactsh-client; \
+    install -m 0755 /tmp/interactsh/interactsh-client /usr/local/bin/interactsh-client; \
     rm -rf /tmp/interactsh /tmp/interactsh.zip; \
-    interactsh-client -h 2>&1 | head -1 || true
+    interactsh-client -h 2>&1 | head -1) \
+    || echo "WARN: interactsh-client install failed (rate limit or network), skipping"
 
-# ── PHPGGC (PHP deserialization gadget chains) ──
+# ── PHPGGC (PHP deserialization gadget chains) — needs a php CLI to run the
+# generator itself; not installed anywhere else in this image, and the
+# `|| true` on the verification line below would have silently hidden that
+# gap (build succeeds, tool is dead at runtime) if left unadded. Its own
+# small layer, not folded into the big categorized apt block above, so
+# adding it doesn't invalidate that block's cache. ──
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    /usr/local/bin/apt-install-retry.sh 5 php-cli
 RUN retry-cmd 5 sh -c 'rm -rf /opt/phpggc && git clone --depth 1 https://github.com/ambionics/phpggc.git /opt/phpggc' \
     && printf '#!/bin/sh\nexec php /opt/phpggc/phpggc "$@"\n' > /usr/local/bin/phpggc \
     && chmod +x /usr/local/bin/phpggc \
@@ -445,11 +503,12 @@ RUN retry-cmd 5 sh -c 'rm -rf /opt/docker-bench-security && git clone --depth 1 
 # ── kube-bench (CIS) — asset filename carries the version, so this uses the
 # same latest/pin helper as terrascan/ghidra above. ──
 ARG KUBE_BENCH_VERSION=""
-RUN set -eux; \
+RUN (set -eux; \
     KB_URL="$(python3 /usr/local/bin/gh-latest-asset.py aquasecurity/kube-bench '*_linux_amd64.tar.gz' "$KUBE_BENCH_VERSION")"; \
     wget -q --tries=5 --waitretry=5 --timeout=30 "$KB_URL" -O /tmp/kube-bench.tar.gz; \
     tar xzf /tmp/kube-bench.tar.gz -C /usr/local/bin kube-bench; \
-    rm /tmp/kube-bench.tar.gz
+    rm /tmp/kube-bench.tar.gz) \
+    || echo "WARN: kube-bench install failed (rate limit or network), skipping"
 
 # ── clairctl (Clair) ──
 RUN --mount=type=cache,target=/opt/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
@@ -486,10 +545,20 @@ RUN retry-cmd 5 sh -c 'rm -rf /opt/libc-database && git clone --depth 1 https://
 RUN ln -sf /usr/bin/python3 /usr/bin/python
 
 # ─── 6. Copy MCP servers ──────────────────────────────────────────────────────
-# The mcp-servers/ directory is mounted as a volume in docker-compose.
-# This step ensures the base Python environment can import mcp.
+# The mcp-servers/ directory is mounted as a volume in docker-compose. This
+# step ensures the base Python environment can import mcp — needed for real:
+# mcp_client.py's _start_in_docker() launches mcp-servers/<category>/server.py
+# INSIDE this container via `docker exec -i ... python3 server.py` and speaks
+# MCP JSON-RPC to it over stdio, so this isn't vestigial even though the
+# faster run_argv() bash-command path bypasses it for most tool calls.
+# Exact-pinned — this package previously drifted across 5 independent
+# constraints in this repo (backend/requirements.txt, mcp-servers/
+# requirements.txt, platform-mcp/requirements.txt, cli/pyproject.toml, and
+# this line — two had no ceiling at all and could silently pull a breaking
+# mcp 2.0 on a fresh build while the others stayed on 1.x). Bump ALL FIVE
+# together, never just one.
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip3 install --break-system-packages "mcp>=1.2.0"
+    pip3 install --break-system-packages "mcp==1.28.1"
 
 # ─── 6b. Make Go tools + PATH permanent for all shells / healthchecks ──────────
 # Symlink into /usr/local/bin so login shells (`bash -lc`) still find tools when

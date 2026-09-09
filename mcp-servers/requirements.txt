@@ -10,7 +10,14 @@
 # by pip — provide them via your OS package manager / Kali, or run the kali
 # profile. `/tools` (CLI) and platform_tools (MCP) show which are present.
 
-mcp>=1.2.0,<2
+# Exact-pinned, matching backend/requirements.txt (its pip-freeze lockfile —
+# the one version actually tested end-to-end) and platform-mcp/requirements.txt,
+# cli/pyproject.toml, kali-tools/Dockerfile. This package previously drifted
+# across 5 independent constraints (two capped <2, one exact, two with no
+# ceiling at all) — a fresh build of the unbounded ones could silently pull a
+# breaking mcp 2.0 while the others stayed on 1.x. Bump ALL FIVE together,
+# never just one.
+mcp==1.28.1
 
 # Custom-tool runtime deps (keyless — the "works on a laptop" set)
 requests>=2.28
@@ -20,8 +27,19 @@ beautifulsoup4>=4.12
 pyyaml>=6.0
 openpyxl>=3.1
 
-# Optional, heavier — only needed for the tools that use them:
-#   browser_scrape / browser_flow  -> playwright  (then: playwright install chromium)
-#   wappalyzer_scan / tech_stack    -> python-Wappalyzer
+# Optional, heavier — only needed for the tools that use them. `/tools` (CLI)
+# and platform_tools (MCP) check these via requires_python_module and will
+# tell you exactly which of these to uncomment/install, so leaving all of
+# this commented out is fine if you don't need that specific tool.
+#   browser_scrape / browser_flow        -> playwright  (then: playwright install chromium)
+#   wappalyzer_scan / tech_stack_analyze -> python-Wappalyzer
+#   pwntools_exploit                     -> pwntools
+#   angr_symbolic_execution              -> angr
+#   proxy_start (mcp-servers/_core/proxy_capture_addon.py, loaded by mitmdump
+#     itself as an addon, not imported by our own code — still needed on the
+#     host in native mode for `mitmdump` to run at all)              -> mitmproxy
 # playwright>=1.44
 # python-Wappalyzer>=0.3.1
+# pwntools>=4.11
+# angr>=9.2
+# mitmproxy>=10.0

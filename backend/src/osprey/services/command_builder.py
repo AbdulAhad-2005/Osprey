@@ -4,27 +4,18 @@ from __future__ import annotations
 
 import importlib.util
 import logging
-import re
-import shlex
 import sys
 from pathlib import Path
 from typing import Any
 
 from osprey.schemas.tools import ToolCategory, ToolDefinition
-from osprey.services.target_utils import (
-    looks_like_domain,
-    prefer_ip_for_tool,
-    registrable_apex,
-)
+from osprey.services.target_utils import prefer_ip_for_tool
 from osprey.services.tool_registry import get_tool_definition
 
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[4]
 _MCP_SERVERS = _PROJECT_ROOT / "mcp-servers"
-# In-Kali path (docker-exec'd, not the backend's own filesystem) — mcp-servers/
-# is bind-mounted to /home/mcpuser/mcp-servers inside osprey-kali (docker-compose.yml).
-_DOMAIN_HUNTER_CLI = "/home/mcpuser/mcp-servers/recon/tools/_domain_hunter_cli.py"
 
 _INTERNAL_PARAM_KEYS = frozenset({
     "use_recovery",
@@ -99,38 +90,6 @@ def merge_llm_params(
             merged[freeform_field] = f"{existing} {combined}".strip() if existing else combined
 
     return merged
-
-
-def _build_domain_hunter_command(params: dict[str, Any]) -> str:
-    """Build the domain-hunter invocation.
-
-    Runs ``python3 _domain_hunter_cli.py`` (self-locating module, no cwd) and
-    writes the CSV to /tmp so it never pollutes the mounted repo — findings
-    are collected from the stdout table/JSON by the parser.
-    """
-    raw = str(params.get("domain", "")).strip()
-    domain = registrable_apex(raw)
-    if not domain or not looks_like_domain(domain):
-        raise ValueError("domain_hunter requires a registrable seed domain")
-
-    parts = ["python3", shlex.quote(_DOMAIN_HUNTER_CLI), "--domain", shlex.quote(domain)]
-
-    modules = str(params.get("modules", "") or "").strip()
-    if modules:
-        parts += ["--modules", shlex.quote(modules)]
-
-    confidence_min = str(params.get("confidence_min", "") or "").strip().lower()
-    if confidence_min in ("low", "medium", "high"):
-        parts += ["--confidence-min", shlex.quote(confidence_min)]
-
-    safe = re.sub(r"[^A-Za-z0-9.]", "_", domain)
-    parts += ["--output", shlex.quote(f"/tmp/domain_hunter_{safe}.csv")]
-
-    extra = str(params.get("additional_args", "") or "").strip()
-    if extra:
-        parts.append(extra)
-
-    return " ".join(parts)
 
 
 def build_command_for_tool(

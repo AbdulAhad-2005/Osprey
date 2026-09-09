@@ -20,8 +20,10 @@ dependencies = [
     "litellm>=1.50,<2.0",
     # The mcp SDK's own FastMCP.tool() decorator is what platform-mcp/server.py
     # uses to register tools — cli/agent/tools.py imports that module directly
-    # and reads its tool schemas off the same registry.
-    "mcp>=1.28.0",
+    # and reads its tool schemas off the same registry. Exact-pinned — this
+    # package previously drifted across 5 independent constraints in this repo
+    # (see mcp-servers/requirements.txt's comment). Bump ALL FIVE together.
+    "mcp==1.28.1",
 ]
 
 [project.scripts]

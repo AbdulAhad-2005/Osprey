@@ -111,6 +111,7 @@ forwarded into the tools container automatically.
 | `intelx_scan` — email/subdomain harvest | `INTELX_API_KEY` | https://intelx.io/account?tab=developer |
 | `intelx_scan` — **leaked credentials** (Identity API) | `INTELX_IDENTITY_API_KEY` | IntelX Identity Portal licence |
 | `resecurity_scan` — leaked credentials | `RESECURITY_API_KEY` (+ optional `RESECURITY_API_BASE`/`RESECURITY_ENDPOINT`) | https://resecurity.com |
+| `domain_hunter`'s `ai_hunt` module — LLM-hypothesized sister domains | `dom_hunter_gemini_key` / `dom_hunter_anthropic_key` / `dom_hunter_openai_key` (lowercase — read directly by the tool, first one set wins) | whichever provider you already use |
 
 ## Dependencies (pip)
 
@@ -157,7 +158,7 @@ osprey run --target example.com "show me the current attack surface"
 | ----------------------------- | ------------------------------------------------- |
 | `/help`                       | Show available commands                           |
 | `/health`                     | Check backend service health                      |
-| `/tools`                      | List tools — **installed vs missing in your env** |
+| `/tools [--all]`              | Missing tools + install hints (default), or every tool with `--all` |
 | `/models`                     | List configured LLM models                        |
 | `/model`                      | Show active model + key status                    |
 | `/scan <target> [phase]`      | Bind engagement + scan (`recon`/`network`/`full`) |
@@ -192,7 +193,7 @@ engagement (`GET /api/v1/agent/conversation/{engagement_id}`), so the CLI and da
 Tool availability is environment-aware: the backend probes each binary in whatever
 execution mode is active (Kali container or host). Surface it with:
 
-- **CLI:** `/tools` — a table of every tool with `installed` / `missing`.
+- **CLI:** `/tools` — missing tools + how to install each; `/tools --all` for every tool.
 - **MCP / harness:** the `platform_tools` tool, or `GET /api/v1/tools/catalog`
   (returns per-tool `installed` plus a summary count).
 

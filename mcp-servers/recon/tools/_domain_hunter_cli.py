@@ -126,6 +126,12 @@ _SITE_LINK_NOISE_ROOTS = frozenset(
         "akamai.com",
         "fastly.com",
         "azure.com",
+        # Reference/knowledge sites — a predictable self-link false-positive
+        # from web_search's own Wikipedia-scraping technique (the seed org's
+        # Wikipedia page inevitably links wikipedia.org itself), never a real
+        # sister domain.
+        "wikipedia.org",
+        "wikimedia.org",
     }
 )
 
@@ -1448,17 +1454,45 @@ def _web_search_sister_domains(
     seed_root: str,
     *,
     timeout: int = 10,
-) -> list[str]:
+) -> tuple[list[str], dict[str, list[str]]]:
     """Web search for domains associated with the seed.
 
-    Raw search — returns every domain found. No filtering here; the LLM
-    module or the caller decides what's a real sister vs noise.
+    Returns (domains, context) — context maps each domain to up to 3 short
+    strings explaining WHERE it was found (which query, which Wikipedia
+    section) so the caller (and ultimately the LLM triaging candidates) can
+    see WHY a domain was proposed, not just that it was. No relevance
+    filtering beyond DNS resolution — the LLM module or the caller decides
+    what's a real sister vs noise.
+
+    Search backend: DuckDuckGo's no-JS HTML endpoint (mcp-servers/recon/
+    tools/_web_search_cli.py — the same free, no-API-key search used by
+    web_search). Previously this scraped google.com/search and bing.com/
+    search directly, which both aggressively block non-browser traffic
+    (CAPTCHA/blocked responses) — that returned empty results silently far
+    more often than it returned anything, exactly the kind of "looks
+    complete, does nothing" gap this whole module exists to avoid creating
+    for the LLM triaging its output.
     """
     from bs4 import BeautifulSoup  # type: ignore
+
+    _TOOLS_DIR = Path(__file__).resolve().parent
+    if str(_TOOLS_DIR) not in sys.path:
+        sys.path.insert(0, str(_TOOLS_DIR))
+    from _web_search_cli import search as _ddg_search
 
     brand = seed_root.split(".")[0]
     seed_tld = seed_root.rsplit(".", 1)[-1]
     found: list[str] = []
+    contexts: dict[str, list[str]] = {}
+
+    def _record(rd: str, context: str) -> None:
+        if not rd or rd == seed_root:
+            return
+        if rd not in found:
+            found.append(rd)
+        ctx_list = contexts.setdefault(rd, [])
+        if context not in ctx_list and len(ctx_list) < 3:
+            ctx_list.append(context)
 
     # --- Source 1: Wikipedia page ---
     try:
@@ -1471,55 +1505,44 @@ def _web_search_sister_domains(
                 text = content.get_text(" ", strip=True)
                 for match in _DOMAIN_RE.finditer(text):
                     rd = root_domain(match.group(1).lower())
-                    if rd and rd != seed_root and rd not in found:
-                        found.append(rd)
+                    _record(rd, "found on the seed org's Wikipedia page")
                 for match in re.finditer(r'https?://([a-z0-9.-]+\.[a-z]{2,})', text):
                     rd = root_domain(match.group(1).lower())
-                    if rd and rd != seed_root and rd not in found:
-                        found.append(rd)
+                    _record(rd, "linked from the seed org's Wikipedia page")
                 # "Geo Super" -> geosuper.tv
                 for match in re.finditer(rf'{re.escape(brand)}\s+(\w{{2,}})', text, re.IGNORECASE):
                     suffix = match.group(1).strip().lower()
                     if suffix not in {'news', 'tv', 'television', 'network', 'group', 'entertainment', 'films'}:
                         candidate = f"{brand.lower()}{suffix}.{seed_tld}"
-                        if candidate not in found:
-                            found.append(candidate)
+                        _record(candidate, f"brand-name pattern match on Wikipedia ('{brand} {suffix}')")
     except Exception as exc:
         logger.info("Wikipedia fetch failed for %s: %s", seed_root, exc)
 
-    # --- Source 2: Google/Bing ---
+    # --- Source 2: DuckDuckGo (free, no API key, no-JS HTML endpoint —
+    # reliable where scraping Google/Bing directly is not) ---
     for query in [
-        f"what are the associated and sister domains of {seed_root}",
-        f"{brand} sister domains affiliated websites",
+        f"{seed_root} sister domains affiliated websites",
+        f"{brand} official website domains network",
+        f'"{brand}" site:wikipedia.org',
     ]:
-        for engine_url in [
-            f"https://www.google.com/search?q={quote_plus(query)}&num=20",
-            f"https://www.bing.com/search?q={quote_plus(query)}&count=20",
-        ]:
-            try:
-                resp = session.get(engine_url, timeout=timeout, headers={
-                    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                })
-                if not resp.ok:
-                    continue
-                soup = BeautifulSoup(resp.text, "html.parser")
-                for link in soup.find_all("a", href=True):
-                    href = link["href"]
-                    if "://" in href:
-                        host = urlparse(href).hostname
-                        if host:
-                            rd = root_domain(host.lower())
-                            if rd and rd != seed_root and rd not in found:
-                                found.append(rd)
-                for match in _DOMAIN_RE.finditer(soup.get_text(" ", strip=True)):
-                    rd = root_domain(match.group(1).lower())
-                    if rd and rd != seed_root and rd not in found:
-                        found.append(rd)
-            except Exception:
-                continue
+        try:
+            result = _ddg_search(query, limit=10)
+        except Exception as exc:
+            logger.info("web_search query failed (%r): %s", query, exc)
+            continue
+        for row in result.get("results", []):
+            url = row.get("url", "")
+            host = urlparse(url).hostname if url else None
+            snippet_text = f"{row.get('title', '')} {row.get('snippet', '')}"
+            context = f"web search {query!r}: {row.get('title', '')[:80]}"
+            if host:
+                _record(root_domain(host.lower()), context)
+            for match in _DOMAIN_RE.finditer(snippet_text):
+                _record(root_domain(match.group(1).lower()), context)
 
-    # DNS-verify
-    return [rd for rd in found if _domain_resolves(rd)]
+    # DNS-verify, keep the context evidence attached for the caller.
+    verified = [rd for rd in found if _domain_resolves(rd)]
+    return verified, {rd: contexts.get(rd, []) for rd in verified}
 
 
 _AI_HUNT_PROMPT = """You are assisting an OSINT domain-discovery tool. Given a seed \
@@ -1903,12 +1926,14 @@ class DomainHunter:
             return
         # Tracker/social/platform apexes only get suppressed as weak third-party
         # evidence: SITE-SCRAPE (links/robots/sitemap — a homepage linking to
-        # facebook.com or cdnjs.com means nothing) and DNS host records (an NS
+        # facebook.com or cdnjs.com means nothing), DNS host records (an NS
         # or MX host at a provider apex like cloudflare.com means the seed USES
-        # that provider — the provider apex is never the sister's own name).
-        # Certs/ASN evidence still counts, so a platform apex with real
-        # signals is not masked.
-        if method in ("site_scrape", "dns") and root_domain(domain) in _SITE_LINK_NOISE_ROOTS:
+        # that provider — the provider apex is never the sister's own name),
+        # and WEB_SEARCH (a result mentioning youtube.com/github.com/facebook.com
+        # alongside the seed is exactly as meaningless as finding the same link
+        # on the seed's own homepage). Certs/ASN evidence still counts, so a
+        # platform apex with real signals is not masked.
+        if method in ("site_scrape", "dns", "web_search") and root_domain(domain) in _SITE_LINK_NOISE_ROOTS:
             return
         candidate = self.candidates.get(domain)
         if candidate is None:
@@ -2267,18 +2292,23 @@ class DomainHunter:
     def _collect_web_search_signals(self) -> None:
         """Web search for associated/sister/parent domains of the target.
 
-        Searches Wikipedia + Google/Bing, extracts domain names from results.
-        Each is DNS-verified before recording.
+        Searches Wikipedia + DuckDuckGo (free, no API key), extracts domain
+        names from results and their surrounding text. Each is DNS-verified
+        before recording, and tagged with WHY it was proposed (which query
+        or Wikipedia section it came from) so the LLM triaging candidates
+        afterward has real evidence to weigh, not just a bare domain name.
         """
-        domains = _web_search_sister_domains(self.session, self.seed_root)
+        domains, context = _web_search_sister_domains(self.session, self.seed_root)
         for rd in domains:
-            if rd != self.seed_root:
-                self._add_candidate(
-                    rd,
-                    method="web_search",
-                    points=25,
-                    evidence=f"web search: sister/associated domain of {self.seed_root}",
-                )
+            if rd == self.seed_root:
+                continue
+            reasons = context.get(rd) or [f"web search: associated with {self.seed_root}"]
+            self._add_candidate(
+                rd,
+                method="web_search",
+                points=25,
+                evidence="; ".join(reasons),
+            )
 
     def _collect_favicon_signals(self) -> None:
         """Favicon MD5 fingerprinting for cross-site correlation.

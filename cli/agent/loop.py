@@ -161,6 +161,13 @@ class Runner:
                     yield Event("thinking", {"content": inline_text})
 
                 sem = asyncio.Semaphore(_MAX_CONCURRENT_TOOLS)
+                # Sub-events a spawned worker produces (its own tool calls,
+                # reasoning) are pushed here as they happen and drained into
+                # this generator's own output below — the fix for
+                # spawn_subagents being a single opaque tool_start/tool_end
+                # pair that blocks for minutes with zero visibility into what
+                # its workers are actually doing. See _spawn_subagents.
+                event_queue: asyncio.Queue[Event] = asyncio.Queue()
 
                 async def _run_one(tc: dict[str, Any]) -> tuple[str, str, float]:
                     name = tc["function"]["name"]
@@ -170,7 +177,7 @@ class Runner:
                         args = {}
                     started = time.monotonic()
                     async with sem:
-                        result = await self._dispatch_tool(name, args)
+                        result = await self._dispatch_tool(name, args, event_queue=event_queue)
                     return name, result, time.monotonic() - started
 
                 for tc in tool_calls:
@@ -179,7 +186,25 @@ class Runner:
                         {"tool_name": tc["function"]["name"], "arguments": tc["function"].get("arguments", "{}")},
                     )
 
-                results = await asyncio.gather(*(_run_one(tc) for tc in tool_calls))
+                gather_task: asyncio.Task[list[tuple[str, str, float]]] = asyncio.ensure_future(
+                    asyncio.gather(*(_run_one(tc) for tc in tool_calls))
+                )
+                get_task: asyncio.Task[Event] = asyncio.ensure_future(event_queue.get())
+                pending = {gather_task, get_task}
+                while True:
+                    done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                    if get_task in done:
+                        yield get_task.result()
+                        get_task = asyncio.ensure_future(event_queue.get())
+                        pending.add(get_task)
+                    if gather_task in done:
+                        get_task.cancel()
+                        results = gather_task.result()
+                        break
+                # A sub-event can land in the queue in the instant between the
+                # gather finishing and the cancel above taking effect.
+                while not event_queue.empty():
+                    yield event_queue.get_nowait()
 
                 for tc, (name, result, elapsed) in zip(tool_calls, results):
                     yield Event(
@@ -202,16 +227,28 @@ class Runner:
             yield Event("cancelled", {"findings": findings_readback})
             raise
 
-    async def _dispatch_tool(self, name: str, args: dict[str, Any]) -> str:
+    async def _dispatch_tool(
+        self, name: str, args: dict[str, Any], *, event_queue: "asyncio.Queue[Event] | None" = None
+    ) -> str:
         if name == _SPAWN_TOOL_NAME:
-            return await self._spawn_subagents(args.get("tasks") or [])
+            return await self._spawn_subagents(args.get("tasks") or [], event_queue=event_queue)
         return await platform_tools.call_tool(name, args)
 
-    async def _spawn_subagents(self, tasks: list[dict[str, Any]]) -> str:
+    async def _spawn_subagents(
+        self, tasks: list[dict[str, Any]], *, event_queue: "asyncio.Queue[Event] | None" = None
+    ) -> str:
         """Real concurrent subagent execution, in-process, using this same
         CLI's own model — no backend LLM key, no second brain. Depth is
         capped at 1: a spawned worker doesn't get the spawn tool itself, so
-        this can't recurse into a fork bomb."""
+        this can't recurse into a fork bomb.
+
+        Each worker's own thinking/tool_start/tool_end/error events are
+        pushed onto ``event_queue`` (tagged "[Worker N]") as they happen, so
+        the operator sees live progress instead of the whole call sitting
+        silent for however long the slowest worker takes — previously this
+        only ever surfaced the worker's final "done" text, discarding every
+        intermediate event, which made a multi-minute spawn look hung.
+        """
         tasks = tasks[:_MAX_CONCURRENT_TOOLS]
         if len(tasks) < 2:
             return (
@@ -221,7 +258,7 @@ class Runner:
 
         engagement_id = platform_tools.current_engagement_id()
 
-        async def _one(task: dict[str, Any]) -> str:
+        async def _one(worker_num: int, task: dict[str, Any]) -> str:
             worker = Runner(config=self.config, api_base_url=self._api_base_url, allow_spawn=False)
             scope = task.get("scope", "")
             brief = task.get("task", "")
@@ -230,8 +267,25 @@ class Runner:
             async for event in worker.run(prompt):
                 if event.type == "done":
                     final = event.data.get("content", "")
+                elif event_queue is not None and event.type in ("thinking", "tool_start", "tool_end", "error"):
+                    await event_queue.put(_tag_worker_event(worker_num, event))
             return final
 
-        summaries = await asyncio.gather(*(_one(t) for t in tasks))
+        summaries = await asyncio.gather(*(_one(i + 1, t) for i, t in enumerate(tasks)))
         parts = [f"Worker {i + 1} ({t.get('scope') or t.get('task', '')[:40]}):\n{s}" for i, (t, s) in enumerate(zip(tasks, summaries))]
         return "\n\n---\n\n".join(parts)
+
+
+def _tag_worker_event(worker_num: int, event: Event) -> Event:
+    """Copy a spawned worker's event with its origin marked, so the render
+    layer (and the operator) can tell "Worker 2 is running nmap" apart from
+    the parent loop's own tool calls without changing what either renderer
+    already keys off of (tool_name / content)."""
+    data = dict(event.data)
+    if "tool_name" in data:
+        data["tool_name"] = f"[Worker {worker_num}] {data['tool_name']}"
+    if "content" in data:
+        data["content"] = f"[Worker {worker_num}] {data['content']}"
+    if "message" in data:
+        data["message"] = f"[Worker {worker_num}] {data['message']}"
+    return Event(event.type, data)

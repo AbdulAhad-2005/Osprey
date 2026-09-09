@@ -112,7 +112,7 @@ def _replay_request(context, step: dict, timeout_ms: int) -> dict:
         return {"url": url, "method": method, "error": str(exc)[:240]}
 
 
-def _run(start_url: str, steps: list, *, timeout_ms: int, screenshot_dir: str) -> dict:
+def _run(start_url: str, steps: list, *, timeout_ms: int, screenshot_dir: str, proxy_port: int = 0) -> dict:
     from playwright.sync_api import sync_playwright
 
     out: dict = {
@@ -124,10 +124,17 @@ def _run(start_url: str, steps: list, *, timeout_ms: int, screenshot_dir: str) -
     captured: list[dict] = []
     extra_headers: dict[str, str] = {}
 
+    launch_kwargs: dict = {
+        "headless": True,
+        "args": ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+    }
+    if proxy_port:
+        launch_kwargs["proxy"] = {"server": f"http://127.0.0.1:{proxy_port}"}
+
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True, args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
-        )
+        browser = p.chromium.launch(**launch_kwargs)
+        # Already set regardless of proxy_port: needed for real self-signed certs too,
+        # and lets mitmdump's generated cert through without a CA install step.
         context = browser.new_context(ignore_https_errors=True)
         page = context.new_page()
         page.set_default_timeout(timeout_ms)
@@ -273,6 +280,8 @@ def main() -> int:
     ap.add_argument("--steps", required=True, help="JSON list of step objects")
     ap.add_argument("--timeout-ms", type=int, default=30000)
     ap.add_argument("--screenshot-dir", default="")
+    ap.add_argument("--proxy-port", type=int, default=0,
+                     help="Route this session through a proxy_start capture instance")
     args = ap.parse_args()
     try:
         steps = json.loads(args.steps)
@@ -282,7 +291,10 @@ def main() -> int:
         print(json.dumps({"errors": [f"bad --steps: {exc}"], "steps": []}))
         return 0
     try:
-        out = _run(args.url, steps, timeout_ms=args.timeout_ms, screenshot_dir=args.screenshot_dir)
+        out = _run(
+            args.url, steps, timeout_ms=args.timeout_ms, screenshot_dir=args.screenshot_dir,
+            proxy_port=args.proxy_port,
+        )
     except Exception as exc:  # noqa: BLE001
         out = {"errors": [f"fatal: {exc}"], "steps": []}
     print(json.dumps(out))

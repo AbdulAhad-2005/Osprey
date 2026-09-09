@@ -94,6 +94,17 @@ class ToolDefinition(BaseModel):
             "OS detection (-O), full-range high-rate scans, masscan, arp-scan, responder."
         ),
     )
+    requires_python_module: str | None = Field(
+        default=None,
+        description=(
+            "For executable='python3' tools whose real dependency is a Python "
+            "package (playwright, Wappalyzer, pwn, angr, ...) rather than a "
+            "separate binary — python3 itself is essentially always present, so "
+            "checking only the executable would report these as 'installed' even "
+            "with the actual package missing. Set this to the importable module "
+            "name and availability checking verifies the import too."
+        ),
+    )
 
 
 class ToolAvailability(ToolDefinition):

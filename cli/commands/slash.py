@@ -36,7 +36,10 @@ def handle_help(args: list[str], client: "APIClient") -> None:
     commands = {
         "/help": "Show this help message",
         "/health": "Check backend service health",
-        "/tools": "List tools (installed vs missing in your Kali/host)",
+        "/tools [--all]": (
+            "Show missing tools + how to install each (default), or every "
+            "registered tool with --all"
+        ),
         "/models": "List supported LLM models",
         "/model": "Show active LLM model + key status",
         "/scan [target] [phase] [--mcp|--engine] [--include-low-confidence]": (
@@ -93,8 +96,9 @@ def handle_health(args: list[str], client: "APIClient") -> None:
 
 
 def handle_tools(args: list[str], client: "APIClient") -> None:
+    show_all = any(a in ("--all", "all") for a in args)
     tools = client.list_tools()
-    print_tools(tools)
+    print_tools(tools, show_all=show_all)
 
 
 def handle_models(args: list[str], client: "APIClient") -> None:

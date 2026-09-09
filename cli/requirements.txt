@@ -2,3 +2,17 @@ prompt_toolkit>=3.0,<4.0
 httpx>=0.27,<1.0
 rich>=13.0,<14.0
 python-dotenv>=1.0,<2.0
+
+# Keep in sync with cli/pyproject.toml's [project.dependencies] — that file
+# is the source of truth (`pip install -e ./cli` uses it); this file is the
+# alternate documented install path (`pip install -r cli/requirements.txt`),
+# and previously drifted (missing litellm/mcp entirely, which cli/agent/
+# actually imports), so a user following THIS path instead got a CLI that
+# crashed the moment it tried to drive the agent loop.
+litellm>=1.50,<2.0
+# Exact-pinned — see mcp-servers/requirements.txt's comment: this package
+# previously drifted across 5 independent constraints in this repo. Bump
+# this file, cli/pyproject.toml, mcp-servers/requirements.txt,
+# platform-mcp/requirements.txt, backend/requirements.txt, and
+# kali-tools/Dockerfile together, never just one.
+mcp==1.28.1

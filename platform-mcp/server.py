@@ -25,6 +25,8 @@ from typed_osint import register_typed_osint_tools
 from typed_recon_content import register_typed_recon_content_tools
 from typed_vuln import register_typed_vuln_tools
 from typed_browser import register_typed_browser_tools
+from typed_proxy import register_typed_proxy_tools
+from typed_web_search import register_typed_web_search_tools
 from typed_exploit import register_typed_exploit_tools
 
 API_BASE = os.environ.get("PENTEST_API_BASE", "http://localhost:9000").rstrip("/")
@@ -2915,6 +2917,12 @@ _log(f"registered {_TYPED_VULN_COUNT} typed vulnerability-analysis tools")
 
 _TYPED_BROWSER_COUNT = register_typed_browser_tools(mcp, execute=_typed_execute)
 _log(f"registered {_TYPED_BROWSER_COUNT} typed browser-automation tools")
+
+_TYPED_PROXY_COUNT = register_typed_proxy_tools(mcp, execute=_typed_execute)
+_log(f"registered {_TYPED_PROXY_COUNT} typed traffic-capture tools")
+
+_TYPED_WEB_SEARCH_COUNT = register_typed_web_search_tools(mcp, execute=_typed_execute)
+_log(f"registered {_TYPED_WEB_SEARCH_COUNT} typed web-search tools")
 
 _TYPED_EXPLOIT_COUNT = register_typed_exploit_tools(mcp, execute=_typed_execute)
 _log(f"registered {_TYPED_EXPLOIT_COUNT} typed exploitation/creds/cloud-exploit tools")
