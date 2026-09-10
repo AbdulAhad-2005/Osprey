@@ -106,6 +106,60 @@ class Runner:
             schemas.append(_SPAWN_TOOL_SCHEMA)
         return schemas
 
+    def _trim_history_for_budget(self, tool_schemas: list[dict[str, Any]]) -> None:
+        """No-op unless tool_schema_budget_tokens is set (same opt-in rule as
+        get_tool_schemas — unconstrained providers see zero behavior change).
+
+        Drops the OLDEST whole turns (a "turn" = one user message plus
+        everything up to the next user message — the assistant's reasoning,
+        its tool_calls, and every matching tool-result message) until the
+        estimated total fits what's left of the budget after the tool
+        schema list. Never splits a turn: dropping a "tool" message while
+        keeping the "assistant" message whose tool_calls it answers (or vice
+        versa) produces an invalid request on every OpenAI-compatible API —
+        this is the actual reason a message-count-based cap ("keep the last
+        N messages") isn't safe here. The most recent turn is always kept in
+        full regardless of size — it's what's driving the exchange in
+        progress; nothing to send if that one alone doesn't fit anyway.
+        """
+        budget = self.config.tool_schema_budget_tokens
+        if budget <= 0:
+            return
+
+        budget_chars = budget * 4
+        schema_chars = sum(len(str(s)) for s in tool_schemas)
+        available = budget_chars - schema_chars
+        if available <= 0:
+            return  # schema alone already over budget; a history trim can't help
+
+        system_msgs = [m for m in self.messages if m.get("role") == "system"]
+        rest = [m for m in self.messages if m.get("role") != "system"]
+
+        turns: list[list[dict[str, Any]]] = []
+        current: list[dict[str, Any]] = []
+        for msg in rest:
+            if msg.get("role") == "user" and current:
+                turns.append(current)
+                current = []
+            current.append(msg)
+        if current:
+            turns.append(current)
+
+        def _turn_chars(turn: list[dict[str, Any]]) -> int:
+            return sum(len(str(m)) for m in turn)
+
+        total = sum(len(str(m)) for m in system_msgs)
+        kept: list[list[dict[str, Any]]] = []
+        for turn in reversed(turns):
+            size = _turn_chars(turn)
+            if kept and total + size > available:
+                break
+            kept.append(turn)
+            total += size
+        kept.reverse()
+
+        self.messages = system_msgs + [m for turn in kept for m in turn]
+
     async def run(self, prompt: str, *, system_prompt: str = "") -> AsyncIterator[Event]:
         """The loop. Yields events for the caller to render. Safe to wrap in
         an `asyncio.Task` and `.cancel()` — on cancellation this reads back
@@ -121,6 +175,14 @@ class Runner:
 
         try:
             for _turn in range(_MAX_TURNS):
+                # Tool results appended by the PREVIOUS iteration (or a long
+                # prior conversation) are the other thing, besides the tool
+                # schema list, competing for a token-budgeted provider's
+                # per-minute cap — and unlike the schema list, history grows
+                # every turn. Re-check before every call, not just once at
+                # the top of run(): a session that fit fine on turn 1 can
+                # still run over by turn 3 as tool results accumulate.
+                self._trim_history_for_budget(tool_schemas)
                 # Signals the start of the one genuinely silent gap in this
                 # loop — everything else (tool calls, worker sub-events) has
                 # its own start/end events already; the model call itself
@@ -217,6 +279,17 @@ class Runner:
                 while not event_queue.empty():
                     yield event_queue.get_nowait()
 
+                # Tool results accumulate in self.messages for the rest of the
+                # session (every later turn resends the full history) — on an
+                # unconstrained provider 12000 chars/result is fine. On a
+                # token-per-minute-budgeted one, this is the OTHER thing (besides
+                # the tool schema list) competing for the same per-minute cap,
+                # and it grows every turn while the schema list doesn't — a
+                # session that started fine can still run into the ceiling a
+                # few tool calls later. Shrink the cap when that budget is set;
+                # leave it alone otherwise (matches get_tool_schemas' own
+                # opt-in-only rule — unset means zero behavior change).
+                result_cap = 3000 if self.config.tool_schema_budget_tokens > 0 else 12000
                 for tc, (name, result, elapsed) in zip(tool_calls, results):
                     yield Event(
                         "tool_end",
@@ -226,7 +299,7 @@ class Runner:
                         {
                             "role": "tool",
                             "tool_call_id": tc["id"],
-                            "content": result[:12000],
+                            "content": result[:result_cap],
                         }
                     )
 

@@ -29,7 +29,7 @@ from osprey.schemas.finding import (
     FindingType,
     clamp_claim_severity,
 )
-from osprey.services.llm_service import LLMServiceError, get_llm_service
+from osprey.services.llm_service import LLMServiceError, get_llm_service, llm_configured
 
 logger = logging.getLogger(__name__)
 
@@ -84,9 +84,20 @@ async def structure_unparsed_output(
 ) -> list[Finding]:
     """Best-effort: turn raw stdout into structured Findings via the platform
     LLM. Returns [] (never raises) on any failure so callers always have the
-    raw-observation fallback to lean on."""
+    raw-observation fallback to lean on.
+
+    Checked up front, not just left to fail into the except below: an
+    MCP-driven session (OpenCode, Claude Desktop, any external harness) has
+    its OWN calling LLM already doing this exact job — the CLI's own system
+    prompt spells it out explicitly ("you are the fallback, not a second
+    hidden model") — so the backend's copy of LLM_MODEL is frequently just
+    never configured for these setups, on purpose. Calling complete()
+    anyway used to mean a full max_retries+1 round of real network attempts
+    against an unusable config on every single unparsed tool output, purely
+    to land on the exact same [] this check returns immediately.
+    """
     text = (stdout or "").strip()
-    if not text:
+    if not text or not llm_configured():
         return []
 
     truncated = text[:_MAX_INPUT_CHARS]

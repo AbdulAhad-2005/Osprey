@@ -141,10 +141,19 @@ def get_tool_schemas(*, budget_tokens: int = 0) -> list[dict[str, Any]]:
     if budget_tokens <= 0:
         return [_schema_for(tool) for tool in all_tools]
 
-    # 10% margin: the schema list isn't the only thing counted against a
-    # per-minute token budget — the conversation history and the model's own
-    # response share it too.
-    remaining_chars = int(budget_tokens * _CHARS_PER_TOKEN_ESTIMATE * 0.9)
+    # The schema list is only ONE of three things sharing this per-minute
+    # budget — the system prompt (platform_context's own output can be
+    # substantial on its own) and the conversation history (which
+    # Runner._trim_history_for_budget bounds against whatever's left after
+    # THIS reservation) take the rest. Giving schemas the full 90% — as an
+    # earlier version of this did — left so little headroom that real
+    # multi-turn sessions ran over budget within 2-3 exchanges even with a
+    # trimmed schema list: the schema was no longer the problem, but it was
+    # still eating the room the other two needed. Half-and-half is a much
+    # safer split; the bootstrap set (always included, see below) is what
+    # actually matters for capability, not how many "extra" tools fit on
+    # top of it.
+    remaining_chars = int(budget_tokens * _CHARS_PER_TOKEN_ESTIMATE * 0.5)
 
     bootstrap = [t for t in all_tools if t.name in _BOOTSTRAP_TOOL_NAMES]
     rest = [t for t in all_tools if t.name not in _BOOTSTRAP_TOOL_NAMES]

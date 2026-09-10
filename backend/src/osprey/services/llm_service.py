@@ -156,8 +156,24 @@ def _is_model_configured(settings: LLMSettings) -> bool:
     """Return True when the configured model can actually be called:
     key present AND the provider's runtime dependencies are importable.
     Key presence alone is not usability — an unrunnable provider must fail
-    once, up front, before a job slot is wasted."""
+    once, up front, before a job slot is wasted.
+
+    An empty settings.model (never set) or one _provider_of can't resolve to
+    any known provider — the literal, un-substituted ".env.example"
+    placeholder "<llm-model-name>" being the exact real-world case this
+    covers — must fail this check too: _missing_runtime_deps("") looks up
+    an empty tuple (nothing to import, trivially "satisfied"), which used to
+    make an unparseable model string register as "configured" as long as
+    *any* non-empty api_key string was also present — including that same
+    file's own "<llm-api-key>" placeholder. That silently passed this gate
+    only to fail opaquely, and expensively (a full retry loop against a
+    provider litellm can't even identify), on the first real complete() call.
+    """
+    if not (settings.model or "").strip():
+        return False
     provider = _provider_of(settings.model)
+    if not provider:
+        return False
     if provider == "ollama":
         # Local Ollama uses api_base; api_key is optional (dummy value is fine).
         return bool(settings.api_base or settings.api_key)
