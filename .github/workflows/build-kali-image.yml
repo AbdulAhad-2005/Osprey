@@ -51,9 +51,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # A cold build with no registry cache hit genuinely needs the full hour+;
-    # give real headroom above the ~40-60 min this takes locally so a slow
-    # mirror or cold Go-module cache doesn't get killed right before finishing.
+    # A cold build with no registry cache hit genuinely needs the full hour+.
     timeout-minutes: 180
     env:
       # Only push+login when we actually can (never on a pull_request — GitHub
@@ -126,7 +124,7 @@ jobs:
         # every build — PR validation and publish alike.
         run: |
           IMAGE="${{ steps.tags.outputs.smoke_image }}"
-          docker run --rm "$IMAGE" bash -lc '
+          docker run --rm "$IMAGE" bash -c '
             set -e
             missing=0
             for t in nmap subfinder httpx naabu nuclei dnsx tlsx katana amass \

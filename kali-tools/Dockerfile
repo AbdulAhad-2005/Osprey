@@ -134,7 +134,8 @@ RUN sed -i 's/\r$//' /usr/local/bin/gh-latest-asset.py && chmod +x /usr/local/bi
 
 # Created early so downstream stages can COPY --chown=mcpuser:mcpuser
 # straight into place instead of a slow `chown -R` at the end of the build.
-RUN useradd -m -s /bin/bash mcpuser
+RUN useradd -m -s /bin/bash mcpuser \
+    && rm -f /home/mcpuser/.bash_logout /etc/skel/.bash_logout
 
 # Base utilities. java/ruby/php are runtime deps of Ghidra, ysoserial, and
 # one_gadget/phpggc respectively, not just build tools.
@@ -591,7 +592,9 @@ RUN set -eu; \
     done; \
     for t in x8 prowler pacu hashpump ysoserial ghidra analyzeHeadless terrascan kube-bench interactsh-client clairctl; do \
         command -v "$t" >/dev/null && echo "OK (optional) $t" || echo "WARN: optional tool missing: $t"; \
-    done
+# Prevent Debian/Kali default .bash_logout (clear_console -q) from clobbering exit codes
+# in non-interactive/headless login shells (e.g. CI/CD or docker run without a TTY).
+RUN rm -f /home/mcpuser/.bash_logout /root/.bash_logout /etc/skel/.bash_logout
 
 USER mcpuser
 WORKDIR /home/mcpuser
