@@ -592,6 +592,8 @@ RUN set -eu; \
     done; \
     for t in x8 prowler pacu hashpump ysoserial ghidra analyzeHeadless terrascan kube-bench interactsh-client clairctl; do \
         command -v "$t" >/dev/null && echo "OK (optional) $t" || echo "WARN: optional tool missing: $t"; \
+    done
+
 # Prevent Debian/Kali default .bash_logout (clear_console -q) from clobbering exit codes
 # in non-interactive/headless login shells (e.g. CI/CD or docker run without a TTY).
 RUN rm -f /home/mcpuser/.bash_logout /root/.bash_logout /etc/skel/.bash_logout
