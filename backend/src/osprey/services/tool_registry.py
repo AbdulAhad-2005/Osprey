@@ -505,7 +505,7 @@ WEB_TOOLS: list[ToolDefinition] = [
        "curl/sqlmap through it with -x http://127.0.0.1:<port> -k.",
        ["proxy", "capture", "mitmproxy", "traffic"],
        {"engagement_id": _p("", "This engagement's id (required)"), **_COMMON_PARAMS},
-       install_hint="pip install mitmproxy"),
+       install_hint="pipx install mitmproxy"),
     _t("proxy_stop", ToolCategory.WEBAPP, "python3", ToolSafetyLevel.PASSIVE,
        "Stop full-session traffic capture for an engagement and free its port. Run at "
        "engagement end to avoid a leaked mitmdump holding its port.",

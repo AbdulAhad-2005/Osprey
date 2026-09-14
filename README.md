@@ -17,8 +17,19 @@ your own tools, or run entirely without Docker.
 
 ## Setup — pick the path that fits you
 
-Quick guide:
-- **Want it to just work, don't mind a one-time heavy build?** → **Path A** (full Docker + Kali, all tools included — preferable).
+**Fastest way to start: the guided wizard.** It asks the same questions as the
+manual paths below, writes `.env` for you, and — for the fully-local path — detects
+and offers to install missing tools. Nothing it does is hidden magic; every command
+it runs is also spelled out in the manual sections below.
+
+```bash
+bash scripts/install.sh                                  # Linux / macOS / WSL / Kali
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1   # Windows
+```
+
+Prefer to do it by hand, or just want to know what's happening under the hood? Quick guide:
+- **Want it to just work, no local tools needed?** → **Path A** (full Docker + Kali,
+  all tools included — pulls a prebuilt image).
 - **Have your own tools *container*?** → **Path B** (lean Docker, point `KALI_CONTAINER` at it).
 - **Want to use tools already on your machine, or no Docker at all?** → **Path C** (fully local). This is the right choice for host tools — a containerized backend (Path B) cannot reach them.
 
@@ -32,15 +43,33 @@ cp .env.example .env
 
 ### Path A — Full Docker stack (easiest; no local tools needed)
 
-Builds Postgres, a Kali container with 90+ tools, and the backend. The heavy Kali
-image is behind the `kali` compose profile, so you opt into the long build explicitly:
+Builds Postgres, a Kali container with 90+ tools, and the backend.
 
 ```bash
-docker compose --profile kali up --build
+docker compose --profile kali up -d
 ```
-> takes time to build kali image ~40-50 min and additional disk space ~16GB
+
+This **pulls the prebuilt `ospreytools/osprey-kali` image from Docker Hub** instead
+of building it. Without it the backend
+runs tools natively or against your own `KALI_CONTAINER` (see Path B/C).
 > No WSL / VirtualBox needed on Windows — the tools run inside the container,
 > reached over the Docker socket. Postgres is on host port 5433, backend on 9000.
+> First pull is a few GB over the network — much less than a from-source build, but
+> still worth doing on a good connection.
+
+**Want to build the image yourself instead** (you modified `kali-tools/Dockerfile`,
+need a platform the prebuilt image doesn't cover, or don't want to trust a
+third-party image)? Add the build override — this takes the original ~40-60 min /
+~16GB disk:
+
+```bash
+docker compose --profile kali -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
+
+Pin or redirect the pulled image with `OSPREY_KALI_IMAGE` in `.env` (e.g. to a
+specific tag/sha, or your own mirror) — see [`.env.example`](.env.example). The
+image is rebuilt and republished automatically on every change to `kali-tools/`
+(see [`.github/workflows/build-kali-image.yml`](.github/workflows/build-kali-image.yml)).
 
 ### Path B — Lean Docker + your own tools container (skip the Kali build)
 

@@ -5,19 +5,45 @@ $ErrorActionPreference = "Stop"
 
 Set-Location (Join-Path $PSScriptRoot "..")
 
-python -m venv .venv
-& .\.venv\Scripts\Activate.ps1
+$pyExe = $null
+foreach ($cand in @("python", "py", "python3")) {
+    if (Get-Command $cand -ErrorAction SilentlyContinue) {
+        try {
+            $ver = & $cand -c "import sys; print(sys.version_info.major)" 2>$null
+            if ($ver -eq "3") { $pyExe = $cand; break }
+        } catch {}
+    }
+}
 
-python -m pip install --upgrade pip
+if (-not $pyExe) {
+    Write-Error "Python 3 is not installed or not on PATH. Please install Python 3.11+."
+    exit 1
+}
 
-# Backend (with dev extras: pytest, ruff, httpx) + CLI, both editable.
-pip install -e "./backend[dev]" -e ./cli
+Write-Host "Using Python: $pyExe" -ForegroundColor Cyan
+if (-not (Test-Path ".venv")) {
+    Write-Host "Creating .venv virtual environment..." -ForegroundColor Cyan
+    & $pyExe -m venv .venv
+}
 
-# Native tool-wrapper deps — only needed if you run tools on the host instead of
-# the Kali container. Safe to install regardless.
-pip install -r mcp-servers/requirements.txt
+$venvPython = ".\.venv\Scripts\python.exe"
+if (-not (Test-Path $venvPython)) {
+    Write-Error "Virtual environment creation failed (.venv\Scripts\python.exe not found)."
+    exit 1
+}
+
+Write-Host "Upgrading pip..." -ForegroundColor Cyan
+& $venvPython -m pip install --upgrade pip --quiet
+
+Write-Host "Installing backend and CLI in editable mode..." -ForegroundColor Cyan
+& $venvPython -m pip install -e "./backend[dev]" -e ./cli
+
+if (Test-Path "mcp-servers/requirements.txt") {
+    Write-Host "Installing native tool-wrapper dependencies..." -ForegroundColor Cyan
+    & $venvPython -m pip install -r mcp-servers/requirements.txt --quiet
+}
 
 Write-Host ""
-Write-Host "Setup complete. Activate the environment with:"
-Write-Host "    .\.venv\Scripts\Activate.ps1"
-Write-Host "Then run the backend (uvicorn osprey.main:app --port 9000) and Osprey CLI (osprey)."
+Write-Host "Setup complete. Activate the environment with:" -ForegroundColor Green
+Write-Host "    .\.venv\Scripts\Activate.ps1" -ForegroundColor White
+Write-Host "Then run the backend (uvicorn osprey.main:app --port 9000) or Osprey CLI (osprey)." -ForegroundColor White

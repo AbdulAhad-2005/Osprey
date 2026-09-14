@@ -51,3 +51,6 @@ skills/learned/
 # Internal audit notes — documents live/unpatched security gaps; keep local
 # until fixed, never in shared history
 docs/AUDIT_FINDINGS_LOG.md
+
+mcp-config.json
+mcp.json

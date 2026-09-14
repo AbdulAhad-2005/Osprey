@@ -1,0 +1,20 @@
+# Optional override: build the Kali tools image from source instead of pulling
+# the prebuilt one from Docker Hub (docker-compose.yml's default). Use this when
+# you've modified kali-tools/Dockerfile, need a platform/arch the prebuilt image
+# doesn't cover, or don't want to trust a third-party registry image.
+#
+# Takes ~40-60 min and ~20GB disk on a cold build (BuildKit cache mounts make
+# repeat builds after a small edit much faster).
+#
+#   docker compose --profile kali -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# scripts/install.sh and scripts/install.ps1's "build from source" option runs
+# exactly this. `image:` is set to a distinct local tag so this never fights
+# over the `ospreytools/osprey-kali:latest` tag the base file pulls by default —
+# rerunning the plain (non-override) `up -d` afterwards goes straight back to
+# the prebuilt image rather than silently reusing your local build.
+services:
+  kali-tools:
+    image: osprey-kali:local
+    build:
+      context: ./kali-tools

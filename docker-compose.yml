@@ -19,13 +19,26 @@ services:
 
   # The heavy Kali image (90+ tools) is opt-in via the `kali` profile so users
   # who already have the tools (native Kali) or want a lean stack don't pay the
-  # long build. Enable it with:  docker compose --profile kali up --build
-  # Without it, the backend auto-detects the missing container and runs tools on
-  # the host (native mode) or against a container named by KALI_CONTAINER.
+  # long build. Enable it with:  docker compose --profile kali up -d
+  #
+  # By default this PULLS the prebuilt image from Docker Hub instead of building
+  # it — the from-source build takes ~40-60 min and ~20GB disk, which is exactly
+  # the "hectic first run" this avoids; the image is built once (by CI, on every
+  # kali-tools/ change — see .github/workflows/build-kali-image.yml) and everyone
+  # else just downloads it. Pin/override the image with OSPREY_KALI_IMAGE in .env.
+  #
+  # Still want to build from source yourself (you edited the Dockerfile, need a
+  # platform the prebuilt image doesn't cover, or don't want a third-party image)?
+  # Add the build override (this is exactly what scripts/install.sh's
+  # "build from source" option runs):
+  #   docker compose --profile kali -f docker-compose.yml -f docker-compose.build.yml up -d --build
+  #
+  # Without the kali profile at all, the backend auto-detects the missing
+  # container and runs tools on the host (native mode) or against a container
+  # named by KALI_CONTAINER.
   kali-tools:
     profiles: ["kali"]
-    build:
-      context: ./kali-tools
+    image: ${OSPREY_KALI_IMAGE:-ospreytools/osprey-kali:latest}
     container_name: osprey-kali
     restart: unless-stopped
     env_file:

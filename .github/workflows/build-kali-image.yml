@@ -1,0 +1,143 @@
+name: Build & publish osprey-kali image
+
+# Builds kali-tools/Dockerfile (the ~90-tool Kali image).
+#
+# On a pull request touching kali-tools/**, this only BUILDS + smoke-tests the
+# image (no push, no Docker Hub login, no secrets needed — safe for PRs from
+# forks) so a broken Dockerfile edit is caught before it can ever reach `main`
+# or get published. On push to `main` (or manual dispatch) it also PUSHES to
+# Docker Hub, so `docker compose --profile kali up -d` PULLS instead of
+# building. See docker-compose.yml / docker-compose.build.yml
+# for the two paths.
+#
+# One-time setup (repo owner):
+#   1. Create a Docker Hub access token for the `ospreytools` account
+#      (Account Settings -> Security -> New Access Token — NOT the account
+#      password) with read/write scope.
+#   2. Add two repository secrets (Settings -> Secrets and variables -> Actions):
+#        DOCKERHUB_USERNAME = ospreytools
+#        DOCKERHUB_TOKEN    = <the access token>
+#   3. Push a change under kali-tools/, or run this workflow manually
+#      (Actions tab -> Build & publish osprey-kali image -> Run workflow) to
+#      publish the first image.
+#
+# GITHUB_TOKEN is passed into the build as a secret (never a build-arg, so it
+# never lands in an image layer) — kali-tools/Dockerfile's gh-latest-asset.py
+# uses it opportunistically to raise the unauthenticated api.github.com rate
+# limit (60/hr, shared across every build on the runner's NAT egress IP) to
+# 5000/hr for the GitHub-release installs (terrascan, ghidra, ysoserial,
+# interactsh). No extra secret needed — GITHUB_TOKEN is automatic.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "kali-tools/**"
+      - ".github/workflows/build-kali-image.yml"
+  pull_request:
+    paths:
+      - "kali-tools/**"
+      - ".github/workflows/build-kali-image.yml"
+  workflow_dispatch:
+    inputs:
+      tag_suffix:
+        description: "Extra tag to push alongside :latest and :<sha> (optional)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # A cold build with no registry cache hit genuinely needs the full hour+;
+    # give real headroom above the ~40-60 min this takes locally so a slow
+    # mirror or cold Go-module cache doesn't get killed right before finishing.
+    timeout-minutes: 180
+    env:
+      # Only push+login when we actually can (never on a pull_request — GitHub
+      # withholds repo secrets from pull_request runs by design, forks
+      # especially, so this must degrade to build-only rather than fail).
+      IS_PUBLISH: ${{ github.event_name != 'pull_request' }}
+    steps:
+      - name: Free up runner disk space
+        # This image (Kali apt set + Metasploit + Ghidra + Playwright/Chromium +
+        # the Go toolchain + several pipx venvs) is large, and GitHub's hosted
+        # runners ship only ~14GB free by default — comfortably less than a
+        # cold build needs mid-way through. Drop preinstalled toolchains this
+        # workflow never uses (dotnet, Android SDK, GHC, the hosted tool cache)
+        # to buy back real headroom before BuildKit starts laying down layers.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
+          sudo rm -rf "${AGENT_TOOLSDIRECTORY:-/opt/hostedtoolcache}" || true
+          docker image prune -af || true
+          df -h /
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        if: env.IS_PUBLISH == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Compute tags
+        id: tags
+        run: |
+          if [ "$IS_PUBLISH" = "true" ]; then
+            IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/osprey-kali"
+            TAGS="${IMAGE}:latest,${IMAGE}:${{ github.sha }}"
+            if [ -n "${{ github.event.inputs.tag_suffix }}" ]; then
+              TAGS="${TAGS},${IMAGE}:${{ github.event.inputs.tag_suffix }}"
+            fi
+          else
+            # PR validation build: local-only tag, never pushed.
+            TAGS="osprey-kali:pr-${{ github.event.pull_request.number || github.run_id }}"
+          fi
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+          echo "smoke_image=$(echo "$TAGS" | cut -d, -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Build (and push on main / manual dispatch)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./kali-tools
+          platforms: linux/amd64
+          push: ${{ env.IS_PUBLISH == 'true' }}
+          # PR validation has nowhere to push to, so load the built image into
+          # this runner's local Docker daemon instead — needed for the
+          # smoke-test step below to `docker run` it.
+          load: ${{ env.IS_PUBLISH != 'true' }}
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          secrets: |
+            github_token=${{ secrets.GITHUB_TOKEN }}
+
+      - name: Smoke-test the image
+        # Catches exactly the failure class that motivated this workflow: a
+        # layer that reported success but didn't actually leave a working
+        # binary on PATH (silent tool loss vs. a loud build failure). Runs on
+        # every build — PR validation and publish alike.
+        run: |
+          IMAGE="${{ steps.tags.outputs.smoke_image }}"
+          docker run --rm "$IMAGE" bash -lc '
+            set -e
+            missing=0
+            for t in nmap subfinder httpx naabu nuclei dnsx tlsx katana amass \
+                     whois sqlmap nikto ffuf gobuster hydra john hashcat \
+                     msfconsole mitmdump searchsploit; do
+              if command -v "$t" >/dev/null 2>&1; then
+                echo "OK      $t"
+              else
+                echo "MISSING $t"
+                missing=1
+              fi
+            done
+            exit "$missing"
+          '
