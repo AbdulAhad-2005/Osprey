@@ -11,7 +11,11 @@ class FanoutSisterRequest(BaseModel):
     run_id: str | None = None
     tool_name: str = Field(
         default="subfinder_scan",
-        description="Only subdomain-enum tools; default subfinder_scan. Never chains httpx/nmap.",
+        description=(
+            "Any registered catalog tool; default subfinder_scan (subdomain enum is "
+            "what this helper is for — an enum tool is the sensible choice, not a "
+            "requirement). Never auto-chains httpx/nmap on your behalf."
+        ),
     )
     max_domains: int = Field(default=10, ge=1, le=50)
     timeout_per_tool: int = Field(default=180, ge=30, le=900)

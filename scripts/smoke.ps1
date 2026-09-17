@@ -10,7 +10,6 @@ python -c @"
 from osprey.platform import (
     RunAssistState,
     build_phase_handoff,
-    build_situational_brief,
     enrich_tool_result,
     export_structured_findings,
 )
@@ -19,11 +18,6 @@ from osprey.services.parsers.registry import ensure_parsers_loaded, parse_tool_o
 from osprey.schemas.tools import ToolExecutionResponse
 
 ensure_parsers_loaded()
-
-# Situational context
-brief = build_situational_brief(target='scanme.nmap.org', resolved_ip='45.33.32.156')
-assert 'CURRENT SITUATION' in brief
-assert 'SENSIBLE NEXT MOVES' in brief
 
 # Parser registry
 sample = 'Nmap scan report for scanme.nmap.org (45.33.32.156)\n22/tcp open ssh\n80/tcp open http'
@@ -79,7 +73,6 @@ assert 'retry' in analysis.lower() or 'fix' in analysis.lower()
 
 enriched = enrich_tool_result('FAILED', ctx)
 assert 'FAILURE ANALYSIS' in enriched or 'HINT' in enriched, enriched[:500]
-assert 'CURRENT SITUATION' in enriched
 
 print('OK: platform kernel smoke passed')
 "@

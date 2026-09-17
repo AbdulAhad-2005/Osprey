@@ -1,8 +1,12 @@
-"""Explicit sister-domain fan-out (M6).
+"""Explicit sister-domain fan-out (M6) — a thin caller of the one fan-out
+primitive in ``fanout_assets.py``.
 
 Commander / operator must call this — nothing auto-chains off domain_hunter.
 Default is dry_run; real execution requires confirm=true and dry_run=false.
-Only runs the chosen subdomain-enum tool (default subfinder). Never httpx/nmap.
+The domain-specific parts (finding sister gaps, confidence ranking, skipping
+domains tool_coverage already marks as done) live here; batch execution
+itself — concurrency, dry-run/confirm, per-call RoE — is not reimplemented,
+it is delegated to ``fanout_assets.fanout_assets`` like any other caller.
 """
 
 from __future__ import annotations
@@ -17,23 +21,14 @@ from osprey.schemas.fanout import (
     FanoutSisterResponse,
 )
 from osprey.schemas.finding import Finding, FindingType
-from osprey.schemas.tools import ToolExecutionRequest
 from osprey.services.engagement_graph import get_engagement_graph
 from osprey.services.engagement_store import get_engagement_store
+from osprey.services.fanout_assets import FanoutAssetsRequest, fanout_assets
 from osprey.services.findings_store import get_findings_store
 from osprey.services.tool_coverage_store import get_tool_coverage_store
-from osprey.services.tool_execution import execute_tool_request
 
 logger = logging.getLogger(__name__)
 
-_ALLOWED_ENUM_TOOLS = frozenset(
-    {
-        "subfinder_scan",
-        "amass_scan",
-        "fierce_scan",
-        "dnsenum_scan",
-    }
-)
 _MAX_SISTER_GAPS = 24
 
 
@@ -113,41 +108,25 @@ async def enumerate_pending_sisters(
         raise ValueError(f"Engagement not found: {engagement_id}")
 
     tool_name = (request.tool_name or "subfinder_scan").strip()
-    if tool_name not in _ALLOWED_ENUM_TOOLS:
-        raise ValueError(
-            f"tool_name must be one of {sorted(_ALLOWED_ENUM_TOOLS)} — "
-            "fan-out will not run httpx/nmap or other phases"
-        )
-
-    will_execute = (not request.dry_run) and request.confirm
-    if not request.dry_run and not request.confirm:
-        # Soft guard: force preview instead of accidental mass scan
-        request = request.model_copy(update={"dry_run": True})
-        will_execute = False
 
     gaps = _find_unenumerated_sisters(engagement_id)
     sister_gaps = [g for g in gaps if g.confidence >= request.min_confidence]
     sister_gaps = sorted(sister_gaps, key=lambda g: (-g.confidence, g.domain))[: request.max_domains]
+    confidence_by_domain = {g.domain: g.confidence for g in sister_gaps}
 
+    # Domain-specific pre-filter: skip sisters tool_coverage already marks as
+    # done for this tool, before the generic fan-out ever sees them.
     coverage = get_tool_coverage_store()
-    results: list[FanoutDomainResult] = []
-    total_findings = 0
-    executed_n = 0
-    skipped_n = 0
-    planned_n = 0
-
+    to_run: list[str] = []
+    skip_results: list[FanoutDomainResult] = []
     for gap in sister_gaps:
         domain = (gap.domain or "").strip().lower()
         if not domain:
             continue
-
         if request.skip_already_marked and coverage.has_run(
-            engagement_id=engagement_id,
-            tool_name=tool_name,
-            asset=domain,
+            engagement_id=engagement_id, tool_name=tool_name, asset=domain,
         ):
-            skipped_n += 1
-            results.append(
+            skip_results.append(
                 FanoutDomainResult(
                     domain=domain,
                     gap_confidence=gap.confidence,
@@ -157,67 +136,56 @@ async def enumerate_pending_sisters(
                 )
             )
             continue
+        to_run.append(domain)
 
-        planned_n += 1
-        item = FanoutDomainResult(
-            domain=domain,
-            gap_confidence=gap.confidence,
-            planned=True,
-        )
+    batch = await fanout_assets(
+        engagement_id,
+        FanoutAssetsRequest(
+            assets=to_run,
+            tool_name=tool_name,
+            dry_run=request.dry_run,
+            confirm=request.confirm,
+            max_assets=max(len(to_run), 1),
+            timeout_per_tool=request.timeout_per_tool,
+            run_id=request.run_id or "",
+        ),
+    )
 
-        if not will_execute:
-            results.append(item)
-            continue
-
-        try:
-            response = await execute_tool_request(
-                ToolExecutionRequest(
-                    tool_name=tool_name,
-                    params={"domain": domain},
-                    engagement_id=engagement_id,
-                    run_id=request.run_id,
-                    timeout=request.timeout_per_tool,
-                    use_recovery=False,
-                    record_findings=True,
-                )
+    results: list[FanoutDomainResult] = list(skip_results)
+    for item in batch.results:
+        results.append(
+            FanoutDomainResult(
+                domain=item.asset,
+                gap_confidence=confidence_by_domain.get(item.asset, 0.0),
+                planned=item.planned,
+                executed=item.executed,
+                skipped=False,
+                success=item.success if item.executed else None,
+                findings_count=item.findings_count,
+                finding_titles=item.finding_titles,
+                error=item.error,
+                command=item.command,
             )
-            item.executed = True
-            item.success = response.success
-            item.findings_count = len(response.finding_titles or [])
-            item.finding_titles = list(response.finding_titles or [])[:20]
-            item.command = response.command or ""
-            item.error = response.error or ""
-            total_findings += item.findings_count
-            executed_n += 1
-        except Exception as exc:
-            logger.exception("fan-out failed for %s", domain)
-            item.executed = True
-            item.success = False
-            item.error = str(exc)
-            executed_n += 1
-        results.append(item)
+        )
 
     note = (
         "Explicit helper only — does not auto-run after domain_hunter. "
         "Does not chain httpx/nmap. Prefer dry_run first."
     )
-    if request.dry_run or not will_execute:
+    if not batch.executed:
         note += " This response is a PREVIEW (dry_run) — set dry_run=false and confirm=true to execute."
 
     return FanoutSisterResponse(
         engagement_id=engagement_id,
-        dry_run=not will_execute,
-        executed=will_execute,
+        dry_run=not batch.executed,
+        executed=batch.executed,
         tool_name=tool_name,
         domains_considered=len(sister_gaps),
-        domains_planned=planned_n,
-        domains_executed=executed_n,
-        domains_skipped=skipped_n,
-        total_findings=total_findings,
+        domains_planned=batch.assets_planned,
+        domains_executed=batch.assets_executed,
+        domains_skipped=len(skip_results),
+        total_findings=batch.total_findings,
         results=results,
         note=note,
-        extra={
-            "confirm_required": True,
-            "allowed_tools": sorted(_ALLOWED_ENUM_TOOLS),
-        },
+        extra={"confirm_required": True},
     )

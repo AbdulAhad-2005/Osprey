@@ -164,8 +164,13 @@ def propose_learned_skill(req: ProposeSkillRequest) -> dict:
         )
     except LearnedSkillError as exc:
         raise HTTPException(400, detail=str(exc)) from exc
+    similar_to = prop.get("similar_to") or []
+    note = "Pending operator approval — it is not active until approved."
+    if similar_to:
+        top = ", ".join(f"{s['skill']} ({s['score']})" for s in similar_to[:3])
+        note += f" Similar to: {top} — weigh novelty before approving."
     return {"status": "proposed", "id": prop["id"], "slug": prop["slug"], "phase": prop["phase"],
-            "note": "Pending operator approval — it is not active until approved."}
+            "similar_to": similar_to, "note": note}
 
 
 @router.post("/learned-skills/add")

@@ -33,10 +33,10 @@ playbooks:
           target: "{{live_hosts}}"
         fallback: [platform_shell]
 
-  network_crown_jewels:
+  network_port_confirm:
     phase: network
     description: >
-      Fast ports then careful service confirm on crown-jewel hosts/IPs.
+      Fast ports then careful service confirm on high-value hosts/IPs.
       Chunk ports; avoid full -sV on huge ranges (timeouts).
     input: target
     steps:
@@ -104,14 +104,14 @@ playbooks:
   web_depth_before_vuln:
     phase: recon
     description: >
-      Exhaust app depth on crown-jewel live hosts BEFORE mass nuclei/vuln scanning.
+      Exhaust app depth on high-value live hosts BEFORE mass nuclei/vuln scanning.
       Clear js_surface_unanalyzed / content_discovery_thin / web_surface_no_app_depth.
       Advisory only — adapt to evidence; do not treat as a rigid stage machine.
     input: domain
     steps:
       - tool: platform_context
-        why: Read coverage gaps + crown jewels; list what is still shallow.
-        fallback: [platform_crown_jewels]
+        why: Read coverage gaps; list what is still shallow.
+        fallback: [platform_graph_query]
       - tool: gau_discovery
         why: Historical paths (helps but does not replace JS/dir depth).
         suggested_params:
@@ -124,9 +124,9 @@ playbooks:
           findings with tags js_bundle / embedded_api_key.
         fallback: [katana_crawl, hakrawler_crawl]
       - tool: ffuf_scan
-        why: Light directory discovery on 3–5 crown jewels only (not whole inventory).
+        why: Light directory discovery on 3–5 high-value hosts only (not whole inventory).
         suggested_params:
-          target: "{{crown_jewel_https}}"
+          target: "{{high_value_https_hosts}}"
         fallback: [gobuster_scan, platform_script]
       - tool: platform_finalize_check
         why: Confirm app-depth gaps cleared before COMPLETE or broad vuln scan.

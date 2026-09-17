@@ -14,7 +14,6 @@ import re
 from urllib.parse import urlparse
 
 from osprey.schemas.finding import (
-    EvidenceGrade,
     Finding,
     FindingConfidence,
     FindingType,
@@ -120,10 +119,9 @@ def _mk(
     target: str,
     metadata: dict | None = None,
     tags: list[str] | None = None,
-    grade: EvidenceGrade | None = None,
     confidence: FindingConfidence = FindingConfidence.LIKELY,
 ) -> Finding:
-    kwargs: dict = dict(
+    return Finding(
         engagement_id=engagement_id,
         run_id=run_id,
         phase="osint",
@@ -137,9 +135,6 @@ def _mk(
         metadata=metadata or {},
         tags=(tags or []) + ["osint"],
     )
-    if grade is not None:
-        kwargs["evidence_grade"] = grade
-    return Finding(**kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -566,7 +561,7 @@ def parse_email_permute(
             desc=f"Candidate email for '{name}' (format guess — unconfirmed)",
             engagement_id=engagement_id, run_id=run_id, target=target,
             metadata={"person": name, "mx": mx},
-            tags=["candidate"], grade=EvidenceGrade.UNVERIFIED,
+            tags=["candidate"],
             confidence=FindingConfidence.HYPOTHESIS,
         ))
     return out
@@ -621,7 +616,6 @@ def parse_exiftool(
                 engagement_id=engagement_id, run_id=run_id, target=target,
                 metadata={"person": name, "source": "document_metadata", "exif_tag": tag},
                 tags=["document-metadata", "person-lead"],
-                grade=EvidenceGrade.INFERRED,
             ))
         elif tag in _EXIF_INFO_TAGS or tag in _EXIF_MAYBE_PERSON_TAGS:
             out.append(_mk(
@@ -630,7 +624,7 @@ def parse_exiftool(
                 engagement_id=engagement_id, run_id=run_id, target=target,
                 metadata={"exif_tag": tag, "value": value[:200]},
                 tags=["document-metadata", tag.replace(" ", "_")],
-                grade=EvidenceGrade.OBSERVED,
+                confidence=FindingConfidence.CONFIRMED,
             ))
     return out
 

@@ -21,7 +21,6 @@ from osprey.schemas.finding import (
     FindingConfidence,
     FindingType,
     GroupedFinding,
-    clamp_claim_severity,
     finding_fingerprint,
 )
 from osprey.services.evidence import apply_port_flood_downgrades, normalize_findings
@@ -30,9 +29,11 @@ logger = logging.getLogger(__name__)
 
 _MAX_FINDINGS_PER_QUERY = 10_000
 
-# Evidence-grade strength ordering (for occurrence-merge upgrades).
-_GRADE_RANK = {"unverified": 0, "inferred": 1, "observed": 2}
 _SEV_ORDER = ["none", "info", "low", "medium", "high", "critical"]
+
+# Confidence strength ordering (for occurrence-merge upgrades — a later,
+# more-confirmed observation of the same fact should win, never a stale one).
+_CONFIDENCE_RANK = {"hypothesis": 0, "likely": 1, "confirmed": 2}
 
 
 def _sev_rank(severity: str) -> int:
@@ -85,7 +86,7 @@ def _group_findings(findings: list[Finding], *, group_limit: int) -> tuple[list[
                 "finding_type": f.finding_type.value,
                 "source_tool": f.source_tool or "",
                 "severity": f.claim_severity.value,
-                "evidence_grade": f.evidence_grade.value,
+                "confidence": f.confidence.value,
                 "count": 0,
                 "targets": [],
                 "seen_targets": set(),
@@ -97,6 +98,8 @@ def _group_findings(findings: list[Finding], *, group_limit: int) -> tuple[list[
         g["count"] += 1
         if _sev_rank(f.claim_severity.value) > _sev_rank(g["severity"]):
             g["severity"] = f.claim_severity.value
+        if _CONFIDENCE_RANK.get(f.confidence.value, 0) > _CONFIDENCE_RANK.get(g["confidence"], 0):
+            g["confidence"] = f.confidence.value
         t = (f.target or "").strip()
         if t and t not in g["seen_targets"]:
             g["seen_targets"].add(t)
@@ -108,7 +111,7 @@ def _group_findings(findings: list[Finding], *, group_limit: int) -> tuple[list[
             finding_type=g["finding_type"],
             source_tool=g["source_tool"],
             severity=g["severity"],
-            evidence_grade=g["evidence_grade"],
+            confidence=g["confidence"],
             count=g["count"],
             affected_targets=g["targets"][:20],
             sample_finding_id=g["sample_finding_id"],
@@ -165,7 +168,6 @@ def _row_to_finding(row: FindingRow) -> Finding:
         description=row.description,
         evidence=row.evidence,
         confidence=FindingConfidence(row.confidence),
-        evidence_grade=row.evidence_grade or "inferred",
         claim_severity=row.claim_severity or "none",
         source_tool=row.source_tool,
         target=row.target,
@@ -203,7 +205,6 @@ def _finding_to_row(finding: Finding, *, fingerprint: str, now: datetime) -> Fin
         description=_clean_text(finding.description or ""),
         evidence=_clean_text(finding.evidence or ""),
         confidence=finding.confidence.value,
-        evidence_grade=finding.evidence_grade.value,
         claim_severity=finding.claim_severity.value,
         source_tool=_clean_text(finding.source_tool or ""),
         target=_clean_text(finding.target or "")[:512],
@@ -226,7 +227,7 @@ def _occurrence_row(finding_id: str, finding: Finding, now: datetime) -> Finding
         run_id=_clean_text(finding.run_id or ""),
         source_tool=_clean_text(finding.source_tool or ""),
         phase=_clean_text(finding.phase or ""),
-        evidence_grade=finding.evidence_grade.value,
+        confidence=finding.confidence.value,
         evidence=_clean_text(finding.evidence or ""),
         created_at=finding.created_at or now,
     )
@@ -355,18 +356,20 @@ class FindingsStore:
         """Attach a new occurrence to a canonical finding (no silent drop)."""
         existing.occurrence_count = int(existing.occurrence_count or 1) + 1
         existing.last_seen_at = now
-        # Upgrade grade only when a later observation is strictly stronger; keep the
-        # strongest asserted severity across occurrences, re-clamped to that grade.
-        new_grade = finding.evidence_grade.value
-        best_grade = existing.evidence_grade or "inferred"
-        if _GRADE_RANK.get(new_grade, 0) > _GRADE_RANK.get(best_grade, 0):
-            best_grade = new_grade
+        # Keep the strongest confidence and the highest severity seen across
+        # occurrences — each parser assigns both honestly per-observation now
+        # (see skills/vuln/verification-and-severity.md), there is no grade to
+        # re-derive or clamp against.
+        new_conf = finding.confidence.value
+        best_conf = existing.confidence or "hypothesis"
+        if _CONFIDENCE_RANK.get(new_conf, 0) > _CONFIDENCE_RANK.get(best_conf, 0):
+            best_conf = new_conf
         new_sev = finding.claim_severity.value
         best_sev = existing.claim_severity or "none"
         if _sev_rank(new_sev) > _sev_rank(best_sev):
             best_sev = new_sev
-        existing.evidence_grade = best_grade
-        existing.claim_severity = clamp_claim_severity(best_grade, best_sev).value
+        existing.confidence = best_conf
+        existing.claim_severity = best_sev
         db.add(_occurrence_row(existing.id, finding, now))
 
     def _bump_engagement_counts(
@@ -389,7 +392,7 @@ class FindingsStore:
         phase: str | None = None,
         finding_type: FindingType | None = None,
         claim_severity: str | None = None,
-        evidence_grade: str | None = None,
+        confidence: str | None = None,
         tag: str | None = None,
         q: str | None = None,
         limit: int = 200,
@@ -432,8 +435,8 @@ class FindingsStore:
                     stmt = stmt.where(FindingRow.finding_type != FindingType.OBSERVATION.value)
                 if claim_severity:
                     stmt = stmt.where(FindingRow.claim_severity == claim_severity.lower())
-                if evidence_grade:
-                    stmt = stmt.where(FindingRow.evidence_grade == evidence_grade.lower())
+                if confidence:
+                    stmt = stmt.where(FindingRow.confidence == confidence.lower())
                 if tag:
                     tag_lower = tag.lower()
                     stmt = stmt.where(FindingRow.tags_json.ilike(f'%"{tag_lower}"%'))
@@ -506,7 +509,7 @@ class FindingsStore:
                         "source_tool": r.source_tool,
                         "run_id": r.run_id,
                         "phase": r.phase,
-                        "evidence_grade": r.evidence_grade,
+                        "confidence": r.confidence,
                         "evidence": r.evidence,
                         "observed_at": r.created_at.isoformat() if r.created_at else None,
                     }
@@ -548,13 +551,11 @@ class FindingsStore:
 
         lines = []
         for f in findings:
-            grade = getattr(f, "evidence_grade", None)
-            grade_s = grade.value if hasattr(grade, "value") else str(grade or "?")
             sev = getattr(f, "claim_severity", None)
             sev_s = sev.value if hasattr(sev, "value") else str(sev or "none")
             lines.append(
-                f"- [{f.id}] {f.finding_type.value} | grade={grade_s} | "
-                f"sev={sev_s} | {f.confidence.value} | "
+                f"- [{f.id}] {f.finding_type.value} | sev={sev_s} | "
+                f"confidence={f.confidence.value} | "
                 f"{f.title} (via {f.source_tool or 'unknown'})"
             )
         return "\n".join(lines)

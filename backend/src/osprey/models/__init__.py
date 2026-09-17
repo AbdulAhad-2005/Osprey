@@ -2,7 +2,6 @@ from osprey.models.context_snapshot import ContextSnapshotRow
 from osprey.models.conversation import ConversationMessageRow
 from osprey.models.engagement import EngagementRow
 from osprey.models.exploit_candidate import ExploitCandidateRow
-from osprey.models.exploit_chain import ExploitChainRow
 from osprey.models.finding import (
     AssetEdgeRow,
     AssetNodeRow,
@@ -28,7 +27,6 @@ __all__ = [
     "SurfaceExpansionRow",
     "ScanRunRow",
     "ExploitCandidateRow",
-    "ExploitChainRow",
     "ContextSnapshotRow",
     "TargetBanRow",
     "ConversationMessageRow",

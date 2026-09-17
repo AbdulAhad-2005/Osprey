@@ -13,7 +13,6 @@ from urllib.parse import urlparse
 
 from osprey.schemas.finding import (
     ClaimSeverity,
-    EvidenceGrade,
     Finding,
     FindingConfidence,
     FindingType,
@@ -65,7 +64,7 @@ def _cookie_issue_findings(cookies, *, tool, engagement_id, run_id, target, url)
                 description=f"Cookie '{name}' on {url or target} lacks {', '.join(missing)} — "
                             "session theft / CSRF exposure depending on which flags are absent.",
                 evidence=json.dumps(c, sort_keys=True)[:300],
-                confidence=FindingConfidence.LIKELY, evidence_grade=EvidenceGrade.OBSERVED,
+                confidence=FindingConfidence.LIKELY, 
                 claim_severity=ClaimSeverity.MEDIUM,
                 source_tool=tool, target=url or target,
                 metadata={"cookie": name, "missing_flags": ",".join(missing)},
@@ -94,7 +93,7 @@ def parse_browser_scrape(stdout, *, engagement_id="", run_id="", target=""):
             description="Link discovered via rendered DOM (SPA route static crawlers miss)"
                         if not interesting else "Interesting rendered route",
             evidence=str(link)[:300], confidence=FindingConfidence.LIKELY,
-            evidence_grade=EvidenceGrade.OBSERVED, source_tool="browser_scrape",
+            source_tool="browser_scrape",
             target=str(link), metadata={"hostname": _host(link), "url": str(link)}, tags=tags,
         ))
 
@@ -108,7 +107,7 @@ def parse_browser_scrape(stdout, *, engagement_id="", run_id="", target=""):
             finding_type=FindingType.URL, title=f"{x.get('method', 'GET')} {xurl}"[:200],
             description="Client-side API call captured at runtime (XHR/fetch) — real endpoint the app uses",
             evidence=json.dumps(x, sort_keys=True)[:300], confidence=FindingConfidence.CONFIRMED,
-            evidence_grade=EvidenceGrade.OBSERVED, source_tool="browser_scrape",
+            source_tool="browser_scrape",
             target=xurl, metadata={"hostname": _host(xurl), "url": xurl, "method": str(x.get("method") or "GET")},
             tags=["browser", "xhr", "api", "interesting_path", "injection_point_candidate"],
         ))
@@ -126,7 +125,7 @@ def parse_browser_scrape(stdout, *, engagement_id="", run_id="", target=""):
                 title=f"Form field '{name}' on {_host(action)}"[:180],
                 description=f"Form input '{name}' ({inp.get('type', 'text')}) via {form.get('method', 'GET')} {action} — injection-point candidate",
                 evidence=f"{name} @ {action}"[:300], confidence=FindingConfidence.LIKELY,
-                evidence_grade=EvidenceGrade.OBSERVED, source_tool="browser_scrape",
+                source_tool="browser_scrape",
                 target=action, metadata={"parameter": name, "url": action, "method": str(form.get("method") or "GET"),
                                          "input_type": str(inp.get("type") or "")},
                 tags=["browser", "form", "parameter", "injection_point_candidate"],
@@ -143,7 +142,7 @@ def parse_browser_scrape(stdout, *, engagement_id="", run_id="", target=""):
             title=f"Mixed content on {_host(url)}",
             description=f"HTTPS page loads {len(data['mixed_content'])} resource(s) over HTTP — integrity/MITM risk.",
             evidence="; ".join(str(m) for m in data["mixed_content"][:8])[:400],
-            confidence=FindingConfidence.LIKELY, evidence_grade=EvidenceGrade.OBSERVED,
+            confidence=FindingConfidence.LIKELY, 
             source_tool="browser_scrape", target=url, tags=["browser", "mixed_content", "wstg-clnt"],
         ))
     return out or _unparsed(stdout, "browser_scrape", engagement_id, run_id, target)
@@ -168,7 +167,7 @@ def parse_browser_flow(stdout, *, engagement_id="", run_id="", target=""):
                     "did a step that SHOULD fail succeed (bypass), or vice versa?",
         evidence=json.dumps({"steps": steps[:20], "asserts": data.get("asserts"),
                              "extracted": data.get("extracted")}, sort_keys=True)[:700],
-        confidence=FindingConfidence.LIKELY, evidence_grade=EvidenceGrade.OBSERVED,
+        confidence=FindingConfidence.LIKELY, 
         source_tool="browser_flow", target=final_url,
         metadata={"steps_ok": ok, "steps_total": len(steps), "final_url": final_url},
         tags=["browser", "flow", "business-logic"] + (["step_errors"] if failed else []),
@@ -182,7 +181,7 @@ def parse_browser_flow(stdout, *, engagement_id="", run_id="", target=""):
             title=f"Assert '{str(a.get('text'))[:60]}' present={a.get('present')}",
             description="Business-logic assertion during the flow (e.g. reached a state that should be gated).",
             evidence=json.dumps(a, sort_keys=True)[:300], confidence=FindingConfidence.LIKELY,
-            evidence_grade=EvidenceGrade.OBSERVED, source_tool="browser_flow",
+            source_tool="browser_flow",
             target=final_url, tags=["browser", "flow", "assertion"],
         ))
 
@@ -196,7 +195,7 @@ def parse_browser_flow(stdout, *, engagement_id="", run_id="", target=""):
             finding_type=FindingType.URL, title=f"{r.get('method', 'GET')} {rurl}"[:200],
             description="API call captured during a driven (possibly authenticated) browser flow.",
             evidence=json.dumps(r, sort_keys=True)[:300], confidence=FindingConfidence.CONFIRMED,
-            evidence_grade=EvidenceGrade.OBSERVED, source_tool="browser_flow",
+            source_tool="browser_flow",
             target=rurl, metadata={"hostname": _host(rurl), "url": rurl, "method": str(r.get("method") or "GET")},
             tags=["browser", "xhr", "api", "authenticated", "injection_point_candidate"],
         ))
@@ -220,7 +219,7 @@ def parse_browser_flow(stdout, *, engagement_id="", run_id="", target=""):
                         "it may be an IDOR / broken-access-control issue — confirm impact.",
             evidence=json.dumps({k: r.get(k) for k in ("method", "url", "status", "body_len")},
                                 sort_keys=True)[:400],
-            confidence=FindingConfidence.LIKELY, evidence_grade=EvidenceGrade.OBSERVED,
+            confidence=FindingConfidence.LIKELY, 
             source_tool="browser_flow", target=rurl,
             metadata={"status": status, "url": rurl, "method": str(r.get("method") or "GET")},
             tags=["browser", "replay", "repeater"] + (["access-control-candidate"] if authorized else []),
@@ -240,7 +239,7 @@ def _unparsed(stdout, tool, engagement_id, run_id, target):
         finding_type=FindingType.OBSERVATION, title=f"{tool} raw output",
         description="Unparsed browser output (stored for agent context)",
         evidence=stripped[:2000], confidence=FindingConfidence.LIKELY,
-        evidence_grade=EvidenceGrade.UNVERIFIED, source_tool=tool, target=target,
+        source_tool=tool, target=target,
         tags=[tool, "unparsed"],
     )]
 

@@ -15,7 +15,6 @@ from collections.abc import Callable, Sequence
 from typing import TypeVar
 
 from osprey.schemas.finding import (
-    EvidenceGrade,
     Finding,
     FindingConfidence,
     FindingType,
@@ -50,7 +49,6 @@ def make_accounting_finding(
         ),
         evidence=f"total={total} stored={kept} excluded={excluded}",
         confidence=FindingConfidence.CONFIRMED,
-        evidence_grade=EvidenceGrade.OBSERVED,
         source_tool=tool_name,
         target=target,
         metadata={"total_count": total, "stored_count": kept, "excluded_count": excluded},

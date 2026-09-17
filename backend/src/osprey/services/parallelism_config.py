@@ -33,6 +33,32 @@ _DEFAULTS: dict[str, Any] = {
     "consult_drift_tools": 6,
 }
 
+# Sanity ceilings only — they exist to catch a fat-fingered config value (e.g.
+# a stray zero), not to second-guess an operator's deliberate setting. The
+# config file's value is honoured as-is below the ceiling; hitting the
+# ceiling is logged loudly rather than silently substituted, so the file
+# never lies about what's actually enforced.
+_SANITY_CEILINGS: dict[str, int] = {
+    "max_running_jobs": 200,
+    "max_running_agents": 200,
+    "agent_spawn_budget": 5000,
+    "max_spawn_depth": 50,
+    "suggest_job_timeout_seconds": 3600,
+}
+
+
+def _bounded(data: dict[str, Any], key: str, *, floor: int, default: int) -> int:
+    ceiling = _SANITY_CEILINGS[key]
+    raw = int(data.get(key) or default)
+    value = max(floor, raw)
+    if value > ceiling:
+        logger.warning(
+            "config/parallelism.yaml: %s=%d exceeds sanity ceiling %d — enforcing %d instead.",
+            key, raw, ceiling, ceiling,
+        )
+        value = ceiling
+    return value
+
 
 @lru_cache(maxsize=1)
 def load_parallelism() -> dict[str, Any]:
@@ -40,13 +66,14 @@ def load_parallelism() -> dict[str, Any]:
     raw = read_config("parallelism.yaml")
     if isinstance(raw, dict):
         data.update(raw)
-    # normalize
-    data["max_running_jobs"] = max(1, min(int(data.get("max_running_jobs") or 4), 16))
-    data["max_running_agents"] = max(1, min(int(data.get("max_running_agents") or 4), 16))
-    data["agent_spawn_budget"] = max(1, min(int(data.get("agent_spawn_budget") or 40), 500))
-    data["max_spawn_depth"] = max(1, min(int(data.get("max_spawn_depth") or 4), 8))
-    data["suggest_job_timeout_seconds"] = max(
-        30, min(int(data.get("suggest_job_timeout_seconds") or 120), 3600)
+    # normalize — honour the configured value; only a fat-fingered value past
+    # the sanity ceiling gets overridden, and that override is logged.
+    data["max_running_jobs"] = _bounded(data, "max_running_jobs", floor=1, default=4)
+    data["max_running_agents"] = _bounded(data, "max_running_agents", floor=1, default=4)
+    data["agent_spawn_budget"] = _bounded(data, "agent_spawn_budget", floor=1, default=40)
+    data["max_spawn_depth"] = _bounded(data, "max_spawn_depth", floor=1, default=4)
+    data["suggest_job_timeout_seconds"] = _bounded(
+        data, "suggest_job_timeout_seconds", floor=30, default=120
     )
     tools = data.get("long_tools") or []
     data["long_tools"] = frozenset(str(t).strip() for t in tools if str(t).strip())

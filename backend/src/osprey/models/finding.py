@@ -35,7 +35,6 @@ class FindingRow(Base):
         Index("ix_findings_engagement_run", "engagement_id", "run_id"),
         Index("ix_findings_source_tool", "source_tool"),
         Index("ix_findings_engagement_severity", "engagement_id", "claim_severity"),
-        Index("ix_findings_engagement_grade", "engagement_id", "evidence_grade"),
     )
 
     id: Mapped[str] = mapped_column(String(12), primary_key=True)
@@ -48,7 +47,6 @@ class FindingRow(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     evidence: Mapped[str] = mapped_column(Text, nullable=False, default="")
     confidence: Mapped[str] = mapped_column(String(32), nullable=False, default="confirmed")
-    evidence_grade: Mapped[str] = mapped_column(String(32), nullable=False, default="inferred")
     claim_severity: Mapped[str] = mapped_column(String(32), nullable=False, default="none")
     source_tool: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     target: Mapped[str] = mapped_column(String(512), nullable=False, default="")
@@ -95,7 +93,7 @@ class FindingOccurrenceRow(Base):
     run_id: Mapped[str] = mapped_column(String(12), nullable=False, default="")
     source_tool: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     phase: Mapped[str] = mapped_column(String(64), nullable=False, default="")
-    evidence_grade: Mapped[str] = mapped_column(String(32), nullable=False, default="inferred")
+    confidence: Mapped[str] = mapped_column(String(32), nullable=False, default="likely")
     evidence: Mapped[str] = mapped_column(Text, nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -116,10 +114,11 @@ class AssetNodeRow(Base):
     asset_type: Mapped[str] = mapped_column(String(64), nullable=False)
     label: Mapped[str] = mapped_column(String(1024), nullable=False)
     run_id: Mapped[str] = mapped_column(String(12), nullable=False, default="")
-    # Provenance + quality, at parity with edges and findings.
+    # Provenance + quality, at parity with edges and findings. Only strengthens
+    # (never downgrades) as stronger observations of the same node arrive —
+    # see engagement_graph._CONFIDENCE_RANK.
     source_tool: Mapped[str] = mapped_column(String(128), nullable=False, default="")
-    evidence_grade: Mapped[str] = mapped_column(String(32), nullable=False, default="inferred")
-    confidence: Mapped[str] = mapped_column(String(32), nullable=False, default="confirmed")
+    confidence: Mapped[str] = mapped_column(String(32), nullable=False, default="likely")
     metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

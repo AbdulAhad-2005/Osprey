@@ -1,13 +1,16 @@
 """Deterministic stdout parsers for the vulnerability-analysis phase.
 
 Each scanner is normalized into ``VULNERABILITY`` findings carrying a
-``claim_severity`` (clamped by ``evidence_grade``) plus CVE/CWE/template
-metadata, so the graph and report treat a nuclei CVE hit, a wpscan plugin vuln,
+``claim_severity`` (impact if real) and a ``confidence`` (how sure we are it's
+real), so the graph and report treat a nuclei CVE hit, a wpscan plugin vuln,
 and a confirmed sqlmap injection uniformly.
 
-Evidence discipline: a scanner *match* is OBSERVED (it got a live response) so
-severity may reach HIGH/CRITICAL, but exploitability is a separate claim — the
-descriptions say so, and version-only / passive matches are dropped to INFERRED.
+Evidence discipline (see skills/vuln/verification-and-severity.md): a scanner
+*match* — a template fired, an injection point detected with no data pulled —
+is a DETECTION: confidence LIKELY, and severity may still reflect real impact
+if the underlying issue is genuine, but the finding's own text must say
+"detected", never "confirmed"/"exploited". Only actual extraction (rows
+dumped, a shell obtained, a credential validated) earns CONFIRMED.
 """
 
 from __future__ import annotations
@@ -18,7 +21,6 @@ from typing import Any
 
 from osprey.schemas.finding import (
     ClaimSeverity,
-    EvidenceGrade,
     Finding,
     FindingConfidence,
     FindingType,
@@ -60,7 +62,6 @@ def _vuln_finding(
     evidence: str,
     severity: ClaimSeverity,
     source_tool: str,
-    grade: EvidenceGrade = EvidenceGrade.OBSERVED,
     confidence: FindingConfidence = FindingConfidence.LIKELY,
     metadata: dict[str, Any] | None = None,
     tags: list[str] | None = None,
@@ -79,7 +80,6 @@ def _vuln_finding(
         description=description,
         evidence=evidence[:800],
         confidence=confidence,
-        evidence_grade=grade,
         claim_severity=severity,
         source_tool=source_tool,
         target=target,
@@ -102,7 +102,6 @@ def _unparsed(stdout: str, *, tool: str, engagement_id: str, run_id: str, target
             description="Unparsed vuln-scanner output (stored for agent context)",
             evidence=stripped[:2000],
             confidence=FindingConfidence.LIKELY,
-            evidence_grade=EvidenceGrade.UNVERIFIED,
             source_tool=tool,
             target=target,
             tags=[tool, "unparsed"],
@@ -170,7 +169,11 @@ def parse_nuclei(
                 evidence=line[:800],
                 severity=severity,
                 source_tool="nuclei_scan",
-                confidence=FindingConfidence.CONFIRMED,
+                # A template match is a pattern match, not proof of exploitation
+                # — LIKELY regardless of severity. Nuclei's own template
+                # severity still drives `severity` above; confidence and
+                # severity are independent (see module docstring).
+                confidence=FindingConfidence.LIKELY,
                 metadata=meta,
                 tags=extra_tags,
             )
@@ -314,7 +317,6 @@ def parse_wpscan(
                 evidence=json.dumps(item, sort_keys=True)[:600],
                 severity=ClaimSeverity.INFO,
                 source_tool="wpscan_analyze",
-                grade=EvidenceGrade.OBSERVED,
                 metadata={"url": url, "type": str(item.get("type") or "")},
                 tags=["wpscan", "wordpress", "interesting"],
             )
@@ -328,6 +330,21 @@ def parse_wpscan(
 
 _SQLMAP_PARAM_RE = re.compile(r"Parameter:\s*(?P<param>[^\(]+)\((?P<place>GET|POST|COOKIE|HEADER|URI)\)", re.IGNORECASE)
 _SQLMAP_TYPE_RE = re.compile(r"^\s*Type:\s*(?P<type>.+)$", re.MULTILINE)
+
+# Phrases sqlmap only prints when it actually pulled something out of the
+# database or a shell — i.e. real extraction happened, not just "the
+# parameter appears injectable". Detecting an injection point is not the same
+# claim as having exploited it; only these upgrade a finding to CONFIRMED.
+_SQLMAP_EXTRACTION_RE = re.compile(
+    r"\[\d+\s+entries?\]"          # --dump: "[5 entries]" row-count banner
+    r"|^Table:\s"                  # --dump: a table name was actually retrieved
+    r"|current user:\s*'"          # --current-user returned a real value
+    r"|current database:\s*'"      # --current-db returned a real value
+    r"|banner:\s*'"                # --banner returned a real value
+    r"|os-shell>"                  # --os-shell: an interactive shell was obtained
+    r"|command standard output",   # --os-shell / --sql-shell: a command actually ran
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 def parse_sqlmap(
@@ -358,7 +375,6 @@ def parse_sqlmap(
                     description=f"sqlmap tested {target or 'the endpoint'} — no injectable parameter.",
                     evidence="all tested parameters do not appear to be injectable",
                     confidence=FindingConfidence.LIKELY,
-                    evidence_grade=EvidenceGrade.OBSERVED,
                     source_tool="sqlmap_scan",
                     target=target,
                     tags=["sqlmap", "no_sqli"],
@@ -372,6 +388,14 @@ def parse_sqlmap(
     dbms_m = re.search(r"back-end DBMS:\s*(.+)", text)
     if dbms_m:
         dbms = dbms_m.group(1).strip()
+    # Detecting an injection point and actually pulling data out are different
+    # claims — only the latter earns CRITICAL/CONFIRMED. A bare "is vulnerable"
+    # with no --dump/--os-shell output is a real, actionable lead, but it's a
+    # detection, not proof of impact.
+    extracted = bool(_SQLMAP_EXTRACTION_RE.search(text))
+    severity = ClaimSeverity.CRITICAL if extracted else ClaimSeverity.HIGH
+    confidence = FindingConfidence.CONFIRMED if extracted else FindingConfidence.LIKELY
+    verb = "extracted data from" if extracted else "detected (not yet exploited)"
     params = _SQLMAP_PARAM_RE.findall(text)
     if params:
         for param, place in params:
@@ -380,17 +404,17 @@ def parse_sqlmap(
                     engagement_id=engagement_id,
                     run_id=run_id,
                     target=target,
-                    title=f"SQL injection: {param.strip()} ({place})"[:180],
-                    description=(f"sqlmap confirmed a SQL injection in parameter '{param.strip()}' ({place})."
+                    title=f"SQL injection {'confirmed' if extracted else 'detected'}: {param.strip()} ({place})"[:180],
+                    description=(f"sqlmap {verb} a SQL injection in parameter '{param.strip()}' ({place})."
                                 + (f" Techniques: {', '.join(techniques[:4])}." if techniques else "")
                                 + (f" DBMS: {dbms}." if dbms else "")),
                     evidence=text[:800],
-                    severity=ClaimSeverity.CRITICAL,
+                    severity=severity,
                     source_tool="sqlmap_scan",
-                    confidence=FindingConfidence.CONFIRMED,
+                    confidence=confidence,
                     metadata={"parameter": param.strip(), "place": place, "dbms": dbms, "url": target,
-                              "techniques": ",".join(techniques[:6])},
-                    tags=["sqlmap", "sqli", "injection"],
+                              "techniques": ",".join(techniques[:6]), "extracted": extracted},
+                    tags=["sqlmap", "sqli", "injection"] + (["extracted"] if extracted else ["detected"]),
                 )
             )
     else:
@@ -399,14 +423,14 @@ def parse_sqlmap(
                 engagement_id=engagement_id,
                 run_id=run_id,
                 target=target,
-                title="SQL injection confirmed by sqlmap",
-                description="sqlmap reported the target as injectable." + (f" DBMS: {dbms}." if dbms else ""),
+                title="SQL injection confirmed by sqlmap" if extracted else "SQL injection detected by sqlmap",
+                description=f"sqlmap {verb} the target." + (f" DBMS: {dbms}." if dbms else ""),
                 evidence=text[:800],
-                severity=ClaimSeverity.CRITICAL,
+                severity=severity,
                 source_tool="sqlmap_scan",
-                confidence=FindingConfidence.CONFIRMED,
-                metadata={"dbms": dbms, "url": target},
-                tags=["sqlmap", "sqli", "injection"],
+                confidence=confidence,
+                metadata={"dbms": dbms, "url": target, "extracted": extracted},
+                tags=["sqlmap", "sqli", "injection"] + (["extracted"] if extracted else ["detected"]),
             )
         )
     return out
@@ -462,7 +486,6 @@ def parse_dalfox(
                 evidence=(data or json.dumps(rec, sort_keys=True))[:800],
                 severity=severity,
                 source_tool="dalfox_xss_scan",
-                grade=EvidenceGrade.OBSERVED if verified else EvidenceGrade.INFERRED,
                 confidence=FindingConfidence.CONFIRMED if verified else FindingConfidence.LIKELY,
                 metadata={"param": param, "cwe": cwe, "poc": data[:400], "poc_type": poc_type, "url": target},
                 tags=["dalfox", "xss", "injection"] + (["verified"] if verified else ["reflected"]),
@@ -568,7 +591,6 @@ def parse_searchsploit_lookup(
                 ),
                 evidence=f"EDB-ID {edb_id} | {entry.get('Path', '')}"[:500],
                 confidence=FindingConfidence.CONFIRMED if verified else FindingConfidence.LIKELY,
-                evidence_grade=EvidenceGrade.OBSERVED,
                 claim_severity=ClaimSeverity.MEDIUM,
                 source_tool="searchsploit_lookup",
                 target=target,
@@ -712,7 +734,7 @@ def parse_sslyze(
                     description=f"The certificate served by {host} does not match the hostname.",
                     evidence="sslyze: leaf_certificate_subject_matches_hostname=false",
                     severity=ClaimSeverity.MEDIUM, source_tool="sslyze_scan",
-                    grade=EvidenceGrade.OBSERVED, metadata={"host": host},
+                    metadata={"host": host},
                     tags=["sslyze", "tls", "cert_mismatch"],
                 ))
             path_results = dep.get("path_validation_results") or [] if isinstance(dep, dict) else []
@@ -724,7 +746,7 @@ def parse_sslyze(
                                 "(self-signed / expired / incomplete chain).",
                     evidence="sslyze: all path_validation_results unsuccessful",
                     severity=ClaimSeverity.LOW, source_tool="sslyze_scan",
-                    grade=EvidenceGrade.OBSERVED, metadata={"host": host},
+                    metadata={"host": host},
                     tags=["sslyze", "tls", "cert_untrusted"],
                 ))
 
@@ -772,7 +794,6 @@ def parse_graphql_cop(
                 description=(desc + (f" Impact: {impact}." if impact else "")).strip() or title,
                 evidence=json.dumps({k: item.get(k) for k in ("title", "severity", "impact", "curl_verify") if k in item}, sort_keys=True)[:600],
                 severity=severity, source_tool="graphql_cop_scan",
-                grade=EvidenceGrade.OBSERVED,
                 metadata={"check": title, "url": target},
                 tags=["graphql", "api", "graphql_cop"],
             )

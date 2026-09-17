@@ -179,6 +179,6 @@ def query_graph(
         "hint": (
             "Narrow with asset_type=subdomain|host|url|port|ip|technology and contains=vpn|oracle|api. "
             "Operator links: platform_graph_link. hypothesis_*=not proof. "
-            "Then platform_fanout_assets or platform_crown_jewels."
+            "Then platform_fanout_assets on the hosts you judge worth deepening."
         ),
     }

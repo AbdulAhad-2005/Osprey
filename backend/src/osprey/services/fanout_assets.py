@@ -1,4 +1,10 @@
-"""Bulk run one catalog tool across an explicit asset list (elite batch verb)."""
+"""Bulk run one catalog tool across an explicit asset list — the one fan-out
+primitive (concurrent, allowlist-free). RoE/validation/rate-governing is
+already enforced per call by ``tool_execution.execute_tool_request``, so a
+second gatekeeping allowlist here would only be redundant — any registered
+catalog tool may be fanned out; ``fanout.py`` (sister-domain enum) is a thin
+domain-specific caller of this same primitive, not a second engine.
+"""
 
 from __future__ import annotations
 
@@ -15,44 +21,25 @@ from osprey.services.tool_registry import get_tool_definition
 
 logger = logging.getLogger(__name__)
 
-# Tools safe for multi-asset fanout (no mass scanners that ignore per-host params).
-_ALLOWED = frozenset(
-    {
-        "subfinder_scan",
-        "amass_scan",
-        "dnsenum_scan",
-        "fierce_scan",
-        "httpx_probe",
-        "whois_lookup",
-        "nmap_syn_scan",
-        "nmap_service_scan",
-        "nmap_custom_scan",
-        "rustscan_fast_scan",
-        "naabu_port_scan",
-        "enum4linux_scan",
-        "smbmap_scan",
-        "shodan_host_info",
-        "subdomain_takeover_check",
-    }
-)
+# Resolution order for "which param gets the per-asset value" — checked
+# against the tool's own registered parameter names, so any catalog tool
+# works without a per-tool table. Falls back to the tool's first declared
+# parameter, then "target", if none of these match.
+_TARGET_PARAM_PRIORITY = ("target", "domain", "url", "host", "hostname", "ip")
 
-_PRIMARY_PARAM = {
-    "subfinder_scan": "domain",
-    "amass_scan": "domain",
-    "dnsenum_scan": "domain",
-    "fierce_scan": "domain",
-    "httpx_probe": "target",
-    "whois_lookup": "target",
-    "nmap_syn_scan": "target",
-    "nmap_service_scan": "target",
-    "nmap_custom_scan": "target",
-    "rustscan_fast_scan": "target",
-    "naabu_port_scan": "target",
-    "enum4linux_scan": "target",
-    "smbmap_scan": "target",
-    "shodan_host_info": "target",
-    "subdomain_takeover_check": "target",
-}
+# A very high sanity ceiling only — catches a fat-fingered value, never
+# second-guesses a deliberate one (see parallelism_config for the same
+# pattern). Exceeding it is logged, not silently substituted without saying so.
+_MAX_ASSETS_CEILING = 500
+
+
+def _primary_param(tool_name: str) -> str:
+    tool_def = get_tool_definition(tool_name)
+    params = list((tool_def.parameters or {}).keys()) if tool_def else []
+    for name in _TARGET_PARAM_PRIORITY:
+        if name in params:
+            return name
+    return params[0] if params else "target"
 
 
 class FanoutAssetsRequest(BaseModel):
@@ -60,7 +47,7 @@ class FanoutAssetsRequest(BaseModel):
     tool_name: str = "httpx_probe"
     dry_run: bool = True
     confirm: bool = False
-    max_assets: int = Field(default=25, ge=1, le=100)
+    max_assets: int = Field(default=25, ge=1)
     timeout_per_tool: int = Field(default=120, ge=30, le=600)
     additional_args: str = ""
     run_id: str = ""
@@ -96,13 +83,16 @@ async def fanout_assets(
 ) -> FanoutAssetsResponse:
     request = request or FanoutAssetsRequest()
     tool = (request.tool_name or "httpx_probe").strip()
-    if tool not in _ALLOWED:
-        raise ValueError(
-            f"tool_name must be one of {sorted(_ALLOWED)} — "
-            "use platform_script for custom batch logic"
-        )
     if get_tool_definition(tool) is None:
         raise ValueError(f"Tool not registered: {tool}")
+
+    max_assets = request.max_assets
+    if max_assets > _MAX_ASSETS_CEILING:
+        logger.warning(
+            "fanout_assets: max_assets=%d exceeds sanity ceiling %d — enforcing %d instead.",
+            max_assets, _MAX_ASSETS_CEILING, _MAX_ASSETS_CEILING,
+        )
+        max_assets = _MAX_ASSETS_CEILING
 
     will_execute = (not request.dry_run) and request.confirm
     if not request.dry_run and not request.confirm:
@@ -119,15 +109,15 @@ async def fanout_assets(
             continue
         seen.add(key)
         assets.append(a)
-        if len(assets) >= request.max_assets:
+        if len(assets) >= max_assets:
             break
 
-    primary = _PRIMARY_PARAM.get(tool, "target")
+    primary = _primary_param(tool)
 
     if not will_execute:
         results = [FanoutAssetResult(asset=asset, planned=True) for asset in assets]
         note = (
-            "Explicit asset fan-out — you pick the list (crown jewels / graph query). "
+            "Explicit asset fan-out — you pick the list (from graph query / findings). "
             "Prefer dry_run first. Does not invent assets."
             " PREVIEW only — set dry_run=false and confirm=true to execute."
         )
@@ -192,7 +182,7 @@ async def fanout_assets(
     executed_n = sum(1 for item in results if item.executed)
 
     note = (
-        "Explicit asset fan-out — you pick the list (crown jewels / graph query). "
+        "Explicit asset fan-out — you pick the list (from graph query / findings). "
         "Prefer dry_run first. Does not invent assets."
     )
 

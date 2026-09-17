@@ -61,7 +61,6 @@ class CommanderContext(BaseModel):
     phase_readiness_text: str = ""
     # Elite operator surfaces
     skills_index: str = ""
-    crown_jewels: list[dict[str, Any]] = Field(default_factory=list)
     context_delta: dict[str, Any] = Field(default_factory=dict)
     background_jobs: list[dict[str, Any]] = Field(
         default_factory=list,

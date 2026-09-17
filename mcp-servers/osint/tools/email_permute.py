@@ -13,7 +13,7 @@ Args:
 
 Category: osint
 
-Candidates are hypotheses (evidence_grade inferred) until confirmed by holehe/SMTP.
+Candidates are hypotheses (LIKELY confidence) until confirmed by holehe/SMTP.
 """
 
 from __future__ import annotations

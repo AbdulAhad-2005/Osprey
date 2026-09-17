@@ -6,9 +6,10 @@ endpoints are additionally tagged ``injection_point_candidate`` so the eventual
 vuln phase inherits a ready-made attack-surface list instead of re-deriving it
 from raw URL dumps (the "attack-surface handoff" seed).
 
-Nothing here claims impact it did not observe: content hits are OBSERVED (live
-HTTP response), hardcoded secrets are OBSERVED-as-present but capped at MEDIUM
-(their validity is unverified), and archive/DNS-derived signals are INFERRED.
+Nothing here claims impact it did not observe: content hits are CONFIRMED (a
+live HTTP response was seen), hardcoded secrets are LIKELY confidence and
+capped at MEDIUM/LOW severity (their presence is seen, but validity is
+unverified), and archive/DNS-derived signals stay at LIKELY confidence too.
 """
 
 from __future__ import annotations
@@ -19,7 +20,6 @@ from urllib.parse import parse_qs, urlparse
 
 from osprey.schemas.finding import (
     ClaimSeverity,
-    EvidenceGrade,
     Finding,
     FindingConfidence,
     FindingType,
@@ -70,7 +70,6 @@ def _content_hit(
         description=f"Discovered path via {source_tool} (HTTP {status}, size {size})",
         evidence=f"{status} {size} {url}"[:300],
         confidence=FindingConfidence.CONFIRMED,
-        evidence_grade=EvidenceGrade.OBSERVED,
         source_tool=source_tool,
         target=url,
         metadata={
@@ -183,7 +182,6 @@ def parse_gobuster(stdout, *, engagement_id="", run_id="", target=""):
                     description=f"Active DNS brute force (gobuster dns{(' on ' + target) if target else ''})",
                     evidence=line[:400],
                     confidence=FindingConfidence.LIKELY,
-                    evidence_grade=EvidenceGrade.OBSERVED,
                     source_tool="gobuster_scan",
                     target=target or host,
                     metadata={"hostname": host, "source": "dns-bruteforce", "ips": ips},
@@ -238,7 +236,7 @@ def _dir_text_fallback(stdout, source_tool, engagement_id, run_id, target):
 _ARJUN_FOUND_RE = re.compile(r"(?i)parameters?\s+found\s*[:>-]*\s*(.+)$")
 
 
-def _param_finding(param, url, *, source_tool, engagement_id, run_id, target, grade):
+def _param_finding(param, url, *, source_tool, engagement_id, run_id, target):
     return Finding(
         engagement_id=engagement_id,
         run_id=run_id,
@@ -248,7 +246,6 @@ def _param_finding(param, url, *, source_tool, engagement_id, run_id, target, gr
         description=f"HTTP parameter discovered via {source_tool} — injection-point candidate",
         evidence=(f"{param} @ {url}" if url else param)[:300],
         confidence=FindingConfidence.LIKELY,
-        evidence_grade=grade,
         source_tool=source_tool,
         target=url or target,
         metadata={"parameter": param, "url": url, "hostname": _host_of(url)},
@@ -271,7 +268,6 @@ def parse_arjun(stdout, *, engagement_id="", run_id="", target=""):
             out.append(_param_finding(
                 param, target, source_tool="arjun_scan",
                 engagement_id=engagement_id, run_id=run_id, target=target,
-                grade=EvidenceGrade.OBSERVED,
             ))
     return out
 
@@ -302,7 +298,6 @@ def parse_x8(stdout, *, engagement_id="", run_id="", target=""):
         out.append(_param_finding(
             param, target, source_tool="x8_parameter_discovery",
             engagement_id=engagement_id, run_id=run_id, target=target,
-            grade=EvidenceGrade.OBSERVED,
         ))
 
     # JSON form: {"params": [...]} or a bare list.
@@ -346,7 +341,6 @@ def extract_parameters_from_urls(urls, *, source_tool, engagement_id, run_id, ta
             out.append(_param_finding(
                 param, url, source_tool=source_tool,
                 engagement_id=engagement_id, run_id=run_id, target=target,
-                grade=EvidenceGrade.INFERRED,
             ))
             if len(out) >= max_params:
                 return out
@@ -382,7 +376,7 @@ def parse_katana(stdout, *, engagement_id="", run_id="", target=""):
             finding_type=FindingType.URL, title=url[:300],
             description="Endpoint discovered by katana crawl",
             evidence=url[:300], confidence=FindingConfidence.CONFIRMED,
-            evidence_grade=EvidenceGrade.OBSERVED, source_tool="katana_crawl",
+            source_tool="katana_crawl",
             target=url, metadata={"hostname": _host_of(url), "url": url},
             tags=["crawl", "katana"] + (["interesting_path"] if _is_interesting(url) else []),
         ))
@@ -414,7 +408,7 @@ def parse_js_recon(stdout, *, engagement_id="", run_id="", target=""):
             finding_type=FindingType.URL, title=ep[:300],
             description="Endpoint extracted from JavaScript",
             evidence=ep[:300], confidence=FindingConfidence.LIKELY,
-            evidence_grade=EvidenceGrade.INFERRED, source_tool="js_recon",
+            source_tool="js_recon",
             target=tgt, metadata={"endpoint": ep, "hostname": _host_of(ep) or _host_of(tgt)},
             tags=["js-endpoint"] + (["interesting_path", "injection_point_candidate"]
                                     if _is_interesting(ep) else []),
@@ -437,7 +431,6 @@ def parse_js_recon(stdout, *, engagement_id="", run_id="", target=""):
             ),
             evidence=f"{stype}: {sec.get('match')} (source {sec.get('source')})"[:300],
             confidence=FindingConfidence.LIKELY,
-            evidence_grade=EvidenceGrade.OBSERVED,
             claim_severity=ClaimSeverity.MEDIUM if high else ClaimSeverity.LOW,
             source_tool="js_recon", target=tgt,
             metadata={"secret_type": stype, "source": sec.get("source"), "high_signal": high},
@@ -451,7 +444,7 @@ def parse_js_recon(stdout, *, engagement_id="", run_id="", target=""):
             title=f"Cloud storage reference: {c.get('bucket')} ({c.get('type')})",
             description="Cloud storage endpoint referenced in JS/target — check for public access.",
             evidence=str(c.get("match"))[:300], confidence=FindingConfidence.LIKELY,
-            evidence_grade=EvidenceGrade.INFERRED, source_tool="js_recon", target=tgt,
+            source_tool="js_recon", target=tgt,
             metadata={"cloud_type": c.get("type"), "bucket": c.get("bucket")},
             tags=["cloud-asset", str(c.get("type"))],
         ))
@@ -498,7 +491,7 @@ def parse_email_security(stdout, *, engagement_id="", run_id="", target=""):
             f"DMARC={'yes' if dmarc else 'NO'} DKIM={len(dkim)} selector(s)"
         ),
         evidence=f"spf={spf[:120] or 'none'}; dmarc={dmarc[:120] or 'none'}"[:300],
-        confidence=FindingConfidence.CONFIRMED, evidence_grade=EvidenceGrade.OBSERVED,
+        confidence=FindingConfidence.CONFIRMED, 
         source_tool="email_security_probe", target=dom, metadata=meta,
         tags=["email-security", "dns"],
     ))
@@ -527,7 +520,7 @@ def parse_email_security(stdout, *, engagement_id="", run_id="", target=""):
                 "in the organisation's name: " + "; ".join(weaknesses)
             ),
             evidence="; ".join(weaknesses)[:300], confidence=FindingConfidence.CONFIRMED,
-            evidence_grade=EvidenceGrade.OBSERVED, claim_severity=ClaimSeverity.LOW,
+            claim_severity=ClaimSeverity.LOW,
             source_tool="email_security_probe", target=dom,
             metadata={**meta, "weaknesses": "; ".join(weaknesses)},
             tags=["email-security", "spoofing", "misconfig"],
@@ -563,7 +556,7 @@ def parse_well_known(stdout, *, engagement_id="", run_id="", target=""):
             description=f"Policy/well-known file exposed ({cur_path})"
                         + (f"; {len(disallow)} Disallow path(s)" if disallow else ""),
             evidence=(body[:300] or url), confidence=FindingConfidence.CONFIRMED,
-            evidence_grade=EvidenceGrade.OBSERVED, source_tool="well_known_probe",
+            source_tool="well_known_probe",
             target=url, metadata=meta, tags=tags,
         ))
         # Emit the disallowed paths themselves as URL leads.
@@ -576,7 +569,7 @@ def parse_well_known(stdout, *, engagement_id="", run_id="", target=""):
                 finding_type=FindingType.URL, title=f"robots Disallow: {d}",
                 description="Path the target asked crawlers not to index — often sensitive.",
                 evidence=f"Disallow: {d}", confidence=FindingConfidence.LIKELY,
-                evidence_grade=EvidenceGrade.INFERRED, source_tool="well_known_probe",
+                source_tool="well_known_probe",
                 target=durl, metadata={"url": durl, "from": "robots_disallow"},
                 tags=["robots_disallow"] + (["interesting_path"] if _is_interesting(durl) else []),
             ))
@@ -657,7 +650,6 @@ def parse_tech_stack(stdout, *, engagement_id="", run_id="", target=""):
                     default=str,
                 )[:2000],
                 confidence=FindingConfidence.CONFIRMED if confidence == "high" else FindingConfidence.LIKELY,
-                evidence_grade=EvidenceGrade.OBSERVED,
                 source_tool="tech_stack_analyze",
                 target=tech_target,
                 metadata={
@@ -717,7 +709,6 @@ def parse_wafw00f(stdout, *, engagement_id="", run_id="", target=""):
                 description=f"wafw00f: {line.strip()[:300]}",
                 evidence=line.strip()[:500],
                 confidence=FindingConfidence.CONFIRMED if confirmed else FindingConfidence.LIKELY,
-                evidence_grade=EvidenceGrade.OBSERVED if confirmed else EvidenceGrade.INFERRED,
                 source_tool="wafw00f_scan",
                 target=target,
                 metadata={"hostname": target, "waf": name, "verdict": verdict},

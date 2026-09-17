@@ -98,7 +98,7 @@ def correlate_now(body: dict) -> dict:
     """Read-only cross-finding correlation — returns candidate links/tags.
 
     Never writes to the graph. The caller (LLM) reviews the suggestions and
-    commits the useful ones via platform_graph_link / platform_tag_asset.
+    commits the useful ones via platform_graph_link.
     """
     from osprey.services.finding_correlator import find_correlations
 
@@ -216,7 +216,7 @@ def graph_query(
 
 @router.post("/graph/link")
 def graph_link(body: dict) -> dict:
-    """Operator-named graph edge (cognition write-back). Non-observed → hypothesis_ prefix."""
+    """Operator-named graph edge (cognition write-back). Non-confirmed → hypothesis_ prefix."""
     from osprey.services.operator_memory import link_assets
 
     try:
@@ -226,7 +226,7 @@ def graph_link(body: dict) -> dict:
             target=str(body.get("target") or ""),
             relation=str(body.get("relation") or ""),
             evidence=str(body.get("evidence") or ""),
-            evidence_grade=str(body.get("evidence_grade") or "inferred"),
+            confidence=str(body.get("confidence") or "likely"),
             run_id=str(body.get("run_id") or ""),
             seed_target=str(body.get("seed_target") or ""),
             derived_from=body.get("derived_from"),
@@ -239,7 +239,7 @@ def graph_link(body: dict) -> dict:
 def graph_link_many(body: dict) -> dict:
     """Bulk operator graph edges — one call persists N relationships.
 
-    Same evidence contract as /graph/link (evidence required, non-observed →
+    Same evidence contract as /graph/link (evidence required, non-confirmed →
     hypothesis_ prefix); just batched so an LLM never skips persistence because
     N separate calls felt like too much overhead.
     """
@@ -249,7 +249,7 @@ def graph_link_many(body: dict) -> dict:
         return link_assets_many(
             engagement_id=str(body.get("engagement_id") or ""),
             evidence=str(body.get("evidence") or ""),
-            evidence_grade=str(body.get("evidence_grade") or "inferred"),
+            confidence=str(body.get("confidence") or "likely"),
             run_id=str(body.get("run_id") or ""),
             seed_target=str(body.get("seed_target") or ""),
             derived_from=body.get("derived_from"),
@@ -261,26 +261,6 @@ def graph_link_many(body: dict) -> dict:
     except ValueError as exc:
         raise HTTPException(400, detail=str(exc)) from exc
 
-
-@router.post("/tag-asset")
-def tag_asset_endpoint(body: dict) -> dict:
-    """Runtime crown-jewel tag (role + boost) without editing thinking_model.yaml."""
-    from osprey.services.operator_memory import tag_asset
-
-    try:
-        boost_raw = body.get("boost", 0)
-        boost_i = int(boost_raw) if boost_raw is not None else 0
-        return tag_asset(
-            engagement_id=str(body.get("engagement_id") or ""),
-            asset=str(body.get("asset") or ""),
-            role=str(body.get("role") or ""),
-            boost=boost_i,
-            reason=str(body.get("reason") or ""),
-            run_id=str(body.get("run_id") or ""),
-            seed_target=str(body.get("seed_target") or ""),
-        )
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(400, detail=str(exc)) from exc
 
 @router.post("/think")
 def think_endpoint(body: dict) -> dict:
@@ -301,24 +281,12 @@ def think_endpoint(body: dict) -> dict:
         raise HTTPException(400, detail=str(exc)) from exc
 
 
-@router.get("/crown-jewels")
-def crown_jewels(
-    engagement_id: str = Query(..., min_length=1),
-    run_id: str | None = Query(default=None),
-    limit: int = Query(default=15, ge=1, le=50),
-) -> dict:
-    from osprey.services.crown_jewels import rank_crown_jewels
-
-    ranked = rank_crown_jewels(engagement_id, run_id=run_id or "", limit=limit)
-    return {"engagement_id": engagement_id, "count": len(ranked), "crown_jewels": ranked}
-
-
 @router.get("/report-outline")
 def report_outline(
     engagement_id: str = Query(..., min_length=1),
     run_id: str | None = Query(default=None),
 ) -> dict:
-    """Observed / inferred / hypotheses / crown jewels — structure for trusted reports."""
+    """Confirmed / likely / hypotheses — structure for trusted reports."""
     from osprey.services.report_outline import build_report_outline
 
     return build_report_outline(engagement_id, run_id=run_id or "")

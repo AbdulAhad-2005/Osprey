@@ -7,7 +7,6 @@ import re
 from typing import Callable
 
 from osprey.schemas.finding import (
-    EvidenceGrade,
     Finding,
     FindingConfidence,
     FindingType,
@@ -69,7 +68,6 @@ def _raw_observation_fallback(
             description="Unparsed tool output (stored for agent context)",
             evidence=stdout[:2000],
             confidence=FindingConfidence.LIKELY,
-            evidence_grade=EvidenceGrade.UNVERIFIED,
             source_tool=tool_name,
             target=target,
             tags=["unparsed"],

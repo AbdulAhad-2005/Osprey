@@ -14,27 +14,16 @@ surface_expansion:
   - "FOOTPRINT - OS/service banners, tech, emails/creds only when observed; web stack + interesting paths/URLs on live apps."
   - "INVENT - custom paths, JS route extract, API trees → platform_script (+ FINDING markers); use platform_job_start for long branches."
   - "IDENTITY (passive) - as the org/site is mapped, harvest the public people surface (web_contact_harvest on the site, theHarvester, metagoofil) and RECURSE each lead: name→email_permute+maigret, email→holehe, username→maigret/sherlock, phone→phoneinfoga. Public sources only — no breach data, no logins."
-  - "DEEPEN - crown jewels / confirmed roles get app depth; then finalize grades."
+  - "DEEPEN - high-value roles (remote_access, mail, admin, api, business apps) / confirmed findings get app depth; then finalize severities."
 
 # Product/fingerprint loop — runs *on assets you already reached*, not instead of expansion.
 universal_loop:
   - "EXPAND - use the full resource set (typed tools, domain_hunter, jobs, fanout, scripts) until the surface story is coherent — not until the first tool returns."
   - "SIGNAL - name the likely product/role using your knowledge (do not wait for a skill file)."
   - "CONFIRM - second observed probe (status/title/headers/banner) on the same asset."
-  - "GRADE - observed / inferred / unverified before any severity word."
+  - "GRADE - confirmed / likely / hypothesis before any severity word."
   - "DEEPEN - on confirmed high-value roles (remote_access, mail, admin, api, business apps) and invent probes when wrappers are thin."
   - "REPORT - finalize gate; never COMPLETE from chat memory alone."
-
-# Host/path *roles* — not vendor lists. Weights guide crown-jewel ranking.
-role_weights:
-  - { pattern: '(?i)\bvpn\b|anyconnect|globalprotect|forticlient', weight: 40, role: remote_access }
-  - { pattern: '(?i)owa|webmail|exchange|autodiscover|mail\.', weight: 38, role: mail }
-  - { pattern: '(?i)mdm|intune|mobile.?device', weight: 36, role: device_mgmt }
-  - { pattern: '(?i)gitlab|jenkins|harbor|confluence|jira|n8n|gitea', weight: 35, role: devops }
-  - { pattern: '(?i)admin|staging|console|pam|sso|identity|auth\.', weight: 32, role: admin_identity }
-  - { pattern: '(?i)\bapi\b|graphql|swagger|gateway|apim', weight: 28, role: api }
-  - { pattern: '(?i)sip|pbx|voice|vpbx', weight: 30, role: voice }
-  - { pattern: '(?i)supplier|portal|intranet|extranet|partner|erp|ebs', weight: 24, role: business_portal }
 
 # Signal classes → thinking cards (how to reason, not what CVE to claim)
 signal_classes:

@@ -1,4 +1,4 @@
-"""Evidence grades + severity clamping for findings."""
+"""Finding normalization + noise downgrades."""
 
 from __future__ import annotations
 
@@ -6,11 +6,9 @@ from typing import Iterable
 
 from osprey.schemas.finding import (
     ClaimSeverity,
-    EvidenceGrade,
     Finding,
+    FindingConfidence,
     FindingType,
-    clamp_claim_severity,
-    default_grade_for_type,
 )
 
 # Hosts with this many open ports and almost no SERVICE findings → decoy/noise.
@@ -19,8 +17,7 @@ PORT_FLOOD_MIN_SERVICES = 3
 
 
 def normalize_finding(finding: Finding) -> Finding:
-    """Ensure grade/severity are consistent (idempotent)."""
-    # Re-run through model validation path
+    """Re-run through model validation (idempotent)."""
     return Finding.model_validate(finding.model_dump())
 
 
@@ -67,7 +64,7 @@ def apply_port_flood_downgrades(findings: list[Finding]) -> list[Finding]:
             f = f.model_copy(
                 update={
                     "tags": tags,
-                    "evidence_grade": EvidenceGrade.UNVERIFIED,
+                    "confidence": FindingConfidence.HYPOTHESIS,
                     "claim_severity": ClaimSeverity.INFO,
                     "notes": (
                         (f.notes + " " if f.notes else "")
@@ -79,26 +76,6 @@ def apply_port_flood_downgrades(findings: list[Finding]) -> list[Finding]:
             f = normalize_finding(f)
         out.append(f)
     return out
-
-
-def allow_severity_claim(
-    grade: EvidenceGrade | str,
-    severity: ClaimSeverity | str,
-) -> tuple[bool, ClaimSeverity, str]:
-    """Return (ok, clamped, reason)."""
-    clamped = clamp_claim_severity(grade, severity)
-    try:
-        requested = ClaimSeverity(str(severity))
-    except ValueError:
-        requested = ClaimSeverity.NONE
-    if requested == clamped:
-        return True, clamped, "ok"
-    return (
-        False,
-        clamped,
-        f"claim_severity={requested.value} exceeds evidence_grade={grade}; "
-        f"clamped to {clamped.value}. Verify with banners/HTTP/auth probes first.",
-    )
 
 
 def _host_key(f: Finding) -> str:
@@ -119,15 +96,3 @@ def _host_key(f: Finding) -> str:
     if "://" in title:
         return title.split("//", 1)[-1].split("/", 1)[0].split(":")[0]
     return title
-
-
-def grade_label(f: Finding) -> str:
-    g = getattr(f, "evidence_grade", None)
-    if g is None:
-        g = default_grade_for_type(
-            f.finding_type,
-            confidence=f.confidence,
-            tags=f.tags,
-            source_tool=f.source_tool,
-        )
-    return str(g.value if hasattr(g, "value") else g)

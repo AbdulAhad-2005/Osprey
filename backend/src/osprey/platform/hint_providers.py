@@ -218,7 +218,7 @@ def _hints_fallback(ctx: HintContext) -> list[str]:
 
     return [
 
-        "HINT: Read STDERR/ERROR above, change approach based on CURRENT SITUATION, "
+        "HINT: Read STDERR/ERROR above, change approach based on what it says, "
 
         "and do not repeat the same failing command."
 

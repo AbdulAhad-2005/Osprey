@@ -6,8 +6,9 @@ Designed for both clean parser output and messy/unstructured tool results:
 - ``tags`` — free-form labels (e.g. sister_domain, cloudflare, unverified)
 - ``raw_data`` — truncated unstructured blob / extract when parse is incomplete
 - ``notes`` — human or agent annotations
-- ``evidence_grade`` — observed | inferred | unverified (severity claims depend on this)
-- ``claim_severity`` — optional operator-facing severity; clamped by evidence_grade
+- ``confidence`` — confirmed | likely | hypothesis: how sure we are the finding is real
+- ``claim_severity`` — impact if the finding is real; assigned honestly by the parser/agent,
+  not derived or clamped from anything else. See skills/vuln/verification-and-severity.md.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 
 class FindingType(StrEnum):
@@ -69,14 +70,6 @@ class FindingConfidence(StrEnum):
     HYPOTHESIS = "hypothesis"
 
 
-class EvidenceGrade(StrEnum):
-    """How strongly we observed the claim — independent of narrative severity."""
-
-    OBSERVED = "observed"  # banner, HTTP body, verified probe response
-    INFERRED = "inferred"  # DNS/CT/name/soft signal — not live-verified impact
-    UNVERIFIED = "unverified"  # noise, unparsed, port-flood / honeypot suspicion
-
-
 class ClaimSeverity(StrEnum):
     NONE = "none"
     INFO = "info"
@@ -84,105 +77,6 @@ class ClaimSeverity(StrEnum):
     MEDIUM = "medium"
     HIGH = "high"
     CRITICAL = "critical"
-
-
-# Max severity allowed per evidence grade (platform clamp).
-_SEVERITY_RANK = {
-    ClaimSeverity.NONE: 0,
-    ClaimSeverity.INFO: 1,
-    ClaimSeverity.LOW: 2,
-    ClaimSeverity.MEDIUM: 3,
-    ClaimSeverity.HIGH: 4,
-    ClaimSeverity.CRITICAL: 5,
-}
-_MAX_SEVERITY_FOR_GRADE = {
-    EvidenceGrade.OBSERVED: ClaimSeverity.CRITICAL,
-    EvidenceGrade.INFERRED: ClaimSeverity.MEDIUM,
-    EvidenceGrade.UNVERIFIED: ClaimSeverity.INFO,
-}
-
-
-def clamp_claim_severity(
-    grade: EvidenceGrade | str,
-    severity: ClaimSeverity | str,
-) -> ClaimSeverity:
-    """Downgrade severity claims that exceed what the evidence grade allows."""
-    try:
-        g = EvidenceGrade(str(grade))
-    except ValueError:
-        g = EvidenceGrade.UNVERIFIED
-    try:
-        s = ClaimSeverity(str(severity))
-    except ValueError:
-        s = ClaimSeverity.NONE
-    allowed = _MAX_SEVERITY_FOR_GRADE[g]
-    if _SEVERITY_RANK[s] > _SEVERITY_RANK[allowed]:
-        return allowed
-    return s
-
-
-def default_grade_for_type(
-    finding_type: FindingType | str,
-    *,
-    confidence: FindingConfidence | str | None = None,
-    tags: list[str] | None = None,
-    source_tool: str = "",
-) -> EvidenceGrade:
-    """Sensible defaults when parsers omit evidence_grade."""
-    ft = FindingType(str(finding_type))
-    tagset = {t.lower() for t in (tags or [])}
-    tool = (source_tool or "").lower()
-
-    if "raw_output" in tagset or "unparsed" in tagset or "honeypot_suspect" in tagset:
-        return EvidenceGrade.UNVERIFIED
-    if "sister_domain" in tagset or tool in ("domain_hunter",):
-        return EvidenceGrade.UNVERIFIED
-    if ft == FindingType.URL:
-        return EvidenceGrade.OBSERVED
-    if ft == FindingType.SERVICE:
-        return EvidenceGrade.OBSERVED
-    if ft == FindingType.VULNERABILITY:
-        # A scanner match is a live response (OBSERVED), which lets severity
-        # reach HIGH/CRITICAL; parsers still set this explicitly and drop
-        # unverified/passive matches (e.g. version-only CVE guesses) to INFERRED.
-        return EvidenceGrade.OBSERVED
-    if ft == FindingType.TECHNOLOGY:
-        return EvidenceGrade.INFERRED
-    if ft == FindingType.PORT:
-        return EvidenceGrade.INFERRED
-    if ft == FindingType.DNS_RECORD:
-        # A DNS record read from a live query is an observed structural fact,
-        # but graded INFERRED (like HOST/PORT) — it's a lead about infra, not
-        # impact, so it should never on its own reach a high severity.
-        return EvidenceGrade.INFERRED
-    # Downstream producers. A secret/credential/HTTP response read from real output
-    # is an observed fact; an ACCESS handoff is a candidate primitive (inferred).
-    if ft in (FindingType.CREDENTIAL, FindingType.SECRET, FindingType.HTTP_RESPONSE):
-        return EvidenceGrade.OBSERVED
-    if ft == FindingType.ACCESS:
-        return EvidenceGrade.INFERRED
-    if ft in (FindingType.SUBDOMAIN, FindingType.HOST):
-        return EvidenceGrade.INFERRED
-    # Passive OSINT: entities harvested from public sources are treated as
-    # leads, never observed impact. Person / social matches are the softest
-    # (name-collision + username-reuse risk) → UNVERIFIED; email / username /
-    # phone / org / document are structural leads → INFERRED.
-    if ft in (FindingType.PERSON, FindingType.SOCIAL_ACCOUNT):
-        return EvidenceGrade.UNVERIFIED
-    if ft in (
-        FindingType.EMAIL,
-        FindingType.USERNAME,
-        FindingType.PHONE,
-        FindingType.ORGANIZATION,
-        FindingType.DOCUMENT,
-    ):
-        return EvidenceGrade.INFERRED
-    if ft == FindingType.OBSERVATION:
-        conf = str(confidence or "")
-        if conf == FindingConfidence.HYPOTHESIS.value:
-            return EvidenceGrade.UNVERIFIED
-        return EvidenceGrade.INFERRED
-    return EvidenceGrade.INFERRED
 
 
 class Finding(BaseModel):
@@ -195,7 +89,6 @@ class Finding(BaseModel):
     description: str = ""
     evidence: str = ""
     confidence: FindingConfidence = FindingConfidence.CONFIRMED
-    evidence_grade: EvidenceGrade = EvidenceGrade.INFERRED
     claim_severity: ClaimSeverity = ClaimSeverity.NONE
     source_tool: str = ""
     target: str = ""
@@ -218,35 +111,6 @@ class Finding(BaseModel):
     node_id: str | None = Field(
         default=None, description="Primary graph node this finding concerns (read-only)."
     )
-
-    @model_validator(mode="before")
-    @classmethod
-    def _derive_grade_if_missing(cls, data: Any) -> Any:
-        """Derive evidence_grade from type/tags/tool when the caller omits it.
-
-        evidence_grade and claim_severity are native persisted columns, so there is
-        no need to read them back out of ``extra`` — only to fill a sensible default
-        on first construction.
-        """
-        if not isinstance(data, dict):
-            return data
-        if data.get("evidence_grade") in (None, ""):
-            try:
-                data["evidence_grade"] = default_grade_for_type(
-                    data.get("finding_type") or FindingType.OBSERVATION,
-                    confidence=data.get("confidence"),
-                    tags=data.get("tags") or [],
-                    source_tool=str(data.get("source_tool") or ""),
-                )
-            except Exception:
-                data["evidence_grade"] = EvidenceGrade.INFERRED
-        return data
-
-    @model_validator(mode="after")
-    def _clamp_severity(self) -> Finding:
-        """Enforce the evidence-grade severity clamp (the referee rule)."""
-        self.claim_severity = clamp_claim_severity(self.evidence_grade, self.claim_severity)
-        return self
 
 
 # Types whose label (title) recurs legitimately across hosts — the same technology
@@ -343,7 +207,7 @@ class GroupedFinding(BaseModel):
     finding_type: str
     source_tool: str
     severity: str
-    evidence_grade: str
+    confidence: str
     count: int
     affected_targets: list[str]
     sample_finding_id: str

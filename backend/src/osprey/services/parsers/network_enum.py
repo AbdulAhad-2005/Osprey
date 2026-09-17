@@ -18,7 +18,6 @@ from __future__ import annotations
 import re
 
 from osprey.schemas.finding import (
-    EvidenceGrade,
     Finding,
     FindingConfidence,
     FindingType,
@@ -78,7 +77,6 @@ def parse_masscan(
                 description="Open port from masscan",
                 evidence=f"masscan: {ip}:{port}/{proto} open",
                 confidence=FindingConfidence.CONFIRMED,
-                evidence_grade=EvidenceGrade.INFERRED,
                 source_tool="masscan_high_speed",
                 target=ip or target,
                 metadata={"ip": ip, "port": port, "protocol": proto, "hostname": ip},
@@ -217,7 +215,6 @@ def _smb_findings(
                     f"users={len(users)} shares={len(shares)}"
                 )[:300],
                 confidence=FindingConfidence.CONFIRMED,
-                evidence_grade=EvidenceGrade.OBSERVED,
                 source_tool=source_tool,
                 target=host,
                 metadata=meta,
@@ -236,7 +233,6 @@ def _smb_findings(
                 description=f"OS/platform reported by {source_tool} on {host}",
                 evidence=os_str[:300],
                 confidence=FindingConfidence.LIKELY,
-                evidence_grade=EvidenceGrade.INFERRED,
                 source_tool=source_tool,
                 target=host,
                 metadata={**hmeta, "os": os_str[:200]},
@@ -255,7 +251,6 @@ def _smb_findings(
                 description=comment or "SMB share",
                 evidence=f"//{host}/{share} {comment}".strip()[:300],
                 confidence=FindingConfidence.CONFIRMED,
-                evidence_grade=EvidenceGrade.OBSERVED,
                 source_tool=source_tool,
                 target=host,
                 metadata={**hmeta, "share": share, "comment": comment},
@@ -275,7 +270,6 @@ def _smb_findings(
                 description="Enumerated user accounts (existence, not credentials)",
                 evidence=f"users: {sample}"[:400],
                 confidence=FindingConfidence.CONFIRMED,
-                evidence_grade=EvidenceGrade.OBSERVED,
                 source_tool=source_tool,
                 target=host,
                 metadata={
@@ -298,7 +292,6 @@ def _smb_findings(
                 description="Enumerated groups",
                 evidence=("groups: " + ", ".join(groups[:20]))[:400],
                 confidence=FindingConfidence.CONFIRMED,
-                evidence_grade=EvidenceGrade.OBSERVED,
                 source_tool=source_tool,
                 target=host,
                 metadata={**hmeta, "group_count": len(groups), "groups": ",".join(groups[:50])},
@@ -402,7 +395,6 @@ def parse_smbmap(
                 description=comment or "SMB share (smbmap)",
                 evidence=f"{share}\t{perm}\t{comment}".strip()[:300],
                 confidence=FindingConfidence.CONFIRMED,
-                evidence_grade=EvidenceGrade.OBSERVED,
                 source_tool="smbmap_scan",
                 target=host or target,
                 metadata={
@@ -466,7 +458,6 @@ def parse_netexec(
                 description=f"{proto.upper()} host banner via netexec",
                 evidence=raw.strip()[:400],
                 confidence=FindingConfidence.CONFIRMED,
-                evidence_grade=EvidenceGrade.OBSERVED,
                 source_tool="netexec_scan",
                 target=ip or target,
                 metadata={
@@ -523,7 +514,6 @@ def parse_nbtscan(
                 description="NetBIOS name from nbtscan",
                 evidence=raw.strip()[:300],
                 confidence=FindingConfidence.CONFIRMED,
-                evidence_grade=EvidenceGrade.OBSERVED,
                 source_tool="nbtscan_netbios",
                 target=ip or target,
                 metadata={"ip": ip, "hostname": name, "netbios": name},

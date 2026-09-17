@@ -1,0 +1,53 @@
+# How many characters of a tool's raw stdout reach the driver (LLM / external
+# harness / CLI) before it gets head+tail trimmed with a pointer to the full
+# artifact. This is the ONE place that decides "how much raw output is enough"
+# — every truncation site in the codebase reads from here via
+# osprey.services.output_budget, instead of inventing its own magic number.
+#
+# default_chars applies to routine inventory tools (subdomain lists, whois,
+# etc.) where the parsed finding already captures the useful signal.
+#
+# high_value_chars applies to tools whose VALUE IS IN THE VOLUME of rows —
+# a sqlmap table dump, a big ffuf match list, a hydra crack list — where
+# trimming to a small preview throws away exactly the data a driver needs to
+# decide the next move (this was the root cause of a real gap found in a
+# platform comparison: a competitor's LLM chained further because it saw all
+# 22 dumped tables where ours saw a stub).
+default_chars: 20000
+high_value_chars: 200000
+
+high_value_tools:
+  - sqlmap_scan
+  - ffuf_scan
+  - feroxbuster_scan
+  - gobuster_scan
+  - hydra_attack
+  - katana_crawl
+  - hakrawler_crawl
+  - gau_discovery
+  - waybackurls_discovery
+  - nuclei_scan
+  - arjun_scan
+  - arjun_parameter_discovery
+  - x8_parameter_discovery
+
+# tool_name prefixes (not exact names) that are always high-value: the shell/
+# script escape hatches produce arbitrary operator/LLM-authored output whose
+# size is inherently unpredictable and whose whole point is flexibility.
+high_value_prefixes:
+  - "shell:"
+  - "script:"
+
+# Head/tail split when a budget is exceeded (must sum to less than the budget
+# so the "...[trimmed]..." marker itself has room).
+head_fraction: 0.72
+tail_fraction: 0.28
+
+# A DIFFERENT, smaller budget: how much of a past tool call's already-shown
+# result is worth keeping in the CLI's rolling conversation history once a
+# token-per-minute-constrained provider is configured (tool_schema_budget_tokens
+# > 0). This is not "how much to show now" (stdout_budget/high_value_chars
+# above) — it's "how much of an old turn to keep re-sending every future turn."
+# Only applied in that constrained mode; an unconstrained provider keeps the
+# full already-budgeted server result in history.
+history_cap_chars: 3000

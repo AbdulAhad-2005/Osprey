@@ -13,9 +13,9 @@ These turn a source tool's JSON stdout into typed findings:
 
 Priority ordering (what the operator asked for): credentials *scraped live during
 the engagement* outrank a *verified-working* credential-manager hit, which outranks
-an *unverified* breach-DB leak. That order is carried by ``evidence_grade`` (scraped
-= OBSERVED; breach = INFERRED, capped at MEDIUM) plus an explicit
-``metadata.cred_priority`` integer for downstream sorting.
+an *unverified* breach-DB leak. That order is carried directly by ``confidence``
+(scraped/working = CONFIRMED; unverified breach leaks = LIKELY, capped at MEDIUM
+severity) plus an explicit ``metadata.cred_priority`` integer for downstream sorting.
 """
 
 from __future__ import annotations
@@ -25,7 +25,6 @@ from urllib.parse import urlparse
 
 from osprey.schemas.finding import (
     ClaimSeverity,
-    EvidenceGrade,
     Finding,
     FindingConfidence,
     FindingType,
@@ -37,15 +36,16 @@ from osprey.services.parsers.email_extract import (
 )
 from osprey.services.parsers.registry import register_many
 
-# source_class → (evidence grade, claimed severity, priority weight).
-# The Finding clamp caps INFERRED at MEDIUM, so working/scraped stay HIGH while
-# unverified breach leaks can never over-claim.
+# source_class → (confidence, claimed severity, priority weight).
+# An unverified breach-DB leak stays capped at MEDIUM severity directly (no
+# clamp needed — the parser just doesn't assign higher), so it can never
+# out-claim a working/scraped credential.
 _SOURCE_POLICY = {
-    "scraped": (EvidenceGrade.OBSERVED, ClaimSeverity.HIGH, 100),
-    "creds_manager_working": (EvidenceGrade.OBSERVED, ClaimSeverity.HIGH, 90),
-    "creds_manager_unknown": (EvidenceGrade.INFERRED, ClaimSeverity.MEDIUM, 60),
-    "creds_manager_not_working": (EvidenceGrade.INFERRED, ClaimSeverity.LOW, 30),
-    "breach_db": (EvidenceGrade.INFERRED, ClaimSeverity.MEDIUM, 40),
+    "scraped": (FindingConfidence.CONFIRMED, ClaimSeverity.HIGH, 100),
+    "creds_manager_working": (FindingConfidence.CONFIRMED, ClaimSeverity.HIGH, 90),
+    "creds_manager_unknown": (FindingConfidence.LIKELY, ClaimSeverity.MEDIUM, 60),
+    "creds_manager_not_working": (FindingConfidence.LIKELY, ClaimSeverity.LOW, 30),
+    "breach_db": (FindingConfidence.LIKELY, ClaimSeverity.MEDIUM, 40),
 }
 
 
@@ -128,10 +128,10 @@ def credential_findings(
         seen.add(key)
 
         host = _host_from(str(rec.get("host") or ""), str(rec.get("url") or ""), target)
-        grade, severity, priority = _SOURCE_POLICY[_policy_key(source_class, creds_status)]
+        confidence, severity, priority = _SOURCE_POLICY[_policy_key(source_class, creds_status)]
         is_admin = bool(rec.get("is_admin"))
         if is_admin and severity == ClaimSeverity.HIGH:
-            severity = ClaimSeverity.CRITICAL  # admin + verified → crown-jewel; clamp still applies
+            severity = ClaimSeverity.CRITICAL  # admin + verified credential → real, high-value access
 
         meta = {
             "username": username,
@@ -153,7 +153,7 @@ def credential_findings(
             tags.append(creds_status)
         if is_admin:
             tags.append("admin")
-        if grade == EvidenceGrade.INFERRED:
+        if confidence != FindingConfidence.CONFIRMED:
             tags.append("verify_creds")  # unverified against the live target — test it
 
         title = f"{identity} @ {host}" if host else identity
@@ -165,9 +165,7 @@ def credential_findings(
                 f"({source_class}, status={creds_status or 'unknown'})"
             ),
             evidence=f"{identity}:{password}"[:400],
-            confidence=FindingConfidence.CONFIRMED if grade == EvidenceGrade.OBSERVED
-            else FindingConfidence.LIKELY,
-            evidence_grade=grade, claim_severity=severity,
+            confidence=confidence, claim_severity=severity,
             source_tool=tool, target=host or target, metadata=meta, tags=tags,
         ))
         if email:

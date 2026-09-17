@@ -2,11 +2,11 @@
 
 This module NEVER writes to the engagement graph. It inspects existing findings
 and returns candidate relationships (same IP + similar title, shared cookie
-domain, URL fan-out) using the patterns in ``config/correlation_rules.yaml`` as
-matching logic. The driving LLM decides whether any candidate is worth
-committing — and only then calls ``platform_graph_link`` / ``platform_tag_asset``.
+domain) using the patterns in ``config/correlation_rules.yaml`` as matching
+logic. The driving LLM decides whether any candidate is worth committing —
+and only then calls ``platform_graph_link``.
 
-Why read-only: a background writer that auto-minted ``evidence_grade=inferred``
+Why read-only: a background writer that auto-minted ``confidence=likely``
 edges into the same graph real evidence lives in made "confirmed vs speculative"
 a flag every reader had to remember to check, and on shared hosting / CDN blocks
 it linked genuinely unrelated hosts. Suggestions the LLM chose to record stay
@@ -31,8 +31,8 @@ _HOST_FROM_URL = re.compile(r"(?i)^https?://([^/:]+)")
 
 _READ_ONLY_NOTE = (
     "Read-only suggestions — these are hypotheses, not graph edges. Confirm the "
-    "ones worth keeping with platform_graph_link / platform_tag_asset (and only "
-    "claim CRITICAL with observed evidence)."
+    "ones worth keeping with platform_graph_link (and only claim CRITICAL with "
+    "confirmed evidence)."
 )
 
 
@@ -54,7 +54,7 @@ def find_correlations(
     """Return candidate cross-finding correlations for an engagement. Read-only.
 
     Never writes to the graph. The returned ``candidates`` are suggestions the
-    LLM may choose to commit via platform_graph_link / platform_tag_asset.
+    LLM may choose to commit via platform_graph_link.
     """
     eid = (engagement_id or "").strip()
     if not eid:
@@ -78,8 +78,6 @@ def find_correlations(
                 candidates.extend(_corr_same_ip_titles(eid, findings, graph, rule))
             elif rtype == "shared_cookie_domain":
                 candidates.extend(_corr_shared_cookie(findings, rule))
-            elif rtype == "host_url_fanout":
-                candidates.extend(_corr_url_fanout(findings, rule))
         except Exception as exc:  # noqa: BLE001
             logger.warning("correlation %s failed: %s", rule.get("id"), exc)
 
@@ -143,7 +141,7 @@ def _corr_same_ip_titles(
     min_len = int(rule.get("min_title_len") or 4)
     max_links = int(rule.get("max_links_per_run") or 12)
     relation = str(rule.get("relation") or "likely_same_app")
-    grade = str(rule.get("evidence_grade") or "inferred")
+    confidence = str(rule.get("confidence") or "likely")
     # Shared-infra guard: hosts on a heavily-shared IP (CDN / shared hosting) are
     # NOT "likely the same app" just because they answer on one address — that is
     # exactly the heuristic that used to link unrelated neighbours. Skip any IP
@@ -215,7 +213,7 @@ def _corr_same_ip_titles(
                         "target": f"host:{hb}",
                         "relation": relation,
                         "evidence": evidence,
-                        "evidence_grade": grade,
+                        "confidence": confidence,
                         "score": round(best, 3),
                     }
                 )
@@ -230,7 +228,7 @@ def _corr_shared_cookie(
 ) -> list[dict[str, Any]]:
     max_links = int(rule.get("max_links_per_run") or 8)
     relation = str(rule.get("relation") or "shares_auth")
-    grade = str(rule.get("evidence_grade") or "inferred")
+    confidence = str(rule.get("confidence") or "likely")
 
     domain_hosts: dict[str, set[str]] = {}
     for f in findings:
@@ -263,7 +261,7 @@ def _corr_shared_cookie(
                     "target": f"host:{other}",
                     "relation": relation,
                     "evidence": f"shared Set-Cookie Domain={cdom}",
-                    "evidence_grade": grade,
+                    "confidence": confidence,
                     "score": 0.6,
                 }
             )
@@ -272,59 +270,3 @@ def _corr_shared_cookie(
     return candidates
 
 
-def _corr_url_fanout(
-    findings: list,
-    rule: dict[str, Any],
-) -> list[dict[str, Any]]:
-    from osprey.schemas.finding import FindingType
-
-    min_urls = int(rule.get("min_urls") or 5)
-    role = str(rule.get("role") or "app_depth_candidate")
-    boost = int(rule.get("boost") or 12)
-    max_tags = int(rule.get("max_tags_per_run") or 6)
-
-    # Skip hosts already tagged this engagement
-    already = {
-        str((f.metadata or {}).get("asset") or "").lower()
-        for f in findings
-        if "operator_tag" in (f.tags or []) and role in str(f.tags)
-    }
-
-    urls_by_host: dict[str, int] = {}
-    for f in findings:
-        ft = str(getattr(f.finding_type, "value", f.finding_type) or "")
-        tags = {str(t).lower() for t in (f.tags or [])}
-        if ft != FindingType.URL.value and "js_route" not in tags:
-            continue
-        host = _host_for_finding(f)
-        if not host:
-            title = (f.title or "").strip()
-            m = _HOST_FROM_URL.match(title)
-            host = m.group(1).lower() if m else None
-        if not host:
-            continue
-        urls_by_host[host] = urls_by_host.get(host, 0) + 1
-
-    candidates: list[dict[str, Any]] = []
-    for host, count in sorted(urls_by_host.items(), key=lambda x: -x[1]):
-        if count < min_urls:
-            continue
-        if host in already:
-            continue
-        reason = (
-            f"{count} URL/route findings under host — app depth likely worth "
-            f"custom probes"
-        )
-        candidates.append(
-            {
-                "kind": "tag",
-                "asset": f"host:{host}",
-                "role": role,
-                "boost": boost,
-                "evidence": reason,
-                "score": min(1.0, count / float(max(min_urls, 1) * 4)),
-            }
-        )
-        if len(candidates) >= max_tags:
-            break
-    return candidates

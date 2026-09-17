@@ -8,6 +8,8 @@ Args:
     username_file: File containing usernames
     password: Single password to test
     password_file: File containing passwords
+    threads: Parallel connections (hydra -t); default 4 is brute-force-polite,
+        raise it when RoE and target capacity allow
     additional_args: Additional Hydra arguments
 
 Returns:
@@ -41,13 +43,16 @@ def build_command(**params: Any) -> str:
     username_file = params.get("username_file", "")
     password = params.get("password", "")
     password_file = params.get("password_file", "")
+    threads = params.get("threads") or 4
     additional_args = params.get("additional_args", "")
-    command = f"hydra -t 4"
+    command = f"hydra -t {int(threads)}"
     if username:
         command += f" -l {q(username)}"
+    if username_file:
         command += f" -L {q(username_file)}"
     if password:
         command += f" -p {q(password)}"
+    if password_file:
         command += f" -P {q(password_file)}"
     if additional_args:
         command += f" {additional_args}"
@@ -57,8 +62,8 @@ def build_command(**params: Any) -> str:
 def parse(result: ToolResult) -> dict[str, Any]:
     return default_parse(result)
 
-def run(target: str = '', service: str = '', username: str = '', username_file: str = '', password: str = '', password_file: str = '', additional_args: str = '', use_recovery: bool = True, use_cache: bool = True, exec_timeout: int = 300) -> dict[str, Any]:
-    params = {"target": target, "service": service, "username": username, "username_file": username_file, "password": password, "password_file": password_file, "additional_args": additional_args}
+def run(target: str = '', service: str = '', username: str = '', username_file: str = '', password: str = '', password_file: str = '', threads: int = 4, additional_args: str = '', use_recovery: bool = True, use_cache: bool = True, exec_timeout: int = 300) -> dict[str, Any]:
+    params = {"target": target, "service": service, "username": username, "username_file": username_file, "password": password, "password_file": password_file, "threads": threads, "additional_args": additional_args}
     command = build_command(**params)
     return run_tool(
         TOOL_NAME,

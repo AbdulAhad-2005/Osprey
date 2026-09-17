@@ -279,17 +279,30 @@ class Runner:
                 while not event_queue.empty():
                     yield event_queue.get_nowait()
 
+                # `result` here already went through the backend's ONE stdout
+                # policy (osprey.services.output_budget, applied in
+                # execute_tool_request before this ever reaches the CLI) — do
+                # not re-cap it a second time by default, or a high-value
+                # tool's budgeted dump (e.g. a sqlmap table list) gets
+                # silently shrunk right back down for CLI users specifically.
+                #
                 # Tool results accumulate in self.messages for the rest of the
-                # session (every later turn resends the full history) — on an
-                # unconstrained provider 12000 chars/result is fine. On a
-                # token-per-minute-budgeted one, this is the OTHER thing (besides
-                # the tool schema list) competing for the same per-minute cap,
-                # and it grows every turn while the schema list doesn't — a
-                # session that started fine can still run into the ceiling a
-                # few tool calls later. Shrink the cap when that budget is set;
-                # leave it alone otherwise (matches get_tool_schemas' own
-                # opt-in-only rule — unset means zero behavior change).
-                result_cap = 3000 if self.config.tool_schema_budget_tokens > 0 else 12000
+                # session (every later turn resends the full history). On an
+                # unconstrained provider, keep the server's result as-is. On a
+                # token-per-minute-budgeted one, history is the OTHER thing
+                # (besides the tool schema list) competing for the same
+                # per-minute cap, and it grows every turn while the schema
+                # list doesn't — a session that started fine can still run
+                # into the ceiling a few tool calls later, so THAT mode keeps
+                # a smaller history-retention cap (a distinct budget from "how
+                # much to show now" — see output_budget.history_result_cap()
+                # in the backend, which this mirrors; the CLI can't import the
+                # backend package directly since it may talk to a remote one,
+                # so keep this constant in sync with that function by hand).
+                _CLI_HISTORY_CAP_CHARS = 3000
+                history_cap = (
+                    _CLI_HISTORY_CAP_CHARS if self.config.tool_schema_budget_tokens > 0 else None
+                )
                 for tc, (name, result, elapsed) in zip(tool_calls, results):
                     yield Event(
                         "tool_end",
@@ -299,7 +312,7 @@ class Runner:
                         {
                             "role": "tool",
                             "tool_call_id": tc["id"],
-                            "content": result[:result_cap],
+                            "content": result if history_cap is None else result[:history_cap],
                         }
                     )
 

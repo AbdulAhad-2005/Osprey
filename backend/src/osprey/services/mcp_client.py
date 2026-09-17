@@ -13,6 +13,7 @@ from osprey.schemas.tools import (
     ToolDefinition,
     ToolExecutionResponse,
 )
+from osprey.services.output_budget import truncate_stdout as _budget_truncate_stdout
 from osprey.services.tool_registry import get_tool_definition
 
 logger = logging.getLogger(__name__)
@@ -61,9 +62,6 @@ _KALI_EXEC_PATH = (
     "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 )
 
-_STDOUT_MAX = 50_000
-_TRUNCATION_HINT = "\n... [TRUNCATED — full output saved; use platform_artifact to read]"
-
 # A handful of scanners the recon/network engine leans on the most. Used only to
 # answer "can this environment actually run tools?" for the /scan --engine
 # preflight — not an exhaustive tool check (that's /tools). If the Kali container
@@ -73,11 +71,21 @@ _TRUNCATION_HINT = "\n... [TRUNCATED — full output saved; use platform_artifac
 _CORE_ENGINE_TOOLS = ("subfinder", "httpx", "naabu", "nmap", "dnsx")
 
 
-def _truncate_stdout(stdout: str) -> str:
-    """Truncate stdout to _STDOUT_MAX chars and append a hint when clipped."""
-    if len(stdout) <= _STDOUT_MAX:
-        return stdout
-    return stdout[:_STDOUT_MAX] + _TRUNCATION_HINT
+def _truncate_stdout(stdout: str, tool_name: str = "") -> str:
+    """Cap raw subprocess capture to this tool's output-budget ceiling.
+
+    This is the earliest point stdout exists in memory (straight off the
+    subprocess pipe) — the one place that used to apply its OWN unrelated
+    50_000-char, head-only, no-tail cap regardless of tool, ahead of where
+    ``tool_execution.execute_tool_request`` writes the full artifact and
+    applies the real per-tool policy. That meant anything past 50KB was lost
+    for good, from both the live view AND the artifact, no matter how
+    generous the later policy was. Deferring to the shared policy here
+    instead means: (a) one number, not two independently-tuned ones, and
+    (b) the head+tail preservation the later layer already does, so the tail
+    of a big dump survives even at this earliest capture point.
+    """
+    return _budget_truncate_stdout(tool_name, stdout)
 
 
 async def _kill_and_reap(proc: asyncio.subprocess.Process | None) -> None:
@@ -708,7 +716,7 @@ class MCPClient:
                         success=True,
                         command=command,
                         returncode=returncode,
-                        stdout=_truncate_stdout(stdout),
+                        stdout=_truncate_stdout(stdout, tool_name),
                         stderr=stderr[:10000],
                         parsed=parsed_data,
                         duration_seconds=0,
@@ -785,7 +793,7 @@ class MCPClient:
                 success=False,
                 command=command,
                 returncode=returncode,
-                stdout=_truncate_stdout(stdout),
+                stdout=_truncate_stdout(stdout, tool_name),
                 stderr=stderr[:10000],
                 parsed=parsed_data,
                 error=error_message
@@ -859,7 +867,7 @@ class MCPClient:
                 success=returncode == 0,
                 command=printable,
                 returncode=returncode,
-                stdout=_truncate_stdout(stdout),
+                stdout=_truncate_stdout(stdout, tool_name),
                 stderr=stderr[:10000],
                 duration_seconds=0,
             )
@@ -870,7 +878,7 @@ class MCPClient:
                 tool_name=tool_name,
                 success=False,
                 command=printable,
-                stdout=_truncate_stdout(partial_stdout),
+                stdout=_truncate_stdout(partial_stdout, tool_name),
                 stderr=partial_stderr[:10000],
                 error=f"Execution timed out after {timeout}s"
                 + (" — partial output captured below" if partial_stdout else ""),
@@ -1065,7 +1073,7 @@ class MCPClient:
                 tool_name=tool_name,
                 success=False,
                 command=printable,
-                stdout=_truncate_stdout(partial_stdout),
+                stdout=_truncate_stdout(partial_stdout, tool_name),
                 stderr=partial_stderr[:10000],
                 error=f"Script timed out after {timeout}s",
                 timed_out=True,
@@ -1110,7 +1118,7 @@ class MCPClient:
                 success=proc.returncode == 0,
                 command=printable,
                 returncode=proc.returncode,
-                stdout=_truncate_stdout(stdout),
+                stdout=_truncate_stdout(stdout, tool_name),
                 stderr=stderr[:10000],
                 duration_seconds=0,
             )
@@ -1131,7 +1139,7 @@ class MCPClient:
                 tool_name=tool_name,
                 success=False,
                 command=printable,
-                stdout=_truncate_stdout(partial_stdout),
+                stdout=_truncate_stdout(partial_stdout, tool_name),
                 stderr=partial_stderr[:10000],
                 error=f"Execution timed out after {timeout}s"
                 + (" — partial output captured below" if partial_stdout else ""),
@@ -1220,7 +1228,7 @@ class MCPClient:
                 tool_name=tool_name,
                 success=False,
                 command=printable,
-                stdout=_truncate_stdout(partial_stdout),
+                stdout=_truncate_stdout(partial_stdout, tool_name),
                 stderr=partial_stderr[:10000],
                 error=f"Script timed out after {timeout}s",
                 timed_out=True,

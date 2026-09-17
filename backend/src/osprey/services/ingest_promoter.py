@@ -9,10 +9,9 @@ from typing import Any
 
 from osprey.schemas.finding import (
     ClaimSeverity,
-    EvidenceGrade,
     Finding,
+    FindingConfidence,
     FindingType,
-    clamp_claim_severity,
 )
 from osprey.services.config_loader import read_config
 
@@ -172,7 +171,7 @@ def apply_ingest_rules(
                 continue
             seen_titles.add(title)
 
-            grade = _grade(rule.get("evidence_grade", "inferred"))
+            confidence = _confidence(rule.get("confidence", "likely"))
             sev = _sev(rule.get("claim_severity", "info"))
             tags = list(rule.get("tags") or [])
             raw_snip = m.group(0)[:800]
@@ -181,15 +180,14 @@ def apply_ingest_rules(
             if spa and _PATH_API.search(path_hint + title + raw_snip):
                 if "spa_catchall_suspect" not in tags:
                     tags.append("spa_catchall_suspect")
-                grade = EvidenceGrade.UNVERIFIED
+                confidence = FindingConfidence.HYPOTHESIS
                 sev = ClaimSeverity.INFO
 
-            # Keep observed for real fingerprints; demote weak HTML-only matches
-            if grade == EvidenceGrade.OBSERVED and not is_strong_http_evidence(blob, path_hint=path_hint):
+            # Keep confirmed for real fingerprints; demote weak HTML-only matches
+            if confidence == FindingConfidence.CONFIRMED and not is_strong_http_evidence(blob, path_hint=path_hint):
                 if "banner" not in tags and "product_hint" not in tags:
-                    grade = EvidenceGrade.INFERRED
+                    confidence = FindingConfidence.LIKELY
 
-            sev = clamp_claim_severity(grade, sev)
             ft = _ftype(rule.get("finding_type", "observation"))
             meta: dict[str, Any] = {"ingest_rule": rule.get("id"), "target": target}
             if ft == FindingType.TECHNOLOGY:
@@ -213,7 +211,7 @@ def apply_ingest_rules(
                     title=title,
                     description=f"Auto-ingest rule={rule.get('id')} via {source_tool}",
                     evidence=raw_snip,
-                    evidence_grade=grade,
+                    confidence=confidence,
                     claim_severity=sev,
                     source_tool=source_tool or "ingest_promoter",
                     target=target or "",
@@ -232,7 +230,7 @@ def apply_ingest_rules(
                 title="SPA/HTML catch-all suspected for API-like path — verify JSON body before CRITICAL",
                 description="Universal evidence law: HTML shell on /api|/swagger|/graphql is not an open API.",
                 evidence=blob[:400],
-                evidence_grade=EvidenceGrade.UNVERIFIED,
+                confidence=FindingConfidence.HYPOTHESIS,
                 claim_severity=ClaimSeverity.INFO,
                 source_tool=source_tool or "ingest_promoter",
                 target=target or "",
@@ -262,11 +260,11 @@ def _render_title(template: str, m: re.Match[str]) -> str:
     return " ".join(title.split())
 
 
-def _grade(raw: str) -> EvidenceGrade:
+def _confidence(raw: str) -> FindingConfidence:
     try:
-        return EvidenceGrade(str(raw).lower())
+        return FindingConfidence(str(raw).lower())
     except Exception:
-        return EvidenceGrade.INFERRED
+        return FindingConfidence.LIKELY
 
 
 def _sev(raw: str) -> ClaimSeverity:

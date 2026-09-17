@@ -4,10 +4,10 @@ Scripts invent their own print formats. We extract common lines so chat evidence
 becomes durable memory — without requiring a named tool parser.
 
 Explicit markers (print from platform_script):
-  FINDING|observed|high|url|Title|evidence
+  FINDING|confirmed|high|url|Title|evidence
   PATH /api/x 401
   REL|host:a|same_app_as|host:b|shared cookie
-  REL|inferred|host:a|likely_origin_of|ip:1.2.3.4|evidence
+  REL|likely|host:a|likely_origin_of|ip:1.2.3.4|evidence
   HYPOTHESIS|erp shares auth with ess|same Set-Cookie domain
 """
 
@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 
 from osprey.schemas.finding import (
-    EvidenceGrade,
+    ClaimSeverity,
     Finding,
     FindingConfidence,
     FindingType,
@@ -69,9 +69,9 @@ _ERROR_BODY_MARKERS = re.compile(
 _ERROR_STATUSES = {"400", "401", "403", "404", "405", "429", "500", "502", "503", "504"}
 
 # Explicit script→memory contract (print these lines from platform_script):
-# FINDING|observed|high|url|Open admin API|/api/admin 200 {"users":...}
+# FINDING|confirmed|high|url|Open admin API|/api/admin 200 {"users":...}
 _FINDING_MARKER_RE = re.compile(
-    r"(?im)^FINDING\|(?P<grade>observed|inferred|unverified)"
+    r"(?im)^FINDING\|(?P<confidence>confirmed|likely|hypothesis)"
     r"\|(?P<sev>none|info|low|medium|high|critical)"
     r"\|(?P<ftype>url|host|port|service|technology|observation|subdomain"
     r"|email|username|person|phone|social_account|organization|document)"
@@ -88,10 +88,10 @@ _PATH_LINE_RE = re.compile(
 )
 
 # REL|host:a.example|same_app_as|host:b.example|shared JS hash
-# Optional leading grade: REL|inferred|host:a|same_app_as|host:b|evidence
+# Optional leading confidence: REL|likely|host:a|same_app_as|host:b|evidence
 _REL_MARKER_RE = re.compile(
     r"(?im)^REL\|"
-    r"(?:(?P<grade>observed|inferred|unverified)\|)?"
+    r"(?:(?P<confidence>confirmed|likely|hypothesis)\|)?"
     r"(?P<source>[^|\n]{1,200})"
     r"\|(?P<relation>[^|\n]{1,64})"
     r"\|(?P<target>[^|\n]{1,200})"
@@ -114,7 +114,7 @@ def extract_rel_markers(stdout: str) -> list[dict[str, str]]:
     for match in _REL_MARKER_RE.finditer(stdout):
         out.append(
             {
-                "grade": (match.group("grade") or "inferred").strip().lower(),
+                "confidence": (match.group("confidence") or "likely").strip().lower(),
                 "source": match.group("source").strip(),
                 "relation": match.group("relation").strip(),
                 "target": match.group("target").strip(),
@@ -156,11 +156,10 @@ def parse_freeform_probe_output(
                 description="Explicit HYPOTHESIS marker from script/shell",
                 evidence=(match.group("evidence") or "")[:800],
                 confidence=FindingConfidence.HYPOTHESIS,
-                evidence_grade=EvidenceGrade.UNVERIFIED,
                 source_tool=source_tool,
                 target=target,
                 raw_data=(match.group("evidence") or "")[:800],
-                tags=["script_marker", "hypothesis", "grade:unverified"],
+                tags=["script_marker", "hypothesis"],
             )
         )
     for match in _FINDING_MARKER_RE.finditer(stdout):
@@ -174,16 +173,13 @@ def parse_freeform_probe_output(
         except ValueError:
             ftype = FindingType.OBSERVATION
         try:
-            grade = EvidenceGrade(match.group("grade"))
+            confidence = FindingConfidence(match.group("confidence"))
         except ValueError:
-            grade = EvidenceGrade.INFERRED
-        from osprey.schemas.finding import ClaimSeverity, clamp_claim_severity
-
+            confidence = FindingConfidence.LIKELY
         try:
             sev = ClaimSeverity(match.group("sev"))
         except ValueError:
             sev = ClaimSeverity.INFO
-        sev = clamp_claim_severity(grade, sev)
         findings.append(
             Finding(
                 engagement_id=engagement_id,
@@ -193,15 +189,12 @@ def parse_freeform_probe_output(
                 title=title,
                 description="Explicit FINDING marker from script/shell",
                 evidence=(match.group("evidence") or "")[:800],
-                confidence=FindingConfidence.CONFIRMED
-                if grade == EvidenceGrade.OBSERVED
-                else FindingConfidence.LIKELY,
-                evidence_grade=grade,
+                confidence=confidence,
                 claim_severity=sev,
                 source_tool=source_tool,
                 target=target,
                 raw_data=(match.group("evidence") or "")[:800],
-                tags=["script_marker", f"grade:{grade.value}"],
+                tags=["script_marker", f"confidence:{confidence.value}"],
             )
         )
 
@@ -224,7 +217,6 @@ def parse_freeform_probe_output(
                 description=extra[:120] or "Path/endpoint from script",
                 evidence=match.group(0)[:500],
                 confidence=FindingConfidence.CONFIRMED,
-                evidence_grade=EvidenceGrade.OBSERVED if status else EvidenceGrade.INFERRED,
                 source_tool=source_tool,
                 target=target or url,
                 metadata={"path": path, "status_code": status},
@@ -261,7 +253,6 @@ def parse_freeform_probe_output(
                 description=f"HTTP {status}" + (f" — {title[:80]}" if title else ""),
                 evidence=match.group(0)[:500],
                 confidence=FindingConfidence.CONFIRMED,
-                evidence_grade=EvidenceGrade.OBSERVED,
                 source_tool=source_tool,
                 target=target or url,
                 metadata={
@@ -297,7 +288,6 @@ def parse_freeform_probe_output(
                 description="Open port from script/shell output",
                 evidence=match.group(0)[:300],
                 confidence=FindingConfidence.CONFIRMED,
-                evidence_grade=EvidenceGrade.INFERRED,
                 source_tool=source_tool,
                 target=target or host,
                 metadata=meta,
@@ -322,7 +312,6 @@ def parse_freeform_probe_output(
                 description=f"Resolves to {ip}",
                 evidence=match.group(0)[:300],
                 confidence=FindingConfidence.CONFIRMED,
-                evidence_grade=EvidenceGrade.INFERRED,
                 source_tool=source_tool,
                 target=target or host,
                 metadata={"hostname": host, "ip": ip},

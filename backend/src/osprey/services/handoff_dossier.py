@@ -4,7 +4,7 @@ The exploitation / post-exploitation agent gets NO prior LLM/agent context — o
 what recon/enum/scanning persisted. This assembles everything it needs from the
 durable store + graph in one payload: complete findings, an asset inventory with
 attributes, credentials/secrets, vulnerabilities, entry points, and the relationship
-graph — each carrying provenance and evidence grade so the next agent can trust and
+graph — each carrying provenance and confidence so the next agent can trust and
 verify without re-deriving.
 """
 
@@ -33,7 +33,6 @@ def _finding_dict(f: Finding) -> dict[str, Any]:
         "title": f.title,
         "description": f.description,
         "evidence": f.evidence,
-        "evidence_grade": f.evidence_grade.value,
         "claim_severity": f.claim_severity.value,
         "confidence": f.confidence.value,
         "source_tool": f.source_tool,
@@ -53,7 +52,6 @@ def _node_dict(node) -> dict[str, Any]:
         "asset_type": node.asset_type.value,
         "label": node.label,
         "source_tool": node.source_tool,
-        "evidence_grade": node.evidence_grade,
         "confidence": node.confidence,
         "metadata": dict(node.metadata or {}),
     }
@@ -96,7 +94,7 @@ def _build_assets(nodes, node_by_id, out_edges) -> list[dict[str, Any]]:
                 "is_cloudflare": False,
                 "os": "",
                 "source_tool": "",
-                "evidence_grade": "inferred",
+                "confidence": "likely",
                 "metadata": {},
             },
         )
@@ -163,11 +161,11 @@ def build_handoff_dossier(engagement_id: str, *, run_id: str = "") -> dict[str, 
 
     by_type: Counter = Counter()
     by_severity: Counter = Counter()
-    by_grade: Counter = Counter()
+    by_confidence: Counter = Counter()
     for f in findings:
         by_type[f.finding_type.value] += 1
         by_severity[f.claim_severity.value] += 1
-        by_grade[f.evidence_grade.value] += 1
+        by_confidence[f.confidence.value] += 1
 
     return {
         "engagement_id": engagement_id,
@@ -179,7 +177,7 @@ def build_handoff_dossier(engagement_id: str, *, run_id: str = "") -> dict[str, 
             "edges": len(edges),
             "by_type": dict(by_type),
             "by_severity": dict(by_severity),
-            "by_grade": dict(by_grade),
+            "by_confidence": dict(by_confidence),
         },
         "assets": _build_assets(nodes, node_by_id, out_edges),
         "credentials": [_finding_dict(f) for f in findings if f.finding_type in _CREDENTIAL_TYPES],

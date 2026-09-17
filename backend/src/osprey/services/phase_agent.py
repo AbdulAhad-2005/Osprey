@@ -11,14 +11,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from osprey.core.config import get_settings
-from osprey.platform.situational_context import build_situational_brief
 from osprey.schemas.agent_run import PhaseBrief, PhaseHandoff, ToolSummary
 from osprey.schemas.engagement import Engagement
 from osprey.schemas.jobs import AGENT_ROLES
 from osprey.services.agent_arg_normalizer import normalize_agent_tool_args
 from osprey.services.agent_assist import AssistState
 from osprey.services.agent_common import (
-    TOOL_RESULT_MAX,
     AgentEventHandler,
     AgentResponse,
     AgentToolCall,
@@ -37,6 +35,7 @@ from osprey.services.agent_common import (
     trim_history,
 )
 from osprey.services.findings_store import get_findings_store
+from osprey.services.output_budget import stdout_budget
 from osprey.services.llm_service import (
     LLMService,
     LLMServiceError,
@@ -236,7 +235,7 @@ RULES:
 _PHASE_SYSTEM = """You are a phase specialist in an autonomous pentest platform — not a script runner.
 
 HOW YOU THINK:
-- Read CURRENT SITUATION before every tool call.
+- Read SESSION FINDINGS before every tool call — it is the ground truth, not chat memory.
 - Pick ONE purposeful next step that closes a specific gap.
 - Skills and tool lists are background knowledge — evidence decides what happens next.
 - Use additional_args for any valid CLI flags not covered by typed params.
@@ -490,7 +489,9 @@ class PhaseAgent:
                         )
                         result_text = f"{result_text}\n\n---\n{format_tool_summary_for_context(summary)}"
 
-                    result_text = format_tool_result(tool_name, result_text, max_length=TOOL_RESULT_MAX)
+                    result_text = format_tool_result(
+                        tool_name, result_text, max_length=stdout_budget(tool_name)
+                    )
                     event_payload = {
                         "tool_name": tool_name,
                         "success": success,
@@ -718,18 +719,6 @@ def _build_phase_system_prompt(
 
     if commander_note:
         sections.append(f"COMMANDER CONSTRAINTS:\n{commander_note}")
-
-    situational = build_situational_brief(
-        engagement_id=engagement_id,
-        run_id=run_id,
-        target=session_target or "",
-        resolved_ip=resolved_ip,
-        phase=phase,
-        assist_state=assist_state,
-        user_goal=user_goal,
-    )
-    if situational:
-        sections.append(situational)
 
     findings = get_findings_store().structured_summary_for_agent(
         engagement_id=engagement_id,

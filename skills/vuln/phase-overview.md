@@ -35,8 +35,9 @@ This is a distinct phase, not a blind scanner sweep. Scan what the evidence poin
 `injection_point_candidate` tags (→ sqlmap/dalfox), `interesting_path`/`js-secret`/
 `cloud-asset` leads (→ verify), live URLs and open services.
 
-**Prioritise by exposure × value:** crown jewels and internet-facing app hosts first.
-Use `platform_crown_jewels` / `platform_context` rather than scanning every asset equally.
+**Prioritise by exposure × value:** high-value roles (remote access, mail, admin,
+API, business apps) and internet-facing app hosts first. Use `platform_graph_query`
+/ `platform_context` rather than scanning every asset equally.
 
 **Severity is earned, not claimed:** see `verification-and-severity`. A scanner match is a
 lead until you understand it; the platform clamps severity to evidence grade.

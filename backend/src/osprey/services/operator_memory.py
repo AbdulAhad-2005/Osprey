@@ -11,7 +11,6 @@ from typing import Any
 from osprey.schemas.engagement_graph import AssetType
 from osprey.schemas.finding import (
     ClaimSeverity,
-    EvidenceGrade,
     Finding,
     FindingConfidence,
     FindingType,
@@ -24,8 +23,8 @@ _HYPOTHESIS_PREFIX = "hypothesis_"
 _MAX_REL_LEN = 64  # matches AssetEdgeRow.relationship column
 
 
-def sanitize_relation(relation: str, *, evidence_grade: str = "inferred") -> str:
-    """Normalize operator relation names; non-observed → hypothesis_ prefix."""
+def sanitize_relation(relation: str, *, confidence: str = "likely") -> str:
+    """Normalize operator relation names; anything short of confirmed → hypothesis_ prefix."""
     raw = (relation or "").strip().lower().replace("-", "_").replace(" ", "_")
     raw = re.sub(r"[^a-z0-9_]", "", raw)
     raw = re.sub(r"_+", "_", raw).strip("_")
@@ -36,11 +35,11 @@ def sanitize_relation(relation: str, *, evidence_grade: str = "inferred") -> str
         if not re.match(r"^[a-z0-9_]+$", raw):
             raise ValueError(f"invalid relation {relation!r}")
 
-    grade = (evidence_grade or "inferred").strip().lower()
-    if grade not in ("observed", "inferred", "unverified"):
-        grade = "inferred"
+    conf = (confidence or "likely").strip().lower()
+    if conf not in ("confirmed", "likely", "hypothesis"):
+        conf = "likely"
 
-    if grade == "observed":
+    if conf == "confirmed":
         # Never let operator mint a bare reserved structural edge as "proof" of
         # something else — they may still use custom names freely.
         name = raw[:_MAX_REL_LEN]
@@ -97,7 +96,7 @@ def link_assets(
     target: str,
     relation: str,
     evidence: str = "",
-    evidence_grade: str = "inferred",
+    confidence: str = "likely",
     run_id: str = "",
     seed_target: str = "",
     derived_from: list[str] | str | None = None,
@@ -109,14 +108,14 @@ def link_assets(
 
     src_type, src_label = parse_asset_ref(source)
     tgt_type, tgt_label = parse_asset_ref(target)
-    grade_s = (evidence_grade or "inferred").strip().lower()
+    conf_s = (confidence or "likely").strip().lower()
     try:
-        grade = EvidenceGrade(grade_s)
+        conf = FindingConfidence(conf_s)
     except ValueError:
-        grade = EvidenceGrade.INFERRED
-        grade_s = grade.value
+        conf = FindingConfidence.LIKELY
+        conf_s = conf.value
 
-    rel = sanitize_relation(relation, evidence_grade=grade_s)
+    rel = sanitize_relation(relation, confidence=conf_s)
     ev = (evidence or "").strip()
     if not ev:
         raise ValueError("evidence is required (why this link exists)")
@@ -130,7 +129,7 @@ def link_assets(
         relationship=rel,
         run_id=run_id or "",
         source_tool="operator_graph_link",
-        metadata={"evidence_grade": grade_s, "evidence": ev[:300]},
+        metadata={"confidence": conf_s, "evidence": ev[:300]},
     )
 
     from osprey.services.evidence_chain import merge_derived_from, normalize_derived_from
@@ -149,12 +148,9 @@ def link_assets(
         run_id=run_id or "",
         finding_type=FindingType.OBSERVATION,
         title=f"REL {src_type.value}:{src_label} --{rel}--> {tgt_type.value}:{tgt_label}",
-        description=f"Operator graph link ({grade_s})",
+        description=f"Operator graph link ({conf_s})",
         evidence=ev[:2000],
-        confidence=FindingConfidence.CONFIRMED
-        if grade == EvidenceGrade.OBSERVED
-        else FindingConfidence.HYPOTHESIS,
-        evidence_grade=grade,
+        confidence=conf,
         claim_severity=ClaimSeverity.NONE,
         source_tool="operator_graph_link",
         target=seed_target or src_label,
@@ -173,16 +169,16 @@ def link_assets(
         "source_id": edge["source_id"],
         "target_id": edge["target_id"],
         "relationship": rel,
-        "evidence_grade": grade_s,
+        "confidence": conf_s,
         "hypothesis": is_hypothesis_relation(rel),
         "finding_id": stored.id,
         "derived_from": meta.get("derived_from") or [],
         "hint": (
             "Hypothesis edge — not proof for COMPLETE/CRITICAL. "
-            "Confirm with observed evidence, then re-link with evidence_grade=observed "
+            "Confirm with real evidence, then re-link with confidence=confirmed "
             "or platform_record_finding."
             if is_hypothesis_relation(rel)
-            else "Asserted link stored. Still need observed proof for CRITICAL claims."
+            else "Asserted link stored. Still need confirmed proof for CRITICAL claims."
         ),
     }
 
@@ -191,7 +187,7 @@ def link_assets_many(
     *,
     engagement_id: str,
     evidence: str = "",
-    evidence_grade: str = "inferred",
+    confidence: str = "likely",
     run_id: str = "",
     seed_target: str = "",
     derived_from: list[str] | str | None = None,
@@ -209,13 +205,13 @@ def link_assets_many(
 
     Two input shapes (use whichever fits):
       - Fan form: source= + relation= + targets=[...] — one source, many targets,
-        all sharing the same relation/evidence/evidence_grade.
-      - List form: links=[{source, target, relation, evidence?, evidence_grade?,
+        all sharing the same relation/evidence/confidence.
+      - List form: links=[{source, target, relation, evidence?, confidence?,
         derived_from?}, ...] — fully independent edges, e.g. mixed relations from
         one tool run (subdomain->ip resolves_to, ip->tech runs_tech, etc).
 
     Both forms may be combined in one call. Every edge still requires evidence,
-    still gets hypothesis_ prefixed when evidence_grade != observed — nothing
+    still gets hypothesis_ prefixed when confidence != confirmed — nothing
     about the single-edge evidence contract is relaxed for bulk writes.
     """
     eid = (engagement_id or "").strip()
@@ -237,7 +233,7 @@ def link_assets_many(
                     "target": t,
                     "relation": relation,
                     "evidence": evidence,
-                    "evidence_grade": evidence_grade,
+                    "confidence": confidence,
                     "derived_from": derived_from,
                 }
             )
@@ -249,7 +245,7 @@ def link_assets_many(
                 "target": str(item.get("target") or ""),
                 "relation": str(item.get("relation") or ""),
                 "evidence": str(item.get("evidence") or evidence or ""),
-                "evidence_grade": str(item.get("evidence_grade") or evidence_grade or "inferred"),
+                "confidence": str(item.get("confidence") or confidence or "likely"),
                 "derived_from": item.get("derived_from", derived_from),
             }
         )
@@ -264,25 +260,25 @@ def link_assets_many(
     resolved: list[dict[str, Any]] = []
     graph_edges: list[dict[str, Any]] = []
     all_derived: list[str] = []
-    n_observed = 0
+    n_confirmed = 0
     n_hypothesis = 0
 
     for idx, item in enumerate(raw_items):
         src_type, src_label = parse_asset_ref(item["source"])
         tgt_type, tgt_label = parse_asset_ref(item["target"])
-        grade_s = (item["evidence_grade"] or "inferred").strip().lower()
+        conf_s = (item["confidence"] or "likely").strip().lower()
         try:
-            EvidenceGrade(grade_s)
+            FindingConfidence(conf_s)
         except ValueError:
-            grade_s = "inferred"
-        rel = sanitize_relation(item["relation"], evidence_grade=grade_s)
+            conf_s = "likely"
+        rel = sanitize_relation(item["relation"], confidence=conf_s)
         ev = (item["evidence"] or "").strip()
         if not ev:
             raise ValueError(f"edge #{idx} ({item['source']} -> {item['target']}): evidence is required")
 
         is_hyp = is_hypothesis_relation(rel)
         n_hypothesis += int(is_hyp)
-        n_observed += int(not is_hyp)
+        n_confirmed += int(not is_hyp)
 
         graph_edges.append(
             {
@@ -292,7 +288,7 @@ def link_assets_many(
                 "target_label": tgt_label,
                 "relationship": rel,
                 "source_tool": "operator_graph_link_many",
-                "metadata": {"evidence_grade": grade_s, "evidence": ev[:300]},
+                "metadata": {"confidence": conf_s, "evidence": ev[:300]},
             }
         )
         resolved.append(
@@ -300,7 +296,7 @@ def link_assets_many(
                 "source": f"{src_type.value}:{src_label}",
                 "target": f"{tgt_type.value}:{tgt_label}",
                 "relationship": rel,
-                "evidence_grade": grade_s,
+                "confidence": conf_s,
                 "hypothesis": is_hyp,
             }
         )
@@ -321,7 +317,7 @@ def link_assets_many(
 
     meta = {
         "edge_count": len(resolved),
-        "observed_count": n_observed,
+        "confirmed_count": n_confirmed,
         "hypothesis_count": n_hypothesis,
         "edges": resolved,
     }
@@ -332,10 +328,9 @@ def link_assets_many(
         run_id=run_id or "",
         finding_type=FindingType.OBSERVATION,
         title=f"BULK REL x{len(resolved)}: {sample}",
-        description=f"Operator bulk graph link ({n_observed} observed, {n_hypothesis} hypothesis)",
+        description=f"Operator bulk graph link ({n_confirmed} confirmed, {n_hypothesis} hypothesis)",
         evidence=(evidence or "bulk edge batch — see per-edge evidence in metadata")[:2000],
         confidence=FindingConfidence.CONFIRMED if n_hypothesis == 0 else FindingConfidence.HYPOTHESIS,
-        evidence_grade=EvidenceGrade.OBSERVED if n_hypothesis == 0 else EvidenceGrade.INFERRED,
         claim_severity=ClaimSeverity.NONE,
         source_tool="operator_graph_link_many",
         target=seed_target or (resolved[0]["source"] if resolved else ""),
@@ -347,84 +342,16 @@ def link_assets_many(
     return {
         "engagement_id": eid,
         "count": len(resolved),
-        "observed_count": n_observed,
+        "confirmed_count": n_confirmed,
         "hypothesis_count": n_hypothesis,
         "edges": resolved,
         "finding_id": stored.id,
         "hint": (
             f"Persisted {len(resolved)} edge(s) in one call — "
-            f"{n_observed} asserted, {n_hypothesis} hypothesis (not proof yet). "
+            f"{n_confirmed} asserted, {n_hypothesis} hypothesis (not proof yet). "
             "This is the natural way to persist a whole tool run's relationships: "
             "don't summarize in chat only, link everything you found."
         ),
-    }
-
-
-def tag_asset(
-    *,
-    engagement_id: str,
-    asset: str,
-    role: str = "",
-    boost: int = 0,
-    reason: str = "",
-    run_id: str = "",
-    seed_target: str = "",
-) -> dict[str, Any]:
-    """Persist an operator crown-jewel tag (runtime scoring override)."""
-    eid = (engagement_id or "").strip()
-    if not eid:
-        raise ValueError("engagement_id required")
-    asset_s = (asset or "").strip()
-    if not asset_s:
-        raise ValueError("asset required")
-    reason_s = (reason or "").strip()
-    if not reason_s:
-        raise ValueError("reason required (why this asset matters)")
-
-    role_s = re.sub(r"[^a-z0-9_]", "", (role or "operator_priority").strip().lower().replace("-", "_"))
-    if not role_s:
-        role_s = "operator_priority"
-    boost_i = max(-50, min(int(boost), 100))
-
-    # Ensure node exists so graph_query can find it
-    atype, label = parse_asset_ref(asset_s)
-    get_engagement_graph().ensure_node(
-        engagement_id=eid,
-        asset_type=atype,
-        label=label,
-        run_id=run_id or "",
-        metadata={"operator_role": role_s, "operator_boost": boost_i},
-    )
-
-    finding = Finding(
-        engagement_id=eid,
-        run_id=run_id or "",
-        finding_type=FindingType.OBSERVATION,
-        title=f"TAG {label} role={role_s} boost={boost_i}",
-        description=reason_s[:500],
-        evidence=reason_s[:2000],
-        confidence=FindingConfidence.LIKELY,
-        evidence_grade=EvidenceGrade.INFERRED,
-        claim_severity=ClaimSeverity.NONE,
-        source_tool="operator_tag_asset",
-        target=seed_target or label,
-        metadata={
-            "asset": label,
-            "asset_type": atype.value,
-            "operator_role": role_s,
-            "operator_boost": boost_i,
-        },
-        tags=["operator_tag", f"role:{role_s}", f"boost:{boost_i}"],
-    )
-    stored = get_findings_store().add(finding)
-    return {
-        "engagement_id": eid,
-        "asset": label,
-        "asset_type": atype.value,
-        "role": role_s,
-        "boost": boost_i,
-        "finding_id": stored.id,
-        "hint": "Tag applied — platform_crown_jewels will reflect boost on next call.",
     }
 
 
@@ -463,7 +390,6 @@ def record_think(
         description=plan.strip()[:400] or "Operator hypothesis",
         evidence=(evidence.strip() or hyp)[:2000],
         confidence=FindingConfidence.HYPOTHESIS,
-        evidence_grade=EvidenceGrade.UNVERIFIED,
         claim_severity=ClaimSeverity.NONE,
         source_tool="operator_think",
         target=seed_target or "",
@@ -504,7 +430,7 @@ def apply_script_rel_markers(
                     target=item["target"],
                     relation=item["relation"],
                     evidence=item["evidence"],
-                    evidence_grade=item.get("grade") or "inferred",
+                    confidence=item.get("confidence") or "likely",
                     run_id=run_id,
                     seed_target=seed_target,
                 )

@@ -431,7 +431,6 @@ def generate_cytoscape_json(
                 "target": tgt_id,
                 "label": rel,
                 "hypothesis": is_hypothesis,
-                "evidence_grade": "observed" if not is_hypothesis else "inferred",
             },
         })
 

@@ -1,6 +1,13 @@
 # Parallelism — help the operator go wide without freezing the chat.
 # Config owns caps + "often long" tool names. The LLM chooses when to branch.
 # Never auto-start jobs from this file.
+#
+# These values are honoured as set — there is no silent clamp. A sanity
+# ceiling exists only to catch a fat-fingered value (see _SANITY_CEILINGS in
+# parallelism_config.py): max_running_jobs/max_running_agents <= 200,
+# agent_spawn_budget <= 5000, max_spawn_depth <= 50,
+# suggest_job_timeout_seconds <= 3600. Exceeding one logs a warning naming
+# the enforced ceiling instead of silently substituting a different number.
 
 max_running_jobs: 4
 suggest_job_timeout_seconds: 120

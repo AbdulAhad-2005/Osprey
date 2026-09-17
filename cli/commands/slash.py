@@ -885,6 +885,10 @@ def handle_skill(args: list[str], client: "APIClient") -> None:
                 print_info(f"Pending proposals ({len(props)}) — /skill show <id>, then /skill approve|reject <id>:")
                 for p in props:
                     print(f"  [{p['id']}] [{p['phase']}] {p['name']} — {p['description']}")
+                    similar = p.get("similar_to") or []
+                    if similar:
+                        top = ", ".join(f"{s['skill']} ({s['score']})" for s in similar[:3])
+                        print(f"      similar to: {top}")
             if active:
                 print_info(f"Active learned skills ({len(active)}):")
                 for a in active:
@@ -898,6 +902,10 @@ def handle_skill(args: list[str], client: "APIClient") -> None:
             print(f"[{p['phase']}] {p['name']}\n{p['description']}\n\n{p['content']}")
             if p.get("evidence"):
                 print(f"\nGrounded in: {p['evidence']}")
+            similar = p.get("similar_to") or []
+            if similar:
+                top = ", ".join(f"{s['skill']} ({s['score']})" for s in similar)
+                print(f"\nSimilar to: {top} — weigh novelty before approving.")
         elif sub == "approve" and len(args) > 1:
             r = client.approve_learned_skill(args[1])
             print_success(f"Approved — now active at skills/{r.get('path')} ({r.get('phase')} phase).")

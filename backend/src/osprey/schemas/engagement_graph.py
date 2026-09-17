@@ -38,8 +38,7 @@ class AssetNode(BaseModel):
     engagement_id: str = ""
     run_id: str = ""
     source_tool: str = ""
-    evidence_grade: str = "inferred"
-    confidence: str = "confirmed"
+    confidence: str = "likely"
     # Nested metadata is allowed: banners, TLS cert chains, response bodies, OS
     # guesses, etc. live on the node instead of being flattened away.
     metadata: dict[str, Any] = Field(default_factory=dict)

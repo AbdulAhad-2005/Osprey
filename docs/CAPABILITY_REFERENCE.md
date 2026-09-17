@@ -170,15 +170,15 @@ platform_graph_link(
   target="host:auth.example.com",
   relation="shares_auth_cookie",
   evidence="Same Set-Cookie Domain and issuer",
-  evidence_grade="inferred",
+  confidence="likely",
   derived_from="findingA,findingB"
 )
 ```
 
 Relations are sanitized but not chosen from a fixed enum.
 
-- `observed` evidence creates an asserted relation.
-- `inferred` or `unverified` evidence becomes a `hypothesis_*` relation.
+- `confirmed` confidence creates an asserted relation.
+- `likely` or `hypothesis` confidence becomes a `hypothesis_*` relation.
 - `derived_from` records which findings support the interpretation.
 
 Examples of LLM-authored relations:
@@ -229,13 +229,14 @@ platform_record_finding(
   title="Unauthenticated JSON user endpoint",
   evidence="HTTP/1.1 200 OK; Content-Type: application/json; {...}",
   finding_type="url",
-  evidence_grade="observed",
+  confidence="confirmed",
   claim_severity="high",
   derived_from="parentFinding"
 )
 ```
 
-Severity is clamped by evidence grade.
+Confidence and severity are independent — assign both honestly yourself (see
+`skills/vuln/verification-and-severity.md`); neither is derived from the other.
 
 ---
 
@@ -608,27 +609,19 @@ Every finding has:
 - `finding_type`: `subdomain`, `host`, `url`, `port`, `service`,
   `technology`, or `observation`.
 - `title`, `description`, and `evidence`.
-- `confidence`: `confirmed`, `likely`, or `hypothesis`.
-- `evidence_grade`: `observed`, `inferred`, or `unverified`.
-- `claim_severity`: `none`, `info`, `low`, `medium`, `high`, or `critical`.
+- `confidence`: `confirmed`, `likely`, or `hypothesis` — how sure this is real.
+- `claim_severity`: `none`, `info`, `low`, `medium`, `high`, or `critical` — impact if
+  real, assigned independently of confidence (see `skills/vuln/verification-and-severity.md`).
 - `source_tool` and `target`.
 - `metadata`: small structured fields used by graph, relation, and recall code.
-- `tags`: free-form labels plus one normalized `grade:*` tag.
+- `tags`: free-form labels.
 - `extra`: arbitrary nested JSON.
 - `raw_data`: unstructured response or output excerpt.
 - `notes`: operator or parser notes.
 - `created_at`.
 
-The SQL row does not have dedicated evidence-grade and severity columns.
-Pydantic mirrors both values into:
-
-```text
-extra.evidence_grade
-extra.claim_severity
-```
-
-When the row is read, model validation hydrates them from `extra`. It also
-removes stale `grade:*` tags and appends exactly one current grade tag.
+`confidence` and `claim_severity` are dedicated columns on the `findings` row —
+not clamped against each other, not mirrored through `extra`.
 
 ### 12.2 Finding write transaction
 
@@ -681,104 +674,38 @@ findings and graph data, not every operational object.
 
 ---
 
-## 13. Evidence grading and severity calculation
+## 13. Confidence and severity — two independent signals
 
-### 13.1 Grade and confidence are different
+### 13.1 There is no clamp
 
-Evidence grade answers:
-
-> How directly did the platform observe this claim?
-
-Confidence answers:
-
-> How strongly does the parser or operator believe the interpretation?
-
-An observation may therefore be `confidence=confirmed` but still
-`evidence_grade=inferred` if it confirms only an indirect signal.
-
-### 13.2 Default grade algorithm
-
-When a parser does not provide a grade, `default_grade_for_type()` evaluates in
-this order:
+Earlier versions of this platform had a second axis (`evidence_grade`:
+observed/inferred/unverified) that mechanically capped `claim_severity` — an
+"observed" scanner *pattern match* could reach CRITICAL with no proof of actual
+exploitation, which is exactly backwards for a report a client will read. That
+axis was removed. `confidence` (`confirmed` / `likely` / `hypothesis`) and
+`claim_severity` (`none` … `critical`) are now both assigned directly and
+honestly by the parser, YAML rule, script marker, or operator — see
+`skills/vuln/verification-and-severity.md` for the contract:
 
 ```text
-if tags contain raw_output, unparsed, or honeypot_suspect:
-    grade = unverified
-else if tags contain sister_domain or source_tool == domain_hunter:
-    grade = unverified
-else if finding_type is URL or SERVICE:
-    grade = observed
-else if finding_type is TECHNOLOGY, PORT, SUBDOMAIN, or HOST:
-    grade = inferred
-else if finding_type is OBSERVATION and confidence == hypothesis:
-    grade = unverified
-else:
-    grade = inferred
+detection only (pattern matched, no data pulled)  → confidence LIKELY,  severity capped at HIGH
+proven exploitation (data/shell/validated cred)   → confidence CONFIRMED, severity may reach CRITICAL
+passive/soft lead (DNS/CT signal, sister domain)  → confidence HYPOTHESIS, severity LOW/INFO
 ```
 
-Why:
+Neither field is derived from the other. A CONFIRMED finding with LOW impact
+stays LOW; a thin-confidence lead pointing at a genuinely severe CVE can still
+carry a high `claim_severity` — the reader sees both fields and judges
+accordingly, rather than one field silently overriding the other.
 
-- A live URL or service parser normally has a response/banner.
-- A port state, DNS name, or technology fingerprint is usually a signal rather
-  than demonstrated impact.
-- A hypothesis is deliberately prevented from becoming proof through confidence
-  wording alone.
-
-### 13.3 Severity is assigned, then clamped
-
-The platform does **not** currently calculate CVSS, exploitability, likelihood,
-business impact, or a numeric risk score.
-
-A parser, YAML rule, script marker, or operator requests a severity. The model
-then applies this ordinal ranking:
-
-```text
-none=0 < info=1 < low=2 < medium=3 < high=4 < critical=5
-```
-
-Grade ceilings:
-
-```text
-observed   → critical
-inferred   → medium
-unverified → info
-```
-
-Formula:
-
-```text
-final_severity =
-    requested_severity
-    if rank(requested_severity) <= rank(max_for_grade)
-    else max_for_grade
-```
-
-Examples:
-
-```text
-observed + critical   → critical
-observed + low        → low
-inferred + critical   → medium
-inferred + high       → medium
-unverified + high     → info
-unverified + critical → info
-```
-
-The clamp is a ceiling, not an upgrade. `observed + low` remains low.
-
-Unknown values passed to the standalone clamp are conservative:
-
-- Unknown grade → `unverified`
-- Unknown severity → `none`
-
-### 13.4 Port-flood demotion
+### 13.2 Port-flood demotion
 
 For one submitted finding batch:
 
 ```text
 if port_findings_for_host >= 40
 and service_findings_for_host < 3:
-    grade = unverified
+    confidence = hypothesis
     severity = info
     add tags honeypot_suspect and port_flood
 ```
@@ -791,12 +718,14 @@ Limitation: store-time demotion sees only the current batch. Forty one-at-a-time
 writes are not retrospectively changed, although finalize performs a separate
 cumulative flood check.
 
-### 13.5 What “observed” does and does not mean
+### 13.3 What “confirmed” does and does not mean
 
-`observed` means the caller or parser supplied direct-looking evidence. It does
-not cryptographically bind the finding to an artifact. A script or manual call
-can claim `observed`; finalize adds length/marker checks, but the LLM must still
-inspect whether the evidence genuinely proves the title.
+`confirmed` means the caller or parser supplied direct, real proof (data
+extracted, a shell, a validated credential) — not just that a scanner returned
+a response. It does not cryptographically bind the finding to an artifact. A
+script or manual call can claim `confirmed`; finalize adds length/marker
+checks, but the LLM must still inspect whether the evidence genuinely proves
+the title.
 
 ---
 

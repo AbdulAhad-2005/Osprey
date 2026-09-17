@@ -79,9 +79,9 @@ Only AFTER every host has this shallow pass do you rank and deep-dive.
 Cluster hosts by **function** (app, API, auth, admin, CI/CD, observability, storage, VCS,
 mail), not by product. Rank by exposure × value. THEN deep-dive the top few with
 `nmap_service_scan`, `tech_stack_analyze`, content discovery (`feroxbuster_scan`), and JS
-analysis (`js_recon`, `katana_crawl`). The 45 hosts you shallow-probed are now ranked, not
-forgotten — the graph holds them for you; `platform_graph_query` / `platform_crown_jewels`
-surface what's still worth returning to.
+analysis (`js_recon`, `katana_crawl`). The 45 hosts you shallow-probed are not
+forgotten — the graph holds them for you; `platform_graph_query` surfaces what's
+still worth returning to.
 
 ## Advanced pivots (cheap breadth multipliers)
 
@@ -103,8 +103,8 @@ You cannot keep 50 hosts in working memory. Don't try — let the system track t
 
 - After each batch, `platform_graph_link_many` the discovered assets so the graph, not your
   context window, is the inventory of record.
-- Call `platform_context` / `platform_crown_jewels` rather than re-listing hosts yourself —
-  it shows what's ranked and what phases have unlocked from the evidence so far.
+- Call `platform_context` / `platform_graph_query` rather than re-listing hosts yourself —
+  they show what's been found and what phases have unlocked from the evidence so far.
 - When you feel the urge to stop, run `platform_graph_query` first — almost always there's
   a host you shallow-probed and never returned to.
 

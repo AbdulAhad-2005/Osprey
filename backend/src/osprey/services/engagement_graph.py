@@ -29,8 +29,9 @@ logger = logging.getLogger(__name__)
 
 _IP_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 
-# Evidence-grade strength ordering (for node provenance strengthening).
-_GRADE_RANK = {"unverified": 0, "inferred": 1, "observed": 2}
+# Confidence strength ordering (for node provenance strengthening) — a node's
+# confidence only ever moves up as stronger observations arrive, never down.
+_CONFIDENCE_RANK = {"hypothesis": 0, "likely": 1, "confirmed": 2}
 
 # Finding types whose primary graph node is keyed directly on the finding title
 # (label == title), so provenance can be stamped generically after ingest. Port /
@@ -105,7 +106,7 @@ class EngagementGraph:
                 db.close()
 
     def _stamp_primary_provenance(self, db, finding: Finding) -> None:
-        """Record which tool observed a finding's own asset node, and its grade.
+        """Record which tool observed a finding's own asset node, and its confidence.
 
         Generic (one place) so the 20 node-construction sites in ``_ingest_one`` stay
         untouched. Only types whose node label == finding title are stamped.
@@ -122,10 +123,9 @@ class EngagementGraph:
             return
         if finding.source_tool and not row.source_tool:
             row.source_tool = finding.source_tool
-        grade = finding.evidence_grade.value
-        if _GRADE_RANK.get(grade, 0) > _GRADE_RANK.get(row.evidence_grade or "inferred", 0):
-            row.evidence_grade = grade
-        row.confidence = finding.confidence.value
+        conf = finding.confidence.value
+        if _CONFIDENCE_RANK.get(conf, 0) > _CONFIDENCE_RANK.get(row.confidence or "likely", 0):
+            row.confidence = conf
         # Link the finding to its primary graph node (findings_store has already
         # committed the canonical row; a merged occurrence's id won't resolve here,
         # and the canonical was linked on its first sighting).
@@ -152,12 +152,12 @@ class EngagementGraph:
             existing.run_id = node.run_id or existing.run_id
             existing.label = node.label
             existing.asset_type = node.asset_type.value
-            # Provenance: keep the first tool that saw the node; strengthen the grade
-            # only when a later observation is strictly stronger.
+            # Provenance: keep the first tool that saw the node; strengthen
+            # confidence only when a later observation is strictly stronger.
             if node.source_tool and not existing.source_tool:
                 existing.source_tool = node.source_tool
-            if _GRADE_RANK.get(node.evidence_grade, 0) > _GRADE_RANK.get(existing.evidence_grade or "inferred", 0):
-                existing.evidence_grade = node.evidence_grade
+            if _CONFIDENCE_RANK.get(node.confidence, 0) > _CONFIDENCE_RANK.get(existing.confidence or "likely", 0):
+                existing.confidence = node.confidence
             return AssetNode(
                 id=existing.id,
                 asset_type=AssetType(existing.asset_type),
@@ -165,7 +165,6 @@ class EngagementGraph:
                 engagement_id=existing.engagement_id,
                 run_id=existing.run_id,
                 source_tool=existing.source_tool,
-                evidence_grade=existing.evidence_grade,
                 confidence=existing.confidence,
                 metadata=merged,
             )
@@ -177,8 +176,7 @@ class EngagementGraph:
             label=node.label,
             run_id=node.run_id or "",
             source_tool=node.source_tool or "",
-            evidence_grade=node.evidence_grade or "inferred",
-            confidence=node.confidence or "confirmed",
+            confidence=node.confidence or "likely",
             metadata_json=_encode_meta(node.metadata or {}),
         )
         db.add(row)
@@ -326,7 +324,6 @@ class EngagementGraph:
                 engagement_id=existing.engagement_id,
                 run_id=existing.run_id,
                 source_tool=existing.source_tool,
-                evidence_grade=existing.evidence_grade,
                 confidence=existing.confidence,
                 metadata=_decode_meta(existing.metadata_json),
             )
@@ -1094,8 +1091,7 @@ class EngagementGraph:
                 engagement_id=r.engagement_id,
                 run_id=r.run_id,
                 source_tool=getattr(r, "source_tool", "") or "",
-                evidence_grade=getattr(r, "evidence_grade", "inferred") or "inferred",
-                confidence=getattr(r, "confidence", "confirmed") or "confirmed",
+                confidence=getattr(r, "confidence", "likely") or "likely",
                 metadata=_decode_meta(r.metadata_json),
                 created_at=getattr(r, "created_at", None),
                 updated_at=getattr(r, "updated_at", None),

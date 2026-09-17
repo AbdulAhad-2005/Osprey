@@ -40,9 +40,14 @@ _VALID_PHASES = frozenset(
 
 _MIN_DESC, _MAX_DESC = 20, 300
 _MIN_BODY, _MAX_BODY = 200, 8000
-# Reject a proposal whose (name+description+headings) is this similar to an
-# existing skill — enforces "novel", not a restatement/merge of what we ship.
+# A proposal whose (name+description+heading) is this similar to an existing
+# skill gets an advisory "similar to X" note the operator sees at approval
+# time — it never blocks the proposal; novelty is a judgment call for the
+# human approval gate, not something the code pre-filters.
 _DEDUP_THRESHOLD = 0.72
+# Full-body content this similar to an existing skill file is not a judgment
+# call — it is the same technique restated, so this alone still hard-rejects.
+_EXACT_DUP_THRESHOLD = 0.97
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 
@@ -98,10 +103,12 @@ def _validate(name: str, phase: str, description: str, content: str) -> tuple[st
     return slug, phase
 
 
-def _reject_if_duplicate(
-    slug: str, name: str, description: str, title_hint: str, *, exclude_pid: str | None = None
-) -> None:
-    # Hard name/slug collision against shipped + active learned skills.
+def _reject_if_identity_conflict(slug: str, name: str, *, exclude_pid: str | None = None) -> None:
+    """Hard block: same name/slug already exists or is already pending.
+
+    A real identity collision, not a similarity judgment — the operator can't
+    approve two skills sharing one slug, so this stays a rejection.
+    """
     for rec in list_skills():
         if rec["name"].lower() == name.lower() or _slugify(rec["name"]) == slug:
             raise LearnedSkillError(
@@ -113,14 +120,40 @@ def _reject_if_duplicate(
             continue
         if prop.get("slug") == slug or (prop.get("name", "").lower() == name.lower()):
             raise LearnedSkillError(f"a proposal '{prop.get('name')}' is already pending for this name.")
-    # Near-duplicate content guard: this is a *new* technique, not a restatement.
-    sig = _tokens(f"{name} {description} {title_hint}")
-    for other_name, other_sig in _existing_signatures():
-        if _jaccard(sig, other_sig) >= _DEDUP_THRESHOLD:
+
+
+def _reject_if_exact_duplicate(content: str) -> None:
+    """Hard block only on effectively-identical body content (>=0.97 token
+    Jaccard against a shipped/learned skill's full text) — a real "you're not
+    adding anything" guard, not a similarity opinion. Everything short of this
+    is surfaced as an advisory note instead (see ``_similarity_flags``)."""
+    body_tokens = _tokens(content)
+    if not body_tokens:
+        return
+    for rec in list_skills():
+        path = _PROJECT_ROOT / "skills" / rec["path"]
+        try:
+            existing_body = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        score = _jaccard(body_tokens, _tokens(existing_body))
+        if score >= _EXACT_DUP_THRESHOLD:
             raise LearnedSkillError(
-                f"too similar to existing skill '{other_name}' — the LLM can already read "
-                "that skill; propose only a genuinely new technique."
+                f"content is effectively identical to existing skill '{rec['name']}' "
+                f"(score={score:.2f}) — not a new technique."
             )
+
+
+def _similarity_flags(name: str, description: str, title_hint: str) -> list[dict[str, Any]]:
+    """Near-duplicate matches (score >= 0.72) for the operator to weigh at
+    approval time. Advisory only — never blocks the proposal."""
+    sig = _tokens(f"{name} {description} {title_hint}")
+    flags: list[dict[str, Any]] = []
+    for other_name, other_sig in _existing_signatures():
+        score = _jaccard(sig, other_sig)
+        if score >= _DEDUP_THRESHOLD:
+            flags.append({"skill": other_name, "score": round(score, 2)})
+    return sorted(flags, key=lambda f: -f["score"])
 
 
 def propose_skill(
@@ -136,7 +169,9 @@ def propose_skill(
     """Validate + store a proposal. Inert until approved. Raises LearnedSkillError."""
     slug, phase = _validate(name, phase, description, content)
     title_hint = _first_heading(content)
-    _reject_if_duplicate(slug, name.strip(), description.strip(), title_hint)
+    _reject_if_identity_conflict(slug, name.strip())
+    _reject_if_exact_duplicate(content)
+    similar_to = _similarity_flags(name.strip(), description.strip(), title_hint)
 
     _PROPOSALS_DIR.mkdir(parents=True, exist_ok=True)
     pid = uuid.uuid4().hex[:12]
@@ -152,6 +187,9 @@ def propose_skill(
         "evidence": evidence.strip(),
         "status": "proposed",
         "created_at": time.time(),
+        # Advisory near-duplicate matches for the operator to weigh — never
+        # blocked the proposal from reaching here (see _similarity_flags).
+        "similar_to": similar_to,
     }
     _proposal_path(pid).write_text(json.dumps(proposal, indent=2), encoding="utf-8")
     return proposal
@@ -217,12 +255,13 @@ def approve_proposal(pid: str) -> dict[str, Any]:
     prop = get_proposal(pid)
     if prop is None:
         raise LearnedSkillError(f"no proposal with id '{pid}'.")
-    # Re-check duplicates at approval time (the library may have changed), but never
-    # count this proposal itself as the duplicate.
-    _reject_if_duplicate(
-        prop["slug"], prop["name"], prop["description"],
-        _first_heading(prop["content"]), exclude_pid=pid,
-    )
+    # Re-check identity/exact-duplicate at approval time (the library may have
+    # changed since the proposal was filed), but never count this proposal
+    # itself as the conflict. Near-duplicate similarity was already surfaced
+    # to the operator on the proposal (similar_to) — approving it IS their
+    # decision, so it is not re-checked here.
+    _reject_if_identity_conflict(prop["slug"], prop["name"], exclude_pid=pid)
+    _reject_if_exact_duplicate(prop["content"])
     res = _write_active(
         slug=prop["slug"], phase=prop["phase"], description=prop["description"],
         content=prop["content"], tags=prop.get("tags"), evidence=prop.get("evidence", ""),
@@ -242,7 +281,8 @@ def add_skill(
     validation + duplicate/similarity guards still apply.
     """
     slug, phase = _validate(name, phase, description, content)
-    _reject_if_duplicate(slug, name.strip(), description.strip(), _first_heading(content))
+    _reject_if_identity_conflict(slug, name.strip())
+    _reject_if_exact_duplicate(content)
     return _write_active(
         slug=slug, phase=phase, description=description.strip(),
         content=content, tags=tags, evidence=evidence.strip(),

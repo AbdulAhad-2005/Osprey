@@ -30,14 +30,21 @@ from _core.runner import default_parse, run_tool
 
 TOOL_NAME = "naabu_port_scan"
 CATEGORY = "network"
-_MAX_INLINE_PORT_EXPANSION = 5000
 
 
 def _normalize_ports(ports: str) -> str:
+    """Validate and de-dupe port tokens — ranges pass through as ranges.
+
+    naabu's own ``-p`` flag accepts ``start-end`` natively, so a range is
+    never expanded into individual port numbers (that used to build a
+    65535-token command line for ``1-65535`` and was the actual reason a
+    wide range needed a hard cap; passing the range straight through removes
+    the problem instead of capping around it).
+    """
     if not ports:
         return ""
-    expanded: list[str] = []
-    seen: set[int] = set()
+    tokens: list[str] = []
+    seen: set[str] = set()
     for token in re.split(r"[,\s]+", ports):
         token = token.strip()
         if not token:
@@ -48,25 +55,18 @@ def _normalize_ports(ports: str) -> str:
             end = int(range_match.group(2))
             if start < 1 or end > 65535 or start > end:
                 raise ValueError(f"Invalid port range: {token}")
-            if end - start > _MAX_INLINE_PORT_EXPANSION:
-                raise ValueError(
-                    f"Port range {token} is too wide for naabu_port_scan; "
-                    "use top_ports or an approved full scan"
-                )
-            for port in range(start, end + 1):
-                if port not in seen:
-                    seen.add(port)
-                    expanded.append(str(port))
-            continue
-        if not token.isdigit():
+            norm = f"{start}-{end}"
+        elif token.isdigit():
+            port = int(token)
+            if port < 1 or port > 65535:
+                raise ValueError(f"Invalid port value: {token}")
+            norm = str(port)
+        else:
             raise ValueError(f"Invalid port value: {token}")
-        port = int(token)
-        if port < 1 or port > 65535:
-            raise ValueError(f"Invalid port value: {token}")
-        if port not in seen:
-            seen.add(port)
-            expanded.append(str(port))
-    return ",".join(expanded)
+        if norm not in seen:
+            seen.add(norm)
+            tokens.append(norm)
+    return ",".join(tokens)
 
 
 def build_command(**params: Any) -> str:

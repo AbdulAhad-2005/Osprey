@@ -12,9 +12,9 @@ These are instincts of a strong operator — apply when they fit.
 ## Evidence over narrative
 
 - Live response (status, title, banner) > hostname keywords  
-- `evidence_grade=observed` + raw body/banner > inferred DNS/CT/port lists  
+- Confirmed confidence + raw body/banner > likely DNS/CT/port-list signals  
 - Parsed finding / artifact file > chat memory of a truncated dump  
-- One confirmed crown jewel > fifty unverified “HIGH” / CVE-title rows  
+- One confirmed high-value asset > fifty unverified “HIGH” / CVE-title rows  
 
 ## Severity
 

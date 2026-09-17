@@ -26,7 +26,6 @@ __all__ = [
     "AgentEventHandler",
     "AgentResponse",
     "AgentToolCall",
-    "TOOL_RESULT_MAX",
     "build_engagement_context",
     "execute_agent_tool",
     "extract_inline_tool_call",
@@ -44,8 +43,6 @@ __all__ = [
 ]
 
 AgentEventHandler = Callable[[str, dict[str, Any]], Awaitable[None] | None]
-
-TOOL_RESULT_MAX = 2500
 
 _DOMAIN_RE = re.compile(
     r"(?:https?://)?(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}",

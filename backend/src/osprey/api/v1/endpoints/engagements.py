@@ -214,7 +214,8 @@ async def action_enumerate_pending_sisters(
 ) -> FanoutSisterResponse:
     """Opt-in only. Default dry_run=true. Execute only with dry_run=false and confirm=true.
 
-    Does **not** auto-chain after domain_hunter and never runs httpx/nmap.
+    Does **not** auto-chain after domain_hunter — tool_name defaults to
+    subfinder_scan and is never substituted without the caller asking.
     """
     try:
         return await enumerate_pending_sisters(engagement_id, body or FanoutSisterRequest())
@@ -233,7 +234,7 @@ async def action_fanout_assets(
     engagement_id: str,
     body: FanoutAssetsRequest | None = None,
 ) -> FanoutAssetsResponse:
-    """Opt-in batch. Default dry_run. You supply assets (from crown jewels / graph query)."""
+    """Opt-in batch. Default dry_run. You supply assets (from graph query / findings)."""
     store = get_engagement_store()
     if store.get(engagement_id) is None:
         raise HTTPException(status_code=404, detail=f"Engagement not found: {engagement_id}")

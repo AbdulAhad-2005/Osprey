@@ -191,14 +191,23 @@ def get_tools_by_category_for_llm() -> dict[str, list[dict[str, Any]]]:
 
 
 def format_tool_result(tool_name: str, result: Any, max_length: int = 8000) -> str:
+    """Cap the full enriched tool-result block (raw output + digest + findings + any
+    compressed summary appended after it) to ``max_length`` chars.
+
+    Keeps head AND tail rather than head-only: a compression summary is
+    deliberately appended at the END of the block by the caller, so a
+    head-only cut would silently discard exactly the part meant to survive
+    when the block is long — the raw stdout at the front would consume the
+    whole budget and the summary would never be seen.
+    """
     if result is None:
         return f"Tool {tool_name} returned no output."
     result_str = str(result)
     if len(result_str) <= max_length:
         return result_str
-    truncated = result_str[:max_length]
-    return (
-        f"{truncated}\n\n"
-        f"[... truncated, {len(result_str) - max_length} chars omitted. "
-        f"Total length: {len(result_str)} chars]"
-    )
+    omitted = len(result_str) - max_length
+    marker = f"\n\n[... {omitted} chars omitted (total {len(result_str)}) ...]\n\n"
+    remaining = max(max_length - len(marker), 200)
+    head_cap = max(int(remaining * 0.6), 100)
+    tail_cap = max(remaining - head_cap, 100)
+    return result_str[:head_cap] + marker + result_str[-tail_cap:]

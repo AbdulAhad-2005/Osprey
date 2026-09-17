@@ -44,13 +44,13 @@ def memory_search(
     # such ceiling; `limit` only bounds the result count, not what's searched.
     findings = get_findings_store().list(engagement_id=eid, run_id=run_id or None, q=q, limit=limit)
     for f in findings:
-        grade = getattr(f.evidence_grade, "value", f.evidence_grade)
+        confidence = getattr(f.confidence, "value", f.confidence)
         hits.append(
             {
                 "kind": "finding",
                 "id": f.id,
                 "title": (f.title or "")[:160],
-                "grade": grade,
+                "confidence": confidence,
                 "type": getattr(f.finding_type, "value", f.finding_type),
                 "tool": f.source_tool or "",
                 "derived_from": (f.metadata or {}).get("derived_from") or [],
@@ -155,7 +155,7 @@ def evidence_chain(
         return {
             "id": f.id,
             "title": (f.title or "")[:140],
-            "grade": getattr(f.evidence_grade, "value", f.evidence_grade),
+            "confidence": getattr(f.confidence, "value", f.confidence),
             "type": getattr(f.finding_type, "value", f.finding_type),
             "derived_from": list((f.metadata or {}).get("derived_from") or []),
         }

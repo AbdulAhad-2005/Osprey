@@ -17,6 +17,7 @@ from osprey.services.engagement_graph import get_engagement_graph
 from osprey.services.engagement_store import get_engagement_store
 from osprey.services.exec_cache import get_exec_cache
 from osprey.services.mcp_client import get_mcp_client
+from osprey.services.output_budget import truncate_stdout
 from osprey.services.param_validator import validate_raw
 from osprey.services.parameter_profiles import profile_flags, select_profile
 from osprey.services.rate_governor import (
@@ -410,7 +411,6 @@ async def execute_tool_request(
         if ban_signal and mark_ban(session.engagement_id, target, ban_signal):
             try:
                 from osprey.schemas.finding import (
-                    EvidenceGrade,
                     Finding,
                     FindingConfidence,
                     FindingType,
@@ -432,7 +432,6 @@ async def execute_tool_request(
                         ),
                         evidence=(response.stdout or "")[:400],
                         confidence=FindingConfidence.CONFIRMED,
-                        evidence_grade=EvidenceGrade.OBSERVED,
                         source_tool="rate_governor",
                         target=target,
                         tags=["rate_limited", "waf_blocked", "pacing"],
@@ -500,11 +499,11 @@ async def execute_tool_request(
         try:
             from osprey.services.exploit_candidate_store import get_exploit_candidate_store
 
-            result_finding_id = findings[0].id if findings else ""
-            attempt_success = bool(response.success) and bool(findings)
-            updated_candidate = get_exploit_candidate_store().record_attempt(
+            result_finding = findings[0] if findings else None
+            result_finding_id = result_finding.id if result_finding else ""
+            get_exploit_candidate_store().record_attempt(
                 request.exploit_candidate_id,
-                success=attempt_success,
+                result_finding=result_finding,
                 result_finding_id=result_finding_id,
             )
             candidate = get_exploit_candidate_store().get(request.exploit_candidate_id)
@@ -517,34 +516,6 @@ async def execute_tool_request(
                         existing.append(candidate.finding_id)
                         f.metadata["derived_from"] = existing
                 get_findings_store().add_many_result(findings)
-
-            if candidate is not None:
-                from osprey.services.exploit_chain_store import (
-                    ExploitStep,
-                    get_exploit_chain_store,
-                    outcome_for_finding,
-                )
-
-                chain = get_exploit_chain_store().get_or_create_for_candidate(
-                    engagement_id=session.engagement_id, candidate_id=candidate.id,
-                )
-                result_finding = findings[0] if findings else None
-                outcome = (
-                    outcome_for_finding(
-                        result_finding, exhausted=bool(updated_candidate and updated_candidate.exhausted),
-                    )
-                    if result_finding is not None
-                    else ("failed" if updated_candidate and updated_candidate.exhausted else "attempted")
-                )
-                get_exploit_chain_store().append_step(
-                    chain.id,
-                    ExploitStep(
-                        asset=asset, technique=candidate.promotion_trigger,
-                        tool=request.tool_name, result="success" if attempt_success else "no result",
-                        evidence_finding_id=result_finding_id,
-                    ),
-                    outcome=outcome,
-                )
         except Exception as exc:  # noqa: BLE001
             logger.debug("Exploit candidate correlation skip: %s", exc)
 
@@ -640,6 +611,22 @@ async def execute_tool_request(
             "auto_stealth": bool(target_hot),
         }
         response.hybrid = hm
+
+    # Single, tool-aware truncation point for every caller (MCP server, CLI,
+    # backend agent) — see osprey.services.output_budget. Runs after
+    # _attach_digest (which needs the full stdout) and before caching (so a
+    # cache hit replays the same budgeted text, not a second, divergent trim).
+    # The full body always stays recoverable via the artifact already written
+    # above, whose path this points the driver at.
+    if (response.stdout or "").strip():
+        arts_for_budget = {}
+        if isinstance(response.hybrid, dict):
+            arts_for_budget = response.hybrid.get("artifacts") or {}
+        response.stdout = truncate_stdout(
+            response.tool_name,
+            response.stdout,
+            artifact_path=str(arts_for_budget.get("stdout_path") or ""),
+        )
 
     if use_cache:
         cache.set(cache_key, response)

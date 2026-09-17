@@ -1,58 +1,61 @@
 ---
 name: verification-and-severity
-description: "Severity discipline: evidence grade caps severity (platform clamp); verify scanner output before rating so reports are not a wall of unverified criticals."
+description: "Severity discipline: severity reflects proven impact, not a scanner pattern-match; confidence states how sure we are. Verify before rating so reports are not a wall of unverified criticals."
 phases: [vuln]
 tags: [vuln, severity, verification]
 ---
 
 # Verification & severity discipline
 
-The fastest way to make a report worthless is a wall of unverified scanner output rated
-"critical." Severity is earned from evidence. The platform enforces this — understand it so you
-work with it, not against it.
+The fastest way to make a report worthless is a wall of scanner "detections" rated critical as
+if they were proven exploits. Severity is earned from evidence. There is no platform clamp doing
+this for you anymore — you own both the severity and the confidence of every finding, honestly,
+every time.
 
-## Evidence grade caps severity (platform clamp)
+## Two independent things you assign: severity and confidence
 
-Every finding has an `evidence_grade`, and it caps the `claim_severity` you can assign:
+- `claim_severity` (INFO → CRITICAL): impact **if the finding is real**.
+- `confidence` (CONFIRMED / LIKELY / HYPOTHESIS): how sure we are it's real.
 
-| Grade | Meaning | Max severity |
-|-------|---------|--------------|
-| `observed` | live response proves the condition (scanner match, fetched file, firing payload) | CRITICAL |
-| `inferred` | soft signal — version banner, reflected-but-unverified, name/DNS match | MEDIUM |
-| `unverified` | noise, unparsed, passive guess | INFO |
+These do not clamp each other automatically. That is exactly why you have to think about both,
+every time, instead of trusting a tool's own verdict:
 
-So a CVE "guessed" from a version banner alone is INFERRED → capped at MEDIUM, no matter how bad
-the CVE is. To claim HIGH/CRITICAL you must **observe** it: reach the vulnerable endpoint, get
-the disclosing response, fire the payload. That's the whole game.
+| What actually happened | Severity ceiling | Confidence |
+|---|---|---|
+| A tool merely detected a pattern — sqlmap says "the parameter appears injectable" with no `--dump`, a nuclei template matched, a version sits in a vulnerable range, wpscan flagged a plugin CVE by version | **HIGH**, never CRITICAL | `LIKELY` |
+| Exploitation actually proven — real rows extracted, a shell obtained and a command executed with captured output, a credential tested and accepted by the live service, a file actually read | may reach `CRITICAL` | `CONFIRMED` |
+| A passive/soft lead — DNS/CT signal, sister domain, name collision, a CVE only implied by a banner | `LOW`/`INFO` | `HYPOTHESIS` unless corroborated |
 
-## What counts as observed vs inferred
+## Turning a detection into proof
 
-- **Observed:** sqlmap confirmed injection; dalfox verified (type V) XSS; nuclei matched an
-  actual exposure you then fetched; wpscan found a file that returns real content.
-- **Inferred:** nuclei/wpscan flagged a version in an affected range (but you didn't confirm the
-  exploit path); a reflected XSS lead (type R) not yet verified; a CVE implied by a banner.
-- **Unverified:** raw scanner text with no structured match; a template that "could" apply.
-
-## Turning inferred into observed
-
-1. **Pin the version** — confirm the *running* version is actually in the vulnerable range, not
-   just "≤ X" from a banner.
-2. **Reach the sink** — confirm the vulnerable endpoint/parameter is present and reachable
-   (auth, WAF, path may block it).
-3. **Get a response** — fetch the file, trigger the error, fire the payload. Record the request
-   and the response as evidence.
-4. Only then raise the grade to `observed` and the severity to what the impact warrants.
+1. **Escalate the tool** — `sqlmap --dump`/`--os-shell`, `dalfox --verify`, an actual exploit
+   attempt — rather than accepting the first "vulnerable" verdict as the finding.
+2. **Capture the artifact** — the extracted rows, the shell banner and command output, the
+   accepted-credential response — as the evidence, not the scanner's own claim about itself.
+3. Only then does the finding become CRITICAL/CONFIRMED. Until you have that artifact, it stays
+   HIGH/LIKELY at most, titled as a detection, and belongs in the exploit-attempt queue — not a
+   "proven" section of the report.
 
 ## Writing the finding
 
-- Title = the specific issue (CVE / class + location), not the tool name.
-- Evidence = the reproducing request/response or the scanner's matched-at line.
-- Severity = impact **given confirmed exploitability**, clamped by grade. Don't inflate.
-- Note false-positive risk explicitly when you couldn't verify ("flagged by version; exploit
-  path unconfirmed").
+- **Title states proof status honestly**, e.g. "SQL injection detected — not yet exploited" vs.
+  "SQL injection — confirmed, 22 tables extracted." Never let the title imply more than the
+  evidence backs.
+- **Evidence** = the reproducing request/response for a detection, or the actual extracted
+  data/shell output for a CONFIRMED claim.
+- **Severity and confidence are each earned on their own** — a CONFIRMED classification doesn't
+  retroactively justify a higher severity than the impact warrants, and a CRITICAL impact doesn't
+  borrow credibility from thin confidence.
+- Note false-positive risk explicitly when unverified ("flagged by version; exploit path
+  unconfirmed").
 
 ## Do not
 
-- Copy the scanner's severity verbatim onto an unverified match.
-- Claim impact you didn't observe. "Vulnerable version present" ≠ "exploitable."
-- Bury real criticals under info-level fingerprint noise — rank by verified impact.
+- Copy a scanner's own severity/confidence verbatim onto an unverified match — nuclei, sqlmap,
+  and wpscan all report generously by design; you own the honest label, not the tool.
+- Write "confirmed" or "exploited" for a pattern match. Confirmed means you hold the artifact
+  that proves it, not that a tool said so.
+- Claim impact you didn't observe. "Vulnerable version present" ≠ "exploitable." "Scanner says
+  vulnerable" ≠ "exploited."
+- Bury a genuinely proven critical under a wall of unverified detections rated the same way —
+  rank by proof, not by what the tool's own output claims.

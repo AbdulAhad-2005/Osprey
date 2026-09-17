@@ -1,4 +1,4 @@
-"""Report outline from memory — Observed / Inferred / Hypotheses / Crown jewels.
+"""Report outline from memory — Confirmed / Likely / Hypotheses.
 
 Helps the LLM structure a trusted report without a hardcoded narrative.
 """
@@ -7,8 +7,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from osprey.schemas.finding import EvidenceGrade
-from osprey.services.crown_jewels import rank_crown_jewels
 from osprey.services.findings_store import get_findings_store
 from osprey.services.phase_supervisor import (
     phase_readiness_snapshot,
@@ -18,11 +16,11 @@ from osprey.services.phase_supervisor import (
 _OUTLINE_PER_SECTION = 25
 
 
-def _grade(f: Any) -> str:
-    g = getattr(f, "evidence_grade", None)
-    if hasattr(g, "value"):
-        return str(g.value)
-    return str(g or "inferred").lower()
+def _confidence(f: Any) -> str:
+    c = getattr(f, "confidence", None)
+    if hasattr(c, "value"):
+        return str(c.value)
+    return str(c or "likely").lower()
 
 
 def _line(f: Any) -> str:
@@ -31,7 +29,7 @@ def _line(f: Any) -> str:
     parents = (f.metadata or {}).get("derived_from") or []
     parent_bit = f" ←{','.join(str(p) for p in parents[:4])}" if parents else ""
     return (
-        f"[{_grade(f)}|{sev_s}] {f.title[:140]} "
+        f"[{_confidence(f)}|{sev_s}] {f.title[:140]} "
         f"(id={f.id} via {f.source_tool or '?'}){parent_bit}"
     )
 
@@ -53,44 +51,36 @@ def build_report_outline(
     cap = _OUTLINE_PER_SECTION
     findings = get_findings_store().list(engagement_id=eid, run_id=run_id or None, limit=5000)
 
-    observed: list[str] = []
-    inferred: list[str] = []
+    confirmed: list[str] = []
+    likely: list[str] = []
     hypotheses: list[str] = []
     sev_counts: dict[str, int] = {"none": 0, "info": 0, "low": 0, "medium": 0, "high": 0, "critical": 0}
     for f in findings:
         tags = {str(t).lower() for t in (f.tags or [])}
-        conf = str(getattr(getattr(f, "confidence", None), "value", getattr(f, "confidence", "")) or "")
-        g = _grade(f)
+        conf = _confidence(f)
         sev_str = str(getattr(getattr(f, "claim_severity", None), "value", getattr(f, "claim_severity", "none")) or "none").lower()
         sev_counts[sev_str] = sev_counts.get(sev_str, 0) + 1
         line = _line(f)
         if (
-            g == EvidenceGrade.UNVERIFIED.value
+            conf == "hypothesis"
             or "hypothesis" in tags
-            or conf == "hypothesis"
             or (f.title or "").startswith("HYPOTHESIS")
             or "operator_think" in tags
             or any(str(t).startswith("rel:hypothesis") for t in tags)
         ):
             hypotheses.append(line)
-        elif g == EvidenceGrade.OBSERVED.value:
-            observed.append(line)
+        elif conf == "confirmed":
+            confirmed.append(line)
         else:
-            inferred.append(line)
+            likely.append(line)
 
-    jewels = rank_crown_jewels(eid, run_id=run_id, limit=10)
-    jewel_lines = [
-        f"{j.get('asset')} score={j.get('score')} ({', '.join(str(r) for r in (j.get('reasons') or [])[:3])})"
-        for j in jewels
-    ]
     readiness = phase_readiness_snapshot(eid, run_id=run_id)
     readiness_line = phase_readiness_text(readiness)
 
     sections = {
-        "observed": observed[-cap:],
-        "inferred": inferred[-cap:],
+        "confirmed": confirmed[-cap:],
+        "likely": likely[-cap:],
         "hypotheses": hypotheses[-cap:],
-        "crown_jewels": jewel_lines,
         "phase_readiness": readiness,
     }
 
@@ -98,27 +88,25 @@ def build_report_outline(
         "## Report outline (from memory — not chat recollection)",
         f"### Severity breakdown: critical={sev_counts['critical']} high={sev_counts['high']} "
         f"medium={sev_counts['medium']} low={sev_counts['low']} info={sev_counts['info']}",
-        f"### 1. Observed (proof) — {len(observed)}",
-        "\n".join(f"- {x}" for x in sections["observed"]) or "- (none)",
-        f"### 2. Inferred — {len(inferred)}",
-        "\n".join(f"- {x}" for x in sections["inferred"]) or "- (none)",
+        f"### 1. Confirmed — {len(confirmed)}",
+        "\n".join(f"- {x}" for x in sections["confirmed"]) or "- (none)",
+        f"### 2. Likely — {len(likely)}",
+        "\n".join(f"- {x}" for x in sections["likely"]) or "- (none)",
         f"### 3. Hypotheses — {len(hypotheses)}",
         "\n".join(f"- {x}" for x in sections["hypotheses"]) or "- (none)",
-        "### 4. Crown jewels + operator tags",
-        "\n".join(f"- {x}" for x in jewel_lines) or "- (none)",
         "### Phase status (conductor)",
         readiness_line,
         "",
-        "Anti-hype: never promote hypothesis/inferred to CRITICAL. "
-        "Quote observed rows with evidence — platform_artifact for raw stdout.",
+        "Anti-hype: never promote hypothesis/likely to CRITICAL without real proof "
+        "(data extracted, shell, validated credential). Quote confirmed rows with "
+        "evidence — platform_artifact for raw stdout.",
     ]
     return {
         "engagement_id": eid,
         "counts": {
-            "observed": len(observed),
-            "inferred": len(inferred),
+            "confirmed": len(confirmed),
+            "likely": len(likely),
             "hypotheses": len(hypotheses),
-            "crown_jewels": len(jewel_lines),
             "severity": sev_counts,
         },
         "sections": sections,

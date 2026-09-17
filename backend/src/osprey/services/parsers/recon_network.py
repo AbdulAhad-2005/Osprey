@@ -8,11 +8,9 @@ from typing import Any
 
 from osprey.schemas.finding import (
     ClaimSeverity,
-    EvidenceGrade,
     Finding,
     FindingConfidence,
     FindingType,
-    clamp_claim_severity,
 )
 from osprey.services.parsers._capping import cap_with_accounting
 from osprey.services.target_utils import looks_like_domain, registrable_apex
@@ -46,7 +44,6 @@ def parse_subfinder(
                 description=f"Subdomain discovered for {target or 'target'}",
                 evidence=line.strip(),
                 confidence=FindingConfidence.CONFIRMED,
-                evidence_grade=EvidenceGrade.INFERRED,
                 source_tool="subfinder_scan",
                 target=target,
                 metadata={"hostname": host},
@@ -117,7 +114,6 @@ def parse_httpx(
                 description="Live HTTP endpoint" + (" (Cloudflare/WAF signal)" if is_cf else ""),
                 evidence=text[:500],
                 confidence=FindingConfidence.CONFIRMED,
-                evidence_grade=EvidenceGrade.OBSERVED,
                 source_tool="httpx_probe",
                 target=url,
                 metadata=meta,
@@ -296,7 +292,6 @@ def parse_domain_hunter(
                     + (f" {evidence_text}" if evidence_text else "")
                 ),
                 confidence=_DH_CONF_TO_FINDING.get(conf, FindingConfidence.HYPOTHESIS),
-                evidence_grade=EvidenceGrade.UNVERIFIED,
                 source_tool="domain_hunter",
                 target=target,
                 metadata=meta,
@@ -397,7 +392,10 @@ def _process_vulners_block(
             vid = m.group("id")
             cvss = float(m.group("cvss"))
             is_cve = bool(re.match(r"^CVE-\d{4}-\d{4,7}$", vid, re.IGNORECASE))
-            severity = clamp_claim_severity(EvidenceGrade.INFERRED, _severity_for_cvss(cvss))
+            # Severity reflects the CVE's own impact if real; confidence (LIKELY,
+            # below) is what carries "this is a version match, not a confirmed
+            # exploit" — the two are independent, see verification-and-severity.md.
+            severity = _severity_for_cvss(cvss)
             meta: dict = {
                 "cvss_score": cvss,
                 "cpe": cpe,
@@ -423,7 +421,6 @@ def _process_vulners_block(
                 + (" — exploit available" if m.group("exploit") else ""),
                 evidence=m.group(0)[:300],
                 confidence=FindingConfidence.LIKELY,
-                evidence_grade=EvidenceGrade.INFERRED,
                 claim_severity=severity,
                 source_tool="nmap_custom_scan",
                 target=host,
@@ -506,7 +503,6 @@ def _process_vulns_lua_block(
             references.append(s)
 
     severity = _RISK_TO_SEVERITY.get(risk.lower(), ClaimSeverity.MEDIUM)
-    severity = clamp_claim_severity(EvidenceGrade.OBSERVED, severity)
     meta: dict = {
         "port": port,
         "protocol": proto,
@@ -533,7 +529,6 @@ def _process_vulns_lua_block(
             confidence=(
                 FindingConfidence.CONFIRMED if state == "VULNERABLE" else FindingConfidence.LIKELY
             ),
-            evidence_grade=EvidenceGrade.OBSERVED,
             claim_severity=severity,
             source_tool="nmap_custom_scan",
             target=host,
@@ -584,11 +579,6 @@ def parse_nmap_text(
                 confidence=(
                     FindingConfidence.CONFIRMED if grade == "observed" else FindingConfidence.LIKELY
                 ),
-                evidence_grade={
-                    "observed": EvidenceGrade.OBSERVED,
-                    "inferred": EvidenceGrade.INFERRED,
-                    "unverified": EvidenceGrade.UNVERIFIED,
-                }[grade],
                 source_tool="nmap_service_scan",
                 target=os_host,
                 metadata={"os": text[:200]},
@@ -635,7 +625,6 @@ def parse_nmap_text(
                 description=f"Unrecognized NSE script output shape for {name}",
                 evidence="\n".join(ln.strip() for ln in lines if ln.strip())[:2000],
                 confidence=FindingConfidence.LIKELY,
-                evidence_grade=EvidenceGrade.UNVERIFIED,
                 source_tool="nmap_custom_scan",
                 target=current_host,
                 metadata={
@@ -730,9 +719,6 @@ def parse_nmap_text(
                 description=f"Open {proto} port {port}",
                 evidence=line.strip(),
                 confidence=FindingConfidence.CONFIRMED,
-                evidence_grade=(
-                    EvidenceGrade.OBSERVED if versionish else EvidenceGrade.INFERRED
-                ),
                 source_tool="nmap_service_scan",
                 target=current_host,
                 metadata=host_meta,
@@ -765,7 +751,6 @@ def parse_rustscan(
                     description="Open port from rustscan",
                     evidence=line.strip(),
                     confidence=FindingConfidence.CONFIRMED,
-                    evidence_grade=EvidenceGrade.INFERRED,
                     source_tool="rustscan_fast_scan",
                     target=target,
                     metadata={
@@ -819,7 +804,6 @@ def parse_naabu(
                 description="Open port from naabu",
                 evidence=line,
                 confidence=FindingConfidence.CONFIRMED,
-                evidence_grade=EvidenceGrade.INFERRED,
                 source_tool="naabu_port_scan",
                 target=host or target,
                 metadata={
@@ -874,7 +858,6 @@ def parse_shodan_search(
                         sort_keys=True,
                     ),
                     confidence=FindingConfidence.CONFIRMED,
-                    evidence_grade=EvidenceGrade.INFERRED,
                     source_tool="shodan_search",
                     target=target or ip,
                     metadata={"ip": ip, "hostname": hostnames[0] if hostnames else "", "org": match.get("org") or ""},
@@ -892,7 +875,6 @@ def parse_shodan_search(
                     description=str(match.get("product") or "Shodan open port"),
                     evidence=(match.get("banner") or "")[:400] or f"{ip}:{port}",
                     confidence=FindingConfidence.CONFIRMED,
-                    evidence_grade=EvidenceGrade.INFERRED,
                     source_tool="shodan_search",
                     target=target or ip,
                     metadata={
@@ -915,7 +897,6 @@ def parse_shodan_search(
                     description=f"Shodan hostname for {ip}" if ip else "Shodan hostname",
                     evidence=f"{host} @ {ip}:{port}",
                     confidence=FindingConfidence.CONFIRMED,
-                    evidence_grade=EvidenceGrade.INFERRED,
                     source_tool="shodan_search",
                     target=target or host,
                     metadata={"hostname": host, "ip": ip},
@@ -961,7 +942,6 @@ def parse_shodan_host_info(
                     sort_keys=True,
                 )[:800],
                 confidence=FindingConfidence.CONFIRMED,
-                evidence_grade=EvidenceGrade.INFERRED,
                 source_tool="shodan_host_info",
                 target=target or ip,
                 metadata={"ip": ip, "org": data.get("org") or "", "isp": data.get("isp") or ""},
@@ -980,7 +960,6 @@ def parse_shodan_host_info(
                 description=f"Shodan-reported OS on {ip}",
                 evidence=f"shodan os={os_name}"[:300],
                 confidence=FindingConfidence.LIKELY,
-                evidence_grade=EvidenceGrade.INFERRED,
                 source_tool="shodan_host_info",
                 target=target or ip,
                 metadata={"os": os_name},
@@ -998,7 +977,6 @@ def parse_shodan_host_info(
                 description="Port reported by Shodan host API (passive — verify live)",
                 evidence=f"shodan host {ip} ports include {port}",
                 confidence=FindingConfidence.LIKELY,
-                evidence_grade=EvidenceGrade.INFERRED,
                 source_tool="shodan_host_info",
                 target=target or ip,
                 metadata={"ip": ip, "port": str(port), "protocol": "tcp"},
@@ -1019,7 +997,6 @@ def parse_shodan_host_info(
                 description=f"Shodan hostname for {ip}",
                 evidence=f"{host_s} @ {ip}",
                 confidence=FindingConfidence.CONFIRMED,
-                evidence_grade=EvidenceGrade.INFERRED,
                 source_tool="shodan_host_info",
                 target=target or host_s,
                 metadata={"hostname": host_s, "ip": ip},
@@ -1038,7 +1015,6 @@ def parse_shodan_host_info(
                 description="Shodan CVE tags are leads — verify before claiming impact",
                 evidence=", ".join(str(v) for v in vulns[:30]),
                 confidence=FindingConfidence.HYPOTHESIS,
-                evidence_grade=EvidenceGrade.UNVERIFIED,
                 source_tool="shodan_host_info",
                 target=target or ip,
                 metadata={"ip": ip, "vuln_count": len(vulns)},
@@ -1076,7 +1052,6 @@ def parse_subdomain_takeover(
                 description=str(row.get("reason") or "Fingerprint matched unclaimed SaaS"),
                 evidence=json.dumps(row, sort_keys=True)[:800],
                 confidence=FindingConfidence.LIKELY,
-                evidence_grade=EvidenceGrade.OBSERVED,
                 source_tool="subdomain_takeover_check",
                 target=target or host,
                 metadata={
@@ -1102,7 +1077,6 @@ def parse_subdomain_takeover(
                 description=str(row.get("reason") or "SaaS CNAME with empty/404 response"),
                 evidence=json.dumps(row, sort_keys=True)[:800],
                 confidence=FindingConfidence.HYPOTHESIS,
-                evidence_grade=EvidenceGrade.INFERRED,
                 source_tool="subdomain_takeover_check",
                 target=target or host,
                 metadata={
@@ -1173,7 +1147,6 @@ def parse_dnsx(
                     description=f"DNS A/AAAA for {host}",
                     evidence=f"{host} -> {ip}",
                     confidence=FindingConfidence.CONFIRMED,
-                    evidence_grade=EvidenceGrade.INFERRED,
                     source_tool="dnsx_resolve",
                     target=target or host,
                     metadata={"hostname": host, "ip": ip, "record_type": "a"},
@@ -1192,7 +1165,6 @@ def parse_dnsx(
                         description=f"{rtype} record",
                         evidence=f"{host} {rtype} {value}",
                         confidence=FindingConfidence.CONFIRMED,
-                        evidence_grade=EvidenceGrade.INFERRED,
                         source_tool="dnsx_resolve",
                         target=target or host,
                         metadata={"hostname": host, "record_type": rtype.lower(), key: value},
@@ -1257,7 +1229,6 @@ def parse_tlsx(
                 description=f"issuer={issuer[:80]} sans={len(sans)}",
                 evidence=line[:800],
                 confidence=FindingConfidence.CONFIRMED,
-                evidence_grade=EvidenceGrade.OBSERVED,
                 source_tool="tlsx_inspect",
                 target=target or host or ip,
                 metadata=meta,
@@ -1277,7 +1248,6 @@ def parse_tlsx(
                         description=f"SAN from TLS cert on {host or ip}",
                         evidence=san_l,
                         confidence=FindingConfidence.LIKELY,
-                        evidence_grade=EvidenceGrade.INFERRED,
                         source_tool="tlsx_inspect",
                         target=target or host,
                         metadata={"hostname": san_l, "from_san": True},
@@ -1322,7 +1292,6 @@ def parse_crtsh(
                     description="Certificate Transparency (crt.sh)",
                     evidence=domain,
                     confidence=FindingConfidence.LIKELY,
-                    evidence_grade=EvidenceGrade.INFERRED,
                     source_tool="crt_sh_query",
                     target=target or domain,
                     metadata={"hostname": domain, "source": "crt.sh"},
@@ -1397,7 +1366,6 @@ def parse_cdn_origin_probe(
                 description="CDN signal from DNS/headers (confirm before treating as fact)",
                 evidence="; ".join(str(x) for x in (data.get("evidence") or [])[:8])[:500],
                 confidence=FindingConfidence.LIKELY,
-                evidence_grade=EvidenceGrade.INFERRED,
                 source_tool="cdn_origin_probe",
                 target=target,
                 metadata={"cdn_provider": provider},
@@ -1417,7 +1385,6 @@ def parse_cdn_origin_probe(
                 description="Edge/A-record IP (may be CDN)",
                 evidence=str(ip),
                 confidence=FindingConfidence.CONFIRMED,
-                evidence_grade=EvidenceGrade.INFERRED,
                 source_tool="cdn_origin_probe",
                 target=target,
                 metadata={"ip": str(ip), "role": "edge"},
@@ -1439,7 +1406,6 @@ def parse_cdn_origin_probe(
                 description=f"Origin candidate (confidence={conf})",
                 evidence=f"signals={cand.get('signals')}",
                 confidence=FindingConfidence.HYPOTHESIS if conf < 0.5 else FindingConfidence.LIKELY,
-                evidence_grade=EvidenceGrade.INFERRED,
                 source_tool="cdn_origin_probe",
                 target=target,
                 metadata={
@@ -1476,7 +1442,6 @@ def _unparsed_observation(
             description="Unparsed tool output (stored for agent context)",
             evidence=stripped[:2000],
             confidence=FindingConfidence.LIKELY,
-            evidence_grade=EvidenceGrade.UNVERIFIED,
             source_tool=tool_name,
             target=target,
             tags=[tool_name, "unparsed"],
@@ -1521,7 +1486,6 @@ def parse_wappalyzer(
                 description=f"Technology fingerprint on {tgt}" + (f" ({', '.join(cats)})" if cats else ""),
                 evidence=f"wappalyzer: {tech_name} versions={versions} categories={cats}"[:400],
                 confidence=FindingConfidence.LIKELY,
-                evidence_grade=EvidenceGrade.INFERRED,
                 source_tool="wappalyzer_scan",
                 target=tgt,
                 metadata={"technology": str(tech_name), "version": version, "categories": ",".join(cats)},
@@ -1601,7 +1565,6 @@ def parse_whatweb(
                     description=f"Technology fingerprint on {tgt}",
                     evidence=f"whatweb: {plugin_name} version={version} module={plugin_data.get('module')}"[:400],
                     confidence=FindingConfidence.LIKELY,
-                    evidence_grade=EvidenceGrade.INFERRED,
                     source_tool="whatweb_scan",
                     target=tgt,
                     metadata={"technology": str(plugin_name), "version": version},
@@ -1651,7 +1614,6 @@ def parse_tech_stack(
                 + (f" (detected by {', '.join(detected_by)})" if detected_by else ""),
                 evidence=f"tech_stack_analyze: {name} version={version} categories={cats}"[:400],
                 confidence=FindingConfidence.CONFIRMED if len(detected_by) > 1 else FindingConfidence.LIKELY,
-                evidence_grade=EvidenceGrade.INFERRED,
                 source_tool="tech_stack_analyze",
                 target=tgt,
                 metadata={
@@ -1698,7 +1660,6 @@ def parse_wafw00f(
                 description=f"WAF product identified on {target or 'target'}",
                 evidence=match.group(0)[:300],
                 confidence=FindingConfidence.CONFIRMED,
-                evidence_grade=EvidenceGrade.OBSERVED,
                 source_tool="wafw00f_scan",
                 target=target,
                 metadata={"waf": waf_name},
@@ -1716,7 +1677,6 @@ def parse_wafw00f(
                 description=f"wafw00f found no WAF signature on {target or 'target'}",
                 evidence="No WAF detected by the generic detection",
                 confidence=FindingConfidence.LIKELY,
-                evidence_grade=EvidenceGrade.OBSERVED,
                 source_tool="wafw00f_scan",
                 target=target,
                 tags=["wafw00f", "no_waf"],
@@ -2056,7 +2016,6 @@ def _parse_url_list(
             description=f"URL discovered on {host or target}",
             evidence=url[:300],
             confidence=FindingConfidence.LIKELY,
-            evidence_grade=EvidenceGrade.INFERRED,
             source_tool=source_tool,
             target=host or target,
             metadata={"hostname": host} if host else {},
@@ -2178,7 +2137,6 @@ def parse_whois(
             description="Domain registration facts (WHOIS)",
             evidence="; ".join(summary_bits)[:400],
             confidence=FindingConfidence.CONFIRMED,
-            evidence_grade=EvidenceGrade.OBSERVED,
             source_tool="whois_lookup",
             target=apex or target,
             metadata=meta,
@@ -2198,7 +2156,6 @@ def parse_whois(
                 description=f"Registrant organization for {apex or 'domain'}",
                 evidence=f"WHOIS registrant: {org}"[:300],
                 confidence=FindingConfidence.LIKELY,
-                evidence_grade=EvidenceGrade.INFERRED,
                 source_tool="whois_lookup",
                 target=apex or target,
                 metadata={"organization": org, "domain": apex, "country": fields.get("registrant_country", "")},
@@ -2218,7 +2175,6 @@ def parse_whois(
                 description="Domain has no DNSSEC signing — enables DNS spoofing / cache poisoning.",
                 evidence=f"WHOIS DNSSEC: {fields.get('dnssec')}"[:200],
                 confidence=FindingConfidence.CONFIRMED,
-                evidence_grade=EvidenceGrade.OBSERVED,
                 claim_severity=ClaimSeverity.LOW,
                 source_tool="whois_lookup",
                 target=apex or target,
@@ -2238,7 +2194,6 @@ def parse_whois(
                 description="Authoritative nameserver (WHOIS)",
                 evidence=f"nameserver {ns}",
                 confidence=FindingConfidence.CONFIRMED,
-                evidence_grade=EvidenceGrade.OBSERVED,
                 source_tool="whois_lookup",
                 target=apex or target,
                 metadata={"hostname": apex, "record_type": "ns", "ns": ns, "domain": apex},
@@ -2299,7 +2254,6 @@ def parse_dnsenum(
                         description=f"Subdomain from dnsenum ({rtype})",
                         evidence=raw.strip()[:200],
                         confidence=FindingConfidence.CONFIRMED,
-                        evidence_grade=EvidenceGrade.INFERRED,
                         source_tool="dnsenum_scan",
                         target=apex or name,
                         metadata={"hostname": name},
@@ -2317,7 +2271,6 @@ def parse_dnsenum(
                         description=f"DNS {rtype} for {name}",
                         evidence=f"{name} -> {value}",
                         confidence=FindingConfidence.CONFIRMED,
-                        evidence_grade=EvidenceGrade.INFERRED,
                         source_tool="dnsenum_scan",
                         target=apex or name,
                         metadata={"hostname": name, "ip": value, "record_type": rtype.lower()},
@@ -2335,7 +2288,6 @@ def parse_dnsenum(
                     description=f"{rtype} record (dnsenum)",
                     evidence=raw.strip()[:200],
                     confidence=FindingConfidence.CONFIRMED,
-                    evidence_grade=EvidenceGrade.INFERRED,
                     source_tool="dnsenum_scan",
                     target=apex or name,
                     metadata={"hostname": name, "record_type": rtype.lower(), rtype.lower(): value},
@@ -2382,7 +2334,6 @@ def parse_dnsx_reverse(
                     description=f"Reverse DNS (PTR) hostname for {ip} — new recon seed",
                     evidence=f"{ip} PTR {host}",
                     confidence=FindingConfidence.LIKELY,
-                    evidence_grade=EvidenceGrade.INFERRED,
                     source_tool="dnsx_reverse",
                     target=target or host,
                     metadata={"hostname": host, "ip": ip, "record_type": "ptr"},
@@ -2435,7 +2386,6 @@ def parse_asn_enum(
                     + (f" — {descr}" if descr else "") + " — candidate asset range",
                     evidence=f"route={route} origin={origin} descr={descr}"[:300],
                     confidence=FindingConfidence.LIKELY,
-                    evidence_grade=EvidenceGrade.INFERRED,
                     source_tool="asn_enum",
                     target=target or route,
                     metadata={"cidr": route, "asn": origin, "role": "netblock"},
@@ -2491,7 +2441,6 @@ def parse_asn_enum(
                 description=f"IP {ip} belongs to {asn} ({as_name}) — {country}".strip(),
                 evidence=line[:300],
                 confidence=FindingConfidence.CONFIRMED,
-                evidence_grade=EvidenceGrade.INFERRED,
                 source_tool="asn_enum",
                 target=target or ip,
                 metadata={"asn": asn, "as_name": as_name, "country": country, "ip": ip},
@@ -2509,7 +2458,6 @@ def parse_asn_enum(
                     description=f"BGP prefix for {ip} announced by {asn} — candidate asset range",
                     evidence=line[:300],
                     confidence=FindingConfidence.LIKELY,
-                    evidence_grade=EvidenceGrade.INFERRED,
                     source_tool="asn_enum",
                     target=target or prefix,
                     metadata={"cidr": prefix, "asn": asn, "role": "netblock"},

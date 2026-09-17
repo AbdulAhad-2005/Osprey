@@ -105,7 +105,6 @@ def _restore_session() -> bool:
 _CTX_SECTION_CACHE: dict[str, dict[str, str]] = {}
 _CTX_COLLAPSIBLE = frozenset(
     {
-        "crown_jewels",
         "recent_artifacts",
         "phase_readiness",
         "network_surface",
@@ -847,16 +846,6 @@ def _fetch_context(engagement_id: str = "", target: str = "", *, full: bool = Fa
             if labels:
                 jobs_line = f"jobs: {running}/? running [{', '.join(str(x) for x in labels)}]"
 
-    # Crown jewels: top 5 compact
-    jewels = data.get("crown_jewels") or []
-    jewel_lines = []
-    for j in jewels[:5]:
-        if isinstance(j, dict):
-            jewel_lines.append(
-                f"{j.get('asset')} score={j.get('score')} "
-                f"({', '.join(str(r) for r in (j.get('reasons') or [])[:3])})"
-            )
-
     idx = data.get("stdout_index") or {}
     idx_text = (idx.get("text") if isinstance(idx, dict) else "") or ""
 
@@ -888,13 +877,6 @@ def _fetch_context(engagement_id: str = "", target: str = "", *, full: bool = Fa
             "**Phase status (conductor):**\n" + (readiness_text or "(no engagement bound)"),
             full=full,
             label="Phase status",
-        ),
-        _ctx_delta(
-            eid,
-            "crown_jewels",
-            "**Crown jewels (top):**\n" + ("\n".join(jewel_lines) if jewel_lines else "(none yet)"),
-            full=full,
-            label="Crown jewels",
         ),
         _ctx_delta(
             eid,
@@ -972,7 +954,7 @@ def _fetch_context(engagement_id: str = "", target: str = "", *, full: bool = Fa
         "Use platform_tools / platform_skills / platform_findings / platform_artifact "
         "only when you need detail. "
         "platform_graph_link_many (bulk — one call for a whole tool run's relationships) "
-        "/ platform_graph_link / platform_tag_asset / platform_script when inventing."
+        "/ platform_graph_link / platform_script when inventing."
     )
     return "\n\n---\n\n".join(parts)
 
@@ -980,10 +962,10 @@ def _fetch_context(engagement_id: str = "", target: str = "", *, full: bool = Fa
 @mcp.tool()
 def platform_context(target: str = "", engagement_id: str = "", full: bool = False) -> str:
     """
-    Compact briefing from evidence: phase status, crown jewels, jobs, delta.
+    Compact briefing from evidence: phase status, jobs, delta.
 
     Large, slow-changing sections (network surface, attack-surface tree, findings
-    brief, role guidance, skills index, crown jewels) collapse to a one-line
+    brief, role guidance, skills index) collapse to a one-line
     "unchanged" placeholder when identical to your previous context call, to save
     context. Pass full=true to expand every section.
 
@@ -1055,38 +1037,17 @@ def platform_artifact(path: str = "", offset: int = 0, limit: int = 80000) -> st
 
 
 def _format_exec_result(data: dict[str, Any], *, engagement_id: str = "", target: str = "") -> str:
+    # The backend already trims stdout to this tool's budget before this
+    # response is sent (osprey.services.output_budget, applied in
+    # tool_execution.execute_tool_request) — that is the ONE place raw-output
+    # size policy lives, so this MCP-side formatter renders what it's given
+    # verbatim instead of re-capping it a second time with its own numbers.
     stdout = data.get("stdout") or ""
+    stdout_show = stdout
     stderr = data.get("stderr") or ""
-    # Trim: status + top findings + gaps; full stdout via artifact path
     hybrid_meta = data.get("hybrid") or {}
     arts = hybrid_meta.get("artifacts") or (data.get("parsed") or {}).get("artifacts") or {}
-    stdout_path = ""
-    if isinstance(arts, dict):
-        stdout_path = str(arts.get("stdout_path") or "")
-
-    # A registered per-tool digest (registry.digest_tool_output, computed
-    # server-side) already carries the compact "what happened" signal —
-    # structured findings capture the rest. When one exists, the raw stdout
-    # preview only needs to cover what the digest and structured findings
-    # might have missed, not mirror the whole (sometimes 10k+ line) dump —
-    # that's what repeatedly filled OpenCode's context on long sessions.
-    # Without a digest (tool has no registered parser), keep the generous cap
-    # since raw stdout is the only signal available for that tool.
     digest = str(hybrid_meta.get("digest") or "")
-    stdout_cap = 2500 if digest else 12000
-    head_cap = 1800 if digest else 6000
-    tail_cap = 700 if digest else 3000
-
-    if len(stdout) <= stdout_cap:
-        stdout_show = stdout
-    else:
-        stdout_show = (
-            stdout[:head_cap]
-            + "\n\n…[trimmed — full stdout on Kali"
-            + (f" `{stdout_path}`" if stdout_path else "")
-            + " — platform_artifact]…\n\n"
-            + stdout[-tail_cap:]
-        )
     stderr_show = stderr if len(stderr) <= 8000 else stderr[:8000] + "\n…[stderr truncated]…"
 
     parts = [
@@ -1241,7 +1202,7 @@ def platform_graph_link(
     target: str,
     relation: str,
     evidence: str,
-    evidence_grade: str = "inferred",
+    confidence: str = "likely",
     derived_from: str = "",
 ) -> str:
     """
@@ -1249,7 +1210,7 @@ def platform_graph_link(
 
     source/target: 'host:erp.x.com' or bare hostname/IP/URL.
     relation: free name (e.g. same_app_as, shares_auth_cookie).
-    evidence_grade: observed|inferred|unverified — non-observed becomes hypothesis_* edge
+    confidence: confirmed|likely|hypothesis — non-confirmed becomes hypothesis_* edge
     (not proof for COMPLETE/CRITICAL). evidence= required (why the link exists).
     derived_from: optional comma-separated finding ids this link builds on.
     """
@@ -1263,7 +1224,7 @@ def platform_graph_link(
             "target": target,
             "relation": relation,
             "evidence": evidence,
-            "evidence_grade": evidence_grade,
+            "confidence": confidence,
         }
         if (derived_from or "").strip():
             body["derived_from"] = derived_from.strip()
@@ -1274,7 +1235,7 @@ def platform_graph_link(
                 _session_header(),
                 f"**{data.get('source_id')}** --`{data.get('relationship')}`--> "
                 f"**{data.get('target_id')}**",
-                f"grade={data.get('evidence_grade')} hypothesis={data.get('hypothesis')} "
+                f"confidence={data.get('confidence')} hypothesis={data.get('hypothesis')} "
                 f"finding_id=`{data.get('finding_id')}` "
                 f"derived_from={data.get('derived_from') or []}",
                 data.get("hint") or "",
@@ -1287,7 +1248,7 @@ def platform_graph_link(
 @mcp.tool()
 def platform_graph_link_many(
     evidence: str = "",
-    evidence_grade: str = "inferred",
+    confidence: str = "likely",
     source: str = "",
     relation: str = "",
     targets_json: Any = "[]",
@@ -1306,16 +1267,16 @@ def platform_graph_link_many(
 
     Two ways to pass edges (combine freely):
       - Fan form: source= + relation= + targets_json=[...] — one source, many
-        targets sharing the same relation/evidence/evidence_grade. Example:
+        targets sharing the same relation/evidence/confidence. Example:
         source="domain:example.com", relation="has_subdomain",
         targets_json=["subdomain:a.example.com","subdomain:b.example.com"]
       - List form: links_json=[{"source":..,"target":..,"relation":..,
         "evidence":.. (optional, else shared evidence=),
-        "evidence_grade":.. (optional, else shared evidence_grade=)}, ...] —
+        "confidence":.. (optional, else shared confidence=)}, ...] —
         independent edges with different relations in one call (e.g. a mixed
         batch of resolves_to + runs_tech + co_hosts from one recon pass).
 
-    evidence_grade: observed|inferred|unverified — non-observed becomes
+    confidence: confirmed|likely|hypothesis — non-confirmed becomes
     hypothesis_* edges (not proof for COMPLETE/CRITICAL) per edge, same as the
     single-edge tool. evidence= required unless every links_json item supplies
     its own. derived_from: optional comma-separated finding ids shared by all
@@ -1344,7 +1305,7 @@ def platform_graph_link_many(
             "run_id": SESSION_RUN_ID,
             "seed_target": _SESSION_TARGET,
             "evidence": evidence,
-            "evidence_grade": evidence_grade,
+            "confidence": confidence,
             "source": source,
             "relation": relation,
             "targets": [str(t).strip() for t in targets if str(t).strip()],
@@ -1357,7 +1318,7 @@ def platform_graph_link_many(
             "### OPERATOR MIRROR — BULK GRAPH LINK",
             _session_header(),
             f"Persisted {data.get('count', 0)} edge(s): "
-            f"{data.get('observed_count', 0)} asserted, "
+            f"{data.get('confirmed_count', 0)} asserted, "
             f"{data.get('hypothesis_count', 0)} hypothesis.",
         ]
         for e in (data.get("edges") or [])[:8]:
@@ -1367,47 +1328,6 @@ def platform_graph_link_many(
         lines.append(f"finding_id=`{data.get('finding_id')}`")
         lines.append(data.get("hint") or "")
         return "\n".join(lines)
-
-    return _safe(_run)
-
-
-@mcp.tool()
-def platform_tag_asset(
-    asset: str,
-    reason: str,
-    role: str = "operator_priority",
-    boost: int = 25,
-) -> str:
-    """
-    Tag an asset for crown-jewel ranking (runtime — no YAML edit).
-
-    asset= hostname or host:name. boost= -50..100. reason= why it matters.
-    Call platform_crown_jewels after to see updated ranking.
-    """
-    def _run() -> str:
-        _require_bound_target()
-        data = _post(
-            "/api/v1/hybrid/tag-asset",
-            {
-                "engagement_id": _SESSION_ENGAGEMENT_ID,
-                "run_id": SESSION_RUN_ID,
-                "seed_target": _SESSION_TARGET,
-                "asset": asset,
-                "role": role,
-                "boost": int(boost),
-                "reason": reason,
-            },
-            timeout=30,
-        )
-        return "\n".join(
-            [
-                "### OPERATOR MIRROR — ASSET TAG",
-                _session_header(),
-                f"**{data.get('asset')}** role=`{data.get('role')}` boost={data.get('boost')}",
-                f"finding_id=`{data.get('finding_id')}`",
-                data.get("hint") or "",
-            ]
-        )
 
     return _safe(_run)
 
@@ -1444,9 +1364,9 @@ def platform_finalize_check() -> str:
 @mcp.tool()
 def platform_report_outline() -> str:
     """
-    Structure a trusted report from memory: Observed / Inferred / Hypotheses /
-    Crown jewels + the conductor's phase status. Call before COMPLETE or PARTIAL
-    prose. Does not invent findings — only organizes what is stored.
+    Structure a trusted report from memory: Confirmed / Likely / Hypotheses +
+    the conductor's phase status. Call before COMPLETE or PARTIAL prose. Does
+    not invent findings — only organizes what is stored.
     """
     def _run() -> str:
         _require_bound_target()
@@ -1497,11 +1417,11 @@ def platform_related(limit: int = 20) -> str:
     Read-only cross-finding correlation — candidate relationships from memory.
 
     Returns HYPOTHESES the platform noticed (hosts on one IP with matching page
-    titles, hosts sharing a Set-Cookie domain, hosts with heavy URL fan-out) so
-    you don't have to eyeball the whole findings list to spot them. Nothing here
-    is written to the graph. Commit the ones you judge real with
-    platform_graph_link / platform_tag_asset; ignore the rest. Naturally useful
-    right after a batch of findings lands, or before deciding where to dig next.
+    titles, hosts sharing a Set-Cookie domain) so you don't have to eyeball the
+    whole findings list to spot them. Nothing here is written to the graph.
+    Commit the ones you judge real with platform_graph_link; ignore the rest.
+    Naturally useful right after a batch of findings lands, or before deciding
+    where to dig next.
     """
 
     def _run() -> str:
@@ -1515,7 +1435,7 @@ def platform_related(limit: int = 20) -> str:
             if c.get("kind") == "link":
                 lines.append(
                     f"LINK  {c.get('source')} --{c.get('relation')}--> {c.get('target')}  "
-                    f"[{c.get('evidence_grade')}, score={c.get('score')}]  {c.get('evidence')}"
+                    f"[{c.get('confidence')}, score={c.get('score')}]  {c.get('evidence')}"
                 )
             else:
                 lines.append(
@@ -1594,7 +1514,6 @@ def _build_finding_body(
     title: str,
     evidence: str,
     finding_type: str = "observation",
-    evidence_grade: str = "observed",
     claim_severity: str = "none",
     description: str = "",
     source_tool: str = "operator_record",
@@ -1623,10 +1542,9 @@ def _build_finding_body(
         if t and t not in tag_list:
             tag_list.append(t)
 
-    grade = (evidence_grade or "observed").strip().lower()
     conf = (confidence or "").strip().lower()
     if conf not in ("confirmed", "likely", "hypothesis"):
-        conf = "confirmed" if grade == "observed" else "likely"
+        conf = "likely"
 
     return {
         "engagement_id": _SESSION_ENGAGEMENT_ID,
@@ -1635,7 +1553,6 @@ def _build_finding_body(
         "title": title,
         "description": (description or "").strip(),
         "evidence": evidence,
-        "evidence_grade": grade,
         "claim_severity": (claim_severity or "none").strip().lower(),
         "confidence": conf,
         "source_tool": source_tool or "operator_record",
@@ -1651,14 +1568,13 @@ def platform_record_finding(
     title: str,
     evidence: str,
     finding_type: str = "observation",
-    evidence_grade: str = "observed",
     claim_severity: str = "none",
     description: str = "",
     source_tool: str = "operator_record",
     derived_from: str = "",
     tags: str = "",
     metadata_json: Any = "",
-    confidence: str = "",
+    confidence: str = "likely",
 ) -> str:
     """
     Persist ONE conclusion that lives only in your reasoning — not tool output.
@@ -1671,11 +1587,12 @@ def platform_record_finding(
     use platform_think. Prefer platform_record_findings (bulk) to flush several
     at a checkpoint. If it lives only in your chat answer, it should be here too.
 
-    evidence_grade: observed|inferred|unverified.
+    confidence: confirmed|likely|hypothesis — how sure you are this is real.
     finding_type: url|host|port|service|technology|observation|subdomain|
       vulnerability|credential|secret|http_response|access
       (use observation for anything that doesn't fit — it's the catch-all).
-    claim_severity is clamped by evidence_grade (CRITICAL needs observed).
+    claim_severity: the impact IF this is real — assign it honestly yourself;
+      it is not derived from confidence (see skills/vuln/verification-and-severity.md).
     derived_from: optional comma-separated parent finding ids (evidence chain).
 
     Flexibility (structure it your way — the platform stores whatever you give):
@@ -1684,7 +1601,6 @@ def platform_record_finding(
       (e.g. {"kind":"jwt","alg":"none","endpoint":"/api/v1/auth"}). Use this to
       record shapes the 7 finding types don't capture — the platform does not
       constrain the keys.
-    - confidence: confirmed|likely|hypothesis (defaults from evidence_grade).
     For many facts at once, prefer platform_record_findings (one call).
     """
     def _run() -> str:
@@ -1693,7 +1609,6 @@ def platform_record_finding(
             title=title,
             evidence=evidence,
             finding_type=finding_type,
-            evidence_grade=evidence_grade,
             claim_severity=claim_severity,
             description=description,
             source_tool=source_tool,
@@ -1709,7 +1624,7 @@ def platform_record_finding(
             "### OPERATOR MIRROR — RECORDED FINDING\n"
             f"{_session_header()}\n"
             f"Stored id={data.get('id')} type={data.get('finding_type')} "
-            f"grade={data.get('evidence_grade')} sev={data.get('claim_severity')}\n"
+            f"confidence={data.get('confidence')} sev={data.get('claim_severity')}\n"
             f"title: {data.get('title')}\n"
             "Call platform_findings to verify; then platform_finalize_check again."
         )
@@ -1731,12 +1646,12 @@ def platform_record_findings(items_json: Any) -> str:
     items_json: a JSON array (or JSON string of one). Each item accepts the same
     fields as platform_record_finding — at minimum title + evidence:
       [
-        {"title":"...","evidence":"...","finding_type":"url","evidence_grade":"observed",
+        {"title":"...","evidence":"...","finding_type":"url","confidence":"confirmed",
          "tags":"oracle,api","metadata_json":{"status":401}},
         {"title":"...","evidence":"...","finding_type":"observation"}
       ]
-    Each item is stored with the same evidence-law clamping and graph ingest as a
-    single write; duplicates are de-duped by content.
+    Each item is stored with the same graph ingest as a single write;
+    duplicates are de-duped by content.
     """
     def _run() -> str:
         _require_bound_target()
@@ -1763,7 +1678,6 @@ def platform_record_findings(items_json: Any) -> str:
                 title=str(item.get("title") or ""),
                 evidence=str(item.get("evidence") or ""),
                 finding_type=str(item.get("finding_type") or "observation"),
-                evidence_grade=str(item.get("evidence_grade") or "observed"),
                 claim_severity=str(item.get("claim_severity") or "none"),
                 description=str(item.get("description") or ""),
                 source_tool=str(item.get("source_tool") or "operator_record"),
@@ -1938,13 +1852,12 @@ def platform_findings(
         for f in findings:
             ft = f.get("finding_type", "")
             conf = f.get("confidence", "")
-            grade = f.get("evidence_grade") or (f.get("extra") or {}).get("evidence_grade") or "?"
             sev = f.get("claim_severity") or (f.get("extra") or {}).get("claim_severity") or "none"
             title = f.get("title", "")
             tool = f.get("source_tool", "")
             tags = ",".join(f.get("tags") or [])
             lines.append(
-                f"- [{ft}|grade={grade}|sev={sev}|{conf}] {title}  (via {tool})"
+                f"- [{ft}|sev={sev}|confidence={conf}] {title}  (via {tool})"
                 + (f" tags={tags}" if tags else "")
             )
         parts.append(
@@ -2401,14 +2314,17 @@ def platform_install(
 @mcp.tool()
 def platform_fanout(
     action: str = "enumerate_sisters",
+    tool_name: str = "subfinder_scan",
     dry_run: bool = True,
     confirm: bool = False,
     max_domains: int = 10,
     timeout_per_tool: int = 180,
 ) -> str:
     """
-    OPTIONAL explicit batch helper for sister subdomain enum (dry_run by default).
-    Uses the active target's engagement only.
+    OPTIONAL explicit batch helper for sister-domain enum (dry_run by default).
+    Uses the active target's engagement only. tool_name= any registered catalog
+    tool — an enum tool (subfinder_scan/amass_scan/fierce_scan/dnsenum_scan) is
+    what this helper is for, not a hard requirement.
     """
     action = (action or "").strip().lower()
     if action not in ("enumerate_sisters", "enumerate_pending_sisters", "sisters"):
@@ -2424,7 +2340,7 @@ def platform_fanout(
         _require_bound_target()
         body = {
             "run_id": SESSION_RUN_ID,
-            "tool_name": "subfinder_scan",
+            "tool_name": (tool_name or "subfinder_scan").strip(),
             "max_domains": max_domains,
             "timeout_per_tool": timeout_per_tool,
             "dry_run": bool(dry_run),
@@ -2470,7 +2386,7 @@ def platform_playbook(name: str = "", target: str = "") -> str:
     Advisory playbook only — does NOT auto-run tools.
 
     Returns a suggested tool sequence you may follow, edit, or ignore.
-    Names: web_recon_light | network_crown_jewels | dns_deep | smb_followup | web_depth_before_vuln
+    Names: web_recon_light | network_port_confirm | dns_deep | smb_followup | web_depth_before_vuln
     Pass empty name to list available playbooks.
     """
     books = _load_playbooks()
@@ -2687,25 +2603,6 @@ def platform_graph_query(
 
 
 @mcp.tool()
-def platform_crown_jewels(limit: int = 15) -> str:
-    """Rank high-value assets by role + evidence (VPN/mail/admin/api…) — not vendor packs."""
-    limit = max(1, min(int(limit), 50))
-
-    def _run() -> str:
-        _require_bound_target()
-        data = _get(
-            "/api/v1/hybrid/crown-jewels",
-            params={
-                "engagement_id": _SESSION_ENGAGEMENT_ID,
-                "limit": str(limit),
-            },
-        )
-        return "\n\n".join([_session_header(), _block("Crown jewels", data)])
-
-    return _safe(_run)
-
-
-@mcp.tool()
 def platform_thinking(limit: int = 10) -> str:
     """
     Optional: evidence → next-probe cards from current findings.
@@ -2739,7 +2636,7 @@ def platform_fanout_assets(
     force_refresh: bool = False,
 ) -> str:
     """
-    Run one catalog tool across an EXPLICIT asset list (you choose — from crown jewels/graph).
+    Run one catalog tool across an EXPLICIT asset list (you choose — from graph_query/findings).
 
     assets_json: list or JSON string, e.g. ["vpn.example.com","mail.example.com"]
     Default dry_run=true. Execute only with dry_run=false AND confirm=true.
@@ -2753,7 +2650,10 @@ def platform_fanout_assets(
             assets = [x.strip() for x in assets_json.replace(",", "\n").splitlines() if x.strip()]
     if not isinstance(assets, list):
         return "ERROR: assets_json must be a list of strings"
-    max_assets = max(1, min(int(max_assets), 100))
+    # No ceiling re-imposed here — fanout_assets() itself enforces the one
+    # sanity ceiling (and logs if a fat-fingered value exceeds it), so this
+    # layer doesn't duplicate/drift from that number.
+    max_assets = max(1, int(max_assets))
     timeout_per_tool = max(30, min(int(timeout_per_tool), 600))
 
     def _run() -> str:

@@ -81,13 +81,13 @@ def _build_severity_breakdown(findings: list) -> dict[str, Any]:
         str(getattr(f.claim_severity, "value", f.claim_severity) or "none").lower()
         for f in findings
     )
-    grade_counts = Counter(
-        str(getattr(f.evidence_grade, "value", f.evidence_grade) or "inferred").lower()
+    confidence_counts = Counter(
+        str(getattr(f.confidence, "value", f.confidence) or "likely").lower()
         for f in findings
     )
     return {
         "by_severity": dict(sev_counts),
-        "by_grade": dict(grade_counts),
+        "by_confidence": dict(confidence_counts),
     }
 
 
@@ -98,14 +98,12 @@ def _build_findings_by_severity(findings: list) -> list[dict[str, Any]]:
 
     for f in findings:
         sev = str(getattr(f.claim_severity, "value", f.claim_severity) or "none").lower()
-        grade = str(getattr(f.evidence_grade, "value", f.evidence_grade) or "inferred").lower()
         grouped.setdefault(sev, []).append({
             "id": f.id,
             "type": f.finding_type.value,
             "title": f.title,
             "description": f.description,
             "severity": sev,
-            "evidence_grade": grade,
             "confidence": str(getattr(f.confidence, "value", f.confidence) or ""),
             "source_tool": f.source_tool,
             "target": f.target,

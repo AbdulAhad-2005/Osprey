@@ -19,7 +19,6 @@ from osprey.services.attack_surface_tree import (
     build_attack_surface_tree,
     tree_to_condensed_text,
 )
-from osprey.services.crown_jewels import rank_crown_jewels
 from osprey.services.context_delta import snapshot_counts
 from osprey.services.engagement_graph import get_engagement_graph
 from osprey.services.escalation_registry import escalation_playbook_markdown
@@ -334,7 +333,6 @@ def _attach_elite(
     if not engagement_id:
         return ctx
     ctx.skills_index = _active_phase_skills_index(ctx.phase_readiness or {}, limit=100)
-    ctx.crown_jewels = rank_crown_jewels(engagement_id, run_id=run_id, limit=12)
 
     findings = get_findings_store().list(
         engagement_id=engagement_id, run_id=run_id or None, limit=5000
@@ -345,7 +343,7 @@ def _attach_elite(
     n_obs = sum(
         1
         for f in findings
-        if str(getattr(f.evidence_grade, "value", f.evidence_grade or "")).lower() == "observed"
+        if str(getattr(f.confidence, "value", f.confidence or "")).lower() == "confirmed"
     )
     ctx.context_delta = snapshot_counts(
         engagement_id,

@@ -23,11 +23,9 @@ from pydantic import ValidationError
 
 from osprey.schemas.finding import (
     ClaimSeverity,
-    EvidenceGrade,
     Finding,
     FindingConfidence,
     FindingType,
-    clamp_claim_severity,
 )
 from osprey.services.llm_service import LLMServiceError, get_llm_service, llm_configured
 
@@ -60,11 +58,12 @@ _INSTRUCTIONS = (
     '  "title": short (<160 char) label for the fact\n'
     '  "description": one sentence, plain language\n'
     '  "evidence": the exact snippet of the input text that supports this (<500 char)\n'
-    '  "evidence_grade": "observed" if the text directly shows this fact (e.g. a live '
-    'response, a completed scan result), "inferred" if it is a derived/indirect '
-    'signal, "unverified" if it is speculative or you are not confident\n'
-    '  "severity": one of "none","info","low","medium","high","critical" — how '
-    'serious this fact is IF it is a vulnerability/misconfiguration, else "none"\n'
+    '  "severity": one of "none","info","low","medium","high","critical" — the impact '
+    'IF this fact is real (a vulnerability/misconfiguration), based on what the text '
+    'actually shows — a detection-only signal (e.g. a version match, no active proof) '
+    'should not exceed "high"; only reserve "critical" for text showing actual '
+    'exploitation (data extracted, a shell, a validated credential). Use "none" for '
+    "non-vulnerability facts.\n"
     "Return [] if nothing is extractable. Do not fabricate CVEs, hosts, or ports "
     "not present in the text."
 )
@@ -188,14 +187,9 @@ def _to_finding(
     except ValueError:
         ftype = FindingType.OBSERVATION
     try:
-        grade = EvidenceGrade(str(item.get("evidence_grade") or "unverified"))
-    except ValueError:
-        grade = EvidenceGrade.UNVERIFIED
-    try:
         severity = ClaimSeverity(str(item.get("severity") or "none"))
     except ValueError:
         severity = ClaimSeverity.NONE
-    severity = clamp_claim_severity(grade, severity)
 
     title = str(item.get("title") or "").strip()[:300]
     if not title:
@@ -211,11 +205,10 @@ def _to_finding(
             description=str(item.get("description") or "").strip()[:500],
             evidence=str(item.get("evidence") or "").strip()[:500],
             confidence=FindingConfidence.LIKELY,
-            evidence_grade=grade,
             claim_severity=severity,
             source_tool=tool_name,
             target=target,
-            tags=["dynamic_parsed", f"grade:{grade.value}"],
+            tags=["dynamic_parsed"],
         )
     except ValidationError:
         return None

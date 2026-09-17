@@ -24,8 +24,9 @@ and Kali. Skills here sharpen judgment — they do not prescribe a fixed playboo
 - Prefer **typed recon/network tools** (`subfinder_scan`, `nmap_*`, `rustscan_fast_scan`, …)
   or `platform_exec` — `target|domain|host|url` all work.  
 - Shell/script only for invention, pipes, or missing catalog coverage — not the default.  
-- Use `platform_findings` so both you and the operator see stored evidence + grades.  
-- Verify before CRITICAL/HIGH — requires `evidence_grade=observed` **and** raw proof.  
+- Use `platform_findings` so both you and the operator see stored evidence + confidence.  
+- Verify before CRITICAL/HIGH — assign severity honestly yourself; CRITICAL needs
+  actual proof (data extracted, shell, validated credential), not just a scanner match.  
 - When stuck: `platform_thinking` (evidence→hypothesis cards) or `platform_playbook`, then adapt.  
 - Unfamiliar product fingerprint → SIGNAL→CONFIRM→GRADE (no vendor skill packs).  
 - On empty/timeout: read the gap note + error, invent a different probe (flags, tool, script, chunk).  

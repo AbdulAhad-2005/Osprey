@@ -17,7 +17,6 @@ from typing import Any
 from osprey.platform.handoff import export_structured_findings
 from osprey.schemas.agent_run import PhaseBrief, ToolSummary
 from osprey.schemas.finding import (
-    EvidenceGrade,
     Finding,
     FindingConfidence,
     FindingType,
@@ -34,6 +33,11 @@ logger = logging.getLogger(__name__)
 ensure_parsers_loaded()
 
 COMPRESS_THRESHOLD = 4000
+# Deliberately separate from osprey.services.output_budget: that module answers
+# "how much raw stdout does the driver see", this answers "how much stdout is
+# worth spending an LLM compression call on reading" — a genuinely different
+# question (compression itself has a cost, and the compressor's own summary is
+# what gets kept, not the input). Do not "unify" this into output_budget.
 _MAX_STDOUT_FOR_LLM = 12000
 
 _DEFAULT_SUMMARY_SYSTEM = (
@@ -118,7 +122,6 @@ async def summarize_execution(
                 # the full untruncated blob as before.
                 evidence=blob[:2000],
                 confidence=FindingConfidence.HYPOTHESIS,
-                evidence_grade=EvidenceGrade.UNVERIFIED,
                 source_tool=tool_name,
                 target=target,
                 tags=["raw_output", "unparsed" if not response.success else "observation"],
@@ -146,7 +149,6 @@ async def summarize_execution(
                     description="Script/shell produced structured findings via freeform parse",
                     evidence=(response.command or "")[:500],
                     confidence=FindingConfidence.LIKELY,
-                    evidence_grade=EvidenceGrade.INFERRED,
                     source_tool=tool_name,
                     target=target,
                     tags=["raw_output", "script_audit"],

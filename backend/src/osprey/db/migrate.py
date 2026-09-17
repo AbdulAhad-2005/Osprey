@@ -18,7 +18,6 @@ from osprey.models import (  # noqa: F401
     ConversationMessageRow,
     EngagementRow,
     ExploitCandidateRow,
-    ExploitChainRow,
     FindingOccurrenceRow,
     FindingRow,
     RecoveryObservationRow,

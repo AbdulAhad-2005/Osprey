@@ -202,8 +202,8 @@ Stored structured facts with:
 | Field | Role |
 |-------|------|
 | `finding_type` | subdomain, host, url, port, service, technology, observation, … |
-| `evidence_grade` | `observed` \| `inferred` \| `unverified` |
-| `claim_severity` | clamped by grade (no CRITICAL from DNS alone) |
+| `confidence` | `confirmed` \| `likely` \| `hypothesis` — how sure this is real |
+| `claim_severity` | impact if real — assigned honestly by the parser/agent, independent of confidence |
 | `raw_data` / `evidence` | proof snippets for finalize honesty |
 
 Sources:
