@@ -89,9 +89,15 @@ def _matches(
     if meta_key:
         meta_contains = match.get("metadata_contains", "").lower()
         meta_value = str(match.get("metadata_value", ""))
-        # No contains/value → treat as an existence check (any finding whose
+        # metadata_contains_any: match if the value contains ANY of these
+        # substrings (e.g. [react, vue, angular]). Without this, a rule using it
+        # silently fell through to the existence check below and fired on ANY
+        # finding carrying the key at all — e.g. `technology_react_or_vue` firing
+        # on an Apache host — because meta_contains/meta_value were both empty.
+        meta_contains_any = [str(x).lower() for x in (match.get("metadata_contains_any") or [])]
+        # No contains/value/any → treat as an existence check (any finding whose
         # metadata carries a non-empty value for this key).
-        existence_only = not meta_contains and not meta_value
+        existence_only = not meta_contains and not meta_value and not meta_contains_any
         found = False
         for f in findings:
             val = str(f.metadata.get(meta_key, "")).lower()
@@ -101,6 +107,9 @@ def _matches(
                     break
                 continue
             if meta_contains and meta_contains in val:
+                found = True
+                break
+            if meta_contains_any and any(sub in val for sub in meta_contains_any):
                 found = True
                 break
             if meta_value and val == meta_value.lower():

@@ -23,10 +23,87 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from cli.agent import tools as platform_tools
+from cli.agent.compaction import (
+    ContextBudget,
+    build_budget,
+    build_summary_request,
+    checkpoint_message,
+    count_message_tokens,
+    estimate_tokens,
+    plan_compaction,
+    spill_tool_result,
+)
 from cli.agent.llm import CLIModelConfig, complete, friendly_llm_error
 
 _MAX_TURNS = 30
 _MAX_CONCURRENT_TOOLS = 4
+# Output tokens requested per completion — kept in sync with the budget's output
+# reserve (compaction.resolve_output_reserve) so we compact before the provider
+# would reject the request.
+_COMPLETION_MAX_TOKENS = 4096
+
+
+def _is_context_overflow(exc: Exception) -> bool:
+    """True when a completion failed specifically because the request exceeded the
+    model's context window — the one failure a compaction-and-retry can fix."""
+    try:
+        import litellm
+
+        if isinstance(exc, litellm.ContextWindowExceededError):
+            return True
+    except Exception:  # noqa: BLE001 — litellm import/attr issues never matter here
+        pass
+    text = str(exc).lower()
+    return any(
+        s in text
+        for s in ("context length", "maximum context", "context_length_exceeded",
+                  "too many tokens", "reduce the length", "context window")
+    )
+
+
+# --- Loop-level failure/repeat guards ------------------------------------
+# Per-call recovery (param adjust, tool switch, escalation-matrix auto-fallback)
+# already happens server-side inside one tool call. What the AGENT LOOP must add
+# is cross-call escalation: an LLM that keeps re-issuing the SAME call, or keeps
+# hammering a tool that keeps failing, across turns. Neither is caught below the
+# loop — this is where "escalate on repeated failure" lives.
+_DOOM_LOOP_THRESHOLD = 3       # identical (tool+args) calls allowed before the next is blocked
+_REPEATED_FAILURE_THRESHOLD = 3  # failures of one tool before a "stop retrying it" nudge
+
+
+def _call_signature(name: str, args: dict[str, Any]) -> str:
+    try:
+        return name + ":" + json.dumps(args or {}, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return name + ":" + str(sorted((args or {}).items()))
+
+
+def _result_failed(result: str) -> bool:
+    """Mirror of the platform's own success signal used by the renderer: a
+    dispatch-level ``ERROR ...`` string, or a platform ``success: False`` line."""
+    if result.lstrip().startswith("ERROR"):
+        return True
+    import re
+
+    m = re.search(r"(?im)^success:\s*(true|false)\b", result)
+    return bool(m) and m.group(1).lower() == "false"
+
+
+def _doom_loop_notice(name: str, count: int) -> str:
+    return (
+        f"BLOCKED (repeated-call guard): {name} was already called with identical "
+        f"arguments {count} times this session. Re-running it will not change the "
+        f"result. Change the arguments or approach, try a different tool, or record "
+        f"this as a blocker and move on — do not call it again with the same input."
+    )
+
+
+def _repeated_failure_notice(name: str, count: int) -> str:
+    return (
+        f"\n\n[loop guard] {name} has now failed {count} times this session. Stop "
+        f"retrying it as-is — switch to an alternative tool (see any hints in the "
+        f"output above) or a different technique, or report the blocker and move on."
+    )
 
 # CLI-native — not a platform tool. This is the actual fix for "spawns a
 # subagent for everything": it's a real, capped tool the model has to
@@ -94,9 +171,30 @@ class Runner:
         self._allow_spawn = allow_spawn
         platform_tools.load_server(api_base_url)
         self._api_base_url = api_base_url
+        # Context management (budget resolved lazily on first use — needs the
+        # model's real context window from litellm). The rolling checkpoint is
+        # the compacted memory of turns dropped from the live window.
+        self._budget: ContextBudget | None = None
+        self._running_summary: str = ""
+        # Loop guards: identical-call counts (doom loop) and per-tool failure
+        # counts (repeated-failure escalation). Session-scoped.
+        self._call_counts: dict[str, int] = {}
+        self._failure_counts: dict[str, int] = {}
 
     def reset(self) -> None:
         self.messages = []
+        self._running_summary = ""
+        self._call_counts = {}
+        self._failure_counts = {}
+
+    def _ensure_budget(self) -> ContextBudget:
+        if self._budget is None:
+            self._budget = build_budget(
+                self.config.model,
+                requested_max_tokens=_COMPLETION_MAX_TOKENS,
+                tpm_budget_tokens=self.config.tool_schema_budget_tokens,
+            )
+        return self._budget
 
     def _tool_schemas(self) -> list[dict[str, Any]]:
         schemas = platform_tools.get_tool_schemas(
@@ -106,59 +204,64 @@ class Runner:
             schemas.append(_SPAWN_TOOL_SCHEMA)
         return schemas
 
-    def _trim_history_for_budget(self, tool_schemas: list[dict[str, Any]]) -> None:
-        """No-op unless tool_schema_budget_tokens is set (same opt-in rule as
-        get_tool_schemas — unconstrained providers see zero behavior change).
+    async def _manage_context(self, tool_schemas: list[dict[str, Any]]) -> AsyncIterator[Event]:
+        """Keep the running prompt under the model's real context window.
 
-        Drops the OLDEST whole turns (a "turn" = one user message plus
-        everything up to the next user message — the assistant's reasoning,
-        its tool_calls, and every matching tool-result message) until the
-        estimated total fits what's left of the budget after the tool
-        schema list. Never splits a turn: dropping a "tool" message while
-        keeping the "assistant" message whose tool_calls it answers (or vice
-        versa) produces an invalid request on every OpenAI-compatible API —
-        this is the actual reason a message-count-based cap ("keep the last
-        N messages") isn't safe here. The most recent turn is always kept in
-        full regardless of size — it's what's driving the exchange in
-        progress; nothing to send if that one alone doesn't fit anyway.
+        History grows every turn as tool results accumulate, and the tool-schema
+        list rides in every request alongside it, so both count toward the window.
+        When the estimated prompt crosses the budget's compaction threshold,
+        summarize the oldest WHOLE turns into one rolling checkpoint and keep the
+        recent tail verbatim. This is non-destructive: the full record (stdout +
+        typed findings) lives in durable memory, so a summarized turn loses nothing
+        the model can't retrieve on demand via platform_artifact / platform_findings.
         """
-        budget = self.config.tool_schema_budget_tokens
-        if budget <= 0:
+        budget = self._ensure_budget()
+        schema_tokens = estimate_tokens("".join(str(s) for s in tool_schemas))
+        prompt_tokens = count_message_tokens(self.config.model, self.messages) + schema_tokens
+        if prompt_tokens < budget.compact_at:
             return
+        before = len(self.messages)
+        if await self._compact_now():
+            yield Event(
+                "compaction",
+                {
+                    "context_tokens": prompt_tokens,
+                    "context_limit": budget.context_limit,
+                    "messages_before": before,
+                    "messages_after": len(self.messages),
+                },
+            )
 
-        budget_chars = budget * 4
-        schema_chars = sum(len(str(s)) for s in tool_schemas)
-        available = budget_chars - schema_chars
-        if available <= 0:
-            return  # schema alone already over budget; a history trim can't help
+    async def _compact_now(self) -> bool:
+        """Summarize the oldest whole-turns into the rolling checkpoint and drop
+        them from the live window. Returns True if history was actually compacted.
 
-        system_msgs = [m for m in self.messages if m.get("role") == "system"]
-        rest = [m for m in self.messages if m.get("role") != "system"]
-
-        turns: list[list[dict[str, Any]]] = []
-        current: list[dict[str, Any]] = []
-        for msg in rest:
-            if msg.get("role") == "user" and current:
-                turns.append(current)
-                current = []
-            current.append(msg)
-        if current:
-            turns.append(current)
-
-        def _turn_chars(turn: list[dict[str, Any]]) -> int:
-            return sum(len(str(m)) for m in turn)
-
-        total = sum(len(str(m)) for m in system_msgs)
-        kept: list[list[dict[str, Any]]] = []
-        for turn in reversed(turns):
-            size = _turn_chars(turn)
-            if kept and total + size > available:
-                break
-            kept.append(turn)
-            total += size
-        kept.reverse()
-
-        self.messages = system_msgs + [m for turn in kept for m in turn]
+        If the summarization call itself fails, still drop the old turns but keep
+        the prior checkpoint — the session survives a provider hiccup, and findings
+        stay durable regardless. Never splits a tool-call/result pair (plan_compaction
+        cuts only on whole-turn boundaries) and never touches the system prompt."""
+        budget = self._ensure_budget()
+        plan = plan_compaction(self.config.model, self.messages, budget)
+        if not plan.has_head:
+            return False  # nothing old enough to summarize yet
+        summary = ""
+        try:
+            resp = await complete(
+                config=self.config,
+                messages=build_summary_request(plan.head, previous_summary=self._running_summary),
+                tools=None,
+                max_tokens=1500,
+            )
+            summary = (resp["choices"][0]["message"].get("content") or "").strip()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — summarization is best-effort; never fatal
+            summary = ""
+        if summary:
+            self._running_summary = summary
+        checkpoint = [checkpoint_message(self._running_summary)] if self._running_summary else []
+        self.messages = plan.system + checkpoint + plan.tail
+        return True
 
     async def run(self, prompt: str, *, system_prompt: str = "") -> AsyncIterator[Event]:
         """The loop. Yields events for the caller to render. Safe to wrap in
@@ -175,14 +278,14 @@ class Runner:
 
         try:
             for _turn in range(_MAX_TURNS):
-                # Tool results appended by the PREVIOUS iteration (or a long
-                # prior conversation) are the other thing, besides the tool
-                # schema list, competing for a token-budgeted provider's
-                # per-minute cap — and unlike the schema list, history grows
-                # every turn. Re-check before every call, not just once at
-                # the top of run(): a session that fit fine on turn 1 can
-                # still run over by turn 3 as tool results accumulate.
-                self._trim_history_for_budget(tool_schemas)
+                # History grows every turn as tool results accumulate and rides
+                # in every request alongside the tool schema list. Keep it under
+                # the model's real context window before each call — summarizing
+                # the oldest turns when needed, non-destructively. Re-checked
+                # every iteration, not just once at the top of run(): a session
+                # that fit fine on turn 1 can still run over by turn 3.
+                async for _ctx_event in self._manage_context(tool_schemas):
+                    yield _ctx_event
                 # Signals the start of the one genuinely silent gap in this
                 # loop — everything else (tool calls, worker sub-events) has
                 # its own start/end events already; the model call itself
@@ -192,22 +295,38 @@ class Runner:
                 # clearing it on whatever event comes next — this loop stays
                 # UI-agnostic, same as every other Event here.
                 yield Event("llm_call_start", {})
+                response = None
                 try:
                     response = await complete(
-                        config=self.config, messages=self.messages, tools=tool_schemas
+                        config=self.config, messages=self.messages,
+                        tools=tool_schemas, max_tokens=_COMPLETION_MAX_TOKENS,
                     )
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:  # noqa: BLE001 — a failed model call
-                    # ends this turn cleanly, it must never crash the session.
-                    # Yields both "error" (the interactive CLI renders this)
-                    # and "done" (a spawned worker's caller only ever reads
-                    # "done" for its result) so neither consumer is left with
-                    # nothing to show for the failure.
-                    msg = friendly_llm_error(exc)
-                    yield Event("error", {"message": msg})
-                    yield Event("done", {"content": f"(stopped: {msg})"})
-                    return
+                    # A context-overflow is the ONE failure a retry can fix:
+                    # force a compaction and try once more. Previously this ended
+                    # the turn with "(stopped: ...)" — a long engagement simply
+                    # died at the window instead of shedding old context. Every
+                    # other failure still ends the turn cleanly (never crashes the
+                    # session): "error" for the interactive CLI, "done" for a
+                    # spawned worker's caller — so neither is left with nothing.
+                    if _is_context_overflow(exc) and await self._compact_now():
+                        yield Event("compaction", {"forced": True, "messages_after": len(self.messages)})
+                        try:
+                            response = await complete(
+                                config=self.config, messages=self.messages,
+                                tools=tool_schemas, max_tokens=_COMPLETION_MAX_TOKENS,
+                            )
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as exc2:  # noqa: BLE001
+                            exc = exc2
+                    if response is None:
+                        msg = friendly_llm_error(exc)
+                        yield Event("error", {"message": msg})
+                        yield Event("done", {"content": f"(stopped: {msg})"})
+                        return
                 message = response["choices"][0]["message"]
                 tool_calls = message.get("tool_calls") or []
 
@@ -249,8 +368,23 @@ class Runner:
                     except (json.JSONDecodeError, ValueError):
                         args = {}
                     started = time.monotonic()
+                    # Doom-loop guard: refuse a 4th identical (tool+args) call —
+                    # identical retries can't change the outcome and just burn
+                    # time/tokens (pentest loops re-run the same nmap/nuclei).
+                    sig = _call_signature(name, args)
+                    prior = self._call_counts.get(sig, 0)
+                    self._call_counts[sig] = prior + 1
+                    if prior >= _DOOM_LOOP_THRESHOLD:
+                        return name, _doom_loop_notice(name, prior), time.monotonic() - started
                     async with sem:
                         result = await self._dispatch_tool(name, args, event_queue=event_queue)
+                    # Repeated-failure escalation: after N failures of one tool,
+                    # append a "stop retrying it" nudge (the failed result already
+                    # carries alternative-tool hints from the backend).
+                    if _result_failed(result):
+                        self._failure_counts[name] = self._failure_counts.get(name, 0) + 1
+                        if self._failure_counts[name] >= _REPEATED_FAILURE_THRESHOLD:
+                            result += _repeated_failure_notice(name, self._failure_counts[name])
                     return name, result, time.monotonic() - started
 
                 for tc in tool_calls:
@@ -300,19 +434,30 @@ class Runner:
                 # backend package directly since it may talk to a remote one,
                 # so keep this constant in sync with that function by hand).
                 _CLI_HISTORY_CAP_CHARS = 3000
-                history_cap = (
-                    _CLI_HISTORY_CAP_CHARS if self.config.tool_schema_budget_tokens > 0 else None
-                )
+                cap_history = self.config.tool_schema_budget_tokens > 0
+                engagement_id = platform_tools.current_engagement_id()
                 for tc, (name, result, elapsed) in zip(tool_calls, results):
                     yield Event(
                         "tool_end",
                         {"tool_name": name, "result": result, "duration_seconds": elapsed},
                     )
+                    # Non-budgeted providers keep the server's already-budgeted
+                    # result verbatim (the backend's output_budget owns per-call
+                    # size; cumulative growth is handled by _manage_context's
+                    # compaction). A per-minute-budgeted provider additionally
+                    # caps each result kept in history — but via SPILL (head/tail
+                    # + a pointer to the durable copy), not a silent cut, so the
+                    # model knows output was trimmed and how to retrieve it.
+                    stored = (
+                        spill_tool_result(result, engagement_id=engagement_id, max_chars=_CLI_HISTORY_CAP_CHARS)
+                        if cap_history
+                        else result
+                    )
                     self.messages.append(
                         {
                             "role": "tool",
                             "tool_call_id": tc["id"],
-                            "content": result if history_cap is None else result[:history_cap],
+                            "content": stored,
                         }
                     )
 

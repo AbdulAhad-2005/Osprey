@@ -137,7 +137,7 @@ def _tool_failed(result: str) -> bool:
     never reaching the platform at all) is a second, separate failure case
     that field can't cover. Checking only one of the two meant a
     platform-reported failure (success: False) still rendered a green ✓."""
-    if result.startswith("ERROR"):
+    if result.startswith("ERROR") or result.startswith("BLOCKED (repeated-call guard)"):
         return True
     match = _SUCCESS_RE.search(result)
     return bool(match) and match.group(1).lower() == "false"
@@ -180,6 +180,18 @@ def _render(event) -> None:  # noqa: ANN001 — cli.agent.loop.Event, avoid impo
             console.print(f"      [dim]{escape(line[:220])}[/]")
     elif event.type == "assistant_text":
         pass  # rendered once via "done" below to avoid double-printing
+    elif event.type == "compaction":
+        # Context management is non-destructive — the full record stays in
+        # durable memory; this just shows the working window was compacted.
+        limit = event.data.get("context_limit")
+        tokens = event.data.get("context_tokens")
+        if event.data.get("forced"):
+            detail = "context window hit — summarized older turns and retried"
+        elif tokens and limit:
+            detail = f"~{tokens} tok approaching {limit} limit — summarized older turns"
+        else:
+            detail = "summarized older turns to free context"
+        console.print(f"  [dim]· context compacted ({detail}); full record kept in memory[/]")
     elif event.type == "error":
         print_error(event.data.get("message") or "The model request failed.")
     elif event.type == "done":
