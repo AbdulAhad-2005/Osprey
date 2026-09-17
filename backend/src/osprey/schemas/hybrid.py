@@ -30,6 +30,10 @@ class DispatchSuggestion(BaseModel):
     skill_file: str = ""
     reason: str = ""
     priority: int = 0
+    # Rule-specified extra CLI flags for default_tool (e.g. a WordPress rule's
+    # `-path /wp-json/wp/v2/users`). Previously parsed in tech_dispatch.yaml but
+    # dropped here — so neither the LLM hint nor the no-LLM engine ever saw them.
+    additional_args: str = ""
 
 
 class CommanderContext(BaseModel):

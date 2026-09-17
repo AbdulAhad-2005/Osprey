@@ -64,11 +64,18 @@ def _is_context_overflow(exc: Exception) -> bool:
 # --- Loop-level failure/repeat guards ------------------------------------
 # Per-call recovery (param adjust, tool switch, escalation-matrix auto-fallback)
 # already happens server-side inside one tool call. What the AGENT LOOP must add
-# is cross-call escalation: an LLM that keeps re-issuing the SAME call, or keeps
-# hammering a tool that keeps failing, across turns. Neither is caught below the
-# loop — this is where "escalate on repeated failure" lives.
-_DOOM_LOOP_THRESHOLD = 3       # identical (tool+args) calls allowed before the next is blocked
-_REPEATED_FAILURE_THRESHOLD = 3  # failures of one tool before a "stop retrying it" nudge
+# is cross-call escalation: an LLM stuck re-issuing a call that makes no progress,
+# or hammering a tool that keeps failing, across turns. Neither is caught below
+# the loop — this is where "escalate on repeated failure" lives.
+#
+# The guard keys on NON-PROGRESS (same call → same result), not merely on "same
+# arguments": a poll (platform_job_poll, a platform_context refresh) is SUPPOSED
+# to be called repeatedly with identical args, and its result changes as state
+# advances — so it must never be blocked. Only a call whose result stops changing
+# (a stuck poll, a deterministic scan re-run for no reason, a repeating failure)
+# trips the guard. No tool allowlist, no special-casing — the signal is the data.
+_STALL_THRESHOLD = 3           # identical (call → identical result) repeats before the next is blocked
+_REPEATED_FAILURE_THRESHOLD = 3  # consecutive failures of one tool before a "stop retrying it" nudge
 
 
 def _call_signature(name: str, args: dict[str, Any]) -> str:
@@ -78,9 +85,19 @@ def _call_signature(name: str, args: dict[str, Any]) -> str:
         return name + ":" + str(sorted((args or {}).items()))
 
 
-def _result_failed(result: str) -> bool:
-    """Mirror of the platform's own success signal used by the renderer: a
-    dispatch-level ``ERROR ...`` string, or a platform ``success: False`` line."""
+def _result_fingerprint(result: str) -> str:
+    """Cheap, stable identity of a tool result, so repeated-but-changing output
+    (a poll advancing) is distinguished from genuinely non-progressing output."""
+    import hashlib
+
+    return hashlib.sha1(result.encode("utf-8", "replace")).hexdigest()
+
+
+def tool_result_failed(result: str) -> bool:
+    """Canonical failure signal for a tool result — the platform's own
+    ``success: False`` line, or a dispatch-level ``ERROR ...`` string. Single
+    source of truth shared by the loop's failure escalation and the CLI renderer
+    (cli/commands/prompt.py), so the two can't drift on what 'failed' means."""
     if result.lstrip().startswith("ERROR"):
         return True
     import re
@@ -89,18 +106,18 @@ def _result_failed(result: str) -> bool:
     return bool(m) and m.group(1).lower() == "false"
 
 
-def _doom_loop_notice(name: str, count: int) -> str:
+def _stall_notice(name: str, count: int) -> str:
     return (
-        f"BLOCKED (repeated-call guard): {name} was already called with identical "
-        f"arguments {count} times this session. Re-running it will not change the "
-        f"result. Change the arguments or approach, try a different tool, or record "
-        f"this as a blocker and move on — do not call it again with the same input."
+        f"BLOCKED (no-progress guard): {name} returned the same result {count} times "
+        f"in a row for this input — re-running it is not advancing the engagement. "
+        f"Change the arguments or approach, try a different tool, or record this as a "
+        f"blocker and move on — do not repeat this exact call."
     )
 
 
 def _repeated_failure_notice(name: str, count: int) -> str:
     return (
-        f"\n\n[loop guard] {name} has now failed {count} times this session. Stop "
+        f"\n\n[loop guard] {name} has now failed {count} times in a row. Stop "
         f"retrying it as-is — switch to an alternative tool (see any hints in the "
         f"output above) or a different technique, or report the blocker and move on."
     )
@@ -176,15 +193,16 @@ class Runner:
         # the compacted memory of turns dropped from the live window.
         self._budget: ContextBudget | None = None
         self._running_summary: str = ""
-        # Loop guards: identical-call counts (doom loop) and per-tool failure
-        # counts (repeated-failure escalation). Session-scoped.
-        self._call_counts: dict[str, int] = {}
+        # Loop guards (session-scoped). Stall guard tracks, per call signature,
+        # (last_result_fingerprint, consecutive_identical_count) to detect
+        # non-progress. Failure guard tracks consecutive failures per tool.
+        self._call_outcomes: dict[str, tuple[str, int]] = {}
         self._failure_counts: dict[str, int] = {}
 
     def reset(self) -> None:
         self.messages = []
         self._running_summary = ""
-        self._call_counts = {}
+        self._call_outcomes = {}
         self._failure_counts = {}
 
     def _ensure_budget(self) -> ContextBudget:
@@ -368,23 +386,32 @@ class Runner:
                     except (json.JSONDecodeError, ValueError):
                         args = {}
                     started = time.monotonic()
-                    # Doom-loop guard: refuse a 4th identical (tool+args) call —
-                    # identical retries can't change the outcome and just burn
-                    # time/tokens (pentest loops re-run the same nmap/nuclei).
+                    # No-progress guard: block the next call ONLY once this exact
+                    # call has already returned the SAME result _STALL_THRESHOLD
+                    # times running. A poll whose result changes as state advances
+                    # resets the counter and is never blocked — the signal is
+                    # non-progress, not merely "same arguments".
                     sig = _call_signature(name, args)
-                    prior = self._call_counts.get(sig, 0)
-                    self._call_counts[sig] = prior + 1
-                    if prior >= _DOOM_LOOP_THRESHOLD:
-                        return name, _doom_loop_notice(name, prior), time.monotonic() - started
+                    seen = self._call_outcomes.get(sig)
+                    if seen and seen[1] >= _STALL_THRESHOLD:
+                        return name, _stall_notice(name, seen[1]), time.monotonic() - started
                     async with sem:
                         result = await self._dispatch_tool(name, args, event_queue=event_queue)
-                    # Repeated-failure escalation: after N failures of one tool,
-                    # append a "stop retrying it" nudge (the failed result already
-                    # carries alternative-tool hints from the backend).
-                    if _result_failed(result):
+                    fp = _result_fingerprint(result)
+                    if seen and seen[0] == fp:
+                        self._call_outcomes[sig] = (fp, seen[1] + 1)
+                    else:
+                        self._call_outcomes[sig] = (fp, 1)
+                    # Repeated-failure escalation: after N consecutive failures of
+                    # one tool, append a "stop retrying it" nudge (the failed result
+                    # already carries alternative-tool hints from the backend). A
+                    # success resets the streak.
+                    if tool_result_failed(result):
                         self._failure_counts[name] = self._failure_counts.get(name, 0) + 1
                         if self._failure_counts[name] >= _REPEATED_FAILURE_THRESHOLD:
                             result += _repeated_failure_notice(name, self._failure_counts[name])
+                    else:
+                        self._failure_counts[name] = 0
                     return name, result, time.monotonic() - started
 
                 for tc in tool_calls:

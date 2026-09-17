@@ -137,90 +137,17 @@ def next_strategy(
     return strategies[idx]
 
 
-# --- Component 3: consolidated fallback-tool suggestion ---
-#
-# Replaces tool_execution.py's _STATIC_FALLBACKS dict — the one genuinely
-# duplicate mechanism found (a hand-written, no-context "alternate tool name"
-# list). NOT a merge of escalation_registry.suggest_escalations() or
-# tech_dispatch.suggest_dispatch(): those solve different problems (technique/
-# WAF-pivot escalation, and discovery-driven "what to try next given findings"
-# respectively) and stay separate on purpose — conflating them with a plain
-# tool-alternatives lookup would blur three genuinely distinct concerns into
-# one, which is the opposite of a real consolidation.
-#
-# Primary source: mcp-servers/_core/recovery.py's alternatives_for_tool() —
-# a real, hand-curated tool_alternatives map (already correctly normalizes
-# platform names like "nmap_syn_scan" -> "nmap" via normalize_tool_key()).
-# Reused as-is rather than re-derived, per the same "if something better
-# already exists, use it" rule applied to the rest of this refactor. Its
-# coverage is intentionally narrow (well-known external tool names) — for
-# anything it doesn't cover, fall back to tool_registry's own category/tag
-# overlap, which spans the full ~90-tool catalog.
+# --- Shared mcp-servers bridge (used by the real docker-exec retry below) ---
 _MCP_ROOT = Path(__file__).resolve().parents[4] / "mcp-servers"
 
 
 def ensure_mcp_path() -> None:
-    """Shared bridge into mcp-servers/_core — used by both alternative_tools_for()
-    (below) and mcp_client.py's real docker-exec retry loop, so this priming
-    step lives in exactly one place rather than being copy-pasted per caller."""
+    """Prime sys.path so mcp-servers/_core is importable — used by
+    real_retry_decision() below (and mcp_client.py's docker-exec retry loop),
+    so this lives in exactly one place rather than being copy-pasted per caller."""
     root = str(_MCP_ROOT)
     if root not in sys.path:
         sys.path.insert(0, root)
-
-
-def alternative_tools_for(tool_name: str, *, limit: int = 3) -> list[str]:
-    """Consolidated replacement for tool_execution.py's _STATIC_FALLBACKS."""
-    alternatives: list[str] = []
-    try:
-        ensure_mcp_path()
-        from _core.recovery import alternatives_for_tool  # type: ignore[import-not-found]
-
-        from osprey.services.tool_registry import get_tool_definition, resolve_tool_name
-
-        for alt in alternatives_for_tool(tool_name):
-            resolved = resolve_tool_name(alt)
-            if resolved != tool_name and get_tool_definition(resolved) and resolved not in alternatives:
-                alternatives.append(resolved)
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("alternatives_for_tool unavailable for %s: %s", tool_name, exc)
-
-    if len(alternatives) < limit:
-        alternatives.extend(
-            _category_tag_fallbacks(tool_name, exclude=alternatives, limit=limit - len(alternatives))
-        )
-    # platform_script is always a legitimate answer to "nothing else worked" for
-    # ANY tool (not a per-tool special case, which is why it's added generally
-    # here rather than copied from specific entries in the old static list) —
-    # only offered once the typed-catalog alternatives are exhausted.
-    if len(alternatives) < limit and "platform_script" not in alternatives:
-        alternatives.append("platform_script")
-    return alternatives[:limit]
-
-
-def _category_tag_fallbacks(tool_name: str, *, exclude: list[str], limit: int) -> list[str]:
-    """Broader-coverage fallback: another tool in the same category with
-    overlapping tags, ranked by overlap count then name (stable, explainable —
-    no learned/adaptive ranking, matching this module's negative-filter-only
-    philosophy elsewhere)."""
-    if limit <= 0:
-        return []
-    from osprey.services.tool_registry import ALL_TOOL_DEFINITIONS, get_tool_definition
-
-    this_def = get_tool_definition(tool_name)
-    if this_def is None:
-        return []
-    this_tags = set(this_def.tags)
-    scored: list[tuple[int, str]] = []
-    for other in ALL_TOOL_DEFINITIONS:
-        if other.name == tool_name or other.name in exclude:
-            continue
-        if other.category != this_def.category:
-            continue
-        overlap = len(this_tags & set(other.tags))
-        if overlap > 0:
-            scored.append((overlap, other.name))
-    scored.sort(key=lambda x: (-x[0], x[1]))
-    return [name for _, name in scored[:limit]]
 
 
 # --- Real (non-shadow) retry decision for the docker-exec path ---

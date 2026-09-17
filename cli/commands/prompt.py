@@ -13,7 +13,7 @@ from rich.markup import escape
 
 from cli.agent.context import build_system_prompt
 from cli.agent.llm import CLIModelConfig, LLMNotConfiguredError
-from cli.agent.loop import Runner
+from cli.agent.loop import Runner, tool_result_failed
 from cli.ui.display import console, print_error, print_info
 
 
@@ -123,7 +123,6 @@ async def _drive(prompt: str, client: "APIClient", runner: Runner) -> None:
 
 
 _BOILERPLATE_LINE_RE = re.compile(r"^(#{1,6}\s|target:|engagement_id:|run_id:)", re.I)
-_SUCCESS_RE = re.compile(r"(?im)^success:\s*(true|false)\b")
 # Priority order for what's actually worth showing, checked in this order —
 # not "first N lines," which mechanically hit only structural fields (the
 # status line, **COMMAND:**, **TOOL:**) and never reached **ERROR:**, the one
@@ -132,15 +131,11 @@ _PRIORITY_PREFIXES = ("**ERROR:**", "**PARSED SUMMARY:**", "**Note:**")
 
 
 def _tool_failed(result: str) -> bool:
-    """The platform's own `success: True/False` field is the real signal —
-    my own dispatch-level `ERROR executing ...` string (a Python exception,
-    never reaching the platform at all) is a second, separate failure case
-    that field can't cover. Checking only one of the two meant a
-    platform-reported failure (success: False) still rendered a green ✓."""
-    if result.startswith("ERROR") or result.startswith("BLOCKED (repeated-call guard)"):
-        return True
-    match = _SUCCESS_RE.search(result)
-    return bool(match) and match.group(1).lower() == "false"
+    """Render a tool line red when it failed OR was blocked by a loop guard.
+    Delegates the real failure signal to the canonical detector in the loop
+    (single source of truth); adds the guard-block string, which is a
+    CLI-loop synthetic result, not a platform failure."""
+    return tool_result_failed(result) or result.startswith("BLOCKED (")
 
 
 def _preview_lines(result: str, *, limit: int) -> list[str]:

@@ -156,6 +156,16 @@ def _similarity_flags(name: str, description: str, title_hint: str) -> list[dict
     return sorted(flags, key=lambda f: -f["score"])
 
 
+def is_learned_skill(slug: str) -> bool:
+    """True if ``slug`` names an existing operator-local LEARNED skill (never a
+    shipped one — those live outside skills/learned/ and are not edited here)."""
+    target = _slugify(slug) or (slug or "").strip().lower()
+    return any(
+        _slugify(rec["name"]) == target or rec["path"] == f"learned/{target}.md"
+        for rec in list_learned()
+    )
+
+
 def propose_skill(
     *,
     name: str,
@@ -165,13 +175,33 @@ def propose_skill(
     tags: list[str] | None = None,
     engagement_id: str = "",
     evidence: str = "",
+    update_existing: str = "",
 ) -> dict[str, Any]:
-    """Validate + store a proposal. Inert until approved. Raises LearnedSkillError."""
+    """Validate + store a proposal. Inert until approved. Raises LearnedSkillError.
+
+    ``update_existing`` (a learned-skill slug) makes this a REFINEMENT of an
+    existing learned skill instead of a new one: the identity/duplicate guards are
+    skipped (an update is *meant* to resemble what it replaces — that guard is
+    exactly why the LLM could never improve a skill, only add a rejected near-
+    duplicate), and on approval the existing skill is overwritten in place. Only
+    learned skills can be updated; shipped skills stay curated.
+    """
     slug, phase = _validate(name, phase, description, content)
     title_hint = _first_heading(content)
-    _reject_if_identity_conflict(slug, name.strip())
-    _reject_if_exact_duplicate(content)
-    similar_to = _similarity_flags(name.strip(), description.strip(), title_hint)
+    update_target = _slugify(update_existing) if (update_existing or "").strip() else ""
+    if update_target:
+        if not is_learned_skill(update_target):
+            raise LearnedSkillError(
+                f"update_existing='{update_existing}' is not an existing learned skill. "
+                "Shipped skills are curated and not edited this way — propose a new learned "
+                "skill, or update one previously learned and approved."
+            )
+        slug = update_target  # force overwrite-in-place on approval
+        similar_to: list[dict[str, Any]] = []
+    else:
+        _reject_if_identity_conflict(slug, name.strip())
+        _reject_if_exact_duplicate(content)
+        similar_to = _similarity_flags(name.strip(), description.strip(), title_hint)
 
     _PROPOSALS_DIR.mkdir(parents=True, exist_ok=True)
     pid = uuid.uuid4().hex[:12]
@@ -185,6 +215,7 @@ def propose_skill(
         "content": content.strip(),
         "engagement_id": engagement_id,
         "evidence": evidence.strip(),
+        "update_existing": update_target,
         "status": "proposed",
         "created_at": time.time(),
         # Advisory near-duplicate matches for the operator to weigh — never
@@ -255,13 +286,15 @@ def approve_proposal(pid: str) -> dict[str, Any]:
     prop = get_proposal(pid)
     if prop is None:
         raise LearnedSkillError(f"no proposal with id '{pid}'.")
-    # Re-check identity/exact-duplicate at approval time (the library may have
-    # changed since the proposal was filed), but never count this proposal
-    # itself as the conflict. Near-duplicate similarity was already surfaced
-    # to the operator on the proposal (similar_to) — approving it IS their
-    # decision, so it is not re-checked here.
-    _reject_if_identity_conflict(prop["slug"], prop["name"], exclude_pid=pid)
-    _reject_if_exact_duplicate(prop["content"])
+    # An update deliberately overwrites an existing learned skill in place, so
+    # the identity/exact-duplicate guards (which would flag it as colliding with
+    # the very skill it refines) don't apply. For a NEW skill, re-check at
+    # approval time (the library may have changed since it was filed), but never
+    # count this proposal itself as the conflict. Near-duplicate similarity was
+    # already surfaced to the operator (similar_to) — approving IS their decision.
+    if not prop.get("update_existing"):
+        _reject_if_identity_conflict(prop["slug"], prop["name"], exclude_pid=pid)
+        _reject_if_exact_duplicate(prop["content"])
     res = _write_active(
         slug=prop["slug"], phase=prop["phase"], description=prop["description"],
         content=prop["content"], tags=prop.get("tags"), evidence=prop.get("evidence", ""),

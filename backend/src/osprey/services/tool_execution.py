@@ -167,10 +167,10 @@ async def execute_tool_request(
     # separately re-resolves to tool_def.name for the actual module path — so
     # the deployed docker-exec execution path was never broken by an alias
     # call. But request.tool_name itself stayed the raw alias string
-    # everywhere else in this function: alternative_tools_for() lookups,
-    # coverage/audit records (an alias and its canonical name would fragment into two
-    # separate "tools" in history), and the shadow-recovery/chunk-detection
-    # hooks added in this same function. Rewriting once here means every
+    # everywhere else in this function: coverage/audit records (an alias and its
+    # canonical name would fragment into two separate "tools" in history), and
+    # the shadow-recovery/chunk-detection hooks added in this same function.
+    # Rewriting once here means every
     # future alias correctly consolidates under one name everywhere, instead
     # of each call site needing its own alias-awareness.
     request.tool_name = tool_def.name

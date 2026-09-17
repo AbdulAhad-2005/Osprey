@@ -257,17 +257,20 @@ class APIClient:
 
     def start_expansion_job(
         self, engagement_id: str, *, run_id: str = "", max_passes: int = 5,
-        include_low_confidence: bool = False,
+        include_low_confidence: bool = False, include_vuln_dispatch: bool = False,
     ) -> dict[str, Any]:
-        """Engine mode: run the BFS surface-expansion engine as a background
-        job — no LLM involved. Same job kind/endpoint the MCP `platform_expand`
-        tool and the auto-fire-on-bind path use; the CLI is just another caller."""
+        """Engine mode: run the no-LLM engine as a background job. Same job
+        kind/endpoint the MCP `platform_expand` tool and the auto-fire-on-bind
+        path use; the CLI is just another caller. `include_vuln_dispatch` turns
+        the recon-breadth pass into the full deterministic engine (recon → rule-
+        matched vuln tools → queue exploit candidates); off = recon breadth only."""
         resp = self._client.post(
             self._url("/api/v1/jobs/start"),
             json={
                 "kind": "expansion", "engagement_id": engagement_id,
                 "run_id": run_id, "max_passes": max_passes,
                 "include_low_confidence": include_low_confidence,
+                "include_vuln_dispatch": include_vuln_dispatch,
                 "label": f"expand(max_passes={max_passes})",
             },
         )

@@ -567,6 +567,7 @@ class JobStore:
                 engagement_id=req.engagement_id, run_id=req.run_id or "",
                 max_passes=req.max_passes, on_pass=_pass_cb, on_progress=on_progress,
                 min_origin_confidence=0.0 if req.include_low_confidence else _MIN_ORIGIN_CONFIDENCE,
+                include_vuln_dispatch=req.include_vuln_dispatch,
             )
         if req.kind == JobKind.AGENT:
             from osprey.services import event_bus

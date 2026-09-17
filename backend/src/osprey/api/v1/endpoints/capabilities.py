@@ -141,6 +141,10 @@ class ProposeSkillRequest(BaseModel):
     tags: list[str] = Field(default_factory=list)
     engagement_id: str = ""
     evidence: str = ""
+    update_existing: str = Field(
+        default="",
+        description="Slug of an existing LEARNED skill to refine instead of creating a new one.",
+    )
 
 
 @router.post("/learned-skills/propose")
@@ -160,7 +164,7 @@ def propose_learned_skill(req: ProposeSkillRequest) -> dict:
         prop = propose_skill(
             name=req.name, phase=req.phase, description=req.description,
             content=req.content, tags=req.tags, engagement_id=req.engagement_id,
-            evidence=req.evidence,
+            evidence=req.evidence, update_existing=req.update_existing,
         )
     except LearnedSkillError as exc:
         raise HTTPException(400, detail=str(exc)) from exc

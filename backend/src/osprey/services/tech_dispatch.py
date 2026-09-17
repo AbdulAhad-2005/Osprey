@@ -49,6 +49,7 @@ def suggest_dispatch(
                 skill_file=str(dispatch.get("skill_file", "")),
                 reason=str(dispatch.get("reason", "")),
                 priority=int(dispatch.get("priority", 0)),
+                additional_args=str(dispatch.get("additional_args", "")),
             )
         )
 

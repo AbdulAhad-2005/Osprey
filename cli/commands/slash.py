@@ -311,6 +311,7 @@ def _run_engine_scan(client: "APIClient", target: str, *, include_low_confidence
     try:
         job = client.start_expansion_job(
             engagement_id, max_passes=10, include_low_confidence=include_low_confidence,
+            include_vuln_dispatch=True,  # --engine = the full no-LLM engine (recon → vuln → queue)
         )
     except Exception as exc:
         print_error(_api_error_text(exc))

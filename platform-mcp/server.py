@@ -422,7 +422,9 @@ def _format_clarification(analysis: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def _start_expansion_job(engagement_id: str, run_id: str, *, max_passes: int = 5) -> dict[str, Any]:
+def _start_expansion_job(
+    engagement_id: str, run_id: str, *, max_passes: int = 5, include_vuln_dispatch: bool = False
+) -> dict[str, Any]:
     """POST /api/v1/jobs/start with kind=expansion — the BFS engine runs as a
     real background job (job_store.py's existing TOOL/SHELL/SCRIPT dispatch
     mechanism, just one more kind) instead of a blocking call. A single pass
@@ -430,7 +432,8 @@ def _start_expansion_job(engagement_id: str, run_id: str, *, max_passes: int = 5
     ever be a synchronous MCP tool call regardless of client-side timeout —
     that was the actual bug, not the timeout value. Returns immediately with
     a job_id; progress is polled via platform_job_poll, final report via
-    platform_job_result."""
+    platform_job_result. include_vuln_dispatch=True runs the full no-LLM engine
+    (recon → rule-matched vuln tools → queue exploit candidates)."""
     return _post(
         "/api/v1/jobs/start",
         {
@@ -438,6 +441,7 @@ def _start_expansion_job(engagement_id: str, run_id: str, *, max_passes: int = 5
             "engagement_id": engagement_id,
             "run_id": run_id,
             "max_passes": max_passes,
+            "include_vuln_dispatch": include_vuln_dispatch,
             "label": f"expand(max_passes={max_passes})",
         },
         timeout=30,
@@ -546,13 +550,19 @@ def platform_set_target(target: str, force_new: bool = False, pick: str = "") ->
 
 
 @mcp.tool()
-def platform_expand(max_passes: int = 5, engagement_id: str = "") -> str:
+def platform_expand(max_passes: int = 5, engagement_id: str = "", full_engine: bool = False) -> str:
     """
     Start the BFS surface-expansion engine as a background job: subdomains/
-    sisters -> live-host probe -> ports -> tech/CDN -> origin IPs -> the
-    comprehensive vuln scan, looping until nothing new turns up or max_passes
-    is hit. Deterministic and mechanical — no LLM judgment involved in
-    running it. Returns immediately with a job_id — do NOT wait on it.
+    sisters -> live-host probe -> ports -> tech/CDN -> origin IPs, looping
+    until nothing new turns up or max_passes is hit. Deterministic and
+    mechanical — no LLM judgment involved in running it. Returns immediately
+    with a job_id — do NOT wait on it.
+
+    full_engine=True runs the complete no-LLM engine: after recon reaches
+    fixpoint it also runs the deterministic tech_dispatch-matched vuln/web
+    tools (nuclei/wpscan/sslyze/sqlmap/…) to a bounded fixpoint, then queues
+    exploit candidates — it never launches exploitation itself. Leave it False
+    for a pure recon-breadth pass.
 
     A real domain can take minutes per pass; this never blocks the chat.
     Continue other work, then platform_job_poll(job_id, wait_seconds=20) to
@@ -569,7 +579,9 @@ def platform_expand(max_passes: int = 5, engagement_id: str = "") -> str:
     """
     def _run() -> str:
         eid, tgt = _resolve_engagement(engagement_id)
-        job = _start_expansion_job(eid, SESSION_RUN_ID, max_passes=max_passes)
+        job = _start_expansion_job(
+            eid, SESSION_RUN_ID, max_passes=max_passes, include_vuln_dispatch=full_engine
+        )
         parts = [
             "### OPERATOR MIRROR — SURFACE EXPANSION (background job)",
             _session_header(eid, tgt),
@@ -2493,22 +2505,29 @@ def platform_propose_skill(
     content: str = "",
     tags: str = "",
     evidence: str = "",
+    update_existing: str = "",
 ) -> str:
     """
-    Propose a NEW operator-local skill capturing a reusable technique you learned.
+    Propose a reusable-technique skill capturing something you learned (or refine
+    an existing learned skill).
 
-    Use this ONLY for genuinely novel, transferable methodology — a bypass/chain/
-    playbook that worked and will help on FUTURE targets. NOT for: a merge or
-    restatement of existing skills (you can already read several skills at once via
-    platform_skills), and NOT for per-target facts (those belong in the engagement
-    graph via platform_think / platform_record_finding).
+    Use this ONLY for genuinely transferable methodology — a bypass/chain/playbook
+    that worked and will help on FUTURE targets. NOT for: per-target facts (those
+    belong in the engagement graph via platform_think / platform_record_finding).
 
-    The proposal is INERT until the operator approves it (it is never auto-active,
-    never committed, never shipped). Cite what it worked against in evidence=.
+    To IMPROVE an existing learned skill instead of adding a near-duplicate, pass
+    its slug as update_existing= — the refinement overwrites it in place on
+    approval, and the novelty check is skipped (only learned skills can be updated;
+    shipped skills stay curated). This is how a skill gets better over time rather
+    than accreting look-alikes.
+
+    The proposal is INERT until the operator approves it (never auto-active, never
+    committed, never shipped). Cite what it worked against in evidence=.
 
     name= short kebab title · phase= recon|network|web|vuln|exploit|osint|commander|shared
     description= one line (when to use it + what it does) · content= the methodology
-    (markdown) · tags= comma-separated · evidence= the engagement facts it's grounded in.
+    (markdown) · tags= comma-separated · evidence= the engagement facts it's grounded in
+    · update_existing= slug of a learned skill to refine (optional).
     """
     def _run() -> str:
         body = {
@@ -2516,6 +2535,7 @@ def platform_propose_skill(
             "content": content, "evidence": evidence.strip(),
             "tags": [t.strip() for t in tags.split(",") if t.strip()],
             "engagement_id": _SESSION_ENGAGEMENT_ID or "",
+            "update_existing": update_existing.strip(),
         }
         data = _post("/api/v1/capabilities/learned-skills/propose", body)
         return (

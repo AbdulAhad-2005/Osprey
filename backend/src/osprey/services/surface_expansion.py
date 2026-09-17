@@ -1574,6 +1574,7 @@ async def run_expansion_to_fixpoint(
     on_pass: Callable[[PassReport], None] | None = None,
     on_progress: Callable[[str], None] | None = None,
     min_origin_confidence: float = _MIN_ORIGIN_CONFIDENCE,
+    include_vuln_dispatch: bool = False,
 ) -> ExpansionReport:
     """Loop run_expansion_pass to fixpoint (2 consecutive zero-delta passes) or
     max_passes, whichever comes first — bounded so one call can't run forever
@@ -1619,6 +1620,27 @@ async def run_expansion_to_fixpoint(
             # yet (first empty pass) — one more won't help either; stop early
             # rather than burning through max_passes on no-ops.
             break
+
+    # Deterministic vuln/web dispatch stage — the no-LLM decision layer. After
+    # recon has mapped the surface, run the tech_dispatch-matched vuln tools
+    # (nuclei/wpscan/sslyze/sqlmap/…) by rule, to a bounded fixpoint. Stops
+    # before exploit: it only queues candidates below, never launches them.
+    # Gated so a caller can request pure recon breadth (include_vuln_dispatch=False).
+    if include_vuln_dispatch:
+        from osprey.services.heuristic_engine import run_dispatch_stage
+
+        if on_progress is not None:
+            on_progress("engine: recon fixpoint reached — running deterministic vuln dispatch stage")
+        try:
+            dispatch_summary = await run_dispatch_stage(
+                engagement_id=engagement_id, run_id=run_id, on_progress=on_progress,
+            )
+            logger.info(
+                "engine vuln dispatch ran %d tool(s) for %s (%s)",
+                dispatch_summary.get("steps", 0), engagement_id, dispatch_summary.get("stopped_reason"),
+            )
+        except Exception:  # noqa: BLE001 — never let the vuln stage abort the whole engine
+            logger.exception("vuln dispatch stage failed (non-fatal); continuing to candidate scan")
 
     candidates_before = {
         c.id for c in get_exploit_candidate_store().list_for_engagement(engagement_id)
