@@ -62,9 +62,16 @@ only when you need something that genuinely isn't there.
 """
 
 
-async def build_system_prompt(engagement_id: str, *, tool_budget_active: bool = False) -> str:
+async def build_system_prompt(
+    engagement_id: str, *, tool_budget_active: bool = False, agent_prompt: str = ""
+) -> str:
     ctx = await platform_tools.call_tool(
         "platform_context", {"engagement_id": engagement_id} if engagement_id else {}
     )
     policy = _POLICY + (_TOOL_BUDGET_POLICY if tool_budget_active else "")
+    # A prompt-defined agent/flow overlays its instructions on top of the base
+    # policy — it ADDS to the harness's own guardrails (spawn/skill/finding rules
+    # above), never replaces them, so a custom mode can't disable a safety rail.
+    if agent_prompt.strip():
+        policy += "\n\n## Active mode (operator-defined flow)\n" + agent_prompt.strip()
     return f"{policy}\n---\n{ctx}"

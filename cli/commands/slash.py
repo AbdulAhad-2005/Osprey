@@ -922,6 +922,102 @@ def handle_skill(args: list[str], client: "APIClient") -> None:
         print_error(_api_error_text(exc))
 
 
+def handle_profile(args: list[str], client: "APIClient") -> None:
+    """Operator profile — your preferences the harness adapts to. Add your own,
+    or review/approve preferences the LLM inferred from how you work."""
+    sub = (args[0].lower() if args else "list")
+    try:
+        if sub == "add" and len(args) > 1:
+            pref = " ".join(args[1:]).strip()
+            client.add_operator_preference(pref)
+            print_success(f"Added to your profile: {pref}")
+            return
+        if sub in ("list", "show"):
+            data = client.operator_profile()
+            profile = (data.get("profile") or "").strip()
+            pending = data.get("pending", [])
+            if profile:
+                print_info("Your confirmed profile (the harness adapts to these):")
+                print(profile)
+            else:
+                print_info(
+                    "No operator profile yet. Add one with /profile add <preference>, or the LLM "
+                    "proposes preferences (platform_remember_preference) that you approve here."
+                )
+            if pending:
+                print_info(f"\nPending preferences ({len(pending)}) — /profile approve|reject <id>:")
+                for p in pending:
+                    line = f"  [{p['id']}] {p['preference']}"
+                    if p.get("rationale"):
+                        line += f"  (why: {p['rationale']})"
+                    print(line)
+        elif sub == "approve" and len(args) > 1:
+            client.approve_operator_preference(args[1])
+            print_success(f"Approved — added to your profile. It now shapes every engagement.")
+        elif sub == "reject" and len(args) > 1:
+            client.reject_operator_preference(args[1])
+            print_info(f"Rejected preference {args[1]}.")
+        else:
+            print_info(
+                "Usage: /profile add <preference> (goes live immediately) | "
+                "/profile list | /profile approve <id> | /profile reject <id>"
+            )
+    except Exception as exc:  # noqa: BLE001 — surface the API error text
+        print_error(_api_error_text(exc))
+
+
+def _reset_agent_runner(client: "APIClient") -> None:
+    """Drop the cached Runner so the next prompt rebuilds it with the active
+    agent's system-prompt overlay, tool scope, and model — a mode switch starts
+    a fresh conversation so the mode fully applies."""
+    if getattr(client, "agent_runner", None) is not None:
+        client.agent_runner = None
+
+
+def handle_agent(args: list[str], client: "APIClient") -> None:
+    """Prompt-defined flows/modes (no code): /agent (list) · /agent <name> (switch) ·
+    /agent default (reset to full catalog). Define agents in .osprey/agents/<name>.md."""
+    from cli.agent.flows import load_agents
+
+    agents = load_agents()
+    active = getattr(client, "active_agent", None)
+    active_name = active.name if active is not None else "default"
+
+    if not args or args[0].lower() == "list":
+        print_info(f"Active agent: {active_name}")
+        if agents:
+            print_info("Available agents:")
+            for a in agents.values():
+                print(f"  {a.name} — {a.description or '(no description)'}")
+        print("  default — full tool catalog, base policy")
+        if not agents:
+            print_info(
+                "Create one: .osprey/agents/<name>.md — frontmatter (description, tools, deny_tools), "
+                "body = the mode's instructions. Example: a recon mode with `deny_tools: metasploit_*, hydra_*, sqlmap_*`."
+            )
+        return
+
+    name = args[0].strip().lower()
+    if name in ("default", "none", "reset"):
+        client.active_agent = None
+        _reset_agent_runner(client)
+        print_success("Switched to the default agent (full catalog). Fresh conversation.")
+        return
+
+    agent = agents.get(name)
+    if agent is None:
+        print_error(f"No agent '{name}'. Run /agent to list, or create .osprey/agents/{name}.md")
+        return
+    client.active_agent = agent
+    _reset_agent_runner(client)
+    scope = ""
+    if agent.allow_tools or agent.deny_tools:
+        scope = f" — tools allow={agent.allow_tools or 'all'}, deny={agent.deny_tools or 'none'}"
+    if agent.model:
+        scope += f", model={agent.model}"
+    print_success(f"Switched to agent '{agent.name}'{scope}. Fresh conversation; applies now.")
+
+
 SLASH_COMMANDS: dict[str, tuple[str, "callable"]] = {
     "/help": ("Show help", handle_help),
     "/health": ("Check backend health", handle_health),
@@ -939,6 +1035,8 @@ SLASH_COMMANDS: dict[str, tuple[str, "callable"]] = {
     "/details": ("Set live tool detail level", handle_details),
     "/status": ("Session status", handle_status),
     "/skill": ("Review/approve LLM-proposed learned skills", handle_skill),
+    "/profile": ("Your operator profile — add prefs or approve LLM-inferred ones", handle_profile),
+    "/agent": ("Switch prompt-defined flow/mode (.osprey/agents/*.md)", handle_agent),
     "/config": ("Show configuration", handle_config),
     "/reconnect": ("Re-read .env and reconnect to backend", handle_reconnect),
     "/reset": ("Clear agent conversation", handle_reset),
@@ -961,7 +1059,19 @@ def execute_command(command_line: str, client: "APIClient") -> bool:
     if cmd in SLASH_COMMANDS:
         _, handler = SLASH_COMMANDS[cmd]
         handler(args, client)
-    else:
-        print_error(f"Unknown command: {cmd}. Type /help for available commands.")
+        return True
 
+    # Prompt-defined custom command? .osprey/commands/<name>.md — expand its
+    # template with the args and drive it as a normal prompt. Zero code, no restart.
+    from cli.agent.flows import expand_command, load_commands
+
+    cmds = load_commands()
+    name = cmd.lstrip("/")
+    if name in cmds:
+        from cli.commands.prompt import handle_prompt
+
+        handle_prompt(expand_command(cmds[name].template, args), client)
+        return True
+
+    print_error(f"Unknown command: {cmd}. Type /help for available commands.")
     return True

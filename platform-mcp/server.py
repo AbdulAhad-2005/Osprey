@@ -879,6 +879,11 @@ def _fetch_context(engagement_id: str = "", target: str = "", *, full: bool = Fa
     parts = [_session_header(eid, tgt), f"**Jobs:** {jobs_line}"]
     if pipeline_line:
         parts.append(f"**Pipeline:** {pipeline_line}")
+    # Operator profile — the human's confirmed preferences. Placed high so any
+    # driver (this CLI or an external harness) adapts to how the operator works.
+    operator_profile = (data.get("operator_profile") or "").strip()
+    if operator_profile:
+        parts.append("**Operator profile — adapt to these preferences:**\n" + operator_profile)
     parts += [
         "**Dispatch signals (from detected tech/ports):**\n"
         + ("\n".join(dispatch_lines) if dispatch_lines else "(none yet)"),
@@ -2544,6 +2549,36 @@ def platform_propose_skill(
             f"{data.get('note', '')}\n"
             "It is NOT active yet — tell the user it awaits their approval "
             "(/skill approve <id> in the CLI). Continue the engagement meanwhile."
+        )
+
+    return _safe(_run)
+
+
+@mcp.tool()
+def platform_remember_preference(preference: str = "", rationale: str = "") -> str:
+    """
+    Remember a PREFERENCE of the human operator you inferred from how they work —
+    e.g. "prefers concise output", "wants nuclei before nikto", "avoids brute-force
+    without asking", "reports in CVSS". The confirmed profile is fed into every
+    future engagement's context so the harness adapts to this operator.
+
+    NOT for target facts (use platform_think / platform_record_finding) and NOT for
+    reusable techniques (use platform_propose_skill). Inert until the operator
+    approves it — never assume a proposed preference is in effect.
+
+    preference= one clear line · rationale= what you observed that suggests it (optional).
+    """
+    def _run() -> str:
+        body = {
+            "preference": preference.strip(), "rationale": rationale.strip(),
+            "engagement_id": _SESSION_ENGAGEMENT_ID or "",
+        }
+        data = _post("/api/v1/capabilities/operator-profile/propose", body)
+        return (
+            "### OPERATOR MIRROR — PREFERENCE PROPOSED\n"
+            f"id={data.get('id')}: {data.get('preference')}\n"
+            f"{data.get('note', '')}\n"
+            "Not active yet — it awaits the operator's approval (/profile approve <id>)."
         )
 
     return _safe(_run)

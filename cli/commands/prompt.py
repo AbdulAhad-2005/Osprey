@@ -14,7 +14,13 @@ from rich.markup import escape
 from cli.agent.context import build_system_prompt
 from cli.agent.llm import CLIModelConfig, LLMNotConfiguredError
 from cli.agent.loop import Runner, tool_result_failed
-from cli.ui.display import console, print_error, print_info
+from cli.ui.display import (
+    console,
+    print_error,
+    print_info,
+    print_tool_end_live,
+    print_tool_start_live,
+)
 
 
 def _get_runner(client: "APIClient") -> Runner | None:
@@ -29,7 +35,17 @@ def _get_runner(client: "APIClient") -> Runner | None:
     except LLMNotConfiguredError as exc:
         print_error(str(exc))
         return None
-    runner = Runner(config=config, api_base_url=client.base_url)
+    # Apply the active prompt-defined agent/flow, if any: its optional model
+    # override and its tool scope. Switching agents resets client.agent_runner
+    # (see /agent), so the next call here rebuilds with the new mode.
+    agent = getattr(client, "active_agent", None)
+    tool_filter = None
+    if agent is not None:
+        if agent.model:
+            from dataclasses import replace
+            config = replace(config, model=agent.model)
+        tool_filter = agent.tool_allowed
+    runner = Runner(config=config, api_base_url=client.base_url, tool_filter=tool_filter)
     client.agent_runner = runner
     return runner
 
@@ -90,9 +106,11 @@ def handle_prompt(prompt: str, client: "APIClient") -> None:
 async def _drive(prompt: str, client: "APIClient", runner: Runner) -> None:
     system_prompt = ""
     if not runner.messages:
+        agent = getattr(client, "active_agent", None)
         system_prompt = await build_system_prompt(
             client.active_engagement_id or "",
             tool_budget_active=runner.config.tool_schema_budget_tokens > 0,
+            agent_prompt=(agent.prompt if agent is not None else ""),
         )
 
     # The one genuinely silent gap in a turn — the model call itself (seconds,
@@ -157,22 +175,32 @@ def _render(event) -> None:  # noqa: ANN001 — cli.agent.loop.Event, avoid impo
         if content:
             console.print(f"[dim italic]{escape(content)}[/]")
     elif event.type == "tool_start":
+        # Delegate to the shared, transcript-backed renderer so a local-loop tool
+        # call gets a #id, /tool N detail, /details levels and the tool-history
+        # table — exactly like a background phase-agent call. One renderer, not two.
         name = event.data.get("tool_name", "?")
         try:
             args = json.loads(event.data.get("arguments") or "{}")
         except (json.JSONDecodeError, ValueError):
             args = {}
-        preview = ", ".join(f"{k}={v}" for k, v in args.items() if v not in (None, "", [], {}))
-        console.print(f"  [bold cyan]▶[/] [bold]{escape(name)}[/][dim]({escape(preview[:100])})[/]")
+        print_tool_start_live(name, args, {"tool_call_id": event.data.get("tool_call_id", "")})
     elif event.type == "tool_end":
         name = event.data.get("tool_name", "?")
-        elapsed = event.data.get("duration_seconds", 0.0)
         result = event.data.get("result", "") or ""
-        failed = _tool_failed(result)
-        icon, style = ("✗", "red") if failed else ("✓", "green")
-        console.print(f"  [{style}]{icon}[/] [{style}]{escape(name)}[/] [dim]({elapsed:.1f}s)[/]")
-        for line in _preview_lines(result, limit=3):
-            console.print(f"      [dim]{escape(line[:220])}[/]")
+        # The local loop returns a raw result string; adapt it to the transcript's
+        # shape (success incl. the loop-guard BLOCKED case, plus the worth-showing
+        # preview lines) so rendering matches the background-event path.
+        print_tool_end_live(
+            name,
+            {
+                "tool_name": name,
+                "success": not _tool_failed(result),
+                "duration_seconds": event.data.get("duration_seconds", 0.0),
+                "preview": result,
+                "display_preview": _preview_lines(result, limit=3),
+                "tool_call_id": event.data.get("tool_call_id", ""),
+            },
+        )
     elif event.type == "assistant_text":
         pass  # rendered once via "done" below to avoid double-printing
     elif event.type == "compaction":

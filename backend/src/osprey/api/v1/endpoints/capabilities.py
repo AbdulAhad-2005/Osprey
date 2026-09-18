@@ -225,6 +225,67 @@ def reject_learned_skill(proposal_id: str) -> dict:
     return {"status": "rejected", "id": proposal_id}
 
 
+class RememberPreferenceRequest(BaseModel):
+    preference: str
+    rationale: str = ""
+    engagement_id: str = ""
+
+
+@router.post("/operator-profile/propose")
+def propose_operator_preference(req: RememberPreferenceRequest) -> dict:
+    """LLM proposes an operator preference it inferred — inert until approved."""
+    from osprey.services.operator_profile import OperatorProfileError, propose_preference
+
+    try:
+        rec = propose_preference(
+            preference=req.preference, rationale=req.rationale, engagement_id=req.engagement_id
+        )
+    except OperatorProfileError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
+    return {"status": "proposed", "id": rec["id"], "preference": rec["preference"],
+            "note": "Pending operator approval — not active until approved (/profile approve <id>)."}
+
+
+@router.post("/operator-profile/add")
+def add_operator_preference(req: RememberPreferenceRequest) -> dict:
+    """Operator-direct add — author is approver, so it goes straight to the profile."""
+    from osprey.services.operator_profile import OperatorProfileError, add_preference
+
+    try:
+        return add_preference(req.preference)
+    except OperatorProfileError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
+
+
+@router.get("/operator-profile")
+def operator_profile() -> dict:
+    """The confirmed profile plus any pending proposals awaiting approval."""
+    from osprey.services.operator_profile import get_profile, list_pending
+
+    return {"profile": get_profile(), "pending": list_pending()}
+
+
+@router.post("/operator-profile/{proposal_id}/approve")
+def approve_operator_preference(proposal_id: str) -> dict:
+    """Operator gate: promote a pending preference into the confirmed profile."""
+    from osprey.services.operator_profile import OperatorProfileError, approve_preference
+
+    try:
+        return {"status": "approved", **approve_preference(proposal_id)}
+    except OperatorProfileError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
+
+
+@router.delete("/operator-profile/{proposal_id}")
+def reject_operator_preference(proposal_id: str) -> dict:
+    """Operator gate: discard a pending preference proposal."""
+    from osprey.services.operator_profile import reject_preference
+
+    if not reject_preference(proposal_id):
+        raise HTTPException(404, detail=f"No pending preference with id: {proposal_id}")
+    return {"status": "rejected", "id": proposal_id}
+
+
 @router.post("/build-command")
 def build_command_preview(proposal: ToolCallProposal) -> dict[str, str]:
     """

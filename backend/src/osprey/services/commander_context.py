@@ -173,6 +173,14 @@ def _refresh_ephemeral(ctx: CommanderContext, engagement_id: str) -> CommanderCo
     packet but re-read the cheap, fast-moving fields (jobs, stdout, pipeline) and
     zero the delta (there is genuinely nothing new since the last recompute)."""
     ctx.context_delta = dict(_NO_CHANGE_DELTA)
+    # Operator profile can change between reads (operator approved a preference) —
+    # refresh it on a cache hit so adaptation is never a stale session behind.
+    try:
+        from osprey.services.operator_profile import profile_for_context
+
+        ctx.operator_profile = profile_for_context()
+    except Exception:
+        pass
     try:
         from osprey.services.stdout_index import list_stdout_index
 
@@ -330,6 +338,15 @@ def _attach_elite(
     engagement_id: str,
     run_id: str,
 ) -> CommanderContext:
+    # Operator profile is operator-global (not engagement-scoped), so set it even
+    # when no engagement is bound — the harness should adapt to the operator from
+    # the very first turn.
+    try:
+        from osprey.services.operator_profile import profile_for_context
+
+        ctx.operator_profile = profile_for_context()
+    except Exception:  # noqa: BLE001 — profile is best-effort, never fatal
+        pass
     if not engagement_id:
         return ctx
     ctx.skills_index = _active_phase_skills_index(ctx.phase_readiness or {}, limit=100)

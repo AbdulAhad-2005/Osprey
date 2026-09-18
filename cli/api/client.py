@@ -255,6 +255,34 @@ class APIClient:
         resp.raise_for_status()
         return resp.json()
 
+    # --- Operator profile (the human operator's preferences) ---
+    def operator_profile(self) -> dict[str, Any]:
+        resp = self._client.get(self._url("/api/v1/capabilities/operator-profile"))
+        resp.raise_for_status()
+        return resp.json()
+
+    def add_operator_preference(self, preference: str) -> dict[str, Any]:
+        resp = self._client.post(
+            self._url("/api/v1/capabilities/operator-profile/add"),
+            json={"preference": preference},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def approve_operator_preference(self, proposal_id: str) -> dict[str, Any]:
+        resp = self._client.post(
+            self._url(f"/api/v1/capabilities/operator-profile/{proposal_id}/approve")
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def reject_operator_preference(self, proposal_id: str) -> dict[str, Any]:
+        resp = self._client.delete(
+            self._url(f"/api/v1/capabilities/operator-profile/{proposal_id}")
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def start_expansion_job(
         self, engagement_id: str, *, run_id: str = "", max_passes: int = 5,
         include_low_confidence: bool = False, include_vuln_dispatch: bool = False,

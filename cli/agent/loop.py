@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -182,10 +182,21 @@ class Runner:
     """One agent session. Persists `messages` across `run()` calls so
     follow-up prompts have full context, same as Claude Code's own CLI."""
 
-    def __init__(self, *, config: CLIModelConfig, api_base_url: str, allow_spawn: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        config: CLIModelConfig,
+        api_base_url: str,
+        allow_spawn: bool = True,
+        tool_filter: "Callable[[str], bool] | None" = None,
+    ) -> None:
         self.config = config
         self.messages: list[dict[str, Any]] = []
         self._allow_spawn = allow_spawn
+        # Optional active-mode tool scope (from a prompt-defined agent/flow). None
+        # = full catalog. Applied to what the model SEES and enforced on dispatch,
+        # and inherited by spawned workers so a mode is consistent end to end.
+        self._tool_filter = tool_filter
         platform_tools.load_server(api_base_url)
         self._api_base_url = api_base_url
         # Context management (budget resolved lazily on first use — needs the
@@ -218,6 +229,8 @@ class Runner:
         schemas = platform_tools.get_tool_schemas(
             budget_tokens=self.config.tool_schema_budget_tokens
         )
+        if self._tool_filter is not None:
+            schemas = [s for s in schemas if self._tool_filter(s["function"]["name"])]
         if self._allow_spawn:
             schemas.append(_SPAWN_TOOL_SCHEMA)
         return schemas
@@ -417,7 +430,11 @@ class Runner:
                 for tc in tool_calls:
                     yield Event(
                         "tool_start",
-                        {"tool_name": tc["function"]["name"], "arguments": tc["function"].get("arguments", "{}")},
+                        {
+                            "tool_name": tc["function"]["name"],
+                            "arguments": tc["function"].get("arguments", "{}"),
+                            "tool_call_id": tc["id"],
+                        },
                     )
 
                 gather_task: asyncio.Task[list[tuple[str, str, float]]] = asyncio.ensure_future(
@@ -466,7 +483,13 @@ class Runner:
                 for tc, (name, result, elapsed) in zip(tool_calls, results):
                     yield Event(
                         "tool_end",
-                        {"tool_name": name, "result": result, "duration_seconds": elapsed},
+                        {
+                            "tool_name": name,
+                            "result": result,
+                            "duration_seconds": elapsed,
+                            "tool_call_id": tc["id"],
+                            "success": not tool_result_failed(result),
+                        },
                     )
                     # Non-budgeted providers keep the server's already-budgeted
                     # result verbatim (the backend's output_budget owns per-call
@@ -501,6 +524,13 @@ class Runner:
     ) -> str:
         if name == _SPAWN_TOOL_NAME:
             return await self._spawn_subagents(args.get("tasks") or [], event_queue=event_queue)
+        # Enforce the active mode's tool scope even if the model names a tool that
+        # wasn't advertised — advertising-only scoping isn't real enforcement.
+        if self._tool_filter is not None and not self._tool_filter(name):
+            return (
+                f"BLOCKED (mode restriction): '{name}' is not available in the current mode. "
+                "Use a tool this mode allows, or switch mode with /agent."
+            )
         return await platform_tools.call_tool(name, args)
 
     async def _spawn_subagents(
@@ -528,7 +558,10 @@ class Runner:
         engagement_id = platform_tools.current_engagement_id()
 
         async def _one(worker_num: int, task: dict[str, Any]) -> str:
-            worker = Runner(config=self.config, api_base_url=self._api_base_url, allow_spawn=False)
+            worker = Runner(
+                config=self.config, api_base_url=self._api_base_url,
+                allow_spawn=False, tool_filter=self._tool_filter,
+            )
             scope = task.get("scope", "")
             brief = task.get("task", "")
             prompt = f"{brief}\n\n(engagement_id={engagement_id}" + (f", scope={scope})" if scope else ")")
