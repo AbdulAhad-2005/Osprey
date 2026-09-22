@@ -16,7 +16,7 @@ there is, because a valid leaked password is a straight path to access.
 1. **Scraped live during the engagement** — creds pulled from the target itself
    (js_recon secrets, sqlmap dumps, exposed configs, `.env`/backup files). These are
    OBSERVED and outrank everything: they are real and current for *this* target.
-2. **Verified-working credential-manager hits** (private Hawkeye `creds_manage` only)
+2. **Verified-working credential-manager hits** (private-overlay `creds_manage` only)
    — externally verified as working. Trust them second.
 3. **Breach-DB leaks** (`intelx_scan`, `resecurity_scan`) — real leaked data, but not
    verified against the live target. Treat as **leads to test**, not facts.

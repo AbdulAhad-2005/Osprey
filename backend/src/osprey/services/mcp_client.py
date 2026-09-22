@@ -31,7 +31,8 @@ _STDIO_LIMIT = 64 * 1024 * 1024
 
 # Forward selected OSINT / credential-intel secrets into Kali on each docker exec
 # (compose env alone is not enough if the key was added after the container
-# started). Private overlays (e.g. Hawkeye's creds-manager) add their own env
+# started). Private overlays (for example, a company credential manager) add
+# their own env
 # names via OSPREY_KALI_ENV_FORWARD (comma-separated) — no code change needed.
 _KALI_ENV_FORWARD_BASE = (
     "SHODAN_API_KEY",

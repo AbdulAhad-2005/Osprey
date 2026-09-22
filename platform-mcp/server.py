@@ -783,7 +783,6 @@ def platform_delete_engagement(target: str = "", engagement_id: str = "") -> str
 
 
 
-@mcp.tool()
 def _execution_readiness_line() -> str:
     """One-line tool-execution readiness (docker/native + whether tools can run).
 
@@ -806,6 +805,7 @@ def _execution_readiness_line() -> str:
     return f"{lead} {message}".strip() if message else lead
 
 
+@mcp.tool()
 def platform_health(target: str = "") -> str:
     """
     Check backend health + tool-execution readiness. Pass target= when the user
@@ -2782,11 +2782,13 @@ def platform_visualization(
             },
             timeout=30,
         )
-        fmt = data.get("format", fmt)
+        response_fmt = data.get("format", fmt)
         body = data.get("data", "")
-        if fmt == "mermaid" and isinstance(body, str):
+        if response_fmt == "mermaid" and isinstance(body, str):
             return f"{_session_header()}\n\n## Attack Surface (Mermaid)\n\n```mermaid\n{body}\n```"
-        return "\n\n".join([_session_header(), _block(f"Visualization ({fmt})", body)])
+        return "\n\n".join(
+            [_session_header(), _block(f"Visualization ({response_fmt})", body)]
+        )
 
     return _safe(_run)
 
@@ -2882,7 +2884,8 @@ _log(f"registered {_TYPED_WEB_SEARCH_COUNT} typed web-search tools")
 _TYPED_EXPLOIT_COUNT = register_typed_exploit_tools(mcp, execute=_typed_execute)
 _log(f"registered {_TYPED_EXPLOIT_COUNT} typed exploitation/creds/cloud-exploit tools")
 
-# Optional private-overlay typed tools (e.g. Hawkeye's creds-manager). Absent in
+# Optional private-overlay typed tools (for example, a company credential
+# manager). Absent in
 # public Osprey — a missing module is a no-op, not an error.
 try:
     from typed_private import register_typed_private_tools  # type: ignore

@@ -49,7 +49,7 @@ def _t(
     )
 
 
-def _p(name: str, default: str = "", desc: str = "") -> ToolParameter:
+def _p(default: str = "", desc: str = "") -> ToolParameter:
     return ToolParameter(default=default, description=desc)
 
 
@@ -949,11 +949,12 @@ ALL_TOOL_DEFINITIONS: tuple[ToolDefinition, ...] = tuple(
     + FORENSICS_TOOLS
 )
 
-# Optional private-overlay tool definitions (e.g. Hawkeye's creds-manager).
+# Optional private-overlay tool definitions (for example, a company credential
+# manager).
 # Absent in public Osprey — a missing module is a no-op, not an error. The
 # private module exports ADDITIONAL_TOOL_DEFINITIONS (and optionally
 # ADDITIONAL_ALIASES, merged into _TOOL_ALIASES below).
-try:  # pragma: no cover - overlay only present in the private (Hawkeye) repo
+try:  # pragma: no cover - overlay only present in a private superset repo
     from osprey.services import tool_registry_private as _tool_registry_private
 
     _EXTRA_TOOL_DEFINITIONS = tuple(
@@ -1273,7 +1274,7 @@ _TOOL_ALIASES: dict[str, str] = {
     "resecurity_lookup": "resecurity_scan",
 }
 
-# Merge optional private-overlay aliases (Hawkeye). No-op in public Osprey.
+# Merge optional private-overlay aliases. No-op in public Osprey.
 if "_tool_registry_private" in dir() and _tool_registry_private is not None:
     _TOOL_ALIASES.update(getattr(_tool_registry_private, "ADDITIONAL_ALIASES", {}) or {})
 
