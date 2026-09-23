@@ -2,26 +2,19 @@
 
 These tools previously had no registered parser, so their output fell through to
 the generic "unparsed observation" bucket — meaning shares, users, domain info,
-NetBIOS names and (for masscan) even open ports never became structured Findings
-and were invisible to the coverage engine and downstream phases. Each parser here
-turns the tool's stdout into typed Findings (PORT / SERVICE / OBSERVATION) with
-enough metadata (ip / hostname / share / permission / user / os) for the graph
-and network-surface tracker to reason about them.
-
-Grading policy: banners/version/OS strings a tool actually read off the wire are
-OBSERVED; share/user inventory is OBSERVED (the tool listed it); anything that is
-a name-only or fingerprint-only signal is INFERRED. Nothing here claims impact.
+NetBIOS names and (for masscan) even open ports never became structured facts
+and were invisible to the coverage engine and downstream phases. Each parser
+here turns the tool's stdout into typed Observations (PORT / SERVICE / SHARE /
+ACCOUNT / HOST) with enough detail (ip / hostname / share / permission / user /
+os) for the graph and network-surface tracker to reason about them. Structural
+extraction only — nothing here claims impact.
 """
 
 from __future__ import annotations
 
 import re
 
-from osprey.schemas.finding import (
-    Finding,
-    FindingConfidence,
-    FindingType,
-)
+from osprey.schemas.observation import Observation, ObservationType
 
 _IP_RE = re.compile(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b")
 
@@ -58,8 +51,8 @@ def parse_masscan(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
-    findings: list[Finding] = []
+) -> list[Observation]:
+    out: list[Observation] = []
     seen: set[tuple[str, str]] = set()
 
     def _emit(ip: str, port: str, proto: str) -> None:
@@ -67,19 +60,14 @@ def parse_masscan(
         if key in seen:
             return
         seen.add(key)
-        findings.append(
-            Finding(
+        out.append(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="network",
-                finding_type=FindingType.PORT,
-                title=f"{ip}:{port}/{proto} open",
-                description="Open port from masscan",
-                evidence=f"masscan: {ip}:{port}/{proto} open",
-                confidence=FindingConfidence.CONFIRMED,
-                source_tool="masscan_high_speed",
+                type=ObservationType.PORT,
                 target=ip or target,
-                metadata={"ip": ip, "port": port, "protocol": proto, "hostname": ip},
+                source_tool="masscan_high_speed",
+                details={"ip": ip, "port": port, "protocol": proto, "hostname": ip},
                 tags=["masscan"],
             )
         )
@@ -98,7 +86,7 @@ def parse_masscan(
             ip, portblob = g.groups()
             for port, proto in _MASSCAN_PORTLIST_RE.findall(portblob):
                 _emit(ip, port, proto.lower())
-    return findings
+    return out
 
 
 def digest_masscan(stdout: str, *, max_items: int = 12) -> str:
@@ -140,7 +128,7 @@ def _extract_host_from_stdout(stdout: str, target: str) -> str:
     return m.group(1) if m else ""
 
 
-def _smb_findings(
+def _smb_observations(
     stdout: str,
     *,
     source_tool: str,
@@ -148,9 +136,9 @@ def _smb_findings(
     run_id: str,
     target: str,
     max_items: int = 40,
-) -> list[Finding]:
+) -> list[Observation]:
     host = _extract_host_from_stdout(stdout, target)
-    out: list[Finding] = []
+    out: list[Observation] = []
     hmeta = _host_meta(host)
 
     users: list[tuple[str, str]] = []
@@ -194,88 +182,65 @@ def _smb_findings(
 
     # A reachable, enumerable SMB host is itself a SERVICE fact.
     if host and (users or shares or domain or os_str):
-        meta = {**hmeta, "service": "smb", "port": "445"}
+        details = {**hmeta, "service": "smb", "port": "445"}
         if domain:
-            meta["domain"] = domain
+            details["domain"] = domain
         if os_str:
-            meta["os"] = os_str
+            details["os"] = os_str
         if sid:
-            meta["domain_sid"] = sid
+            details["domain_sid"] = sid
+        details.update({"user_count": len(users), "share_count": len(shares)})
         out.append(
-            Finding(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="network",
-                finding_type=FindingType.SERVICE,
-                title=f"SMB on {host}"
-                + (f" (domain {domain})" if domain else ""),
-                description=f"SMB/NetBIOS enumeration via {source_tool}",
-                evidence=(
-                    f"domain={domain or '?'} os={os_str or '?'} "
-                    f"users={len(users)} shares={len(shares)}"
-                )[:300],
-                confidence=FindingConfidence.CONFIRMED,
-                source_tool=source_tool,
+                type=ObservationType.SERVICE,
                 target=host,
-                metadata=meta,
+                source_tool=source_tool,
+                details=details,
                 tags=["smb", "enumeration"],
             )
         )
 
     if os_str and host:
         out.append(
-            Finding(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="network",
-                finding_type=FindingType.OBSERVATION,
-                title=f"OS: {os_str}"[:120],
-                description=f"OS/platform reported by {source_tool} on {host}",
-                evidence=os_str[:300],
-                confidence=FindingConfidence.LIKELY,
-                source_tool=source_tool,
+                type=ObservationType.BANNER,
                 target=host,
-                metadata={**hmeta, "os": os_str[:200]},
+                source_tool=source_tool,
+                details={**hmeta, "os": os_str[:200]},
                 tags=["os", "os_detected", "smb"],
             )
         )
 
     for share, comment in list(shares.items())[:max_items]:
         out.append(
-            Finding(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="network",
-                finding_type=FindingType.OBSERVATION,
-                title=f"SMB share {share} on {host or 'target'}",
-                description=comment or "SMB share",
-                evidence=f"//{host}/{share} {comment}".strip()[:300],
-                confidence=FindingConfidence.CONFIRMED,
-                source_tool=source_tool,
+                type=ObservationType.SHARE,
                 target=host,
-                metadata={**hmeta, "share": share, "comment": comment},
+                source_tool=source_tool,
+                details={**hmeta, "share": share, "comment": comment},
                 tags=["smb", "share"],
             )
         )
 
     if users:
-        sample = ", ".join(u for u, _ in users[:20])
         out.append(
-            Finding(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="network",
-                finding_type=FindingType.OBSERVATION,
-                title=f"{len(users)} SMB/domain user(s) on {host or 'target'}",
-                description="Enumerated user accounts (existence, not credentials)",
-                evidence=f"users: {sample}"[:400],
-                confidence=FindingConfidence.CONFIRMED,
-                source_tool=source_tool,
+                type=ObservationType.ACCOUNT,
                 target=host,
-                metadata={
+                source_tool=source_tool,
+                details={
                     **hmeta,
+                    "kind": "users",
                     "user_count": len(users),
-                    "users": ",".join(u for u, _ in users[:50]),
+                    "users": [u for u, _ in users[:50]],
                     "domain": domain,
                 },
                 tags=["smb", "users", "enumeration"],
@@ -283,18 +248,18 @@ def _smb_findings(
         )
     if groups:
         out.append(
-            Finding(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="network",
-                finding_type=FindingType.OBSERVATION,
-                title=f"{len(groups)} SMB/domain group(s) on {host or 'target'}",
-                description="Enumerated groups",
-                evidence=("groups: " + ", ".join(groups[:20]))[:400],
-                confidence=FindingConfidence.CONFIRMED,
-                source_tool=source_tool,
+                type=ObservationType.ACCOUNT,
                 target=host,
-                metadata={**hmeta, "group_count": len(groups), "groups": ",".join(groups[:50])},
+                source_tool=source_tool,
+                details={
+                    **hmeta,
+                    "kind": "groups",
+                    "group_count": len(groups),
+                    "groups": groups[:50],
+                },
                 tags=["smb", "groups", "enumeration"],
             )
         )
@@ -307,8 +272,8 @@ def parse_enum4linux(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
-    return _smb_findings(
+) -> list[Observation]:
+    return _smb_observations(
         stdout,
         source_tool="enum4linux_scan",
         engagement_id=engagement_id,
@@ -323,8 +288,8 @@ def parse_enum4linux_ng(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
-    return _smb_findings(
+) -> list[Observation]:
+    return _smb_observations(
         stdout,
         source_tool="enum4linux_ng_advanced",
         engagement_id=engagement_id,
@@ -339,8 +304,8 @@ def parse_rpcclient(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
-    return _smb_findings(
+) -> list[Observation]:
+    return _smb_observations(
         stdout,
         source_tool="rpcclient_enumeration",
         engagement_id=engagement_id,
@@ -368,8 +333,8 @@ def parse_smbmap(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
-    out: list[Finding] = []
+) -> list[Observation]:
+    out: list[Observation] = []
     host = target
     for raw in (stdout or "").splitlines():
         hm = _SMBMAP_HOST_RE.search(raw)
@@ -386,24 +351,20 @@ def parse_smbmap(
         readable = "READ" in perm
         interesting = writable or (readable and share.upper() not in ("IPC$",))
         out.append(
-            Finding(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="network",
-                finding_type=FindingType.OBSERVATION,
-                title=f"SMB share {share} [{perm}] on {host or 'target'}",
-                description=comment or "SMB share (smbmap)",
-                evidence=f"{share}\t{perm}\t{comment}".strip()[:300],
-                confidence=FindingConfidence.CONFIRMED,
-                source_tool="smbmap_scan",
+                type=ObservationType.SHARE,
                 target=host or target,
-                metadata={
+                source_tool="smbmap_scan",
+                details={
                     **_host_meta(host),
                     "share": share,
                     "permission": perm,
                     "writable": writable,
                     "readable": readable,
                     "comment": comment,
+                    "interesting": interesting,
                 },
                 tags=["smb", "share", "smbmap"] + (["writable"] if writable else []) + (["accessible"] if interesting else []),
             )
@@ -431,14 +392,14 @@ def parse_netexec(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
-    out: list[Finding] = []
+) -> list[Observation]:
+    out: list[Observation] = []
     for raw in (stdout or "").splitlines():
         m = _NXC_BANNER_RE.match(raw.strip())
         if not m:
             continue
         proto, ip, port, netbios, banner = m.groups()
-        name = (_NXC_NAME_RE.search(banner) or [None, ""])[1] if _NXC_NAME_RE.search(banner) else ""
+        name = (_NXC_NAME_RE.search(banner).group(1) if _NXC_NAME_RE.search(banner) else "")
         domain = (_NXC_DOMAIN_RE.search(banner).group(1) if _NXC_DOMAIN_RE.search(banner) else "")
         signing = (_NXC_SIGNING_RE.search(banner).group(1) if _NXC_SIGNING_RE.search(banner) else "")
         smbv1 = (_NXC_SMBV1_RE.search(banner).group(1) if _NXC_SMBV1_RE.search(banner) else "")
@@ -449,18 +410,13 @@ def parse_netexec(
         if str(smbv1).strip().lower() in ("true", "yes", "1"):
             tags.append("smbv1_enabled")
         out.append(
-            Finding(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="network",
-                finding_type=FindingType.SERVICE,
-                title=f"{ip}:{port} {proto.upper()} {os_str}"[:120],
-                description=f"{proto.upper()} host banner via netexec",
-                evidence=raw.strip()[:400],
-                confidence=FindingConfidence.CONFIRMED,
-                source_tool="netexec_scan",
+                type=ObservationType.SERVICE,
                 target=ip or target,
-                metadata={
+                source_tool="netexec_scan",
+                details={
                     "ip": ip,
                     "hostname": name or netbios,
                     "port": port,
@@ -493,8 +449,8 @@ def parse_nbtscan(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
-    out: list[Finding] = []
+) -> list[Observation]:
+    out: list[Observation] = []
     seen: set[str] = set()
     for raw in (stdout or "").splitlines():
         m = _NBTSCAN_ROW_RE.match(raw.strip())
@@ -505,18 +461,13 @@ def parse_nbtscan(
             continue
         seen.add(ip)
         out.append(
-            Finding(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="network",
-                finding_type=FindingType.OBSERVATION,
-                title=f"NetBIOS name {name} @ {ip}",
-                description="NetBIOS name from nbtscan",
-                evidence=raw.strip()[:300],
-                confidence=FindingConfidence.CONFIRMED,
-                source_tool="nbtscan_netbios",
+                type=ObservationType.HOST,
                 target=ip or target,
-                metadata={"ip": ip, "hostname": name, "netbios": name},
+                source_tool="nbtscan_netbios",
+                details={"ip": ip, "hostname": name, "netbios": name},
                 tags=["netbios", "smb"],
             )
         )

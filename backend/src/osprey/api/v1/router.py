@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from osprey.api.v1.endpoints import (
     agent,
     audit,
+    benchmark,
     capabilities,
     config,
     engagements,
@@ -13,7 +14,9 @@ from osprey.api.v1.endpoints import (
     jobs,
     mcp,
     models,
+    observations,
     pipeline,
+    reasoning,
     surface,
     tools,
 )
@@ -34,3 +37,6 @@ api_v1_router.include_router(models.router, prefix="/models", tags=["models"])
 api_v1_router.include_router(config.router, prefix="/config", tags=["config"])
 api_v1_router.include_router(engagements.router, prefix="/engagements", tags=["engagements"])
 api_v1_router.include_router(audit.router, prefix="/audit", tags=["audit"])
+api_v1_router.include_router(benchmark.router, prefix="/benchmark", tags=["benchmark"])
+api_v1_router.include_router(observations.router, prefix="/observations", tags=["observations"])
+api_v1_router.include_router(reasoning.router, prefix="/reasoning", tags=["reasoning"])

@@ -49,6 +49,8 @@ shannon/
 skills/learned/
 # Operator profile — the human operator's preferences, operator-local, never shipped/synced
 skills/operator/
+# FP-cache — operator-local noise-pattern judgments, may embed engagement detail
+fp_cache/
 
 # Internal audit notes — documents live/unpatched security gaps; keep local
 # until fixed, never in shared history
@@ -59,3 +61,14 @@ mcp.json
 
 # Committed test artifact — should not be tracked
 test.db
+
+# Real engagement evidence dumps (scraped target data) — operator-local,
+# never shipped/synced; same reasoning as reports/ above
+mcp-servers/*_Evidence/
+
+# Redundant archive of plans/harness/ (the directory is the source of truth)
+plans/harness.zip
+
+# Scratch chat-log dump, not project documentation
+opencode_chatgpt_discussion.txt
+prompts.md

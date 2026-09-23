@@ -31,6 +31,16 @@ class AssetType(StrEnum):
     SECRET = "secret"
 
 
+class ConflictingValue(BaseModel):
+    """One disputed value for a node's slot (e.g. service@443) — plans/harness/
+    05-world-model-and-attack-paths.md Step 2a: kept, never silently
+    overwritten, when two observations disagree."""
+
+    value: str
+    observation_id: str = ""
+    source_tool: str = ""
+
+
 class AssetNode(BaseModel):
     id: str
     asset_type: AssetType
@@ -39,6 +49,13 @@ class AssetNode(BaseModel):
     run_id: str = ""
     source_tool: str = ""
     confidence: str = "likely"
+    # Every observation_id that asserts this node — the evidence backing
+    # (Step 1). Empty only for the disclosed operator-asserted exception
+    # (ensure_node/operator_link — see engagement_graph.py's module docstring).
+    observation_ids: list[str] = Field(default_factory=list)
+    source_tools: list[str] = Field(default_factory=list)
+    # slot name -> disputed values, when observations disagree (Step 2a).
+    conflicts: dict[str, list[ConflictingValue]] = Field(default_factory=dict)
     # Nested metadata is allowed: banners, TLS cert chains, response bodies, OS
     # guesses, etc. live on the node instead of being flattened away.
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -53,6 +70,7 @@ class AssetEdge(BaseModel):
     engagement_id: str = ""
     run_id: str = ""
     source_tool: str = ""
+    observation_ids: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

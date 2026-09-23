@@ -35,7 +35,7 @@ from osprey.services.escalation_registry import (
 )
 from osprey.services.run_store import get_run_store
 from osprey.services.session_context import resolve_for_tool_execution, resolve_session
-from osprey.services.summary_agent import summarize_execution
+from osprey.services.summary_agent import extract_observations_for_execution
 from osprey.services.target_utils import extract_target
 from osprey.services.task_registry import get_tool_capability
 from osprey.services.tech_dispatch import suggest_dispatch
@@ -43,6 +43,15 @@ from osprey.services.tool_coverage_store import get_tool_coverage_store
 from osprey.services.tool_registry import get_tool_definition
 
 logger = logging.getLogger(__name__)
+
+
+def _observation_label(observation: Any) -> str:
+    """Short display label for an Observation — narrative/compression-layer
+    use only (``response.finding_titles``), never anything that decides
+    confidence or earns a finding."""
+    d = observation.details or {}
+    label = d.get("title") or d.get("url") or d.get("hostname") or d.get("name") or observation.target
+    return f"{observation.type.value}: {label}" if label else observation.type.value
 
 
 import re as _re
@@ -410,30 +419,22 @@ async def execute_tool_request(
         ban_signal = scan_for_ban(response.stdout or "")
         if ban_signal and mark_ban(session.engagement_id, target, ban_signal):
             try:
-                from osprey.schemas.finding import (
-                    Finding,
-                    FindingConfidence,
-                    FindingType,
-                )
+                from osprey.schemas.observation import Observation, ObservationType
+                from osprey.services.observation_store import get_observation_store
 
-                from osprey.services.findings_store import get_findings_store
-
-                get_findings_store().add(
-                    Finding(
+                get_observation_store().record(
+                    Observation(
                         engagement_id=session.engagement_id,
                         run_id=request.run_id or "",
-                        phase="recon",
-                        finding_type=FindingType.OBSERVATION,
-                        title=f"Rate-limited/blocked: {target} ({ban_signal})",
-                        description=(
-                            f"{request.tool_name} output shows a WAF/rate-limiter response "
-                            f"('{ban_signal}'). Further calls to {target} are being paced "
-                            f"to avoid escalating the block."
-                        ),
-                        evidence=(response.stdout or "")[:400],
-                        confidence=FindingConfidence.CONFIRMED,
-                        source_tool="rate_governor",
+                        type=ObservationType.SCANNER_SIGNAL,
                         target=target,
+                        source_tool="rate_governor",
+                        details={
+                            "kind": "ban_signal",
+                            "ban_signal": ban_signal,
+                            "evidence": (response.stdout or "")[:400],
+                            "tool_that_triggered": request.tool_name,
+                        },
                         tags=["rate_limited", "waf_blocked", "pacing"],
                     )
                 )
@@ -454,72 +455,12 @@ async def execute_tool_request(
             )
 
     asset = target or str(request.params.get("domain", ""))
-    findings: list = []
-    if request.record_findings:
-        try:
-            # Always persist raw/observation (even on failure) so memory is never empty.
-            findings = await summarize_execution(
-                response,
-                engagement_id=session.engagement_id,
-                run_id=request.run_id or "",
-                target=target,
-                force_raw_observation=True,
-            )
-            # Universal ingest — every tool inherits YAML rules (SPA demotion, banners, …).
-            from osprey.services.ingest_promoter import apply_ingest_rules
 
-            ingested = apply_ingest_rules(
-                response.stdout or "",
-                response.stderr or "",
-                engagement_id=session.engagement_id,
-                run_id=request.run_id or "",
-                source_tool=request.tool_name,
-                target=target or asset,
-                persist=True,
-            )
-            titles = [f.title for f in findings] + [f.title for f in ingested]
-            # de-dupe preserve order
-            response.finding_titles = list(dict.fromkeys(titles))
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Findings ingest failed for %s: %s", request.tool_name, exc)
-        try:
-            get_tool_coverage_store().record(
-                engagement_id=session.engagement_id,
-                tool_name=request.tool_name,
-                asset=asset,
-                run_id=request.run_id or "",
-                findings_count=len(response.finding_titles or []),
-                success=bool(response.success),
-                notes="advisory mark only",
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("Tool coverage record skip: %s", exc)
-
-    if request.exploit_candidate_id:
-        try:
-            from osprey.services.exploit_candidate_store import get_exploit_candidate_store
-
-            result_finding = findings[0] if findings else None
-            result_finding_id = result_finding.id if result_finding else ""
-            get_exploit_candidate_store().record_attempt(
-                request.exploit_candidate_id,
-                result_finding=result_finding,
-                result_finding_id=result_finding_id,
-            )
-            candidate = get_exploit_candidate_store().get(request.exploit_candidate_id)
-            if candidate and candidate.finding_id and findings:
-                from osprey.services.findings_store import get_findings_store
-
-                for f in findings:
-                    existing = list(f.metadata.get("derived_from") or [])
-                    if candidate.finding_id not in existing:
-                        existing.append(candidate.finding_id)
-                        f.metadata["derived_from"] = existing
-                get_findings_store().add_many_result(findings)
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("Exploit candidate correlation skip: %s", exc)
-
-    # Lightweight stdout index — path + snippet (full body on Kali when path set)
+    # Resolve the artifact path FIRST (moved ahead of observation extraction)
+    # so the Evidence row Plan 02 requires can point at the real stdout_path
+    # instead of being recorded pathless and backfilled later.
+    stdout_path = ""
+    stderr_path = ""
     try:
         from osprey.services.artifacts import write_text_artifact
         from osprey.services.stdout_index import record_stdout_entry
@@ -558,6 +499,65 @@ async def execute_tool_request(
             response.hybrid = hybrid_meta
     except Exception as exc:  # noqa: BLE001
         logger.debug("stdout index skip: %s", exc)
+
+    observations: list = []
+    if request.record_findings:
+        try:
+            # Always persist raw/observation (even on failure) so memory is never empty.
+            observations = await extract_observations_for_execution(
+                response,
+                engagement_id=session.engagement_id,
+                run_id=request.run_id or "",
+                target=target,
+                stdout_path=stdout_path,
+                stderr_path=stderr_path,
+            )
+            # Universal ingest — every tool inherits YAML rules (SPA demotion, banners, …).
+            from osprey.services.ingest_promoter import apply_ingest_rules
+
+            ingested = apply_ingest_rules(
+                response.stdout or "",
+                response.stderr or "",
+                engagement_id=session.engagement_id,
+                run_id=request.run_id or "",
+                source_tool=request.tool_name,
+                target=target or asset,
+                persist=True,
+            )
+            titles = [_observation_label(o) for o in observations] + [_observation_label(o) for o in ingested]
+            # de-dupe preserve order
+            response.finding_titles = list(dict.fromkeys(titles))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Observation extraction failed for %s: %s", request.tool_name, exc)
+        try:
+            get_tool_coverage_store().record(
+                engagement_id=session.engagement_id,
+                tool_name=request.tool_name,
+                asset=asset,
+                run_id=request.run_id or "",
+                findings_count=len(response.finding_titles or []),
+                success=bool(response.success),
+                notes="advisory mark only",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Tool coverage record skip: %s", exc)
+
+    if request.exploit_candidate_id:
+        try:
+            from osprey.services.exploit_candidate_store import get_exploit_candidate_store
+
+            # No Finding exists on this path anymore (Plan 02) — candidate
+            # promotion re-sources from observations/candidates directly in
+            # Plan 03 Step 6. Record the attempt without a result_finding for
+            # now; controlled-PoC evidence attaches via platform_file_finding
+            # once that lands.
+            get_exploit_candidate_store().record_attempt(
+                request.exploit_candidate_id,
+                result_finding=None,
+                result_finding_id="",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Exploit candidate correlation skip: %s", exc)
 
     get_engagement_store().increment_tools_executed(session.engagement_id)
 

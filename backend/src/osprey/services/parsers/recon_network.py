@@ -1,4 +1,11 @@
-"""Deterministic stdout parsers for recon/network tools."""
+"""Deterministic stdout parsers for recon/network tools.
+
+Structural extraction only — see plans/harness/02-evidence-and-observation-layer.md.
+A scanner's own verdict (nmap NSE vulners/vulns.lua, a subdomain-takeover
+check, a Shodan CVE tag) becomes a ``SCANNER_SIGNAL`` observation carrying the
+claim as a fact ("the scanner said X"), never a judged ``VULNERABILITY``
+finding — `confidence_for` (Plan 03) decides what that signal earns.
+"""
 
 from __future__ import annotations
 
@@ -6,12 +13,7 @@ import json
 import re
 from typing import Any
 
-from osprey.schemas.finding import (
-    ClaimSeverity,
-    Finding,
-    FindingConfidence,
-    FindingType,
-)
+from osprey.schemas.observation import Observation, ObservationType
 from osprey.services.parsers._capping import cap_with_accounting
 from osprey.services.target_utils import looks_like_domain, registrable_apex
 
@@ -22,8 +24,8 @@ def parse_subfinder(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
-    findings: list[Finding] = []
+) -> list[Observation]:
+    out: list[Observation] = []
     seen: set[str] = set()
     for line in stdout.splitlines():
         host = line.strip().lower()
@@ -34,22 +36,17 @@ def parse_subfinder(
         if host in seen:
             continue
         seen.add(host)
-        findings.append(
-            Finding(
+        out.append(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="recon",
-                finding_type=FindingType.SUBDOMAIN,
-                title=host,
-                description=f"Subdomain discovered for {target or 'target'}",
-                evidence=line.strip(),
-                confidence=FindingConfidence.CONFIRMED,
-                source_tool="subfinder_scan",
+                type=ObservationType.SUBDOMAIN,
                 target=target,
-                metadata={"hostname": host},
+                source_tool="subfinder_scan",
+                details={"hostname": host},
             )
         )
-    return findings
+    return out
 
 
 # httpx prints these bracketed markers (instead of a status code) when a
@@ -63,8 +60,8 @@ def parse_httpx(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
-    findings: list[Finding] = []
+) -> list[Observation]:
+    out: list[Observation] = []
     for line in stdout.splitlines():
         text = line.strip()
         if not text or text.startswith("#"):
@@ -96,48 +93,39 @@ def parse_httpx(
 
         is_cf = _looks_like_cloudflare(text, tech)
         tags: list[str] = []
-        meta: dict = {"hostname": host} if host else {}
+        details: dict = {"hostname": host} if host else {}
+        details["url"] = url
         if tech:
-            meta["technology"] = tech
+            details["technology"] = tech
         if is_cf:
-            meta["is_cloudflare"] = True
-            meta["waf"] = "cloudflare"
+            details["is_cloudflare"] = True
+            details["waf"] = "cloudflare"
             tags.append("cloudflare")
 
-        findings.append(
-            Finding(
+        out.append(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="recon",
-                finding_type=FindingType.URL,
-                title=url,
-                description="Live HTTP endpoint" + (" (Cloudflare/WAF signal)" if is_cf else ""),
-                evidence=text[:500],
-                confidence=FindingConfidence.CONFIRMED,
-                source_tool="httpx_probe",
+                type=ObservationType.URL,
                 target=url,
-                metadata=meta,
+                source_tool="httpx_probe",
+                details={**details, "raw": text[:500]},
                 tags=tags,
             )
         )
         if tech:
-            findings.append(
-                Finding(
+            out.append(
+                Observation(
                     engagement_id=engagement_id,
                     run_id=run_id,
-                    phase="recon",
-                    finding_type=FindingType.TECHNOLOGY,
-                    title=tech,
-                    description=f"Technology fingerprint on {url}",
-                    evidence=text[:300],
-                    confidence=FindingConfidence.LIKELY,
-                    source_tool="httpx_probe",
+                    type=ObservationType.TECHNOLOGY,
                     target=url,
-                    metadata={"hostname": host, "url": url},
+                    source_tool="httpx_probe",
+                    details={"name": tech, "hostname": host, "url": url},
                     tags=["cloudflare"] if is_cf else [],
                 )
             )
-    return findings
+    return out
 
 
 _CF_RE = re.compile(
@@ -150,12 +138,6 @@ def _looks_like_cloudflare(text: str, tech: str = "") -> bool:
     blob = f"{text} {tech}"
     return bool(_CF_RE.search(blob))
 
-
-_DH_CONF_TO_FINDING = {
-    "high": FindingConfidence.CONFIRMED,
-    "medium": FindingConfidence.LIKELY,
-    "low": FindingConfidence.HYPOTHESIS,
-}
 
 _DH_ROW_RE = re.compile(
     r"^(?P<domain>\S+\.\S+)\s+(?P<method>.+?)\s+(?P<conf>low|medium|high)\s+(?P<live>Yes|No)\s*$"
@@ -198,7 +180,7 @@ def _dh_row_from_dict(row: dict) -> tuple | None:
     else:
         live = bool(live)
     conf = str(row.get("confidence", "low") or "low").strip().lower()
-    if conf not in _DH_CONF_TO_FINDING:
+    if conf not in ("low", "medium", "high"):
         conf = "low"
     return (
         apex.lower(),
@@ -255,8 +237,8 @@ def parse_domain_hunter(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
-    findings: list[Finding] = []
+) -> list[Observation]:
+    out: list[Observation] = []
     seen: set[str] = set()
     seed_apex = registrable_apex(target) if target else ""
     for domain, method, conf, live, score, evidence in _domain_hunter_rows(stdout):
@@ -267,7 +249,7 @@ def parse_domain_hunter(
         seen.add(domain)
         evidence_text = evidence if isinstance(evidence, str) else " | ".join(str(item) for item in evidence if item)
         tags = ["sister_domain", "domain_hunter"]
-        meta: dict[str, Any] = {
+        details: dict[str, Any] = {
             "hostname": domain,
             "method": method,
             "hunter_confidence": conf,
@@ -275,30 +257,22 @@ def parse_domain_hunter(
             "role": "sister_domain",
         }
         if score is not None:
-            meta["score"] = score
+            details["score"] = score
         if evidence:
-            meta["hunter_evidence"] = evidence
-        findings.append(
-            Finding(
+            details["hunter_evidence"] = evidence
+            details["evidence_text"] = evidence_text
+        out.append(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="recon",
-                finding_type=FindingType.HOST,
-                title=domain,
-                description=f"Sister/affiliated domain of {target or 'seed'} (via {method})",
-                evidence=(
-                    f"method={method} confidence={conf} live={'yes' if live else 'no'}"
-                    + (f" score={score}" if score is not None else "")
-                    + (f" {evidence_text}" if evidence_text else "")
-                ),
-                confidence=_DH_CONF_TO_FINDING.get(conf, FindingConfidence.HYPOTHESIS),
-                source_tool="domain_hunter",
+                type=ObservationType.HOST,
                 target=target,
-                metadata=meta,
+                source_tool="domain_hunter",
+                details=details,
                 tags=tags,
             )
         )
-    return findings
+    return out
 
 
 _OS_DETAILS_RE = re.compile(r"^OS details:\s*(.+)$")
@@ -315,8 +289,9 @@ _OS_NO_MATCH_RE = re.compile(r"^No exact OS matches for host")
 #   - vulners: CPE-block + tab/space-separated ID/CVSS/url[/*EXPLOIT*] lines.
 #   - vulns.lua (the library most maintained vuln-category scripts share):
 #     State:/IDs:/Risk factor:/References: keyed block.
-# Anything else is captured verbatim and tagged for the dynamic LLM fallback
-# (registry.parse_tool_output) rather than dropped or hand-parsed per script.
+# Anything else is captured verbatim as a SCANNER_SIGNAL observation — the
+# optional LLM observation-extraction layer (Plan 02 Step 5) is where further
+# structuring of an unrecognized shape belongs, not a per-parser hack.
 _SCRIPT_HEADER_RE = re.compile(r"^([A-Za-z][\w.\-]*)\s*:\s*(.*)$")
 _CPE_HEADER_RE = re.compile(r"^cpe:/\S+", re.IGNORECASE)
 _VULNERS_ENTRY_RE = re.compile(
@@ -329,24 +304,50 @@ _VULN_RISK_RE = re.compile(r"^Risk factor:\s*(.*)$", re.IGNORECASE)
 _VULN_KNOWN_KEY_RE = re.compile(
     r"^(state|ids?|risk factor|disclosure date|references|extra information)\s*:", re.IGNORECASE
 )
-_RISK_TO_SEVERITY = {
-    "critical": ClaimSeverity.CRITICAL,
-    "high": ClaimSeverity.HIGH,
-    "medium": ClaimSeverity.MEDIUM,
-    "low": ClaimSeverity.LOW,
-}
+_RISK_TO_SEVERITY = {"critical": "critical", "high": "high", "medium": "medium", "low": "low"}
 
 
-def _severity_for_cvss(score: float) -> ClaimSeverity:
+def _severity_for_cvss(score: float) -> str:
     if score >= 9.0:
-        return ClaimSeverity.CRITICAL
+        return "critical"
     if score >= 7.0:
-        return ClaimSeverity.HIGH
+        return "high"
     if score >= 4.0:
-        return ClaimSeverity.MEDIUM
+        return "medium"
     if score > 0:
-        return ClaimSeverity.LOW
-    return ClaimSeverity.INFO
+        return "low"
+    return "info"
+
+
+def _nse_signal(
+    *,
+    engagement_id: str,
+    run_id: str,
+    target: str,
+    title: str,
+    description: str,
+    evidence: str,
+    claimed_severity: str,
+    extracted: bool = False,
+    details: dict[str, Any],
+    tags: list[str],
+) -> Observation:
+    return Observation(
+        engagement_id=engagement_id,
+        run_id=run_id,
+        type=ObservationType.SCANNER_SIGNAL,
+        target=target,
+        source_tool="nmap_custom_scan",
+        details={
+            **details,
+            "title": title[:300],
+            "description": description[:500],
+            "evidence": evidence[:800],
+            "claimed_severity": claimed_severity,
+            "extracted": extracted,
+        },
+        tags=["nmap_custom_scan", "vuln_scanner", f"claimed_severity:{claimed_severity}"] + tags,
+    )
 
 
 def _process_vulners_block(
@@ -358,10 +359,10 @@ def _process_vulners_block(
     port: str,
     proto: str,
     service: str,
-) -> list[Finding]:
+) -> list[Observation]:
     """vulners.nse: CPE sub-headers, each followed by ID/CVSS/url rows. One
-    Finding per row; genuine CVE IDs get metadata["cve"], other vulners
-    cross-references (PACKETSTORM/EDB-ID/etc.) get metadata["reference_id"]
+    SCANNER_SIGNAL per row; genuine CVE IDs get details["cve"], other vulners
+    cross-references (PACKETSTORM/EDB-ID/etc.) get details["reference_id"]
     so they're never misrepresented as CVEs downstream."""
     cpe_entries: dict[str, list[re.Match]] = {}
     order: list[str] = []
@@ -380,7 +381,7 @@ def _process_vulners_block(
         if match and current_cpe:
             cpe_entries[current_cpe].append(match)
 
-    findings: list[Finding] = []
+    observations: list[Observation] = []
     for cpe in order:
         entries = cpe_entries.get(cpe, [])
         if not entries:
@@ -388,15 +389,12 @@ def _process_vulners_block(
         # Exploit-flagged entries sort first so a cap always keeps them.
         entries.sort(key=lambda m: (0 if m.group("exploit") else 1, -float(m.group("cvss"))))
 
-        def _render(m: re.Match, cpe: str = cpe) -> Finding:
+        def _render(m: re.Match, cpe: str = cpe) -> Observation:
             vid = m.group("id")
             cvss = float(m.group("cvss"))
             is_cve = bool(re.match(r"^CVE-\d{4}-\d{4,7}$", vid, re.IGNORECASE))
-            # Severity reflects the CVE's own impact if real; confidence (LIKELY,
-            # below) is what carries "this is a version match, not a confirmed
-            # exploit" — the two are independent, see verification-and-severity.md.
             severity = _severity_for_cvss(cvss)
-            meta: dict = {
+            details: dict = {
                 "cvss_score": cvss,
                 "cpe": cpe,
                 "port": port,
@@ -405,30 +403,26 @@ def _process_vulners_block(
                 "exploit_available_hint": bool(m.group("exploit")),
             }
             if is_cve:
-                meta["cve"] = vid.upper()
+                details["cve"] = vid.upper()
             else:
-                meta["reference_id"] = vid
+                details["reference_id"] = vid
             tags = ["vulners", "nmap_nse"] + ([vid.upper()] if is_cve else []) + (
                 ["exploit_hint"] if m.group("exploit") else []
             )
-            return Finding(
+            return _nse_signal(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="vuln",
-                finding_type=FindingType.VULNERABILITY,
-                title=f"{vid} (CVSS {cvss}) — {service or host}:{port}"[:300],
+                target=host,
+                title=f"{vid} (CVSS {cvss}) — {service or host}:{port}",
                 description=f"vulners CPE match for {cpe}"
                 + (" — exploit available" if m.group("exploit") else ""),
-                evidence=m.group(0)[:300],
-                confidence=FindingConfidence.LIKELY,
-                claim_severity=severity,
-                source_tool="nmap_custom_scan",
-                target=host,
-                metadata=meta,
+                evidence=m.group(0),
+                claimed_severity=severity,
+                details=details,
                 tags=tags,
             )
 
-        findings.extend(
+        observations.extend(
             cap_with_accounting(
                 entries,
                 max_items=15,
@@ -440,7 +434,7 @@ def _process_vulners_block(
                 target=host,
             )
         )
-    return findings
+    return observations
 
 
 def _process_vulns_lua_block(
@@ -453,7 +447,7 @@ def _process_vulns_lua_block(
     port: str,
     proto: str,
     service: str,
-) -> list[Finding] | None:
+) -> list[Observation] | None:
     """The shared vulns.lua output shape most maintained NSE vuln scripts use
     (smb-vuln-*, http-vuln-*, rdp-vuln-*, ftp-vuln-*, ...) — script-agnostic:
     a State:/IDs:/Risk factor:/References: keyed block. Returns None when the
@@ -502,8 +496,8 @@ def _process_vulns_lua_block(
         if in_references and s.startswith("http"):
             references.append(s)
 
-    severity = _RISK_TO_SEVERITY.get(risk.lower(), ClaimSeverity.MEDIUM)
-    meta: dict = {
+    severity = _RISK_TO_SEVERITY.get(risk.lower(), "medium")
+    details: dict = {
         "port": port,
         "protocol": proto,
         "service": service,
@@ -513,26 +507,21 @@ def _process_vulns_lua_block(
         "references": references[:10],
     }
     if cve_ids:
-        meta["cve"] = cve_ids[0].upper()
+        details["cve"] = cve_ids[0].upper()
         if len(cve_ids) > 1:
-            meta["cve_all"] = [c.upper() for c in cve_ids]
+            details["cve_all"] = [c.upper() for c in cve_ids]
     tags = ["nmap_nse", script_name] + ([cve_ids[0].upper()] if cve_ids else [])
     return [
-        Finding(
+        _nse_signal(
             engagement_id=engagement_id,
             run_id=run_id,
-            phase="vuln",
-            finding_type=FindingType.VULNERABILITY,
-            title=f"{title} ({host}:{port})"[:300],
-            description=f"nmap {script_name}: {state}" + (f", risk {risk}" if risk else ""),
-            evidence="\n".join(ln for ln in text_lines if ln.strip())[:800],
-            confidence=(
-                FindingConfidence.CONFIRMED if state == "VULNERABLE" else FindingConfidence.LIKELY
-            ),
-            claim_severity=severity,
-            source_tool="nmap_custom_scan",
             target=host,
-            metadata=meta,
+            title=f"{title} ({host}:{port})",
+            description=f"nmap {script_name}: {state}" + (f", risk {risk}" if risk else ""),
+            evidence="\n".join(ln for ln in text_lines if ln.strip()),
+            claimed_severity=severity,
+            extracted=(state == "VULNERABLE"),
+            details=details,
             tags=tags,
         )
     ]
@@ -544,8 +533,8 @@ def parse_nmap_text(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
-    findings: list[Finding] = []
+) -> list[Observation]:
+    out: list[Observation] = []
     current_host = target
     current_port = ""
     current_proto = ""
@@ -567,21 +556,14 @@ def parse_nmap_text(
         if os_best is None or not os_host:
             return
         text, grade, tag_suffix = os_best
-        findings.append(
-            Finding(
+        out.append(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="network",
-                finding_type=FindingType.OBSERVATION,
-                title=f"OS: {text}"[:120],
-                description=f"nmap OS detection on {os_host}",
-                evidence=text[:300],
-                confidence=(
-                    FindingConfidence.CONFIRMED if grade == "observed" else FindingConfidence.LIKELY
-                ),
-                source_tool="nmap_service_scan",
+                type=ObservationType.BANNER,
                 target=os_host,
-                metadata={"os": text[:200]},
+                source_tool="nmap_service_scan",
+                details={"os": text[:200], "grade": grade},
                 tags=["os", f"os_{tag_suffix}"],
             )
         )
@@ -602,38 +584,32 @@ def parse_nmap_text(
             service=current_service,
         )
         if name.lower() == "vulners":
-            findings.extend(_process_vulners_block(lines, **ctx))
+            out.extend(_process_vulners_block(lines, **ctx))
             return
         vulns_result = _process_vulns_lua_block(name, lines, **ctx)
         if vulns_result is not None:
-            findings.extend(vulns_result)
+            out.extend(vulns_result)
             return
-        # Neither recognized shape — never drop; tag for the dynamic LLM
-        # fallback (registry.parse_tool_output) to attempt structuring, with
-        # this raw capture as the guaranteed floor if that doesn't pan out.
-        from osprey.services.parsers.dynamic_fallback import (
-            NEEDS_DYNAMIC_STRUCTURING_TAG,
-        )
-
-        findings.append(
-            Finding(
+        # Neither recognized shape — never drop; keep as a raw SCANNER_SIGNAL
+        # with the unrecognized script text intact.
+        out.append(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="network",
-                finding_type=FindingType.OBSERVATION,
-                title=f"{name} output ({current_host}:{current_port})"[:300],
-                description=f"Unrecognized NSE script output shape for {name}",
-                evidence="\n".join(ln.strip() for ln in lines if ln.strip())[:2000],
-                confidence=FindingConfidence.LIKELY,
-                source_tool="nmap_custom_scan",
+                type=ObservationType.SCANNER_SIGNAL,
                 target=current_host,
-                metadata={
+                source_tool="nmap_custom_scan",
+                details={
+                    "kind": "unrecognized_nse_shape",
+                    "title": f"{name} output ({current_host}:{current_port})"[:300],
+                    "description": f"Unrecognized NSE script output shape for {name}",
+                    "evidence": "\n".join(ln.strip() for ln in lines if ln.strip())[:2000],
                     "port": current_port,
                     "protocol": current_proto,
                     "service": current_service,
                     "nse_script": name,
                 },
-                tags=["nmap_nse", name, NEEDS_DYNAMIC_STRUCTURING_TAG],
+                tags=["nmap_nse", name],
             )
         )
 
@@ -702,31 +678,26 @@ def parse_nmap_text(
             k in svc.lower()
             for k in ("openssh", "apache", "microsoft", "nginx", "openssl", "dropbear")
         )
-        host_meta = {"port": port, "protocol": proto, "service": svc}
+        host_details = {"port": port, "protocol": proto, "service": svc}
         # Prefer IP-ish keys for port-flood detection
         if re.match(r"^\d{1,3}(?:\.\d{1,3}){3}$", (current_host or "").split()[0]):
-            host_meta["ip"] = current_host.split()[0]
+            host_details["ip"] = current_host.split()[0]
         else:
-            host_meta["hostname"] = current_host
+            host_details["hostname"] = current_host
 
-        findings.append(
-            Finding(
+        out.append(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="network",
-                finding_type=FindingType.SERVICE if versionish else FindingType.PORT,
-                title=f"{current_host}:{port}/{proto} {svc}",
-                description=f"Open {proto} port {port}",
-                evidence=line.strip(),
-                confidence=FindingConfidence.CONFIRMED,
-                source_tool="nmap_service_scan",
+                type=ObservationType.SERVICE if versionish else ObservationType.PORT,
                 target=current_host,
-                metadata=host_meta,
+                source_tool="nmap_service_scan",
+                details=host_details,
             )
         )
     _flush_script()
     _flush_os()
-    return findings
+    return out
 
 
 def parse_rustscan(
@@ -735,25 +706,20 @@ def parse_rustscan(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
-    findings: list[Finding] = []
+) -> list[Observation]:
+    out: list[Observation] = []
     for line in stdout.splitlines():
         match = re.search(r"(\d+)/tcp\s+open", line)
         if match:
             port = match.group(1)
-            findings.append(
-                Finding(
+            out.append(
+                Observation(
                     engagement_id=engagement_id,
                     run_id=run_id,
-                    phase="network",
-                    finding_type=FindingType.PORT,
-                    title=f"{target}:{port}/tcp open",
-                    description="Open port from rustscan",
-                    evidence=line.strip(),
-                    confidence=FindingConfidence.CONFIRMED,
-                    source_tool="rustscan_fast_scan",
+                    type=ObservationType.PORT,
                     target=target,
-                    metadata={
+                    source_tool="rustscan_fast_scan",
+                    details={
                         "port": port,
                         "protocol": "tcp",
                         "ip": target if re.match(r"^\d{1,3}(?:\.\d{1,3}){3}$", target or "") else "",
@@ -761,7 +727,7 @@ def parse_rustscan(
                     },
                 )
             )
-    return findings
+    return out
 
 
 def parse_naabu(
@@ -770,9 +736,9 @@ def parse_naabu(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
+) -> list[Observation]:
     """naabu -silent lines: host:port or bare port."""
-    findings: list[Finding] = []
+    out: list[Observation] = []
     seen: set[tuple[str, str]] = set()
     for line in stdout.splitlines():
         line = line.strip()
@@ -793,20 +759,14 @@ def parse_naabu(
         if key in seen:
             continue
         seen.add(key)
-        label = f"{host}:{port}/tcp" if host else f"{port}/tcp"
-        findings.append(
-            Finding(
+        out.append(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="network",
-                finding_type=FindingType.PORT,
-                title=f"{label} open",
-                description="Open port from naabu",
-                evidence=line,
-                confidence=FindingConfidence.CONFIRMED,
-                source_tool="naabu_port_scan",
+                type=ObservationType.PORT,
                 target=host or target,
-                metadata={
+                source_tool="naabu_port_scan",
+                details={
                     "port": port,
                     "protocol": "tcp",
                     "ip": host if re.match(r"^\d{1,3}(?:\.\d{1,3}){3}$", host or "") else "",
@@ -815,7 +775,7 @@ def parse_naabu(
                 tags=["naabu"],
             )
         )
-    return findings
+    return out
 
 
 def parse_shodan_search(
@@ -824,14 +784,14 @@ def parse_shodan_search(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
+) -> list[Observation]:
     try:
         data = json.loads(stdout or "")
     except (json.JSONDecodeError, TypeError, ValueError):
         return []
     if not isinstance(data, dict):
         return []
-    out: list[Finding] = []
+    out: list[Observation] = []
     for match in data.get("matches") or []:
         if not isinstance(match, dict):
             continue
@@ -840,66 +800,50 @@ def parse_shodan_search(
         hostnames = [str(h).lower() for h in (match.get("hostnames") or []) if h]
         if ip:
             out.append(
-                Finding(
+                Observation(
                     engagement_id=engagement_id,
                     run_id=run_id,
-                    phase="recon",
-                    finding_type=FindingType.HOST,
-                    title=ip,
-                    description=f"Shodan host {match.get('org') or ''}".strip(),
-                    evidence=json.dumps(
-                        {
-                            "ip": ip,
-                            "port": port,
-                            "org": match.get("org"),
-                            "product": match.get("product"),
-                            "hostnames": hostnames[:10],
-                        },
-                        sort_keys=True,
-                    ),
-                    confidence=FindingConfidence.CONFIRMED,
-                    source_tool="shodan_search",
+                    type=ObservationType.HOST,
                     target=target or ip,
-                    metadata={"ip": ip, "hostname": hostnames[0] if hostnames else "", "org": match.get("org") or ""},
+                    source_tool="shodan_search",
+                    details={
+                        "ip": ip,
+                        "port": port,
+                        "org": match.get("org"),
+                        "product": match.get("product"),
+                        "hostnames": hostnames[:10],
+                        "hostname": hostnames[0] if hostnames else "",
+                    },
                     tags=["shodan", "passive"],
                 )
             )
         if ip and port is not None:
             out.append(
-                Finding(
+                Observation(
                     engagement_id=engagement_id,
                     run_id=run_id,
-                    phase="recon",
-                    finding_type=FindingType.PORT,
-                    title=f"{ip}:{port}/{(match.get('transport') or 'tcp')}",
-                    description=str(match.get("product") or "Shodan open port"),
-                    evidence=(match.get("banner") or "")[:400] or f"{ip}:{port}",
-                    confidence=FindingConfidence.CONFIRMED,
-                    source_tool="shodan_search",
+                    type=ObservationType.PORT,
                     target=target or ip,
-                    metadata={
+                    source_tool="shodan_search",
+                    details={
                         "ip": ip,
                         "port": str(port),
                         "protocol": str(match.get("transport") or "tcp"),
                         "product": match.get("product") or "",
+                        "banner": (match.get("banner") or "")[:400],
                     },
                     tags=["shodan", "passive", "port"],
                 )
             )
         for host in hostnames[:5]:
             out.append(
-                Finding(
+                Observation(
                     engagement_id=engagement_id,
                     run_id=run_id,
-                    phase="recon",
-                    finding_type=FindingType.SUBDOMAIN,
-                    title=host,
-                    description=f"Shodan hostname for {ip}" if ip else "Shodan hostname",
-                    evidence=f"{host} @ {ip}:{port}",
-                    confidence=FindingConfidence.CONFIRMED,
-                    source_tool="shodan_search",
+                    type=ObservationType.SUBDOMAIN,
                     target=target or host,
-                    metadata={"hostname": host, "ip": ip},
+                    source_tool="shodan_search",
+                    details={"hostname": host, "ip": ip},
                     tags=["shodan", "passive"],
                 )
             )
@@ -912,7 +856,7 @@ def parse_shodan_host_info(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
+) -> list[Observation]:
     try:
         data = json.loads(stdout or "")
     except (json.JSONDecodeError, TypeError, ValueError):
@@ -920,66 +864,48 @@ def parse_shodan_host_info(
     if not isinstance(data, dict) or data.get("error"):
         return []
     ip = str(data.get("ip") or target or "").strip()
-    out: list[Finding] = []
+    out: list[Observation] = []
     if ip:
         out.append(
-            Finding(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="recon",
-                finding_type=FindingType.HOST,
-                title=ip,
-                description=f"Shodan host detail org={data.get('org') or ''} isp={data.get('isp') or ''}".strip(),
-                evidence=json.dumps(
-                    {
-                        "ip": ip,
-                        "org": data.get("org"),
-                        "isp": data.get("isp"),
-                        "os": data.get("os"),
-                        "ports": data.get("ports"),
-                        "hostnames": data.get("hostnames"),
-                    },
-                    sort_keys=True,
-                )[:800],
-                confidence=FindingConfidence.CONFIRMED,
-                source_tool="shodan_host_info",
+                type=ObservationType.HOST,
                 target=target or ip,
-                metadata={"ip": ip, "org": data.get("org") or "", "isp": data.get("isp") or ""},
+                source_tool="shodan_host_info",
+                details={
+                    "ip": ip,
+                    "org": data.get("org"),
+                    "isp": data.get("isp"),
+                    "os": data.get("os"),
+                    "ports": data.get("ports"),
+                    "hostnames": data.get("hostnames"),
+                },
                 tags=["shodan", "passive"],
             )
         )
     os_name = str(data.get("os") or "").strip()
     if os_name and ip:
         out.append(
-            Finding(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="recon",
-                finding_type=FindingType.OBSERVATION,
-                title=f"OS: {os_name}"[:120],
-                description=f"Shodan-reported OS on {ip}",
-                evidence=f"shodan os={os_name}"[:300],
-                confidence=FindingConfidence.LIKELY,
-                source_tool="shodan_host_info",
+                type=ObservationType.BANNER,
                 target=target or ip,
-                metadata={"os": os_name},
+                source_tool="shodan_host_info",
+                details={"os": os_name},
                 tags=["os", "os_detected", "shodan"],
             )
         )
     for port in data.get("ports") or []:
         out.append(
-            Finding(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="recon",
-                finding_type=FindingType.PORT,
-                title=f"{ip}:{port}/tcp",
-                description="Port reported by Shodan host API (passive — verify live)",
-                evidence=f"shodan host {ip} ports include {port}",
-                confidence=FindingConfidence.LIKELY,
-                source_tool="shodan_host_info",
+                type=ObservationType.PORT,
                 target=target or ip,
-                metadata={"ip": ip, "port": str(port), "protocol": "tcp"},
+                source_tool="shodan_host_info",
+                details={"ip": ip, "port": str(port), "protocol": "tcp"},
                 tags=["shodan", "passive", "port"],
             )
         )
@@ -988,36 +914,36 @@ def parse_shodan_host_info(
         if not host_s:
             continue
         out.append(
-            Finding(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="recon",
-                finding_type=FindingType.SUBDOMAIN,
-                title=host_s,
-                description=f"Shodan hostname for {ip}",
-                evidence=f"{host_s} @ {ip}",
-                confidence=FindingConfidence.CONFIRMED,
-                source_tool="shodan_host_info",
+                type=ObservationType.SUBDOMAIN,
                 target=target or host_s,
-                metadata={"hostname": host_s, "ip": ip},
+                source_tool="shodan_host_info",
+                details={"hostname": host_s, "ip": ip},
                 tags=["shodan", "passive"],
             )
         )
     vulns = data.get("vulns") or []
     if vulns:
         out.append(
-            Finding(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="recon",
-                finding_type=FindingType.OBSERVATION,
-                title=f"Shodan indexed vulns on {ip}",
-                description="Shodan CVE tags are leads — verify before claiming impact",
-                evidence=", ".join(str(v) for v in vulns[:30]),
-                confidence=FindingConfidence.HYPOTHESIS,
-                source_tool="shodan_host_info",
+                type=ObservationType.SCANNER_SIGNAL,
                 target=target or ip,
-                metadata={"ip": ip, "vuln_count": len(vulns)},
+                source_tool="shodan_host_info",
+                details={
+                    "kind": "shodan_cve_tags",
+                    "title": f"Shodan indexed vulns on {ip}",
+                    "description": "Shodan CVE tags are leads — verify before claiming impact",
+                    "evidence": ", ".join(str(v) for v in vulns[:30]),
+                    "ip": ip,
+                    "vuln_count": len(vulns),
+                    "cves": [str(v) for v in vulns[:30]],
+                    "claimed_severity": "info",
+                    "extracted": False,
+                },
                 tags=["shodan", "cve_lead", "unverified"],
             )
         )
@@ -1030,35 +956,36 @@ def parse_subdomain_takeover(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
+) -> list[Observation]:
     try:
         data = json.loads(stdout or "")
     except (json.JSONDecodeError, TypeError, ValueError):
         return []
     if not isinstance(data, dict) or data.get("error"):
         return []
-    out: list[Finding] = []
+    out: list[Observation] = []
     for row in data.get("vulnerable") or []:
         host = str(row.get("subdomain") or "").strip().lower()
         if not host:
             continue
         out.append(
-            Finding(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="recon",
-                finding_type=FindingType.OBSERVATION,
-                title=f"Possible subdomain takeover: {host}",
-                description=str(row.get("reason") or "Fingerprint matched unclaimed SaaS"),
-                evidence=json.dumps(row, sort_keys=True)[:800],
-                confidence=FindingConfidence.LIKELY,
-                source_tool="subdomain_takeover_check",
+                type=ObservationType.SCANNER_SIGNAL,
                 target=target or host,
-                metadata={
+                source_tool="subdomain_takeover_check",
+                details={
+                    "kind": "subdomain_takeover",
+                    "title": f"Possible subdomain takeover: {host}",
+                    "description": str(row.get("reason") or "Fingerprint matched unclaimed SaaS"),
+                    "evidence": json.dumps(row, sort_keys=True),
                     "hostname": host,
                     "cname": row.get("cname") or "",
                     "service": row.get("service") or "",
                     "takeover_status": "vulnerable",
+                    "claimed_severity": "medium",
+                    "extracted": False,
                 },
                 tags=["takeover", "vulnerable", "cname"],
             )
@@ -1068,22 +995,23 @@ def parse_subdomain_takeover(
         if not host:
             continue
         out.append(
-            Finding(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="recon",
-                finding_type=FindingType.OBSERVATION,
-                title=f"Potential dangling CNAME: {host}",
-                description=str(row.get("reason") or "SaaS CNAME with empty/404 response"),
-                evidence=json.dumps(row, sort_keys=True)[:800],
-                confidence=FindingConfidence.HYPOTHESIS,
-                source_tool="subdomain_takeover_check",
+                type=ObservationType.SCANNER_SIGNAL,
                 target=target or host,
-                metadata={
+                source_tool="subdomain_takeover_check",
+                details={
+                    "kind": "subdomain_takeover",
+                    "title": f"Potential dangling CNAME: {host}",
+                    "description": str(row.get("reason") or "SaaS CNAME with empty/404 response"),
+                    "evidence": json.dumps(row, sort_keys=True),
                     "hostname": host,
                     "cname": row.get("cname") or "",
                     "service": row.get("service") or "",
                     "takeover_status": "potential",
+                    "claimed_severity": "low",
+                    "extracted": False,
                 },
                 tags=["takeover", "potential", "cname"],
             )
@@ -1101,8 +1029,8 @@ def parse_dnsx(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
-    """dnsx -resp lines → host + typed DNS findings (flexible, no CDN hardcoding).
+) -> list[Observation]:
+    """dnsx -resp lines → host + typed DNS observations (flexible, no CDN hardcoding).
 
     dnsx prints ``host [TYPE] [VALUE]``; the record type governs the bucket so an
     NS/MX target is never mislabelled as a CNAME (the value shape alone is
@@ -1134,40 +1062,30 @@ def parse_dnsx(
                 key = {"CNAME": "cname", "NS": "ns", "MX": "mx"}.get(current, "cname")
                 bucket[key].append(value.rstrip("."))
 
-    out: list[Finding] = []
+    out: list[Observation] = []
     for host, rec in host_records.items():
         for ip in dict.fromkeys(rec["ip"]):
             out.append(
-                Finding(
+                Observation(
                     engagement_id=engagement_id,
                     run_id=run_id,
-                    phase="recon",
-                    finding_type=FindingType.HOST,
-                    title=ip,
-                    description=f"DNS A/AAAA for {host}",
-                    evidence=f"{host} -> {ip}",
-                    confidence=FindingConfidence.CONFIRMED,
-                    source_tool="dnsx_resolve",
+                    type=ObservationType.HOST,
                     target=target or host,
-                    metadata={"hostname": host, "ip": ip, "record_type": "a"},
+                    source_tool="dnsx_resolve",
+                    details={"hostname": host, "ip": ip, "record_type": "a"},
                     tags=["dns_resolve"],
                 )
             )
         for rtype, key in (("CNAME", "cname"), ("NS", "ns"), ("MX", "mx")):
             for value in dict.fromkeys(rec.get(key, [])):
                 out.append(
-                    Finding(
+                    Observation(
                         engagement_id=engagement_id,
                         run_id=run_id,
-                        phase="recon",
-                        finding_type=FindingType.DNS_RECORD,
-                        title=f"{host} {rtype} -> {value}",
-                        description=f"{rtype} record",
-                        evidence=f"{host} {rtype} {value}",
-                        confidence=FindingConfidence.CONFIRMED,
-                        source_tool="dnsx_resolve",
+                        type=ObservationType.DNS_RECORD,
                         target=target or host,
-                        metadata={"hostname": host, "record_type": rtype.lower(), key: value},
+                        source_tool="dnsx_resolve",
+                        details={"hostname": host, "record_type": rtype.lower(), key: value},
                         tags=[key, "dns_record"],
                     )
                 )
@@ -1180,11 +1098,9 @@ def parse_tlsx(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
+) -> list[Observation]:
     """tlsx JSON lines → observed TLS / SAN / optional CDN-hint tags."""
-    import json
-
-    out: list[Finding] = []
+    out: list[Observation] = []
     for line in (stdout or "").splitlines():
         line = line.strip()
         if not line.startswith("{"):
@@ -1201,12 +1117,13 @@ def parse_tlsx(
         issuer = str(cert.get("issuer_dn") or cert.get("issuer_cn") or "")
         subject = str(cert.get("subject_dn") or cert.get("subject_cn") or "")
         tags: list[str] = ["tls"]
-        meta = {
+        details = {
             "hostname": host,
             "ip": ip,
             "port": str(cert.get("port") or 443),
             "issuer": issuer[:200],
-            "sans": ",".join(str(s) for s in sans[:20]),
+            "subject": subject[:200],
+            "sans": [str(s) for s in sans[:20]],
         }
         blob = f"{issuer} {subject} {' '.join(str(s) for s in sans)}".lower()
         for name, needles in (
@@ -1217,21 +1134,16 @@ def parse_tlsx(
         ):
             if any(n in blob for n in needles):
                 tags.append(f"cdn_hint:{name}")
-                meta["cdn_hint"] = name
+                details["cdn_hint"] = name
                 break
         out.append(
-            Finding(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="recon",
-                finding_type=FindingType.OBSERVATION,
-                title=f"TLS {host or ip}:{meta['port']}",
-                description=f"issuer={issuer[:80]} sans={len(sans)}",
-                evidence=line[:800],
-                confidence=FindingConfidence.CONFIRMED,
-                source_tool="tlsx_inspect",
+                type=ObservationType.CERT,
                 target=target or host or ip,
-                metadata=meta,
+                source_tool="tlsx_inspect",
+                details=details,
                 tags=tags,
             )
         )
@@ -1239,18 +1151,13 @@ def parse_tlsx(
             san_l = str(san).strip().lower().lstrip("*.")
             if san_l and "." in san_l:
                 out.append(
-                    Finding(
+                    Observation(
                         engagement_id=engagement_id,
                         run_id=run_id,
-                        phase="recon",
-                        finding_type=FindingType.SUBDOMAIN,
-                        title=san_l,
-                        description=f"SAN from TLS cert on {host or ip}",
-                        evidence=san_l,
-                        confidence=FindingConfidence.LIKELY,
-                        source_tool="tlsx_inspect",
+                        type=ObservationType.SUBDOMAIN,
                         target=target or host,
-                        metadata={"hostname": san_l, "from_san": True},
+                        source_tool="tlsx_inspect",
+                        details={"hostname": san_l, "from_san": True},
                         tags=["tls_san"],
                     )
                 )
@@ -1263,10 +1170,8 @@ def parse_crtsh(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
-    """crt.sh JSON → subdomain findings (passive CT)."""
-    import json
-
+) -> list[Observation]:
+    """crt.sh JSON → subdomain observations (passive CT)."""
     try:
         certs = json.loads(stdout or "[]")
     except json.JSONDecodeError:
@@ -1274,7 +1179,7 @@ def parse_crtsh(
     if not isinstance(certs, list):
         return []
     seen: set[str] = set()
-    out: list[Finding] = []
+    out: list[Observation] = []
     for cert in certs[:500]:
         name_value = str(cert.get("name_value") or "")
         for line in name_value.splitlines():
@@ -1283,18 +1188,13 @@ def parse_crtsh(
                 continue
             seen.add(domain)
             out.append(
-                Finding(
+                Observation(
                     engagement_id=engagement_id,
                     run_id=run_id,
-                    phase="recon",
-                    finding_type=FindingType.SUBDOMAIN,
-                    title=domain,
-                    description="Certificate Transparency (crt.sh)",
-                    evidence=domain,
-                    confidence=FindingConfidence.LIKELY,
-                    source_tool="crt_sh_query",
+                    type=ObservationType.SUBDOMAIN,
                     target=target or domain,
-                    metadata={"hostname": domain, "source": "crt.sh"},
+                    source_tool="crt_sh_query",
+                    details={"hostname": domain, "source": "crt.sh"},
                     tags=["ct", "passive"],
                 )
             )
@@ -1307,11 +1207,9 @@ def parse_cdn_origin_probe(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
+) -> list[Observation]:
     """Parse dig/curl probe text; also accept JSON if tool parse() was mirrored."""
-    import json
-
-    out: list[Finding] = []
+    out: list[Observation] = []
     # Prefer structured JSON if present in stdout (rare) — else regex sections
     data = None
     stripped = (stdout or "").strip()
@@ -1357,18 +1255,17 @@ def parse_cdn_origin_probe(
     provider = data.get("cdn_provider")
     if provider:
         out.append(
-            Finding(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="recon",
-                finding_type=FindingType.TECHNOLOGY,
-                title=f"CDN hint: {provider}",
-                description="CDN signal from DNS/headers (confirm before treating as fact)",
-                evidence="; ".join(str(x) for x in (data.get("evidence") or [])[:8])[:500],
-                confidence=FindingConfidence.LIKELY,
-                source_tool="cdn_origin_probe",
+                type=ObservationType.TECHNOLOGY,
                 target=target,
-                metadata={"cdn_provider": provider},
+                source_tool="cdn_origin_probe",
+                details={
+                    "name": f"CDN: {provider}",
+                    "cdn_provider": provider,
+                    "signal_evidence": [str(x) for x in (data.get("evidence") or [])[:8]],
+                },
                 tags=["cdn_hint", str(provider)],
             )
         )
@@ -1376,18 +1273,13 @@ def parse_cdn_origin_probe(
         if not _IP_RE.match(str(ip)):
             continue
         out.append(
-            Finding(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="recon",
-                finding_type=FindingType.HOST,
-                title=str(ip),
-                description="Edge/A-record IP (may be CDN)",
-                evidence=str(ip),
-                confidence=FindingConfidence.CONFIRMED,
-                source_tool="cdn_origin_probe",
+                type=ObservationType.HOST,
                 target=target,
-                metadata={"ip": str(ip), "role": "edge"},
+                source_tool="cdn_origin_probe",
+                details={"ip": str(ip), "role": "edge"},
                 tags=["edge_ip", "cdn_hint"] if provider else ["edge_ip"],
             )
         )
@@ -1397,22 +1289,17 @@ def parse_cdn_origin_probe(
             continue
         conf = float(cand.get("confidence") or 0)
         out.append(
-            Finding(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="recon",
-                finding_type=FindingType.HOST,
-                title=ip,
-                description=f"Origin candidate (confidence={conf})",
-                evidence=f"signals={cand.get('signals')}",
-                confidence=FindingConfidence.HYPOTHESIS if conf < 0.5 else FindingConfidence.LIKELY,
-                source_tool="cdn_origin_probe",
+                type=ObservationType.HOST,
                 target=target,
-                metadata={
+                source_tool="cdn_origin_probe",
+                details={
                     "ip": ip,
                     "role": "origin_candidate",
-                    "confidence": conf,
-                    "signals": ",".join(str(s) for s in (cand.get("signals") or [])),
+                    "probe_confidence": conf,
+                    "signals": [str(s) for s in (cand.get("signals") or [])],
                 },
                 tags=["origin_candidate"],
             )
@@ -1427,23 +1314,19 @@ def _unparsed_observation(
     engagement_id: str,
     run_id: str,
     target: str,
-) -> list[Finding]:
+) -> list[Observation]:
     """Never silently drop raw output when structured parsing fails or matches nothing."""
     stripped = (stdout or "").strip()
     if not stripped:
         return []
     return [
-        Finding(
+        Observation(
             engagement_id=engagement_id,
             run_id=run_id,
-            phase="recon",
-            finding_type=FindingType.OBSERVATION,
-            title=f"{tool_name} raw output",
-            description="Unparsed tool output (stored for agent context)",
-            evidence=stripped[:2000],
-            confidence=FindingConfidence.LIKELY,
-            source_tool=tool_name,
+            type=ObservationType.RAW,
             target=target,
+            source_tool=tool_name,
+            details={"snippet": stripped[:2000]},
             tags=[tool_name, "unparsed"],
         )
     ]
@@ -1455,7 +1338,7 @@ def parse_wappalyzer(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
+) -> list[Observation]:
     try:
         data = json.loads(stdout)
     except (json.JSONDecodeError, TypeError):
@@ -1469,30 +1352,25 @@ def parse_wappalyzer(
         return []
     tgt = data.get("target") or target
 
-    findings: list[Finding] = []
+    out: list[Observation] = []
     for tech_name, info in technologies.items():
         if not isinstance(info, dict):
             continue
         versions = info.get("versions") or []
         version = str(versions[0]) if versions else ""
         cats = [str(c) for c in (info.get("categories") or [])]
-        findings.append(
-            Finding(
+        out.append(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="recon",
-                finding_type=FindingType.TECHNOLOGY,
-                title=f"{tech_name} {version}".strip(),
-                description=f"Technology fingerprint on {tgt}" + (f" ({', '.join(cats)})" if cats else ""),
-                evidence=f"wappalyzer: {tech_name} versions={versions} categories={cats}"[:400],
-                confidence=FindingConfidence.LIKELY,
-                source_tool="wappalyzer_scan",
+                type=ObservationType.TECHNOLOGY,
                 target=tgt,
-                metadata={"technology": str(tech_name), "version": version, "categories": ",".join(cats)},
+                source_tool="wappalyzer_scan",
+                details={"name": str(tech_name), "version": version, "categories": cats},
                 tags=["wappalyzer"] + [c.lower().replace(" ", "_") for c in cats[:3]],
             )
         )
-    return findings or _unparsed_observation(
+    return out or _unparsed_observation(
         stdout, tool_name="wappalyzer_scan", engagement_id=engagement_id, run_id=run_id, target=target
     )
 
@@ -1506,7 +1384,7 @@ def parse_whatweb(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
+) -> list[Observation]:
     text = stdout.strip()
     data: Any = None
     try:
@@ -1537,7 +1415,7 @@ def parse_whatweb(
     if not isinstance(data, list):
         data = [data]
 
-    findings: list[Finding] = []
+    out: list[Observation] = []
     seen: set[str] = set()
     for result in data:
         if not isinstance(result, dict):
@@ -1555,23 +1433,18 @@ def parse_whatweb(
             if key in seen:
                 continue
             seen.add(key)
-            findings.append(
-                Finding(
+            out.append(
+                Observation(
                     engagement_id=engagement_id,
                     run_id=run_id,
-                    phase="recon",
-                    finding_type=FindingType.TECHNOLOGY,
-                    title=f"{plugin_name} {version}".strip(),
-                    description=f"Technology fingerprint on {tgt}",
-                    evidence=f"whatweb: {plugin_name} version={version} module={plugin_data.get('module')}"[:400],
-                    confidence=FindingConfidence.LIKELY,
-                    source_tool="whatweb_scan",
+                    type=ObservationType.TECHNOLOGY,
                     target=tgt,
-                    metadata={"technology": str(plugin_name), "version": version},
+                    source_tool="whatweb_scan",
+                    details={"name": str(plugin_name), "version": version, "module": plugin_data.get("module")},
                     tags=["whatweb"],
                 )
             )
-    return findings or _unparsed_observation(
+    return out or _unparsed_observation(
         stdout, tool_name="whatweb_scan", engagement_id=engagement_id, run_id=run_id, target=target
     )
 
@@ -1582,7 +1455,7 @@ def parse_tech_stack(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
+) -> list[Observation]:
     try:
         data = json.loads(stdout)
     except (json.JSONDecodeError, TypeError):
@@ -1593,7 +1466,7 @@ def parse_tech_stack(
         return []
     tgt = data.get("target") or target
 
-    findings: list[Finding] = []
+    out: list[Observation] = []
     for tech in data.get("unified_stack") or []:
         if not isinstance(tech, dict):
             continue
@@ -1603,29 +1476,23 @@ def parse_tech_stack(
         version = str(tech.get("version") or "")
         cats = [str(c) for c in (tech.get("categories") or [])]
         detected_by = [str(d) for d in (tech.get("detected_by") or [])]
-        findings.append(
-            Finding(
+        out.append(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="recon",
-                finding_type=FindingType.TECHNOLOGY,
-                title=f"{name} {version}".strip(),
-                description=f"Technology fingerprint on {tgt}"
-                + (f" (detected by {', '.join(detected_by)})" if detected_by else ""),
-                evidence=f"tech_stack_analyze: {name} version={version} categories={cats}"[:400],
-                confidence=FindingConfidence.CONFIRMED if len(detected_by) > 1 else FindingConfidence.LIKELY,
-                source_tool="tech_stack_analyze",
+                type=ObservationType.TECHNOLOGY,
                 target=tgt,
-                metadata={
-                    "technology": name,
+                source_tool="tech_stack_analyze",
+                details={
+                    "name": name,
                     "version": version,
-                    "categories": ",".join(cats),
-                    "detected_by": ",".join(detected_by),
+                    "categories": cats,
+                    "detected_by": detected_by,
                 },
                 tags=["tech_stack"] + [c.lower().replace(" ", "_") for c in cats[:3]],
             )
         )
-    return findings or _unparsed_observation(
+    return out or _unparsed_observation(
         stdout, tool_name="tech_stack_analyze", engagement_id=engagement_id, run_id=run_id, target=target
     )
 
@@ -1640,9 +1507,9 @@ def parse_wafw00f(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
+) -> list[Observation]:
     text = stdout or ""
-    findings: list[Finding] = []
+    out: list[Observation] = []
     seen: set[str] = set()
     for match in _WAFW00F_DETECTED_RE.finditer(text):
         waf_name = match.group(1).strip()
@@ -1650,39 +1517,30 @@ def parse_wafw00f(
         if key in seen:
             continue
         seen.add(key)
-        findings.append(
-            Finding(
+        out.append(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="recon",
-                finding_type=FindingType.TECHNOLOGY,
-                title=f"WAF: {waf_name}",
-                description=f"WAF product identified on {target or 'target'}",
-                evidence=match.group(0)[:300],
-                confidence=FindingConfidence.CONFIRMED,
-                source_tool="wafw00f_scan",
+                type=ObservationType.WAF,
                 target=target,
-                metadata={"waf": waf_name},
+                source_tool="wafw00f_scan",
+                details={"waf": waf_name, "raw": match.group(0)[:300]},
                 tags=["waf", "wafw00f"],
             )
         )
-    if not findings and _WAFW00F_NONE_RE.search(text):
-        findings.append(
-            Finding(
+    if not out and _WAFW00F_NONE_RE.search(text):
+        out.append(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="recon",
-                finding_type=FindingType.OBSERVATION,
-                title="No WAF detected",
-                description=f"wafw00f found no WAF signature on {target or 'target'}",
-                evidence="No WAF detected by the generic detection",
-                confidence=FindingConfidence.LIKELY,
-                source_tool="wafw00f_scan",
+                type=ObservationType.WAF,
                 target=target,
+                source_tool="wafw00f_scan",
+                details={"waf": None, "detected": False},
                 tags=["wafw00f", "no_waf"],
             )
         )
-    return findings or _unparsed_observation(
+    return out or _unparsed_observation(
         stdout, tool_name="wafw00f_scan", engagement_id=engagement_id, run_id=run_id, target=target
     )
 
@@ -1892,7 +1750,7 @@ _INTERESTING_URL_MARKERS = (
 
 # Archive/crawler URL corpora are full of HTML-injection fragments and malformed
 # encodings (e.g. http://h/x/%22target=%22_blank, %20onmousedown=, %3cscript%3e).
-# Promoting these to URL findings created hundreds of junk graph nodes that
+# Promoting these to URL observations created hundreds of junk graph nodes that
 # inflated finalize gap counts and kept tripping the "continue" banner. Reject
 # them at the source — they are never real, followable endpoints.
 _JUNK_URL_MARKERS = (
@@ -1994,31 +1852,26 @@ def _parse_url_list(
     target: str = "",
     source_tool: str = "",
     max_findings: int = 300,
-) -> list[Finding]:
+) -> list[Observation]:
     """Shared core for gau/waybackurls/hakrawler — one URL per line (sometimes
-    with a bracketed prefix). Findings are capped; these tools can return tens
-    of thousands of URLs and the digest already carries the full count — the
-    Finding rows are for the genuinely followable subset, not a full mirror."""
+    with a bracketed prefix). Observations are capped; these tools can return
+    tens of thousands of URLs and the digest already carries the full count —
+    the rows are for the genuinely followable subset, not a full mirror."""
     urls = _extract_unique_urls(stdout)
     if not urls:
         return _unparsed_observation(
             stdout, tool_name=source_tool, engagement_id=engagement_id, run_id=run_id, target=target
         )
 
-    def _render(url: str) -> Finding:
+    def _render(url: str) -> Observation:
         host = url.split("://", 1)[-1].split("/", 1)[0].split(":")[0]
-        return Finding(
+        return Observation(
             engagement_id=engagement_id,
             run_id=run_id,
-            phase="recon",
-            finding_type=FindingType.URL,
-            title=url[:300],
-            description=f"URL discovered on {host or target}",
-            evidence=url[:300],
-            confidence=FindingConfidence.LIKELY,
-            source_tool=source_tool,
+            type=ObservationType.URL,
             target=host or target,
-            metadata={"hostname": host} if host else {},
+            source_tool=source_tool,
+            details={"url": url[:300], "hostname": host},
             tags=["url_history"],
         )
 
@@ -2034,7 +1887,7 @@ def _parse_url_list(
     )
 
 
-def parse_gau(stdout: str, *, engagement_id: str = "", run_id: str = "", target: str = "") -> list[Finding]:
+def parse_gau(stdout: str, *, engagement_id: str = "", run_id: str = "", target: str = "") -> list[Observation]:
     return _parse_url_list(
         stdout, engagement_id=engagement_id, run_id=run_id, target=target, source_tool="gau_discovery"
     )
@@ -2042,7 +1895,7 @@ def parse_gau(stdout: str, *, engagement_id: str = "", run_id: str = "", target:
 
 def parse_waybackurls(
     stdout: str, *, engagement_id: str = "", run_id: str = "", target: str = ""
-) -> list[Finding]:
+) -> list[Observation]:
     return _parse_url_list(
         stdout, engagement_id=engagement_id, run_id=run_id, target=target, source_tool="waybackurls_discovery"
     )
@@ -2050,7 +1903,7 @@ def parse_waybackurls(
 
 def parse_hakrawler(
     stdout: str, *, engagement_id: str = "", run_id: str = "", target: str = ""
-) -> list[Finding]:
+) -> list[Observation]:
     return _parse_url_list(
         stdout, engagement_id=engagement_id, run_id=run_id, target=target, source_tool="hakrawler_crawl"
     )
@@ -2077,14 +1930,15 @@ def parse_whois(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
+) -> list[Observation]:
     """WHOIS key:value output → structured registration facts.
 
-    Emits a rich registration OBSERVATION (registrar / dates / abuse contact in
-    metadata), an ORGANIZATION finding for the registrant, nameserver
-    observations (so the graph can link domain→nameserver), and a dedicated
-    security-relevant finding when DNSSEC is unsigned — the exact facts the
-    operator previously had to hand-copy out of raw output.
+    Emits a rich registration observation (registrar / dates / abuse contact),
+    an ORGANIZATION observation for the registrant, nameserver observations (so
+    the graph can link domain→nameserver), and a dedicated DNSSEC observation
+    when unsigned — the exact facts the operator previously had to hand-copy
+    out of raw output. Whether "DNSSEC not configured" earns a finding is
+    `confidence_for`'s job now, not this parser's.
     """
     text = stdout or ""
     if not text.strip():
@@ -2113,33 +1967,21 @@ def parse_whois(
         return []
 
     apex = (target or "").strip().lower()
-    out: list[Finding] = []
-    meta = {k: v for k, v in fields.items() if v}
+    out: list[Observation] = []
+    details = {k: v for k, v in fields.items() if v}
     if nameservers:
-        meta["nameservers"] = ",".join(nameservers)
+        details["nameservers"] = nameservers
     if apex:
-        meta["domain"] = apex
+        details["domain"] = apex
 
-    summary_bits = [
-        f"registrar={fields.get('registrar', '?')}",
-        f"created={fields.get('created', '?')}",
-        f"expiry={fields.get('expiry', '?')}",
-        f"dnssec={fields.get('dnssec', '?')}",
-        f"ns={len(nameservers)}",
-    ]
     out.append(
-        Finding(
+        Observation(
             engagement_id=engagement_id,
             run_id=run_id,
-            phase="recon",
-            finding_type=FindingType.OBSERVATION,
-            title=f"WHOIS: {apex or 'domain'}",
-            description="Domain registration facts (WHOIS)",
-            evidence="; ".join(summary_bits)[:400],
-            confidence=FindingConfidence.CONFIRMED,
-            source_tool="whois_lookup",
+            type=ObservationType.DNS_RECORD,
             target=apex or target,
-            metadata=meta,
+            source_tool="whois_lookup",
+            details={**details, "kind": "registration"},
             tags=["whois", "registration"],
         )
     )
@@ -2147,18 +1989,13 @@ def parse_whois(
     org = fields.get("registrant_org")
     if org:
         out.append(
-            Finding(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="recon",
-                finding_type=FindingType.ORGANIZATION,
-                title=org[:120],
-                description=f"Registrant organization for {apex or 'domain'}",
-                evidence=f"WHOIS registrant: {org}"[:300],
-                confidence=FindingConfidence.LIKELY,
-                source_tool="whois_lookup",
+                type=ObservationType.ORGANIZATION,
                 target=apex or target,
-                metadata={"organization": org, "domain": apex, "country": fields.get("registrant_country", "")},
+                source_tool="whois_lookup",
+                details={"organization": org, "domain": apex, "country": fields.get("registrant_country", "")},
                 tags=["whois", "organization", "registrant"],
             )
         )
@@ -2166,37 +2003,26 @@ def parse_whois(
     dnssec = (fields.get("dnssec") or "").lower()
     if dnssec and ("unsigned" in dnssec or "no" == dnssec.strip() or "not" in dnssec):
         out.append(
-            Finding(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="recon",
-                finding_type=FindingType.OBSERVATION,
-                title=f"DNSSEC not configured on {apex or 'domain'}",
-                description="Domain has no DNSSEC signing — enables DNS spoofing / cache poisoning.",
-                evidence=f"WHOIS DNSSEC: {fields.get('dnssec')}"[:200],
-                confidence=FindingConfidence.CONFIRMED,
-                claim_severity=ClaimSeverity.LOW,
-                source_tool="whois_lookup",
+                type=ObservationType.DNS_RECORD,
                 target=apex or target,
-                metadata={"dnssec": fields.get("dnssec"), "domain": apex},
+                source_tool="whois_lookup",
+                details={"kind": "dnssec_status", "dnssec": fields.get("dnssec"), "domain": apex, "signed": False},
                 tags=["whois", "dnssec", "misconfig"],
             )
         )
 
     for ns in nameservers[:12]:
         out.append(
-            Finding(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="recon",
-                finding_type=FindingType.DNS_RECORD,
-                title=f"{apex or 'domain'} NS -> {ns}",
-                description="Authoritative nameserver (WHOIS)",
-                evidence=f"nameserver {ns}",
-                confidence=FindingConfidence.CONFIRMED,
-                source_tool="whois_lookup",
+                type=ObservationType.DNS_RECORD,
                 target=apex or target,
-                metadata={"hostname": apex, "record_type": "ns", "ns": ns, "domain": apex},
+                source_tool="whois_lookup",
+                details={"hostname": apex, "record_type": "ns", "ns": ns, "domain": apex},
                 tags=["whois", "ns", "dns_record"],
             )
         )
@@ -2217,16 +2043,16 @@ def parse_dnsenum(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
-    """dnsenum resource records → subdomain/host/DNS findings.
+) -> list[Observation]:
+    """dnsenum resource records → subdomain/host/DNS observations.
 
     Captures the hostnames dnsenum surfaces (zone transfer, brute force, NS/MX)
     that previously fell into the generic unparsed bucket. A records under the
-    target become SUBDOMAIN + HOST(ip) findings so the graph builds the
-    host→ip edge; NS/MX/CNAME become DNS observations.
+    target become SUBDOMAIN + HOST(ip) observations so the graph builds the
+    host→ip edge; NS/MX/CNAME become DNS_RECORD observations.
     """
     apex = (target or "").strip().lower()
-    out: list[Finding] = []
+    out: list[Observation] = []
     seen: set[tuple[str, str]] = set()
     for raw in (stdout or "").splitlines():
         m = _DNSENUM_RR_RE.match(raw.strip())
@@ -2245,52 +2071,37 @@ def parse_dnsenum(
         if rtype in ("A", "AAAA"):
             if apex and (name == apex or name.endswith("." + apex)) and name != apex:
                 out.append(
-                    Finding(
+                    Observation(
                         engagement_id=engagement_id,
                         run_id=run_id,
-                        phase="recon",
-                        finding_type=FindingType.SUBDOMAIN,
-                        title=name,
-                        description=f"Subdomain from dnsenum ({rtype})",
-                        evidence=raw.strip()[:200],
-                        confidence=FindingConfidence.CONFIRMED,
-                        source_tool="dnsenum_scan",
+                        type=ObservationType.SUBDOMAIN,
                         target=apex or name,
-                        metadata={"hostname": name},
+                        source_tool="dnsenum_scan",
+                        details={"hostname": name},
                         tags=["dnsenum", "dns"],
                     )
                 )
             if _IP_RE.match(value):
                 out.append(
-                    Finding(
+                    Observation(
                         engagement_id=engagement_id,
                         run_id=run_id,
-                        phase="recon",
-                        finding_type=FindingType.HOST,
-                        title=value,
-                        description=f"DNS {rtype} for {name}",
-                        evidence=f"{name} -> {value}",
-                        confidence=FindingConfidence.CONFIRMED,
-                        source_tool="dnsenum_scan",
+                        type=ObservationType.HOST,
                         target=apex or name,
-                        metadata={"hostname": name, "ip": value, "record_type": rtype.lower()},
+                        source_tool="dnsenum_scan",
+                        details={"hostname": name, "ip": value, "record_type": rtype.lower()},
                         tags=["dnsenum", "dns_resolve"],
                     )
                 )
         else:
             out.append(
-                Finding(
+                Observation(
                     engagement_id=engagement_id,
                     run_id=run_id,
-                    phase="recon",
-                    finding_type=FindingType.DNS_RECORD,
-                    title=f"{name} {rtype} -> {value}",
-                    description=f"{rtype} record (dnsenum)",
-                    evidence=raw.strip()[:200],
-                    confidence=FindingConfidence.CONFIRMED,
-                    source_tool="dnsenum_scan",
+                    type=ObservationType.DNS_RECORD,
                     target=apex or name,
-                    metadata={"hostname": name, "record_type": rtype.lower(), rtype.lower(): value},
+                    source_tool="dnsenum_scan",
+                    details={"hostname": name, "record_type": rtype.lower(), rtype.lower(): value},
                     tags=["dnsenum", rtype.lower(), "dns_record"],
                 )
             )
@@ -2303,10 +2114,10 @@ def parse_dnsx_reverse(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
+) -> list[Observation]:
     """dnsx -ptr lines (``ip [PTR] [hostname]``) → hostname seeds from reverse DNS."""
     stdout = _ANSI_RE.sub("", stdout or "")
-    out: list[Finding] = []
+    out: list[Observation] = []
     seen: set[tuple[str, str]] = set()
     for line in stdout.splitlines():
         line = line.strip()
@@ -2325,18 +2136,13 @@ def parse_dnsx_reverse(
                 continue
             seen.add(key)
             out.append(
-                Finding(
+                Observation(
                     engagement_id=engagement_id,
                     run_id=run_id,
-                    phase="recon",
-                    finding_type=FindingType.SUBDOMAIN,
-                    title=host,
-                    description=f"Reverse DNS (PTR) hostname for {ip} — new recon seed",
-                    evidence=f"{ip} PTR {host}",
-                    confidence=FindingConfidence.LIKELY,
-                    source_tool="dnsx_reverse",
+                    type=ObservationType.SUBDOMAIN,
                     target=target or host,
-                    metadata={"hostname": host, "ip": ip, "record_type": "ptr"},
+                    source_tool="dnsx_reverse",
+                    details={"hostname": host, "ip": ip, "record_type": "ptr"},
                     tags=["reverse_dns", "ptr"],
                 )
             )
@@ -2354,15 +2160,15 @@ def parse_asn_enum(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
-    """ASN/netblock output (Team Cymru pipe rows or RADb route objects) → findings.
+) -> list[Observation]:
+    """ASN/netblock output (Team Cymru pipe rows or RADb route objects) → observations.
 
     Emits an ASN observation plus one observation per announced BGP prefix
-    (netblock), each carrying a ``cidr`` in metadata so downstream steps can
+    (netblock), each carrying a ``cidr`` in details so downstream steps can
     treat the range as a candidate asset sweep.
     """
     text = stdout or ""
-    out: list[Finding] = []
+    out: list[Observation] = []
 
     # RADb route-object format — one prefix per route:/route6: object.
     if re.search(r"(?im)^route6?:", text):
@@ -2376,19 +2182,13 @@ def parse_asn_enum(
                 return
             seen.add(route)
             out.append(
-                Finding(
+                Observation(
                     engagement_id=engagement_id,
                     run_id=run_id,
-                    phase="recon",
-                    finding_type=FindingType.OBSERVATION,
-                    title=f"Netblock {route}" + (f" ({origin})" if origin else ""),
-                    description=f"BGP prefix announced by {origin or 'ASN'}"
-                    + (f" — {descr}" if descr else "") + " — candidate asset range",
-                    evidence=f"route={route} origin={origin} descr={descr}"[:300],
-                    confidence=FindingConfidence.LIKELY,
-                    source_tool="asn_enum",
+                    type=ObservationType.ASN,
                     target=target or route,
-                    metadata={"cidr": route, "asn": origin, "role": "netblock"},
+                    source_tool="asn_enum",
+                    details={"cidr": route, "asn": origin, "role": "netblock", "descr": descr},
                     tags=["netblock", "asn", "asn_prefix"],
                 )
             )
@@ -2432,35 +2232,25 @@ def parse_asn_enum(
         country = cols[3] if len(cols) > 3 else ""
         as_name = cols[6] if len(cols) > 6 else (cols[-1] if len(cols) > 3 else "")
         out.append(
-            Finding(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="recon",
-                finding_type=FindingType.OBSERVATION,
-                title=f"{asn} {as_name}".strip(),
-                description=f"IP {ip} belongs to {asn} ({as_name}) — {country}".strip(),
-                evidence=line[:300],
-                confidence=FindingConfidence.CONFIRMED,
-                source_tool="asn_enum",
+                type=ObservationType.ASN,
                 target=target or ip,
-                metadata={"asn": asn, "as_name": as_name, "country": country, "ip": ip},
+                source_tool="asn_enum",
+                details={"asn": asn, "as_name": as_name, "country": country, "ip": ip},
                 tags=["asn", "attribution"],
             )
         )
         if _ASN_CIDR_RE.match(prefix):
             out.append(
-                Finding(
+                Observation(
                     engagement_id=engagement_id,
                     run_id=run_id,
-                    phase="recon",
-                    finding_type=FindingType.OBSERVATION,
-                    title=f"Netblock {prefix} ({asn})",
-                    description=f"BGP prefix for {ip} announced by {asn} — candidate asset range",
-                    evidence=line[:300],
-                    confidence=FindingConfidence.LIKELY,
-                    source_tool="asn_enum",
+                    type=ObservationType.ASN,
                     target=target or prefix,
-                    metadata={"cidr": prefix, "asn": asn, "role": "netblock"},
+                    source_tool="asn_enum",
+                    details={"cidr": prefix, "asn": asn, "role": "netblock"},
                     tags=["netblock", "asn"],
                 )
             )
@@ -2475,13 +2265,13 @@ def parse_autorecon(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
+) -> list[Observation]:
     """AutoRecon output (its per-service nmap files folded into stdout by the tool
-    wrapper) → port/service findings, reusing the nmap parser."""
-    findings = parse_nmap_text(
+    wrapper) → port/service observations, reusing the nmap parser."""
+    observations = parse_nmap_text(
         stdout, engagement_id=engagement_id, run_id=run_id, target=target
     )
-    relabeled = [f.model_copy(update={"source_tool": "autorecon_scan"}) for f in findings]
+    relabeled = [o.model_copy(update={"source_tool": "autorecon_scan"}) for o in observations]
     return relabeled or _unparsed_observation(
         stdout, tool_name="autorecon_scan", engagement_id=engagement_id, run_id=run_id, target=target
     )
@@ -2591,7 +2381,7 @@ async def parse_tool_output(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
+) -> list[Observation]:
     """Backward-compatible wrapper — delegates to global parser registry."""
     from osprey.services.parsers.registry import parse_tool_output as registry_parse
 

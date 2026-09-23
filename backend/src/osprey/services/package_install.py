@@ -13,7 +13,7 @@ from osprey.services.engagement_store import get_engagement_store
 from osprey.services.mcp_client import get_mcp_client
 from osprey.services.run_store import get_run_store
 from osprey.services.session_context import resolve_session
-from osprey.services.summary_agent import summarize_execution
+from osprey.services.summary_agent import extract_observations_for_execution
 
 logger = logging.getLogger(__name__)
 
@@ -173,12 +173,11 @@ async def execute_install_request(
             "pip uses --user --break-system-packages (PEP 668)."
         ),
     }
-    await summarize_execution(
+    await extract_observations_for_execution(
         response,
         engagement_id=session.engagement_id,
         run_id=session.run_id or "",
         target=eng.target,
-        force_raw_observation=True,
     )
     get_engagement_store().increment_tools_executed(session.engagement_id)
     return response

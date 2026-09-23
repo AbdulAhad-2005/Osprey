@@ -37,6 +37,7 @@ try:
         print_banner,
         print_error,
         print_info,
+        print_success,
     )
 except ModuleNotFoundError as exc:
     if exc.name in {"prompt_toolkit", "httpx", "rich", "dotenv", "pydantic"}:
@@ -249,6 +250,89 @@ def _run_prompt_noninteractive(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_scorecard(sc: dict) -> None:
+    modes = {
+        "false_positive_rate": "deterministic",
+        "validated_finding_count": "deterministic",
+        "confirmed_without_proof_count": "deterministic",
+        "attack_surface_coverage": "deterministic",
+        "redundant_action_count": "deterministic",
+        "missed_known_vuln_count": "deterministic",
+        "time_to_first_validated_finding_seconds": "llm-dependent",
+    }
+    print_info(f"Scorecard for '{sc['fixture_name']}' (run_id={sc['run_id']}, mode={sc['mode']})")
+    for field, mode in modes.items():
+        value = sc.get(field)
+        shown = "unmeasured" if value is None else value
+        print(f"  {field} [{mode}]: {shown}")
+    for note in sc.get("notes") or []:
+        print_info(f"  note: {note}")
+
+
+def _run_benchmark_noninteractive(args: argparse.Namespace) -> int:
+    """`osprey benchmark record|run|list|diff` — the CLI + CI entry point for
+    plans/harness/01-replay-benchmark-harness.md. Never opens the REPL."""
+    api_url = os.getenv("API_BASE_URL", "http://localhost:9000")
+    client = APIClient(base_url=api_url)
+    from cli.commands.slash import _api_error_text
+
+    try:
+        if args.benchmark_command == "list":
+            data = client.benchmark_list_fixtures()
+            fixtures = data.get("fixtures") or []
+            if not fixtures:
+                print_info("No fixtures yet. Run `osprey benchmark install-builtin` first.")
+            for name in fixtures:
+                print(f"  {name}")
+            return 0
+
+        if args.benchmark_command == "install-builtin":
+            data = client.benchmark_install_builtin_fixtures()
+            print_success(f"Installed: {', '.join(data.get('installed') or [])}")
+            return 0
+
+        if args.benchmark_command == "record":
+            if not args.engagement_id or not args.name:
+                print_error("Usage: osprey benchmark record --engagement-id ID --name NAME")
+                return 2
+            data = client.benchmark_record(
+                engagement_id=args.engagement_id, name=args.name, target=args.target or ""
+            )
+            print_success(f"Recorded {data['calls_recorded']} call(s) -> {data['path']}")
+            if data.get("degraded_fidelity_calls"):
+                print_error(
+                    f"{data['degraded_fidelity_calls']} call(s) recorded with degraded fidelity "
+                    "(no live Kali artifact reachable) — see backend logs."
+                )
+            return 0
+
+        if args.benchmark_command == "run":
+            if not args.fixture:
+                print_error("Usage: osprey benchmark run --fixture NAME")
+                return 2
+            sc = client.benchmark_run(args.fixture)
+            _print_scorecard(sc)
+            return 0
+
+        if args.benchmark_command == "diff":
+            if not args.baseline or not args.candidate:
+                print_error("Usage: osprey benchmark diff --baseline RUN_ID --candidate RUN_ID")
+                return 2
+            data = client.benchmark_diff(args.baseline, args.candidate)
+            print_info(f"Diff {args.baseline} -> {args.candidate}:")
+            for field, d in data["deltas"].items():
+                print(f"  {field}: {d['baseline']} -> {d['candidate']} (delta={d['delta']})")
+            return 0
+
+        print_error("Usage: osprey benchmark {list|install-builtin|record|run|diff}")
+        return 2
+    except Exception as exc:  # noqa: BLE001
+        print_error(_api_error_text(exc))
+        return 1
+    finally:
+        client.close()
+
+
 def main() -> None:
     # Load .env so API_BASE_URL and other env vars are available
     load_dotenv()
@@ -272,11 +356,29 @@ def main() -> None:
     run_parser.add_argument("--target", help="Bind or reuse an engagement before sending the prompt")
     run_parser.add_argument("--force-new", action="store_true", help="Force a new engagement for --target")
 
+    bench_parser = subparsers.add_parser(
+        "benchmark", help="Replay & benchmark harness (plans/harness/01-...) — record/run/diff fixtures"
+    )
+    bench_sub = bench_parser.add_subparsers(dest="benchmark_command")
+    bench_sub.add_parser("list", help="List available fixtures")
+    bench_sub.add_parser("install-builtin", help="Write the built-in synthetic fixtures to disk")
+    bench_record = bench_sub.add_parser("record", help="Record a live/recent engagement as a fixture")
+    bench_record.add_argument("--engagement-id", dest="engagement_id", required=True)
+    bench_record.add_argument("--name", required=True)
+    bench_record.add_argument("--target", default="")
+    bench_run = bench_sub.add_parser("run", help="Replay a fixture and print its scorecard")
+    bench_run.add_argument("--fixture", required=True)
+    bench_diff = bench_sub.add_parser("diff", help="Diff two scorecards by run_id")
+    bench_diff.add_argument("--baseline", required=True)
+    bench_diff.add_argument("--candidate", required=True)
+
     args = parser.parse_args()
     if args.command == "scan":
         sys.exit(_run_scan_noninteractive(args))
     if args.command == "run":
         sys.exit(_run_prompt_noninteractive(args))
+    if args.command == "benchmark":
+        sys.exit(_run_benchmark_noninteractive(args))
 
     api_url = os.getenv("API_BASE_URL", "http://localhost:9000")
     client = APIClient(base_url=api_url)

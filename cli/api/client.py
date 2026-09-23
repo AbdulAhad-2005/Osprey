@@ -255,6 +255,63 @@ class APIClient:
         resp.raise_for_status()
         return resp.json()
 
+    # --- FP-cache (plans/harness/04-learning-fp-cache.md) ---
+    def mark_finding_fp(self, finding_id: str, *, reason: str = "") -> dict[str, Any]:
+        resp = self._client.post(
+            self._url(f"/api/v1/findings/{finding_id}/fp"), params={"reason": reason}
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def list_fp_patterns(self) -> dict[str, Any]:
+        resp = self._client.get(self._url("/api/v1/findings/fp/patterns"))
+        resp.raise_for_status()
+        return resp.json()
+
+    def remove_fp_pattern(self, pattern_id: str) -> dict[str, Any]:
+        resp = self._client.delete(self._url(f"/api/v1/findings/fp/patterns/{pattern_id}"))
+        resp.raise_for_status()
+        return resp.json()
+
+    def list_suppressed_promotions(self, engagement_id: str) -> dict[str, Any]:
+        resp = self._client.get(
+            self._url("/api/v1/findings/fp/suppressed"), params={"engagement_id": engagement_id}
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    # --- Benchmark harness (plans/harness/01-replay-benchmark-harness.md) ---
+    def benchmark_list_fixtures(self) -> dict[str, Any]:
+        resp = self._client.get(self._url("/api/v1/benchmark/fixtures"))
+        resp.raise_for_status()
+        return resp.json()
+
+    def benchmark_install_builtin_fixtures(self) -> dict[str, Any]:
+        resp = self._client.post(self._url("/api/v1/benchmark/fixtures/install-builtin"))
+        resp.raise_for_status()
+        return resp.json()
+
+    def benchmark_record(self, *, engagement_id: str, name: str, target: str = "") -> dict[str, Any]:
+        resp = self._client.post(
+            self._url("/api/v1/benchmark/record"),
+            json={"engagement_id": engagement_id, "name": name, "target": target},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def benchmark_run(self, fixture: str) -> dict[str, Any]:
+        resp = self._client.post(self._url("/api/v1/benchmark/run"), json={"fixture": fixture})
+        resp.raise_for_status()
+        return resp.json()
+
+    def benchmark_diff(self, baseline_run_id: str, candidate_run_id: str) -> dict[str, Any]:
+        resp = self._client.get(
+            self._url("/api/v1/benchmark/diff"),
+            params={"baseline": baseline_run_id, "candidate": candidate_run_id},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     # --- Operator profile (the human operator's preferences) ---
     def operator_profile(self) -> dict[str, Any]:
         resp = self._client.get(self._url("/api/v1/capabilities/operator-profile"))

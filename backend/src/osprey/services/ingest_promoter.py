@@ -1,4 +1,11 @@
-"""Universal stdout ingest — promotes structured findings from ANY tool output."""
+"""Universal stdout ingest — extracts structural Observations from ANY tool output.
+
+Structural extraction only, per plans/harness/02-evidence-and-observation-layer.md:
+this used to mint Findings with a confidence/severity baked into the YAML
+rule. It no longer does — every rule now only says WHAT to extract (a header,
+a port, a technology name) and the earned-finding pipeline (Plan 03) decides
+what, if anything, that fact earns.
+"""
 
 from __future__ import annotations
 
@@ -7,12 +14,7 @@ import re
 from functools import lru_cache
 from typing import Any
 
-from osprey.schemas.finding import (
-    ClaimSeverity,
-    Finding,
-    FindingConfidence,
-    FindingType,
-)
+from osprey.schemas.observation import Observation, ObservationType
 from osprey.services.config_loader import read_config
 
 logger = logging.getLogger(__name__)
@@ -28,13 +30,7 @@ _ANSI_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 # Rules that should only fire when the source tool has NO dedicated parser are
 # marked `applies_when: no_parser` in config/ingest_rules.yaml — the config is
 # the single source of truth for suppression, so adding a new parser-owned rule
-# never means also editing a Python set here. These are the loose "structural
-# guessing" regexes (reconstructing ports/services/tech/URLs/certs from free
-# text) plus a few whose extraction a parser does better: valuable for
-# platform_shell / platform_script / nikto output, garbage duplicated over
-# output a precise parser already structured (e.g. "nginx" inside a JS bundle as
-# a "Service banner"). Header/CORS/cookie rules carry no flag, so they stay on
-# for every tool (parsers rarely extract those).
+# never means also editing a Python set here.
 
 
 def _tool_has_parser(source_tool: str) -> bool:
@@ -64,9 +60,9 @@ _IP_LITERAL_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
 def _port_from_match(m: "re.Match[str]") -> str:
     """PORT/SERVICE rules in ingest_rules.yaml (open_port_line, nmap_service_version)
     both capture the port number as group 1 — the convention their patterns already
-    follow. Without this, PORT/SERVICE findings from the universal ingest rules carry
-    no port metadata, so engagement_graph.py's auto-skeleton edge builder (which
-    requires it) silently skips them — a guaranteed orphan node, not a real gap."""
+    follow. Without this, PORT/SERVICE observations from the universal ingest rules
+    carry no port detail, so downstream consumers requiring it silently skip them —
+    a guaranteed orphan, not a real gap."""
     try:
         g1 = m.group(1)
     except (IndexError, re.error):
@@ -90,20 +86,6 @@ def looks_like_spa_html(text: str) -> bool:
     return bool(_SPA_MARKERS.search(sample))
 
 
-def is_strong_http_evidence(text: str, *, path_hint: str = "") -> bool:
-    """True when body/headers prove a real service — not an HTML catch-all."""
-    blob = text or ""
-    if _JSON_CT.search(blob) and "{" in blob:
-        return True
-    if looks_like_spa_html(blob) and _PATH_API.search(path_hint or blob):
-        return False
-    if len(blob.strip()) >= 80 and not looks_like_spa_html(blob):
-        return True
-    lower = blob.lower()
-    markers = ("server:", "www-authenticate", "set-cookie:", "openssh", "banner", "x-powered-by")
-    return any(m in lower for m in markers) and len(blob.strip()) >= 24
-
-
 def apply_ingest_rules(
     stdout: str,
     stderr: str = "",
@@ -113,9 +95,9 @@ def apply_ingest_rules(
     source_tool: str = "",
     target: str = "",
     persist: bool = True,
-    max_findings: int = 40,
-) -> list[Finding]:
-    """Run YAML rules over combined output; optionally persist + graph ingest."""
+    max_observations: int = 40,
+) -> list[Observation]:
+    """Run YAML rules over combined output; optionally persist to the observation store."""
     if not engagement_id:
         return []
     blob = "\n".join(x for x in (stdout or "", stderr or "") if x)
@@ -125,11 +107,11 @@ def apply_ingest_rules(
     # Strip ANSI escape sequences so regex rules match clean text.
     blob = _ANSI_RE.sub("", blob)
 
-    # Hard SPA catch-all demotion signal for API-looking paths in target/URL
+    # Hard SPA catch-all signal for API-looking paths in target/URL
     spa = looks_like_spa_html(blob)
     path_hint = target or ""
 
-    findings: list[Finding] = []
+    observations: list[Observation] = []
     seen_titles: set[str] = set()
 
     # A tool with its own parser owns its structured extraction — the loose
@@ -137,7 +119,7 @@ def apply_ingest_rules(
     skip_structural = _tool_has_parser(source_tool)
 
     for rule in _load_rules():
-        if len(findings) >= max_findings:
+        if len(observations) >= max_observations:
             break
         if skip_structural and rule.get("applies_when") == "no_parser":
             continue
@@ -163,7 +145,7 @@ def apply_ingest_rules(
 
         matches = list(rx.finditer(blob))[:8]
         for m in matches:
-            if len(findings) >= max_findings:
+            if len(observations) >= max_observations:
                 break
             title = _render_title(rule.get("title_template") or "{match}", m)
             title = title[:200]
@@ -171,86 +153,68 @@ def apply_ingest_rules(
                 continue
             seen_titles.add(title)
 
-            confidence = _confidence(rule.get("confidence", "likely"))
-            sev = _sev(rule.get("claim_severity", "info"))
             tags = list(rule.get("tags") or [])
             raw_snip = m.group(0)[:800]
 
-            # SPA false CRITICAL killer
+            # SPA false-positive marker — a fact about the response shape, not
+            # a confidence downgrade (there is no confidence to downgrade here).
             if spa and _PATH_API.search(path_hint + title + raw_snip):
                 if "spa_catchall_suspect" not in tags:
                     tags.append("spa_catchall_suspect")
-                confidence = FindingConfidence.HYPOTHESIS
-                sev = ClaimSeverity.INFO
 
-            # Keep confirmed for real fingerprints; demote weak HTML-only matches
-            if confidence == FindingConfidence.CONFIRMED and not is_strong_http_evidence(blob, path_hint=path_hint):
-                if "banner" not in tags and "product_hint" not in tags:
-                    confidence = FindingConfidence.LIKELY
-
-            ft = _ftype(rule.get("finding_type", "observation"))
-            meta: dict[str, Any] = {"ingest_rule": rule.get("id"), "target": target}
-            if ft == FindingType.TECHNOLOGY:
+            otype = _otype(rule.get("type") or rule.get("finding_type") or "http_response")
+            details: dict[str, Any] = {"ingest_rule": rule.get("id"), "target": target, "raw": raw_snip}
+            if otype == ObservationType.TECHNOLOGY:
                 # tech_dispatch.yaml signals (WordPress/Joomla/Drupal/... follow-ups)
-                # match on metadata["technology"] via substring — without this,
-                # every technology-type finding from the generic ingest rules
+                # match on details["technology"] via substring — without this,
+                # every technology-type observation from the generic ingest rules
                 # (WhatWeb/Wappalyzer/version-banner/etc.) is invisible to dispatch.
-                meta["technology"] = title
-            if ft in (FindingType.PORT, FindingType.SERVICE):
+                details["technology"] = title
+            if otype in (ObservationType.PORT, ObservationType.SERVICE):
                 port_val = _port_from_match(m)
                 if port_val:
-                    meta["port"] = port_val
+                    details["port"] = port_val
                 host_val = (target or "").strip()
                 if host_val:
-                    meta["ip" if _IP_LITERAL_RE.match(host_val) else "hostname"] = host_val
-            findings.append(
-                Finding(
+                    details["ip" if _IP_LITERAL_RE.match(host_val) else "hostname"] = host_val
+            observations.append(
+                Observation(
                     engagement_id=engagement_id,
                     run_id=run_id or "",
-                    finding_type=ft,
-                    title=title,
-                    description=f"Auto-ingest rule={rule.get('id')} via {source_tool}",
-                    evidence=raw_snip,
-                    confidence=confidence,
-                    claim_severity=sev,
-                    source_tool=source_tool or "ingest_promoter",
+                    type=otype,
                     target=target or "",
-                    raw_data=raw_snip,
+                    source_tool=source_tool or "ingest_promoter",
+                    details={**details, "title": title},
                     tags=tags,
-                    metadata=meta,
                 )
             )
 
-    if spa and _PATH_API.search(path_hint) and not any("spa_catchall_suspect" in (f.tags or []) for f in findings):
-        findings.append(
-            Finding(
+    if spa and _PATH_API.search(path_hint) and not any("spa_catchall_suspect" in (o.tags or []) for o in observations):
+        observations.append(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id or "",
-                finding_type=FindingType.OBSERVATION,
-                title="SPA/HTML catch-all suspected for API-like path — verify JSON body before CRITICAL",
-                description="Universal evidence law: HTML shell on /api|/swagger|/graphql is not an open API.",
-                evidence=blob[:400],
-                confidence=FindingConfidence.HYPOTHESIS,
-                claim_severity=ClaimSeverity.INFO,
-                source_tool=source_tool or "ingest_promoter",
+                type=ObservationType.HTTP_RESPONSE,
                 target=target or "",
-                raw_data=blob[:400],
+                source_tool=source_tool or "ingest_promoter",
+                details={
+                    "title": "SPA/HTML catch-all suspected for API-like path — verify JSON body before treating as an open API",
+                    "raw": blob[:400],
+                },
                 tags=["auto_ingest", "spa_catchall_suspect"],
             )
         )
 
-    if persist and findings:
+    if persist and observations:
         from osprey.services.engagement_graph import get_engagement_graph
-        from osprey.services.findings_store import get_findings_store
+        from osprey.services.observation_store import get_observation_store
 
-        store = get_findings_store()
-        store.add_many(findings)
-        get_engagement_graph().ingest_many(findings)
-        # Cross-finding correlation is READ-ONLY and on-demand now (see
-        # finding_correlator.find_correlations / /hybrid/correlate): the LLM
-        # asks for suggestions and commits the useful ones itself. Nothing is
-        # auto-written into the graph on ingest anymore.
-    return findings
+        result = get_observation_store().record_many(observations)
+        try:
+            get_engagement_graph().ingest_many_observations(result.observations)
+        except Exception:  # noqa: BLE001
+            logger.debug("Graph ingest skipped for ingest_promoter observations", exc_info=True)
+    return observations
 
 
 def _render_title(template: str, m: re.Match[str]) -> str:
@@ -260,22 +224,8 @@ def _render_title(template: str, m: re.Match[str]) -> str:
     return " ".join(title.split())
 
 
-def _confidence(raw: str) -> FindingConfidence:
+def _otype(raw: str) -> ObservationType:
     try:
-        return FindingConfidence(str(raw).lower())
-    except Exception:
-        return FindingConfidence.LIKELY
-
-
-def _sev(raw: str) -> ClaimSeverity:
-    try:
-        return ClaimSeverity(str(raw).lower())
-    except Exception:
-        return ClaimSeverity.INFO
-
-
-def _ftype(raw: str) -> FindingType:
-    try:
-        return FindingType(str(raw).lower())
-    except Exception:
-        return FindingType.OBSERVATION
+        return ObservationType(str(raw).lower())
+    except ValueError:
+        return ObservationType.HTTP_RESPONSE

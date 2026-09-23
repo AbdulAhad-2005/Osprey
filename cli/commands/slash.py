@@ -599,6 +599,71 @@ def handle_findings(args: list[str], client: "APIClient") -> None:
     print_findings_grouped(data)
 
 
+def handle_finding(args: list[str], client: "APIClient") -> None:
+    """Act on one finding by id — currently just false-positive marking.
+
+    Usage: /finding fp <id> [reason...]
+    plans/harness/04-learning-fp-cache.md: appends a pattern learned from
+    this finding's (type, title) and retracts it from the current
+    engagement. Every future promotion matching that pattern — any
+    engagement, forever — is suppressed automatically. /fp list to review.
+    """
+    if not args or args[0].lower() != "fp" or len(args) < 2:
+        print_info("Usage: /finding fp <id> [reason...]")
+        return
+    finding_id = args[1]
+    reason = " ".join(args[2:]).strip()
+    try:
+        result = client.mark_finding_fp(finding_id, reason=reason)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            print_error(f"No finding with id '{finding_id}'.")
+        else:
+            print_error(f"Mark-FP failed: {exc}")
+        return
+    pattern = result.get("pattern") or {}
+    print_success(
+        f"Retracted finding {finding_id}. Learned FP-cache pattern "
+        f"[{pattern.get('id')}] scope={pattern.get('target_glob')} "
+        f"title_contains='{pattern.get('title_contains')}' — suppresses matching "
+        "candidates on every future promotion. /fp list to review."
+    )
+
+
+def handle_fp(args: list[str], client: "APIClient") -> None:
+    """FP-cache pattern audit — plans/harness/04-learning-fp-cache.md Step 4.
+
+    Usage: /fp list | /fp remove <pattern_id>
+    A bad mark shouldn't hide real findings forever — removing a pattern
+    re-enables promotion for matching candidates on the next scan/replay.
+    """
+    sub = (args[0].lower() if args else "list")
+    if sub == "list":
+        data = client.list_fp_patterns()
+        patterns = data.get("patterns", [])
+        if not patterns:
+            print_info("No FP-cache patterns yet. Mark noise with /finding fp <id> [reason].")
+            return
+        print_info(f"FP-cache patterns ({len(patterns)}):")
+        for p in patterns:
+            print(
+                f"  [{p['id']}] scope={p['target_glob']} type={p.get('finding_type') or 'any'} "
+                f"title_contains='{p['title_contains']}' reason='{p.get('reason', '')}'"
+            )
+    elif sub == "remove" and len(args) > 1:
+        try:
+            client.remove_fp_pattern(args[1])
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                print_error(f"No FP pattern with id '{args[1]}'.")
+            else:
+                print_error(f"Remove failed: {exc}")
+            return
+        print_success(f"Removed pattern {args[1]} — matching promotions are no longer suppressed.")
+    else:
+        print_info("Usage: /fp list | /fp remove <pattern_id>")
+
+
 def handle_report(args: list[str], client: "APIClient") -> None:
     """Write a human-readable recon report to a Markdown file: seed domain ->
     sister/associated domains -> subdomains (nested) -> IPs -> ports/services/
@@ -1028,6 +1093,8 @@ SLASH_COMMANDS: dict[str, tuple[str, "callable"]] = {
     "/fast-scan": ("Deterministic no-LLM scan: whois+subs+SANs+IPs+CDN-classify+httpx+nmap+takeover", handle_fast_scan),
     "/engage": ("Manage engagements", handle_engagements),
     "/findings": ("Show findings", handle_findings),
+    "/finding": ("Act on one finding by id (fp <id> [reason])", handle_finding),
+    "/fp": ("FP-cache patterns: list | remove <id>", handle_fp),
     "/report": ("Write a Markdown recon report to ./reports/", handle_report),
     "/tool": ("Show or expand tool-call output", handle_tool),
     "/output": ("Alias for /tool", handle_tool),

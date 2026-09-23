@@ -10,15 +10,20 @@ from sqlalchemy import delete as sqlalchemy_delete
 from sqlalchemy.orm import Session
 
 from osprey.db.session import SessionLocal
+from osprey.models.attack_path import AttackPathRow
 from osprey.models.engagement import EngagementRow
+from osprey.models.evidence import EvidenceRow
 from osprey.models.finding import (
     AssetEdgeRow,
     AssetNodeRow,
     FindingOccurrenceRow,
     FindingRow,
 )
+from osprey.models.observation import ObservationOccurrenceRow, ObservationRow
+from osprey.models.reasoning import HypothesisRow, QuestionRow
 from osprey.models.recovery_observation import RecoveryObservationRow
 from osprey.models.run import RunRow
+from osprey.models.suppressed_promotion import SuppressedPromotionRow
 from osprey.models.tool_coverage import ToolCoverageRow
 from osprey.schemas.engagement import (
     Engagement,
@@ -173,6 +178,13 @@ class EngagementStore:
                 db.execute(sqlalchemy_delete(RunRow).where(RunRow.engagement_id == engagement_id))
                 db.execute(sqlalchemy_delete(ToolCoverageRow).where(ToolCoverageRow.engagement_id == engagement_id))
                 db.execute(sqlalchemy_delete(RecoveryObservationRow).where(RecoveryObservationRow.engagement_id == engagement_id))
+                db.execute(sqlalchemy_delete(ObservationOccurrenceRow).where(ObservationOccurrenceRow.engagement_id == engagement_id))
+                db.execute(sqlalchemy_delete(ObservationRow).where(ObservationRow.engagement_id == engagement_id))
+                db.execute(sqlalchemy_delete(EvidenceRow).where(EvidenceRow.engagement_id == engagement_id))
+                db.execute(sqlalchemy_delete(SuppressedPromotionRow).where(SuppressedPromotionRow.engagement_id == engagement_id))
+                db.execute(sqlalchemy_delete(AttackPathRow).where(AttackPathRow.engagement_id == engagement_id))
+                db.execute(sqlalchemy_delete(QuestionRow).where(QuestionRow.engagement_id == engagement_id))
+                db.execute(sqlalchemy_delete(HypothesisRow).where(HypothesisRow.engagement_id == engagement_id))
                 db.delete(row)
                 db.commit()
                 return {
@@ -209,6 +221,13 @@ class EngagementStore:
                 db.execute(sqlalchemy_delete(RunRow).where(RunRow.engagement_id.in_(engagement_ids)))
                 db.execute(sqlalchemy_delete(ToolCoverageRow).where(ToolCoverageRow.engagement_id.in_(engagement_ids)))
                 db.execute(sqlalchemy_delete(RecoveryObservationRow).where(RecoveryObservationRow.engagement_id.in_(engagement_ids)))
+                db.execute(sqlalchemy_delete(ObservationOccurrenceRow).where(ObservationOccurrenceRow.engagement_id.in_(engagement_ids)))
+                db.execute(sqlalchemy_delete(ObservationRow).where(ObservationRow.engagement_id.in_(engagement_ids)))
+                db.execute(sqlalchemy_delete(EvidenceRow).where(EvidenceRow.engagement_id.in_(engagement_ids)))
+                db.execute(sqlalchemy_delete(SuppressedPromotionRow).where(SuppressedPromotionRow.engagement_id.in_(engagement_ids)))
+                db.execute(sqlalchemy_delete(AttackPathRow).where(AttackPathRow.engagement_id.in_(engagement_ids)))
+                db.execute(sqlalchemy_delete(QuestionRow).where(QuestionRow.engagement_id.in_(engagement_ids)))
+                db.execute(sqlalchemy_delete(HypothesisRow).where(HypothesisRow.engagement_id.in_(engagement_ids)))
 
                 for row in rows:
                     db.delete(row)

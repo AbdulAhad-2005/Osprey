@@ -58,6 +58,11 @@ class FindingRow(Base):
     extra_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     raw_data: Mapped[str] = mapped_column(Text, nullable=False, default="")
     notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Earned-finding provenance (plans/harness/03-earned-finding-pipeline.md).
+    observation_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    source_tools_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    evidence_records_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    evidence_summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
     occurrence_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     first_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -114,11 +119,24 @@ class AssetNodeRow(Base):
     asset_type: Mapped[str] = mapped_column(String(64), nullable=False)
     label: Mapped[str] = mapped_column(String(1024), nullable=False)
     run_id: Mapped[str] = mapped_column(String(12), nullable=False, default="")
-    # Provenance + quality, at parity with edges and findings. Only strengthens
-    # (never downgrades) as stronger observations of the same node arrive —
-    # see engagement_graph._CONFIDENCE_RANK.
+    # First tool that saw this node (display only — see source_tools_json for
+    # the full accumulated set confidence is computed from).
     source_tool: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    # Recomputed fresh from the current observation set on every ingest
+    # (plans/harness/05-world-model-and-attack-paths.md Step 1) — never
+    # ratcheted from a remembered prior value, so it can fall as well as rise.
     confidence: Mapped[str] = mapped_column(String(32), nullable=False, default="likely")
+    # Every observation_id that asserts this node exists — the evidence
+    # backing, never empty for a node built by ingest_observation (operator-
+    # asserted nodes from ensure_node/operator_link are the disclosed
+    # exception — see engagement_graph.py's module docstring).
+    observation_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    source_tools_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    # Per-slot conflicting values (plans/harness/05-... Step 2a), e.g.
+    # {"service": [{"value": "nginx", "observation_id": "...", "source_tool": "nmap_service_scan"},
+    #              {"value": "Apache", "observation_id": "...", "source_tool": "whatweb_scan"}]}
+    # — kept, never silently overwritten, when two observations disagree.
+    conflicts_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -154,6 +172,9 @@ class AssetEdgeRow(Base):
     metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     run_id: Mapped[str] = mapped_column(String(12), nullable=False, default="")
     source_tool: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    # The observation(s) that assert this edge (plans/harness/05-world-model-
+    # and-attack-paths.md Step 1) — "no edge exists without evidence backing".
+    observation_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
