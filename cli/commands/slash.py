@@ -602,19 +602,26 @@ def handle_findings(args: list[str], client: "APIClient") -> None:
 def handle_finding(args: list[str], client: "APIClient") -> None:
     """Act on one finding by id — currently just false-positive marking.
 
-    Usage: /finding fp <id> [reason...]
+    Usage: /finding fp <id> [--scope <glob>] [reason...]
     plans/harness/04-learning-fp-cache.md: appends a pattern learned from
     this finding's (type, title) and retracts it from the current
-    engagement. Every future promotion matching that pattern — any
-    engagement, forever — is suppressed automatically. /fp list to review.
+    engagement. By default the pattern scopes to THIS finding's own target
+    only — it cannot suppress the same-titled signal on a different host by
+    accident. Pass --scope "*" (or a glob like "*.internal.corp") only when
+    you deliberately want to widen it. /fp list to review.
     """
     if not args or args[0].lower() != "fp" or len(args) < 2:
-        print_info("Usage: /finding fp <id> [reason...]")
+        print_info('Usage: /finding fp <id> [--scope "<glob>"] [reason...]')
         return
     finding_id = args[1]
-    reason = " ".join(args[2:]).strip()
+    rest = list(args[2:])
+    target_glob = ""
+    if rest and rest[0] == "--scope" and len(rest) >= 2:
+        target_glob = rest[1]
+        rest = rest[2:]
+    reason = " ".join(rest).strip()
     try:
-        result = client.mark_finding_fp(finding_id, reason=reason)
+        result = client.mark_finding_fp(finding_id, reason=reason, target_glob=target_glob)
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
             print_error(f"No finding with id '{finding_id}'.")

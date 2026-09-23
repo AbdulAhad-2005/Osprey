@@ -15,8 +15,12 @@ from pydantic import BaseModel, Field
 
 class FpPattern(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
-    # "*" (cross-engagement, the default — a noise pattern on nginx is noise
-    # everywhere) or an fnmatch glob to scope the mark to one target.
+    # An fnmatch glob scoping which targets this pattern applies to. The raw
+    # store default is "*" (match anything), but the operator-facing entry
+    # point — services.finding_pipeline.mark_false_positive — never uses
+    # that default; it scopes to the finding's own target unless the caller
+    # explicitly widens it, so a noise judgment on one host can't silently
+    # suppress a real finding on another.
     target_glob: str = "*"
     # Empty = matches any finding type.
     finding_type: str = ""

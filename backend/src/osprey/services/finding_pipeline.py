@@ -242,7 +242,7 @@ def mark_false_positive(
     *,
     reason: str = "",
     marked_by: str = "operator",
-    target_glob: str = "*",
+    target_glob: str = "",
 ) -> FpPattern:
     """Learn a noise pattern once, apply it forever — plans/harness/04-
     learning-fp-cache.md Step 3. Appends a pattern keyed on the finding's own
@@ -250,12 +250,20 @@ def mark_false_positive(
     engagement. The pattern — not this deletion — is what prevents the same
     signal from being promoted again on a future replay/scan; the underlying
     Observations/Evidence are never touched (Step 4).
+
+    target_glob scopes the pattern. Left empty (the default), it scopes to
+    THIS finding's own target only — marking noise on host A can never
+    suppress the same-titled signal on host B by accident. An operator who
+    deliberately knows a pattern is noise everywhere (e.g. a scanner's own
+    banner) passes an explicit glob ("*" or "*.internal.corp") to widen it;
+    that is an opt-in, not a default.
     """
     finding = get_findings_store().get(finding_id)
     if finding is None:
         raise MarkFalsePositiveError(f"no finding with id '{finding_id}'")
+    scope = (target_glob or "").strip() or finding.target or "*"
     pattern = fp_cache.add_pattern(
-        target_glob=target_glob,
+        target_glob=scope,
         finding_type=finding.finding_type.value,
         title_contains=finding.title,
         reason=reason,

@@ -256,9 +256,10 @@ class APIClient:
         return resp.json()
 
     # --- FP-cache (plans/harness/04-learning-fp-cache.md) ---
-    def mark_finding_fp(self, finding_id: str, *, reason: str = "") -> dict[str, Any]:
+    def mark_finding_fp(self, finding_id: str, *, reason: str = "", target_glob: str = "") -> dict[str, Any]:
         resp = self._client.post(
-            self._url(f"/api/v1/findings/{finding_id}/fp"), params={"reason": reason}
+            self._url(f"/api/v1/findings/{finding_id}/fp"),
+            params={"reason": reason, "target_glob": target_glob},
         )
         resp.raise_for_status()
         return resp.json()

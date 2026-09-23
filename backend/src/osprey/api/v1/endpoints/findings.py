@@ -216,14 +216,18 @@ def promote_observations_endpoint(
 
 
 @router.post("/{finding_id}/fp")
-def mark_false_positive_endpoint(finding_id: str, reason: str = Query(default="")) -> dict[str, Any]:
+def mark_false_positive_endpoint(
+    finding_id: str,
+    reason: str = Query(default=""),
+    target_glob: str = Query(default="", description="Scope the pattern; empty defaults to this finding's own target"),
+) -> dict[str, Any]:
     """Mark a finding as noise — plans/harness/04-learning-fp-cache.md Step 3.
     Appends an FP-cache pattern and retracts the finding from this
     engagement; every future promotion of the same pattern is suppressed."""
     from osprey.services.finding_pipeline import MarkFalsePositiveError, mark_false_positive
 
     try:
-        pattern = mark_false_positive(finding_id, reason=reason)
+        pattern = mark_false_positive(finding_id, reason=reason, target_glob=target_glob)
     except MarkFalsePositiveError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"pattern": pattern.model_dump(mode="json"), "retracted_finding_id": finding_id}

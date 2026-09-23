@@ -1862,18 +1862,20 @@ def platform_promote_observations(engagement_id: str = "") -> str:
 
 
 @mcp.tool()
-def platform_mark_false_positive(finding_id: str, reason: str = "", target_glob: str = "*") -> str:
+def platform_mark_false_positive(finding_id: str, reason: str = "", target_glob: str = "") -> str:
     """
     Mark a finding as noise, once, forever — plans/harness/04-learning-fp-
     cache.md. Appends an FP-cache pattern keyed on the finding's own type and
     title, and retracts the finding from THIS engagement. Every future
     platform_file_finding / platform_promote_observations call on a matching
-    candidate (any engagement, unless target_glob scopes it) is suppressed
-    automatically — a human judgment captured once, applied forever.
+    candidate is suppressed automatically — a human judgment captured once,
+    applied forever.
 
-    target_glob: "*" (default) suppresses this pattern cross-engagement — a
-    noise pattern on nginx is noise everywhere. Pass a glob (e.g.
-    "*.internal.corp") to scope the mark to matching targets only.
+    target_glob: left empty (the default), the pattern scopes to THIS
+    finding's own target only — marking noise on one host can never suppress
+    the same-titled signal on a different host by accident. Pass "*" (noise
+    everywhere, e.g. a scanner's own banner) or a glob like "*.internal.corp"
+    only when you deliberately want to widen it — that's an opt-in.
 
     The pattern is advisory metadata, never evidence deletion — the
     underlying Observations stay intact; platform_fp_list shows what's
@@ -1883,7 +1885,7 @@ def platform_mark_false_positive(finding_id: str, reason: str = "", target_glob:
         eid, _label = _resolve_engagement("")
         resp = _client().post(
             f"/api/v1/findings/{finding_id}/fp",
-            params={"reason": reason.strip()},
+            params={"reason": reason.strip(), "target_glob": target_glob.strip()},
             timeout=min(30.0, HTTP_TIMEOUT),
         )
         if resp.status_code == 404:
