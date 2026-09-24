@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from alembic import command
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from osprey.db import migrate
 from osprey.db.base import Base
 from sqlalchemy import create_engine, inspect, text
@@ -12,13 +14,23 @@ def _sqlite_engine(tmp_path, name: str):
     return create_engine(f"sqlite:///{(tmp_path / name).as_posix()}")
 
 
+def _expected_head() -> str:
+    """The single current head, derived from the migration scripts — never
+    hardcoded, so adding a migration (or a merge revision) doesn't break this
+    test. ``get_current_head()`` also raises if the graph has multiple heads,
+    so this doubles as a single-head guard."""
+    cfg = Config(str(migrate._BACKEND_ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(migrate._BACKEND_ROOT / "alembic"))
+    return ScriptDirectory.from_config(cfg).get_current_head()
+
+
 def _assert_at_head(engine) -> None:
     with engine.begin() as connection:
         version = connection.execute(
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
         inspector = inspect(connection)
-        assert version == "0014_durable_audit_entries"
+        assert version == _expected_head()
         assert "audit_entries" in inspector.get_table_names()
         scan_columns = {
             column["name"] for column in inspector.get_columns("scan_runs")

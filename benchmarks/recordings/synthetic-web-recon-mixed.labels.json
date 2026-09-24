@@ -1,0 +1,18 @@
+{
+  "fixture_name": "synthetic-web-recon-mixed",
+  "noise": [
+    {
+      "tool_name": "script:probe",
+      "title_contains": "internal-api.bench-target.test/legacy-status",
+      "reason": "Bare HTTP 501 with no corroboration — freeform_probe.py's _ERROR_STATUSES omits 501, so this is promoted to a CONFIRMED URL finding by the current pipeline with zero real evidence."
+    }
+  ],
+  "planted_vulns": [
+    {
+      "tool_name": "script:probe",
+      "target": "bench-target.test",
+      "title_contains": "CVE-2016-6210",
+      "description": "Explicit FINDING marker naming a real, versioned OpenSSH CVE."
+    }
+  ]
+}

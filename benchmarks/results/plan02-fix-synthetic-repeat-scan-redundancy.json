@@ -1,0 +1,16 @@
+{
+  "run_id": "plan02-fix-synthetic-repeat-scan-redundancy",
+  "fixture_name": "synthetic-repeat-scan-redundancy",
+  "created_at": "2026-09-23T03:02:55.506234Z",
+  "mode": "deterministic",
+  "false_positive_rate": null,
+  "validated_finding_count": 0,
+  "confirmed_without_proof_count": 0,
+  "attack_surface_coverage": 0,
+  "redundant_action_count": 2,
+  "missed_known_vuln_count": null,
+  "time_to_first_validated_finding_seconds": null,
+  "notes": [
+    "false_positive_rate: no noise labels on this fixture \u2014 unmeasured, not zero."
+  ]
+}

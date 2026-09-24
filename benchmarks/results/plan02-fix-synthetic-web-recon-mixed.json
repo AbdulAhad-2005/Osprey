@@ -1,0 +1,14 @@
+{
+  "run_id": "plan02-fix-synthetic-web-recon-mixed",
+  "fixture_name": "synthetic-web-recon-mixed",
+  "created_at": "2026-09-23T03:02:55.413681Z",
+  "mode": "deterministic",
+  "false_positive_rate": 0.0,
+  "validated_finding_count": 0,
+  "confirmed_without_proof_count": 0,
+  "attack_surface_coverage": 0,
+  "redundant_action_count": 0,
+  "missed_known_vuln_count": 0,
+  "time_to_first_validated_finding_seconds": null,
+  "notes": []
+}

@@ -1,4 +1,4 @@
-"""Best-effort parse of freeform script/shell probe output into structured findings.
+"""Best-effort parse of freeform script/shell probe output into structural Observations.
 
 Scripts invent their own print formats. We extract common lines so chat evidence
 becomes durable memory — without requiring a named tool parser.
@@ -9,18 +9,20 @@ Explicit markers (print from platform_script):
   REL|host:a|same_app_as|host:b|shared cookie
   REL|likely|host:a|likely_origin_of|ip:1.2.3.4|evidence
   HYPOTHESIS|erp shares auth with ess|same Set-Cookie domain
+
+A ``FINDING|...`` marker is a script *claiming* a verdict — per Plan 03's one
+law, say-so is not evidence. It becomes a SCANNER_SIGNAL observation carrying
+the claim as structural detail (``claimed_confidence``/``claimed_severity``/
+``claimed_finding_type``); ``platform_file_finding``/``promote_observations``
+decide, from whatever evidence actually backs it, whether it earns a real
+Finding.
 """
 
 from __future__ import annotations
 
 import re
 
-from osprey.schemas.finding import (
-    ClaimSeverity,
-    Finding,
-    FindingConfidence,
-    FindingType,
-)
+from osprey.schemas.observation import Observation, ObservationType
 from osprey.services.parsers._capping import cap_with_accounting
 
 # https://host/...  200  Title here
@@ -50,7 +52,7 @@ _RESOLVE_RE = re.compile(
     re.IGNORECASE,
 )
 
-_MAX_FINDINGS = 200
+_MAX_OBSERVATIONS = 200
 
 # When a probe line's "title" is actually an error-page body fragment, the URL
 # is NOT an asset — it is an error response being echoed (Cloudflare 403 page,
@@ -132,12 +134,12 @@ def parse_freeform_probe_output(
     run_id: str = "",
     target: str = "",
     source_tool: str = "script",
-) -> list[Finding]:
+) -> list[Observation]:
     """Extract URL/port/host facts from messy script stdout."""
     if not (stdout or "").strip():
         return []
 
-    findings: list[Finding] = []
+    out: list[Observation] = []
     seen: set[str] = set()
 
     for match in _HYPOTHESIS_MARKER_RE.finditer(stdout):
@@ -146,19 +148,16 @@ def parse_freeform_probe_output(
         if key in seen:
             continue
         seen.add(key)
-        findings.append(
-            Finding(
-                engagement_id=engagement_id,
-                run_id=run_id,
-                phase="",
-                finding_type=FindingType.OBSERVATION,
-                title=f"HYPOTHESIS: {title}",
-                description="Explicit HYPOTHESIS marker from script/shell",
-                evidence=(match.group("evidence") or "")[:800],
-                confidence=FindingConfidence.HYPOTHESIS,
-                source_tool=source_tool,
-                target=target,
-                raw_data=(match.group("evidence") or "")[:800],
+        out.append(
+            Observation(
+                engagement_id=engagement_id, run_id=run_id,
+                type=ObservationType.SCANNER_SIGNAL,
+                target=target, source_tool=source_tool,
+                details={
+                    "kind": "hypothesis_marker",
+                    "claim": title,
+                    "evidence": (match.group("evidence") or "")[:800],
+                },
                 tags=["script_marker", "hypothesis"],
             )
         )
@@ -168,33 +167,20 @@ def parse_freeform_probe_output(
         if key in seen:
             continue
         seen.add(key)
-        try:
-            ftype = FindingType(match.group("ftype"))
-        except ValueError:
-            ftype = FindingType.OBSERVATION
-        try:
-            confidence = FindingConfidence(match.group("confidence"))
-        except ValueError:
-            confidence = FindingConfidence.LIKELY
-        try:
-            sev = ClaimSeverity(match.group("sev"))
-        except ValueError:
-            sev = ClaimSeverity.INFO
-        findings.append(
-            Finding(
-                engagement_id=engagement_id,
-                run_id=run_id,
-                phase="",
-                finding_type=ftype,
-                title=title,
-                description="Explicit FINDING marker from script/shell",
-                evidence=(match.group("evidence") or "")[:800],
-                confidence=confidence,
-                claim_severity=sev,
-                source_tool=source_tool,
-                target=target,
-                raw_data=(match.group("evidence") or "")[:800],
-                tags=["script_marker", f"confidence:{confidence.value}"],
+        out.append(
+            Observation(
+                engagement_id=engagement_id, run_id=run_id,
+                type=ObservationType.SCANNER_SIGNAL,
+                target=target, source_tool=source_tool,
+                details={
+                    "kind": "finding_marker",
+                    "claimed_finding_type": match.group("ftype"),
+                    "claimed_confidence": match.group("confidence"),
+                    "claimed_severity": match.group("sev"),
+                    "title": title,
+                    "evidence": (match.group("evidence") or "")[:800],
+                },
+                tags=["script_marker"],
             )
         )
 
@@ -207,19 +193,17 @@ def parse_freeform_probe_output(
             continue
         seen.add(key)
         url = path if path.startswith("http") else path
-        findings.append(
-            Finding(
-                engagement_id=engagement_id,
-                run_id=run_id,
-                phase="recon",
-                finding_type=FindingType.URL if path.startswith("http") or path.startswith("/") else FindingType.OBSERVATION,
-                title=f"{url}" + (f" [{status}]" if status else ""),
-                description=extra[:120] or "Path/endpoint from script",
-                evidence=match.group(0)[:500],
-                confidence=FindingConfidence.CONFIRMED,
-                source_tool=source_tool,
-                target=target or url,
-                metadata={"path": path, "status_code": status},
+        out.append(
+            Observation(
+                engagement_id=engagement_id, run_id=run_id,
+                type=ObservationType.URL if path.startswith("http") or path.startswith("/") else ObservationType.RAW,
+                target=target or url, source_tool=source_tool,
+                details={
+                    "path": path,
+                    "status_code": status,
+                    "extra": extra[:120],
+                    "raw": match.group(0)[:500],
+                },
                 tags=["script_parsed", "path_probe"],
             )
         )
@@ -243,22 +227,17 @@ def parse_freeform_probe_output(
             host = raw_host.split("/", 1)[0].split(":", 1)[0].lower()
         except Exception:
             host = ""
-        findings.append(
-            Finding(
-                engagement_id=engagement_id,
-                run_id=run_id,
-                phase="recon",
-                finding_type=FindingType.URL,
-                title=url,
-                description=f"HTTP {status}" + (f" — {title[:80]}" if title else ""),
-                evidence=match.group(0)[:500],
-                confidence=FindingConfidence.CONFIRMED,
-                source_tool=source_tool,
-                target=target or url,
-                metadata={
+        out.append(
+            Observation(
+                engagement_id=engagement_id, run_id=run_id,
+                type=ObservationType.URL,
+                target=target or url, source_tool=source_tool,
+                details={
+                    "url": url,
                     "hostname": host,
                     "status_code": status,
                     "http_title": title[:120],
+                    "raw": match.group(0)[:500],
                 },
                 tags=["script_parsed", "observed_http"],
             )
@@ -275,22 +254,15 @@ def parse_freeform_probe_output(
         if key in seen:
             continue
         seen.add(key)
-        meta: dict = {"port": port, "protocol": proto, "hostname": host}
+        details: dict = {"port": port, "protocol": proto, "hostname": host}
         if re.match(r"^\d{1,3}(?:\.\d{1,3}){3}$", host):
-            meta["ip"] = host
-        findings.append(
-            Finding(
-                engagement_id=engagement_id,
-                run_id=run_id,
-                phase="network",
-                finding_type=FindingType.PORT,
-                title=f"{host}:{port}/{proto} open",
-                description="Open port from script/shell output",
-                evidence=match.group(0)[:300],
-                confidence=FindingConfidence.CONFIRMED,
-                source_tool=source_tool,
-                target=target or host,
-                metadata=meta,
+            details["ip"] = host
+        out.append(
+            Observation(
+                engagement_id=engagement_id, run_id=run_id,
+                type=ObservationType.PORT,
+                target=target or host, source_tool=source_tool,
+                details=details,
                 tags=["script_parsed"],
             )
         )
@@ -302,31 +274,24 @@ def parse_freeform_probe_output(
         if key in seen:
             continue
         seen.add(key)
-        findings.append(
-            Finding(
-                engagement_id=engagement_id,
-                run_id=run_id,
-                phase="recon",
-                finding_type=FindingType.HOST,
-                title=host,
-                description=f"Resolves to {ip}",
-                evidence=match.group(0)[:300],
-                confidence=FindingConfidence.CONFIRMED,
-                source_tool=source_tool,
-                target=target or host,
-                metadata={"hostname": host, "ip": ip},
+        out.append(
+            Observation(
+                engagement_id=engagement_id, run_id=run_id,
+                type=ObservationType.HOST,
+                target=target or host, source_tool=source_tool,
+                details={"hostname": host, "ip": ip},
                 tags=["script_parsed", "dns_resolve"],
             )
         )
 
-    if len(findings) <= _MAX_FINDINGS:
-        return findings
+    if len(out) <= _MAX_OBSERVATIONS:
+        return out
     return cap_with_accounting(
-        findings,
-        max_items=_MAX_FINDINGS,
-        render=lambda f: f,
+        out,
+        max_items=_MAX_OBSERVATIONS,
+        render=lambda o: o,
         tool_name=source_tool,
-        item_label="finding",
+        item_label="observation",
         engagement_id=engagement_id,
         run_id=run_id,
         target=target,

@@ -1,10 +1,13 @@
 """Summary agent: deterministic parse (ground truth) + LLM compression for context.
 
 Two layers, one concern:
-- ``summarize_execution`` — parser only. Runs once inside ``tool_execution`` after a
-  successful run, writes findings to the store + engagement graph. This is ground truth.
+- ``extract_observations_for_execution`` — parser only. Runs once inside
+  ``tool_execution`` after a run, records an Evidence row and writes
+  Observations to the store. This is ground truth — no Finding is created
+  here (plans/harness/02-evidence-and-observation-layer.md); a Finding is
+  earned later by the Plan 03 pipeline.
 - ``compress_tool_output`` / ``summarize_phase`` — LLM layer. Compresses large stdout
-  and writes end-of-phase briefs for the Commander. Never contradicts parsed findings.
+  and writes end-of-phase briefs for the Commander. Never contradicts parsed observations.
 """
 
 from __future__ import annotations
@@ -16,15 +19,12 @@ from typing import Any
 
 from osprey.platform.handoff import export_structured_findings
 from osprey.schemas.agent_run import PhaseBrief, ToolSummary
-from osprey.schemas.finding import (
-    Finding,
-    FindingConfidence,
-    FindingType,
-)
+from osprey.schemas.observation import Observation, ObservationType
 from osprey.schemas.tools import ToolExecutionResponse
 from osprey.services.engagement_graph import get_engagement_graph
-from osprey.services.findings_store import get_findings_store
+from osprey.services.evidence_store import get_evidence_store
 from osprey.services.llm_service import LLMService, LLMServiceError, get_llm_service
+from osprey.services.observation_store import get_observation_store
 from osprey.services.parsers.registry import ensure_parsers_loaded, parse_tool_output
 from osprey.services.skills_loader import load_skills_for_agent
 
@@ -48,40 +48,63 @@ _DEFAULT_SUMMARY_SYSTEM = (
 
 # === Parser layer (ground truth) ===
 
-async def summarize_execution(
+async def extract_observations_for_execution(
     response: ToolExecutionResponse,
     *,
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-    phase: str = "",
-    force_raw_observation: bool = False,
-) -> list[Finding]:
-    """Deterministic parse — registry parsers + freeform script/shell extraction.
+    stdout_path: str = "",
+    stderr_path: str = "",
+    allow_llm_fallback: bool = True,
+) -> list[Observation]:
+    """Record evidence, then extract structural Observations — registry
+    parsers + freeform script/shell extraction. No ``Finding`` is created
+    here (plans/harness/02-evidence-and-observation-layer.md); a Finding is
+    earned later from these observations by ``promote_observations`` /
+    ``platform_file_finding`` (Plan 03).
 
-    Script/shell stdout is mined for URL/status/port/resolve lines so observed
-    probe facts become durable findings (not only chat memory).
+    ``allow_llm_fallback=False`` disables the LLM structural-extraction call
+    inside ``parse_tool_output`` for this call only — used by the benchmark
+    replay driver so a fixture's result doesn't depend on whether the
+    replaying process happens to have an LLM key configured.
     """
-    findings: list[Finding] = []
     stdout = response.stdout or ""
     stderr = response.stderr or ""
     tool_name = response.tool_name or ""
 
+    evidence_id = ""
+    if engagement_id:
+        evidence = get_evidence_store().record(
+            engagement_id=engagement_id,
+            tool_name=tool_name,
+            run_id=run_id,
+            target=target,
+            command=response.command or "",
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            exit_code=response.returncode or 0,
+            duration_ms=int((response.duration_seconds or 0) * 1000),
+        )
+        if evidence is not None:
+            evidence_id = evidence.id
+
+    observations: list[Observation] = []
     if stdout:
-        findings = await parse_tool_output(
+        observations = await parse_tool_output(
             tool_name,
             stdout,
             engagement_id=engagement_id,
             run_id=run_id,
             target=target,
-            phase=phase,
+            allow_llm_fallback=allow_llm_fallback,
         )
 
     needs_freeform = (
         tool_name.startswith("script:")
         or tool_name.startswith("shell:")
-        or not findings
-        or all(f.finding_type == FindingType.OBSERVATION for f in findings)
+        or not observations
+        or all(o.type == ObservationType.RAW for o in observations)
     )
     if stdout and needs_freeform:
         from osprey.services.parsers.freeform_probe import parse_freeform_probe_output
@@ -94,91 +117,74 @@ async def summarize_execution(
             source_tool=tool_name or "script",
         )
         if freeform:
-            if findings and all(f.finding_type == FindingType.OBSERVATION for f in findings):
-                findings = freeform
+            if observations and all(o.type == ObservationType.RAW for o in observations):
+                observations = freeform
             else:
-                findings = list(findings) + freeform
+                observations = list(observations) + freeform
 
-    if findings and not response.success:
-        # Preserve useful partial stdout without letting consumers mistake it
-        # for a clean run.  This is provenance, not a confidence downgrade:
-        # parser-specific evidence remains intact and the execution status is
-        # explicit on every resulting finding.
-        for finding in findings:
-            if "partial_failed_output" not in finding.tags:
-                finding.tags.append("partial_failed_output")
-
-    # A failed process's stderr/error describes the execution failure, not the
-    # target.  It remains available in the audit record and stderr artifact but
-    # must not become graph evidence.  Partial stdout is different: scanners
-    # commonly return useful observations before a timeout/non-zero exit, so it
-    # remains eligible for permissive parsing and a clearly marked raw record.
-    raw_evidence = stdout or (stderr if response.success else "")
-    if force_raw_observation and not findings and raw_evidence:
-        blob = raw_evidence
+    if not observations and (stdout or stderr or response.error):
+        blob = stdout or stderr or (response.error or "")
         status = "ok" if response.success else "failed"
-        findings = [
-            Finding(
+        observations = [
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase=phase or "",
-                finding_type=FindingType.OBSERVATION,
-                title=f"{tool_name} raw output ({status})",
-                description=(
-                    f"Unparsed/fallback observation from {tool_name} "
-                    f"(exit={response.returncode}, success={response.success})"
-                ),
-                # `evidence` must be evidence OF something — the tool's actual
-                # output, not the shell command that produced it (that was the
-                # bug: every consumer reading .evidence for "what did this tool
-                # find" saw a curl/nmap command line instead of a single byte
-                # of real output). The command is still available in metadata
-                # for anyone who wants to reproduce the call; raw_data keeps
-                # the full untruncated blob as before.
-                evidence=blob[:2000],
-                confidence=FindingConfidence.HYPOTHESIS,
-                source_tool=tool_name,
+                type=ObservationType.RAW,
                 target=target,
-                tags=[
-                    "raw_output",
-                    "partial_failed_output" if not response.success else "observation",
-                ],
-                metadata={"command": (response.command or "")[:500]},
-                raw_data=blob[:24000],
-                notes=stderr[:4000] if stderr else "",
+                source_tool=tool_name,
+                # `snippet` must be evidence OF something — the tool's actual
+                # output, not the shell command that produced it. The command
+                # is still available in details for anyone who wants to
+                # reproduce the call.
+                details={
+                    "snippet": blob[:24000],
+                    "status": status,
+                    "exit_code": response.returncode,
+                    "command": (response.command or "")[:500],
+                    "stderr": stderr[:4000] if stderr else "",
+                },
+                tags=["raw_output", "unparsed" if not response.success else "observation"],
             )
         ]
-    elif (
-        force_raw_observation
-        and findings
-        and tool_name.startswith(("script:", "shell:"))
-    ):
-        structured_n = sum(
-            1 for f in findings if f.finding_type != FindingType.OBSERVATION
-        )
+    elif observations and tool_name.startswith(("script:", "shell:")):
+        structured_n = sum(1 for o in observations if o.type != ObservationType.RAW)
         if structured_n:
-            findings.append(
-                Finding(
+            observations.append(
+                Observation(
                     engagement_id=engagement_id,
                     run_id=run_id,
-                    phase=phase or "",
-                    finding_type=FindingType.OBSERVATION,
-                    title=f"{tool_name} run summary ({structured_n} structured)",
-                    description="Script/shell produced structured findings via freeform parse",
-                    evidence=(response.command or "")[:500],
-                    confidence=FindingConfidence.LIKELY,
-                    source_tool=tool_name,
+                    type=ObservationType.RAW,
                     target=target,
+                    source_tool=tool_name,
+                    details={
+                        "kind": "run_summary",
+                        "structured_count": structured_n,
+                        "command": (response.command or "")[:500],
+                        "snippet": (stdout or "")[:4000],
+                    },
                     tags=["raw_output", "script_audit"],
-                    raw_data=(stdout or "")[:4000],
                 )
             )
 
-    if findings:
-        get_findings_store().add_many(findings)
-        get_engagement_graph().ingest_many(findings)
+    if evidence_id:
+        observations = [
+            o if o.evidence_id else o.model_copy(update={"evidence_id": evidence_id})
+            for o in observations
+        ]
 
-    # Operator graph links from REL| markers (script/shell) — separate from finding ingest
+    if observations and engagement_id:
+        result = get_observation_store().record_many(observations)
+        # Graph ingest reads the CANONICAL (post-dedup) observations record_many
+        # returns, never the pre-persist list — a merged observation keeps its
+        # existing id, not whatever the fresh Observation object minted.
+        try:
+            get_engagement_graph().ingest_many_observations(result.observations)
+        except Exception:  # noqa: BLE001
+            logger.debug("Graph ingest skipped for extracted observations", exc_info=True)
+        if evidence_id:
+            get_evidence_store().mark_observed(evidence_id)
+
+    # Operator graph links from REL| markers (script/shell) — separate from observation ingest
     if stdout and engagement_id and (
         tool_name.startswith("script:")
         or tool_name.startswith("shell:")
@@ -196,7 +202,7 @@ async def summarize_execution(
         except Exception:
             logger.debug("REL marker apply failed", exc_info=True)
 
-    return findings
+    return observations
 
 
 # === LLM compression layer ===

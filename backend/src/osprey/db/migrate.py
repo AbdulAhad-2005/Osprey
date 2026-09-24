@@ -7,6 +7,7 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import Connection, inspect
 
 from osprey.db.session import engine
@@ -14,6 +15,16 @@ from osprey.db.session import engine
 logger = logging.getLogger(__name__)
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _head_revision() -> str:
+    """The single current Alembic head, read from the migration scripts — never
+    hardcoded, so a new migration (or a merge revision) is picked up automatically.
+    ``get_current_head()`` raises on multiple heads, which is the correct signal
+    that the migration graph itself needs a merge revision."""
+    cfg = Config(str(_BACKEND_ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(_BACKEND_ROOT / "alembic"))
+    return ScriptDirectory.from_config(cfg).get_current_head()
 
 _APPLICATION_TABLES = {
     "engagements",
@@ -117,6 +128,24 @@ def _legacy_revision(connection: Connection) -> str | None:
         return "0011_conversation_messages"
     if "exploit_chains" in tables:
         return "0012_remove_evidence_grade"
+
+    # Post-0013 the graph forks into two branches off 0013 — the durable-audit
+    # branch (audit_entries) and the evidence/observation → reasoning branch
+    # (observations … attack_paths) — merged at the head. create_all builds the
+    # whole current model set, so stamp at the newest point whose tables are all
+    # present; otherwise a later migration would replay a CREATE for a table
+    # create_all already made.
+    has_audit = "audit_entries" in tables
+    has_observations = "observations" in tables
+    has_reasoning = "attack_paths" in tables
+    if has_audit and has_observations and has_reasoning:
+        return _head_revision()  # full current schema — nothing left to run
+    if has_observations and has_reasoning:
+        # Evidence/observation/reasoning branch present, audit branch not.
+        return "0019_attack_paths_and_reasoning"
+    if has_audit and not has_observations:
+        # Durable-audit branch only (pre-observation-layer snapshot).
+        return "0014_durable_audit_entries"
     return "0013_drop_exploit_chains"
 
 

@@ -1873,9 +1873,473 @@ def platform_record_findings(items_json: Any, engagement_id: str = "") -> str:
 
 
 @mcp.tool()
-def platform_tools(
-    query: str = "", category: str = "", engagement_id: str = ""
+def platform_file_finding(
+    title: str,
+    finding_type: str,
+    observation_ids: str,
+    claim_severity: str = "none",
+    description: str = "",
+    evidence_kind: str = "",
+    evidence_detail: str = "",
+    evidence_source_tool: str = "",
+    engagement_id: str = "",
+    target: str = "",
+    tags: str = "",
 ) -> str:
+    """
+    File a finding backed by evidence — the earned-finding path
+    (plans/harness/03-earned-finding-pipeline.md). There is NO confidence
+    parameter: you attach evidence, the platform computes confidence from it.
+    Claiming "confirmed" in your title changes nothing — only evidence does.
+
+    observation_ids: comma-separated ids from platform_findings/platform_graph_query
+    (an Observation must already exist — extract/record one first; this call
+    fails if none of the ids resolve).
+
+    evidence_kind (optional, attach ONE piece of evidence beyond the raw
+    signal): corroboration|reproduction|verification|attestation.
+      - corroboration: an independent tool also observed this (pass
+        evidence_source_tool=<that tool's name>).
+      - reproduction: you ran a controlled PoC and it reproduced (RoE/blast-
+        radius still apply to whatever you actually ran).
+      - verification: you read the config/permission directly and confirmed it.
+      - attestation: you (the operator) are personally attesting to this.
+    Omit evidence_kind for a bare signal with no extra evidence — it stays
+    HYPOTHESIS unless >=2 independent source tools already observed it.
+
+    claim_severity: the impact IF this is real — assign it honestly yourself
+    (see skills/vuln/verification-and-severity.md); independent of confidence.
+    finding_type: url|host|port|service|technology|observation|subdomain|
+      vulnerability|credential|secret|http_response|access.
+    """
+    def _run() -> str:
+        eid, _label = _resolve_engagement(engagement_id)
+        ids = [x.strip() for x in observation_ids.split(",") if x.strip()]
+        if not ids:
+            return "ERROR: observation_ids is required — at least one Observation id."
+        evidence_records: list[dict[str, Any]] = []
+        kind = evidence_kind.strip().lower()
+        if kind:
+            if kind not in ("corroboration", "reproduction", "verification", "attestation"):
+                return f"ERROR: evidence_kind must be one of corroboration|reproduction|verification|attestation, got {kind!r}"
+            evidence_records.append({
+                "kind": kind,
+                "source_tool": evidence_source_tool.strip(),
+                "detail": evidence_detail.strip(),
+            })
+        sev = (claim_severity or "none").strip().lower()
+        if sev not in ("none", "info", "low", "medium", "high", "critical"):
+            sev = "none"
+        tag_list = [t.strip() for t in tags.replace(",", " ").split() if t.strip()]
+        body = {
+            "engagement_id": eid,
+            "run_id": SESSION_RUN_ID,
+            "title": title.strip()[:300],
+            "finding_type": (finding_type or "observation").strip().lower(),
+            "observation_ids": ids,
+            "claim_severity": sev,
+            "description": description.strip(),
+            "evidence_records": evidence_records,
+            "target": target.strip() or _SESSION_TARGET,
+            "tags": tag_list,
+        }
+        data = _post("/api/v1/findings/file", body, timeout=30)
+        if data.get("suppressed"):
+            return (
+                "### OPERATOR MIRROR — SUPPRESSED (FP-cache)\n"
+                f"{_session_header(eid)}\n"
+                f"title: {title}\n"
+                f"Not filed — matches a known false-positive pattern: {data.get('suppressed_reason')}\n"
+                "Visible in the audit trail (platform_fp_list shows patterns; the suppressed-"
+                "promotion audit is at GET /api/v1/findings/fp/suppressed) — never a silent drop."
+            )
+        f = data.get("finding") or {}
+        return (
+            "### OPERATOR MIRROR — FILED FINDING\n"
+            f"{_session_header(eid)}\n"
+            f"Stored id={f.get('id')} type={f.get('finding_type')} "
+            f"confidence={f.get('confidence')} (computed) sev={f.get('claim_severity')}\n"
+            f"title: {f.get('title')}\n"
+            f"observation_ids: {f.get('observation_ids')}\n"
+            f"source_tools: {f.get('source_tools')}\n"
+            "Call platform_findings to verify."
+        )
+
+    return _safe(_run)
+
+
+@mcp.tool()
+def platform_promote_observations(engagement_id: str = "") -> str:
+    """
+    Deterministic promotion (no LLM required) — plans/harness/03-earned-
+    finding-pipeline.md Step 5. Clusters SCANNER_SIGNAL observations
+    (nuclei/nikto/sqlmap/nmap-NSE/… matches, subdomain-takeover checks,
+    Shodan CVE tags), attaches whatever corroboration already exists
+    (independent tools that reported the same fact), and files each through
+    the same evidence law as platform_file_finding. Never runs a destructive
+    PoC — a single-source signal still becomes a finding, honestly graded
+    HYPOTHESIS, not dropped or inflated.
+    """
+    def _run() -> str:
+        eid, _label = _resolve_engagement(engagement_id)
+        resp = _client().post(
+            "/api/v1/findings/promote",
+            params={"engagement_id": eid, "run_id": SESSION_RUN_ID},
+            timeout=min(60.0, HTTP_TIMEOUT),
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        total = result.get("total", 0)
+        findings = result.get("findings") or []
+        by_conf: dict[str, int] = {}
+        for f in findings:
+            by_conf[f.get("confidence", "?")] = by_conf.get(f.get("confidence", "?"), 0) + 1
+        return (
+            "### OPERATOR MIRROR — PROMOTED OBSERVATIONS\n"
+            f"{_session_header(eid)}\n"
+            f"Promoted {total} finding(s): {by_conf}\n"
+            "Call platform_findings to see them."
+        )
+
+    return _safe(_run)
+
+
+@mcp.tool()
+def platform_mark_false_positive(finding_id: str, reason: str = "", target_glob: str = "") -> str:
+    """
+    Mark a finding as noise, once, forever — plans/harness/04-learning-fp-
+    cache.md. Appends an FP-cache pattern keyed on the finding's own type and
+    title, and retracts the finding from THIS engagement. Every future
+    platform_file_finding / platform_promote_observations call on a matching
+    candidate is suppressed automatically — a human judgment captured once,
+    applied forever.
+
+    target_glob: left empty (the default), the pattern scopes to THIS
+    finding's own target only — marking noise on one host can never suppress
+    the same-titled signal on a different host by accident. Pass "*" (noise
+    everywhere, e.g. a scanner's own banner) or a glob like "*.internal.corp"
+    only when you deliberately want to widen it — that's an opt-in.
+
+    The pattern is advisory metadata, never evidence deletion — the
+    underlying Observations stay intact; platform_fp_list shows what's
+    active, and removing a pattern re-enables promotion.
+    """
+    def _run() -> str:
+        eid, _label = _resolve_engagement("")
+        resp = _client().post(
+            f"/api/v1/findings/{finding_id}/fp",
+            params={"reason": reason.strip(), "target_glob": target_glob.strip()},
+            timeout=min(30.0, HTTP_TIMEOUT),
+        )
+        if resp.status_code == 404:
+            return f"ERROR: no finding with id '{finding_id}'."
+        resp.raise_for_status()
+        data = resp.json()
+        pattern = data.get("pattern") or {}
+        return (
+            "### OPERATOR MIRROR — MARKED FALSE POSITIVE\n"
+            f"{_session_header(eid)}\n"
+            f"Retracted finding {finding_id}. New FP-cache pattern id={pattern.get('id')} "
+            f"scope={pattern.get('target_glob')} type={pattern.get('finding_type') or 'any'}\n"
+            f"title_contains: {pattern.get('title_contains')}\n"
+            "This pattern now suppresses matching candidates on every future promotion. "
+            "platform_fp_list to review/prune."
+        )
+
+    return _safe(_run)
+
+
+@mcp.tool()
+def platform_fp_list() -> str:
+    """
+    List active FP-cache patterns (plans/harness/04-learning-fp-cache.md
+    Step 4) — audit what's currently suppressing promotion. A bad mark
+    shouldn't hide real findings forever: remove a pattern via
+    DELETE /api/v1/findings/fp/patterns/{id} (no MCP unmark tool yet — ask
+    the operator to do this via the CLI/API if a pattern looks wrong).
+    """
+    def _run() -> str:
+        data = _get("/api/v1/findings/fp/patterns", timeout=15)
+        patterns = data.get("patterns") or []
+        if not patterns:
+            return "No FP-cache patterns yet. Mark noise with platform_mark_false_positive."
+        lines = [
+            f"- id={p.get('id')} scope={p.get('target_glob')} type={p.get('finding_type') or 'any'} "
+            f"title_contains='{p.get('title_contains')}' reason='{p.get('reason')}' "
+            f"marked_by={p.get('marked_by')}"
+            for p in patterns
+        ]
+        return "### OPERATOR MIRROR — FP-CACHE PATTERNS\n" + "\n".join(lines)
+
+    return _safe(_run)
+
+
+@mcp.tool()
+def platform_world_model(view: str, asset_id: str = "", asset_type: str = "", engagement_id: str = "") -> str:
+    """
+    Query the world model — plans/harness/05-world-model-and-attack-paths.md
+    Step 2. A read model over the observation-backed graph, not a new store.
+
+    view: assets | related | incomplete | unexplained | conflicts
+      - assets: every asset node (optionally asset_type=host|port|service|…).
+      - related: what connects to asset_id, closest first (undirected walk).
+      - incomplete: HOST/SUBDOMAIN assets with no port evidence yet — raw
+        material for "what haven't we scanned".
+      - unexplained: observations not yet tied to any graph asset — raw
+        material for a question/hypothesis (platform_question/platform_hypothesis).
+      - conflicts: assets with a disputed slot (Step 2a, e.g. service@443
+        nginx vs Apache) — both values kept, never silently picked.
+    """
+    def _run() -> str:
+        eid, tgt = _resolve_engagement(engagement_id)
+        v = view.strip().lower()
+        if v == "assets":
+            params: dict[str, Any] = {"engagement_id": eid}
+            if asset_type.strip():
+                params["asset_type"] = asset_type.strip().lower()
+            data = _get("/api/v1/reasoning/assets", params=params, timeout=30)
+            items = data.get("assets") or []
+            lines = [
+                f"- {a['id']} confidence={a['confidence']} tools={a.get('source_tools')}"
+                for a in items[:80]
+            ]
+        elif v == "related":
+            if not asset_id.strip():
+                return "ERROR: view='related' requires asset_id (e.g. 'host:example.com')."
+            data = _get(
+                "/api/v1/reasoning/related",
+                params={"engagement_id": eid, "asset_id": asset_id.strip()}, timeout=30,
+            )
+            items = data.get("related") or []
+            lines = [f"- {r['node_id']} ({r['hops']} hop via {r['via_relationship']})" for r in items[:80]]
+        elif v == "incomplete":
+            data = _get("/api/v1/reasoning/incomplete", params={"engagement_id": eid}, timeout=30)
+            items = data.get("assets") or []
+            lines = [f"- {a['asset_id']}: {a['gap']}" for a in items[:80]]
+        elif v == "unexplained":
+            data = _get("/api/v1/reasoning/unexplained", params={"engagement_id": eid}, timeout=30)
+            items = data.get("observations") or []
+            lines = [f"- {o['observation_id']} [{o['type']}] target={o['target']} via {o['source_tool']}" for o in items[:80]]
+        elif v == "conflicts":
+            data = _get("/api/v1/reasoning/conflicts", params={"engagement_id": eid}, timeout=30)
+            items = data.get("conflicts") or []
+            lines = [
+                f"- {c['asset_id']}: " + "; ".join(
+                    f"{slot}={[v['value'] for v in vals]}" for slot, vals in c["conflicts"].items()
+                )
+                for c in items[:80]
+            ]
+        else:
+            return "ERROR: view must be one of assets|related|incomplete|unexplained|conflicts."
+        return (
+            "### OPERATOR MIRROR — WORLD MODEL\n"
+            f"{_session_header(eid, tgt)}\n"
+            f"view={v} count={len(items)}\n"
+            + ("\n".join(lines) if lines else "(none)")
+        )
+
+    return _safe(_run)
+
+
+@mcp.tool()
+def platform_attack_path(
+    action: str,
+    title: str = "",
+    path_id: str = "",
+    step_kind: str = "observation",
+    step_ref_id: str = "",
+    step_rationale: str = "",
+    status: str = "",
+    finding_id: str = "",
+    engagement_id: str = "",
+) -> str:
+    """
+    Attack path — a first-class reasoning object (plans/harness/05-world-
+    model-and-attack-paths.md Step 3): an ordered chain of
+    (observation|asset|hypothesis) steps with a rationale per hop, e.g.
+    public API endpoint -> internal endpoint reference (observation) ->
+    different authz boundary (observation) -> cross-user access (hypothesis).
+
+    action: propose | advance | list
+      - propose: title= + one step (step_kind/step_ref_id/step_rationale).
+        Add more hops later via action=advance.
+      - advance: path_id= required. Any of: status=investigating|validated|dead,
+        finding_id=<id> (once a PoC validates the chain), or a new step
+        (step_ref_id set) to append another hop.
+      - list: active (hypothesized/investigating) paths for this engagement.
+    """
+    def _run() -> str:
+        eid, _tgt = _resolve_engagement(engagement_id)
+        a = action.strip().lower()
+        if a == "propose":
+            if not title.strip() or not step_ref_id.strip():
+                return "ERROR: propose requires title= and step_ref_id= (the first hop)."
+            body = {
+                "engagement_id": eid, "title": title.strip(),
+                "steps": [{"kind": step_kind.strip().lower(), "ref_id": step_ref_id.strip(), "rationale": step_rationale.strip()}],
+            }
+            data = _post("/api/v1/reasoning/attack-paths", body, timeout=30)
+            return (
+                "### OPERATOR MIRROR — ATTACK PATH PROPOSED\n"
+                f"{_session_header(eid)}\nid={data.get('id')} status={data.get('status')}\n"
+                "platform_attack_path(action='advance', path_id=..., step_ref_id=...) to add hops."
+            )
+        if a == "advance":
+            if not path_id.strip():
+                return "ERROR: advance requires path_id="
+            body: dict[str, Any] = {"finding_id": finding_id.strip()}
+            if status.strip():
+                body["status"] = status.strip().lower()
+            if step_ref_id.strip():
+                body["step"] = {"kind": step_kind.strip().lower(), "ref_id": step_ref_id.strip(), "rationale": step_rationale.strip()}
+            resp = _client().post(f"/api/v1/reasoning/attack-paths/{path_id.strip()}/advance", json=body, timeout=min(30.0, HTTP_TIMEOUT))
+            if resp.status_code == 404:
+                return f"ERROR: no attack path with id '{path_id}'."
+            resp.raise_for_status()
+            data = resp.json()
+            return (
+                "### OPERATOR MIRROR — ATTACK PATH ADVANCED\n"
+                f"{_session_header(eid)}\nid={data.get('id')} status={data.get('status')} "
+                f"hops={len(data.get('steps') or [])}"
+            )
+        if a == "list":
+            data = _get("/api/v1/reasoning/attack-paths", params={"engagement_id": eid}, timeout=30)
+            paths = data.get("attack_paths") or []
+            if not paths:
+                return "No active attack paths. platform_world_model(view='unexplained') for raw material."
+            lines = [f"- [{p['id']}] {p['status']}: {p['title']} ({len(p['steps'])} hop(s))" for p in paths]
+            return "### OPERATOR MIRROR — ACTIVE ATTACK PATHS\n" + "\n".join(lines)
+        return "ERROR: action must be propose|advance|list."
+
+    return _safe(_run)
+
+
+@mcp.tool()
+def platform_question(
+    action: str, text: str = "", question_id: str = "", answer_text: str = "",
+    related_asset_id: str = "", engagement_id: str = "",
+) -> str:
+    """
+    Open questions — the reasoning scaffold (plans/harness/05-world-model-
+    and-attack-paths.md Step 4). Cheap, write freely, no approval needed.
+
+    action: raise | answer | dismiss | list
+    """
+    def _run() -> str:
+        eid, _tgt = _resolve_engagement(engagement_id)
+        a = action.strip().lower()
+        if a == "raise":
+            if not text.strip():
+                return "ERROR: raise requires text="
+            resp = _client().post(
+                "/api/v1/reasoning/questions",
+                params={"engagement_id": eid, "text": text.strip(), "related_asset_id": related_asset_id.strip()},
+                timeout=min(30.0, HTTP_TIMEOUT),
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return f"### OPERATOR MIRROR — QUESTION RAISED\nid={data.get('id')}: {data.get('text')}"
+        if a == "answer":
+            if not question_id.strip() or not answer_text.strip():
+                return "ERROR: answer requires question_id= and answer_text="
+            resp = _client().post(
+                f"/api/v1/reasoning/questions/{question_id.strip()}/answer",
+                params={"answer_text": answer_text.strip()}, timeout=min(30.0, HTTP_TIMEOUT),
+            )
+            if resp.status_code == 404:
+                return f"ERROR: no question with id '{question_id}'."
+            return f"### OPERATOR MIRROR — QUESTION ANSWERED\n{resp.json()}"
+        if a == "dismiss":
+            if not question_id.strip():
+                return "ERROR: dismiss requires question_id="
+            resp = _client().post(f"/api/v1/reasoning/questions/{question_id.strip()}/dismiss", timeout=min(30.0, HTTP_TIMEOUT))
+            if resp.status_code == 404:
+                return f"ERROR: no question with id '{question_id}'."
+            return f"### OPERATOR MIRROR — QUESTION DISMISSED\n{question_id}"
+        if a == "list":
+            data = _get("/api/v1/reasoning/questions", params={"engagement_id": eid}, timeout=30)
+            qs = data.get("questions") or []
+            if not qs:
+                return "No open questions."
+            return "### OPERATOR MIRROR — OPEN QUESTIONS\n" + "\n".join(f"- [{q['id']}] {q['text']}" for q in qs)
+        return "ERROR: action must be raise|answer|dismiss|list."
+
+    return _safe(_run)
+
+
+@mcp.tool()
+def platform_hypothesis(
+    action: str, statement: str = "", hypothesis_id: str = "", observation_id: str = "",
+    supports: bool = True, status: str = "", engagement_id: str = "",
+) -> str:
+    """
+    Active hypotheses — the reasoning scaffold (plans/harness/05-world-model-
+    and-attack-paths.md Step 4). Distinct from a Finding's evidence: a
+    hypothesis is an unresolved claim the reasoner is still testing.
+
+    action: raise | evidence | resolve | list
+      - evidence: hypothesis_id= + observation_id= + supports=true|false
+        (attach evidence in either direction — a hypothesis can be
+        strengthened OR weakened, unlike confidence_for's finding-only law).
+      - resolve: hypothesis_id= + status=confirmed|refuted.
+    """
+    def _run() -> str:
+        eid, _tgt = _resolve_engagement(engagement_id)
+        a = action.strip().lower()
+        if a == "raise":
+            if not statement.strip():
+                return "ERROR: raise requires statement="
+            resp = _client().post(
+                "/api/v1/reasoning/hypotheses",
+                params={"engagement_id": eid, "statement": statement.strip()},
+                timeout=min(30.0, HTTP_TIMEOUT),
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return f"### OPERATOR MIRROR — HYPOTHESIS RAISED\nid={data.get('id')}: {data.get('statement')}"
+        if a == "evidence":
+            if not hypothesis_id.strip() or not observation_id.strip():
+                return "ERROR: evidence requires hypothesis_id= and observation_id="
+            resp = _client().post(
+                f"/api/v1/reasoning/hypotheses/{hypothesis_id.strip()}/evidence",
+                params={"observation_id": observation_id.strip(), "supports": supports},
+                timeout=min(30.0, HTTP_TIMEOUT),
+            )
+            if resp.status_code == 404:
+                return f"ERROR: no hypothesis with id '{hypothesis_id}'."
+            data = resp.json()
+            return (
+                "### OPERATOR MIRROR — HYPOTHESIS EVIDENCE ATTACHED\n"
+                f"supporting={data.get('supporting_observation_ids')} "
+                f"contradicting={data.get('contradicting_observation_ids')}"
+            )
+        if a == "resolve":
+            if not hypothesis_id.strip() or status.strip().lower() not in ("confirmed", "refuted"):
+                return "ERROR: resolve requires hypothesis_id= and status=confirmed|refuted"
+            resp = _client().post(
+                f"/api/v1/reasoning/hypotheses/{hypothesis_id.strip()}/resolve",
+                params={"status": status.strip().lower()}, timeout=min(30.0, HTTP_TIMEOUT),
+            )
+            if resp.status_code == 404:
+                return f"ERROR: no hypothesis with id '{hypothesis_id}'."
+            return f"### OPERATOR MIRROR — HYPOTHESIS RESOLVED\n{resp.json()}"
+        if a == "list":
+            data = _get("/api/v1/reasoning/hypotheses", params={"engagement_id": eid}, timeout=30)
+            hs = data.get("hypotheses") or []
+            if not hs:
+                return "No active hypotheses."
+            return "### OPERATOR MIRROR — ACTIVE HYPOTHESES\n" + "\n".join(
+                f"- [{h['id']}] {h['statement']} (support={len(h['supporting_observation_ids'])} "
+                f"contra={len(h['contradicting_observation_ids'])})"
+                for h in hs
+            )
+        return "ERROR: action must be raise|evidence|resolve|list."
+
+    return _safe(_run)
+
+
+@mcp.tool()
+def platform_tools(query: str = "", category: str = "", engagement_id: str = "") -> str:
     """
     List registered catalog tool names (fixes 404 from short names).
 
@@ -2037,6 +2501,63 @@ def platform_findings(
             "Paste important rows into your chat reply so the operator sees them. "
             "Support HIGH/CRITICAL claims with the strongest evidence available."
         )
+        return "\n\n".join(parts)
+
+    return _safe(_run)
+
+
+@mcp.tool()
+def platform_observations(
+    limit: int = 120,
+    observation_type: str = "",
+    target: str = "",
+    engagement_id: str = "",
+) -> str:
+    """
+    Dump stored Observations — the structural facts parsers extracted
+    (ports, services, technologies, scanner signals, injection points,
+    credentials, …), each with an id. Tool output ingests into these
+    automatically. Use this to find the observation_ids platform_file_finding
+    requires — a finding must be filed against something actually observed.
+
+    observation_type: optional filter, e.g. scanner_signal | injection_point |
+      credential | secret | port | service | technology | subdomain | host |
+      url | dns_record | cert | waf | share | account | asn | raw.
+    target: optional filter to one asset's observations.
+    engagement_id: optional pin to a specific engagement — see platform_exec.
+    """
+    limit = max(10, min(int(limit), 500))
+
+    def _run() -> str:
+        eid, tgt = _resolve_engagement(engagement_id)
+        params: dict[str, Any] = {"engagement_id": eid, "limit": limit}
+        if observation_type.strip():
+            params["type"] = observation_type.strip().lower()
+        if target.strip():
+            params["target"] = target.strip()
+
+        data = _get("/api/v1/observations/", params=params, timeout=45)
+        items = data.get("observations") or []
+        total = data.get("total", len(items))
+        lines = []
+        for o in items:
+            details = o.get("details") or {}
+            label = details.get("title") or details.get("url") or details.get("hostname") or o.get("target", "")
+            lines.append(
+                f"- id={o.get('id')} [{o.get('type')}] {label}  (via {o.get('source_tool', '')}, "
+                f"seen {o.get('occurrence_count', 1)}x)"
+            )
+        parts = [
+            "### OPERATOR MIRROR — OBSERVATIONS",
+            _session_header(eid, tgt),
+            _block(
+                f"Observations list (showing {len(items)} / total field {total})",
+                "\n".join(lines) if lines else "(none)",
+            ),
+            "Use an id above with platform_file_finding(observation_ids=...) once you have "
+            "evidence beyond the raw signal, or platform_promote_observations() for the "
+            "no-LLM deterministic route.",
+        ]
         return "\n\n".join(parts)
 
     return _safe(_run)

@@ -18,7 +18,7 @@ from osprey.services.engagement_store import get_engagement_store
 from osprey.services.mcp_client import get_mcp_client
 from osprey.services.run_store import get_run_store
 from osprey.services.session_context import resolve_session
-from osprey.services.summary_agent import summarize_execution
+from osprey.services.summary_agent import extract_observations_for_execution
 from osprey.services.tool_coverage_store import get_tool_coverage_store
 
 logger = logging.getLogger(__name__)
@@ -315,13 +315,13 @@ async def execute_shell_request(
 
     if record_findings:
         try:
-            findings = await summarize_execution(
+            from osprey.services.tool_execution import _observation_label
+
+            observations = await extract_observations_for_execution(
                 response,
                 engagement_id=session.engagement_id,
                 run_id=session.run_id or run_id or "",
                 target=eng.target,
-                phase="",
-                force_raw_observation=True,
             )
             from osprey.services.ingest_promoter import apply_ingest_rules
 
@@ -334,10 +334,10 @@ async def execute_shell_request(
                 target=eng.target,
                 persist=True,
             )
-            titles = [f.title for f in findings] + [f.title for f in ingested]
+            titles = [_observation_label(o) for o in observations] + [_observation_label(o) for o in ingested]
             response.finding_titles = list(dict.fromkeys(titles))
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Findings ingest failed for %s: %s", response.tool_name, exc)
+            logger.warning("Observation extraction failed for %s: %s", response.tool_name, exc)
         try:
             get_tool_coverage_store().record(
                 engagement_id=session.engagement_id,

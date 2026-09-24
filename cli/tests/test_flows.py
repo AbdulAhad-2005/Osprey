@@ -7,14 +7,14 @@ from cli.agent import flows
 
 def test_parse_frontmatter_extracts_meta_and_body():
     text = "---\ndescription: Recon mode\ndeny_tools: metasploit_*, hydra_*\n---\nBody line one.\nBody line two."
-    meta, body = flows.parse_frontmatter(text)
+    meta, body = flows._parse_frontmatter(text)
     assert meta["description"] == "Recon mode"
     assert meta["deny_tools"] == "metasploit_*, hydra_*"
     assert body == "Body line one.\nBody line two."
 
 
 def test_parse_frontmatter_no_frontmatter():
-    meta, body = flows.parse_frontmatter("just a body, no frontmatter")
+    meta, body = flows._parse_frontmatter("just a body, no frontmatter")
     assert meta == {}
     assert body == "just a body, no frontmatter"
 
@@ -62,7 +62,8 @@ def test_load_agents_reads_project_dir(monkeypatch, tmp_path):
         "Stay in recon. Do not exploit.",
         encoding="utf-8",
     )
-    monkeypatch.setattr(flows, "_dirs", lambda kind: [agents_dir] if kind == "agents" else [])
+    # load_agents resolves `.osprey/agents` relative to cwd — run from tmp_path.
+    monkeypatch.chdir(tmp_path)
     agents = flows.load_agents()
     assert "recon" in agents
     a = agents["recon"]

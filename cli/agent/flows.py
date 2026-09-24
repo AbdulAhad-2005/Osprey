@@ -1,22 +1,9 @@
-"""Prompt-customizable flows — Markdown-defined agents and commands.
+"""Prompt-defined flows: operator-authored agent modes and custom slash commands.
 
-Lets an operator define entire flows (a system-prompt overlay + tool scoping) or
-reusable commands with NO code and NO restart, git-versionable per engagement.
-Modeled on OpenCode's agent/command markdown (MIT — patterns, not code). A "mode"
-is just an agent whose tool scope denies some tools (e.g. a read-only recon mode
-that denies exploit tools). Files, project taking precedence over global:
-
-  <cwd>/.osprey/agents/<name>.md       ·  ~/.osprey/agents/<name>.md
-  <cwd>/.osprey/commands/<name>.md     ·  ~/.osprey/commands/<name>.md
-
-Agent frontmatter: `description`, `model` (optional override), `tools`/`allow_tools`
-(globs; empty = all), `deny_tools` (globs). Body = a system-prompt overlay appended
-to the base policy (so the harness's own guardrails always still apply). Command
-frontmatter: `description`; body = a prompt template with $ARGUMENTS / $1..$N.
-
-Tool scoping is OPT-IN and pattern-based (fnmatch on tool names): the DEFAULT agent
-has NO restriction (full catalog). A mode only ever NARROWS, and only when the
-operator defines one — so this can never silently restrict a real pentest.
+No code change is needed to add a mode or a command — drop a markdown file in
+`.osprey/agents/` or `.osprey/commands/` (resolved relative to the CLI's current
+working directory, same convention as `.env`/`load_dotenv()`). `handle_agent` /
+`execute_command` in `cli/commands/slash.py` are the only callers.
 """
 
 from __future__ import annotations
@@ -26,109 +13,133 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
+    """Minimal `--- key: value ---` frontmatter parse — mirrors
+    ``osprey.services.knowledge_browser.parse_frontmatter`` byte-for-byte, but
+    duplicated rather than imported: ``cli/`` is an independently installable
+    package (its own pyproject/requirements) with no dependency on the backend."""
+    stripped = text.lstrip("﻿")
+    if not stripped.startswith("---"):
+        return {}, text
+    lines = stripped.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}, text
+    meta: dict[str, str] = {}
+    body_start = None
+    last_key: str | None = None
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            body_start = i + 1
+            break
+        raw = lines[i]
+        if not raw.strip():
+            continue
+        if last_key is not None and (":" not in raw or raw[:1].isspace()):
+            meta[last_key] = (meta[last_key] + " " + raw.strip()).strip()
+            continue
+        key, _, value = raw.partition(":")
+        key = key.strip()
+        meta[key] = value.strip().strip('"').strip("'")
+        last_key = key
+    if body_start is None:
+        return {}, text
+    body = "\n".join(lines[body_start:]).lstrip("\n")
+    return meta, body
+
+
+def _parse_list_field(meta: dict[str, str], key: str) -> list[str]:
+    return [v.strip() for v in (meta.get(key) or "").strip("[]").split(",") if v.strip()]
+
+
+def _osprey_dir(*parts: str) -> Path:
+    return Path.cwd().joinpath(".osprey", *parts)
+
+
 @dataclass
 class Agent:
+    """A prompt-defined mode: a system-prompt overlay plus an optional tool scope
+    and model override, authored as ``.osprey/agents/<name>.md``."""
+
     name: str
     description: str = ""
-    prompt: str = ""            # system-prompt overlay (appended to base policy)
-    model: str = ""             # optional per-agent model override
-    allow_tools: list[str] = field(default_factory=list)  # globs; empty = all allowed
-    deny_tools: list[str] = field(default_factory=list)    # globs; take precedence
+    prompt: str = ""
+    allow_tools: list[str] = field(default_factory=list)
+    deny_tools: list[str] = field(default_factory=list)
+    model: str = ""
 
     def tool_allowed(self, tool_name: str) -> bool:
-        for pat in self.deny_tools:
-            if fnmatch.fnmatch(tool_name, pat):
-                return False
+        """Glob-matched allow/deny, deny wins. Empty allow-list = everything
+        allowed (deny still applies). Bound, so ``agent.tool_allowed`` is directly
+        usable as ``Runner``'s ``Callable[[str], bool]`` tool_filter."""
+        if any(fnmatch.fnmatch(tool_name, pat) for pat in self.deny_tools):
+            return False
         if self.allow_tools:
             return any(fnmatch.fnmatch(tool_name, pat) for pat in self.allow_tools)
         return True
 
 
+def load_agents() -> dict[str, Agent]:
+    """Every `.osprey/agents/*.md`, keyed by lowercase name. An empty or missing
+    directory just yields no agents — this is opt-in, never required."""
+    out: dict[str, Agent] = {}
+    agents_dir = _osprey_dir("agents")
+    if not agents_dir.is_dir():
+        return out
+    for path in sorted(agents_dir.glob("*.md")):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        meta, body = _parse_frontmatter(text)
+        name = (meta.get("name") or path.stem).strip().lower()
+        if not name:
+            continue
+        out[name] = Agent(
+            name=name,
+            description=meta.get("description", ""),
+            prompt=body.strip(),
+            allow_tools=_parse_list_field(meta, "tools"),
+            deny_tools=_parse_list_field(meta, "deny_tools"),
+            model=meta.get("model", ""),
+        )
+    return out
+
+
 @dataclass
 class Command:
+    """A prompt-defined slash command: ``.osprey/commands/<name>.md``'s body is a
+    template expanded with the invocation's args, then driven as a normal prompt."""
+
     name: str
     description: str = ""
     template: str = ""
 
 
-def _dirs(kind: str) -> list[Path]:
-    """Global first, then project — so a later-loaded project file overrides a
-    global one of the same name (dict insertion order in the loaders below)."""
-    return [Path.home() / ".osprey" / kind, Path.cwd() / ".osprey" / kind]
-
-
-def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
-    """Split leading `---`-delimited `key: value` frontmatter from the body.
-    Deliberately tiny (no YAML dep): keys are lowercased; everything after the
-    closing `---` is the body."""
-    if not text.startswith("---"):
-        return {}, text
-    end = text.find("\n---", 3)
-    if end == -1:
-        return {}, text
-    fm = text[3:end].strip()
-    body = text[end + 4:].lstrip("\n")
-    meta: dict[str, str] = {}
-    for line in fm.splitlines():
-        if ":" in line:
-            k, v = line.split(":", 1)
-            meta[k.strip().lower()] = v.strip()
-    return meta, body
-
-
-def _split_globs(value: str) -> list[str]:
-    return [x.strip().strip("\"'") for x in value.strip().strip("[]").split(",") if x.strip()]
-
-
-def load_agents() -> dict[str, Agent]:
-    agents: dict[str, Agent] = {}
-    for d in _dirs("agents"):
-        if not d.is_dir():
-            continue
-        for f in sorted(d.glob("*.md")):
-            try:
-                meta, body = parse_frontmatter(f.read_text(encoding="utf-8"))
-            except OSError:
-                continue
-            name = (meta.get("name") or f.stem).strip().lower()
-            if not name:
-                continue
-            agents[name] = Agent(
-                name=name,
-                description=meta.get("description", ""),
-                prompt=body.strip(),
-                model=meta.get("model", ""),
-                allow_tools=_split_globs(meta.get("tools") or meta.get("allow_tools") or ""),
-                deny_tools=_split_globs(meta.get("deny_tools") or meta.get("deny") or ""),
-            )
-    return agents
-
-
 def load_commands() -> dict[str, Command]:
-    commands: dict[str, Command] = {}
-    for d in _dirs("commands"):
-        if not d.is_dir():
+    out: dict[str, Command] = {}
+    commands_dir = _osprey_dir("commands")
+    if not commands_dir.is_dir():
+        return out
+    for path in sorted(commands_dir.glob("*.md")):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
             continue
-        for f in sorted(d.glob("*.md")):
-            try:
-                meta, body = parse_frontmatter(f.read_text(encoding="utf-8"))
-            except OSError:
-                continue
-            name = (meta.get("name") or f.stem).strip().lower()
-            if not name:
-                continue
-            commands[name] = Command(name=name, description=meta.get("description", ""), template=body.strip())
-    return commands
+        meta, body = _parse_frontmatter(text)
+        name = (meta.get("name") or path.stem).strip().lower()
+        if not name:
+            continue
+        out[name] = Command(name=name, description=meta.get("description", ""), template=body.strip())
+    return out
 
 
 def expand_command(template: str, args: list[str]) -> str:
-    """Substitute $ARGUMENTS (all args joined) and $1..$N (positional)."""
-    text = template.replace("$ARGUMENTS", " ".join(args))
-    # Replace higher indices first so $10 isn't clobbered by $1.
+    """Expand ``$ARGUMENTS`` (all args, space-joined) and ``$1``..``$N``
+    (positional) in a command template. An unmatched ``$N`` is left as-is rather
+    than blanked, so a malformed invocation is visibly wrong, not silently short."""
+    out = template.replace("$ARGUMENTS", " ".join(args))
+    # Replace higher indices first so a $1 pass never clobbers the leading digit
+    # of $10..$N. Unmatched $N (index > len(args)) is left as-is by construction.
     for i in range(len(args), 0, -1):
-        text = text.replace(f"${i}", args[i - 1])
-    return text
-
-
-def get_agent(name: str) -> Agent | None:
-    return load_agents().get((name or "").strip().lower())
+        out = out.replace(f"${i}", args[i - 1])
+    return out

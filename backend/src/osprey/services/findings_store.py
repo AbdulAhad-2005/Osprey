@@ -179,6 +179,10 @@ def _row_to_finding(row: FindingRow) -> Finding:
         created_at=row.created_at,
         occurrence_count=int(row.occurrence_count) if row.occurrence_count is not None else 1,
         node_id=row.node_id,
+        observation_ids=[str(x) for x in _decode_list(getattr(row, "observation_ids_json", "") or "[]")],
+        source_tools=[str(x) for x in _decode_list(getattr(row, "source_tools_json", "") or "[]")],
+        evidence_records=_decode_list(getattr(row, "evidence_records_json", "") or "[]"),
+        evidence_summary=getattr(row, "evidence_summary", "") or "",
     )
 
 
@@ -193,6 +197,15 @@ def _clean_text(val: Any) -> str:
 
 
 def _finding_to_row(finding: Finding, *, fingerprint: str, now: datetime) -> FindingRow:
+    # NOTE: the store persists whatever confidence the Finding it's given
+    # already carries — it does not itself enforce "confidence = f(evidence)".
+    # That enforcement belongs to the finding's CREATOR: platform_file_finding
+    # and promote_observations (plans/harness/03-earned-finding-pipeline.md
+    # Steps 3/5) call services.confidence.confidence_for themselves before
+    # constructing the Finding they hand to this store. Forcing recomputation
+    # here would also silently downgrade every finding built by call sites
+    # not yet migrated onto the evidence model (Step 6/7 tracks those) —
+    # this store stays a dumb persistence layer until that migration is done.
     created = finding.created_at or now
     return FindingRow(
         id=finding.id,
@@ -213,6 +226,12 @@ def _finding_to_row(finding: Finding, *, fingerprint: str, now: datetime) -> Fin
         extra_json=_clean_text(_encode_json(finding.extra or {})),
         raw_data=_clean_text(finding.raw_data or ""),
         notes=_clean_text(finding.notes or ""),
+        observation_ids_json=_clean_text(_encode_json(finding.observation_ids or [])),
+        source_tools_json=_clean_text(_encode_json(finding.source_tools or [])),
+        evidence_records_json=_clean_text(
+            _encode_json([er.model_dump(mode="json") for er in (finding.evidence_records or [])])
+        ),
+        evidence_summary=_clean_text(finding.evidence_summary or ""),
         occurrence_count=1,
         first_seen_at=created,
         last_seen_at=created,
@@ -357,9 +376,11 @@ class FindingsStore:
         existing.occurrence_count = int(existing.occurrence_count or 1) + 1
         existing.last_seen_at = now
         # Keep the strongest confidence and the highest severity seen across
-        # occurrences — each parser assigns both honestly per-observation now
-        # (see skills/vuln/verification-and-severity.md), there is no grade to
-        # re-derive or clamp against.
+        # occurrences — each writer assigns both honestly per-occurrence (see
+        # skills/vuln/verification-and-severity.md; earned-finding writers use
+        # services.confidence.confidence_for before ever constructing the
+        # Finding — see _finding_to_row's note), there is no grade to
+        # re-derive or clamp against here.
         new_conf = finding.confidence.value
         best_conf = existing.confidence or "hypothesis"
         if _CONFIDENCE_RANK.get(new_conf, 0) > _CONFIDENCE_RANK.get(best_conf, 0):
@@ -370,6 +391,30 @@ class FindingsStore:
             best_sev = new_sev
         existing.confidence = best_conf
         existing.claim_severity = best_sev
+
+        # Provenance still accumulates across occurrences (observation_ids /
+        # source_tools / evidence_records) even though this layer doesn't
+        # itself recompute confidence from it — a later re-open of this
+        # finding via platform_file_finding can call confidence_for on the
+        # accumulated evidence explicitly.
+        merged_observation_ids = list(
+            dict.fromkeys(_decode_list(existing.observation_ids_json) + list(finding.observation_ids or []))
+        )
+        merged_source_tools = list(
+            dict.fromkeys(
+                [t for t in _decode_list(existing.source_tools_json) if t]
+                + ([existing.source_tool] if existing.source_tool else [])
+                + list(finding.source_tools or [])
+                + ([finding.source_tool] if finding.source_tool else [])
+            )
+        )
+        merged_records = _decode_list(existing.evidence_records_json) + [
+            er.model_dump(mode="json") for er in (finding.evidence_records or [])
+        ]
+        existing.observation_ids_json = _clean_text(_encode_json(merged_observation_ids))
+        existing.source_tools_json = _clean_text(_encode_json(merged_source_tools))
+        existing.evidence_records_json = _clean_text(_encode_json(merged_records))
+
         db.add(_occurrence_row(existing.id, finding, now))
 
     def _bump_engagement_counts(
@@ -528,6 +573,15 @@ class FindingsStore:
             finally:
                 db.close()
 
+    def get(self, finding_id: str) -> Finding | None:
+        with self._lock:
+            db = SessionLocal()
+            try:
+                row = db.get(FindingRow, finding_id)
+                return _row_to_finding(row) if row is not None else None
+            finally:
+                db.close()
+
     def node_id_for(self, *, finding_id: str) -> str | None:
         """The primary graph node a finding is linked to (or None)."""
         with self._lock:
@@ -535,6 +589,33 @@ class FindingsStore:
             try:
                 row = db.get(FindingRow, finding_id)
                 return row.node_id if row is not None else None
+            finally:
+                db.close()
+
+    def delete(self, *, finding_id: str) -> bool:
+        """Retract a canonical finding and its occurrence history — used by
+        the FP-cache mark flow (plans/harness/04-learning-fp-cache.md Step 3)
+        to remove a finding from the *current* engagement once its pattern is
+        recorded. The pattern (not this row) is what prevents recurrence; the
+        underlying Observations/Evidence are untouched (Step 4 — a mark is
+        advisory metadata over promotion, never a deletion of evidence)."""
+        with self._lock:
+            db = SessionLocal()
+            try:
+                row = db.get(FindingRow, finding_id)
+                if row is None:
+                    return False
+                db.execute(
+                    FindingOccurrenceRow.__table__.delete().where(
+                        FindingOccurrenceRow.finding_id == finding_id
+                    )
+                )
+                db.delete(row)
+                db.commit()
+                return True
+            except Exception:
+                db.rollback()
+                raise
             finally:
                 db.close()
 

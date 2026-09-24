@@ -79,6 +79,25 @@ class ClaimSeverity(StrEnum):
     CRITICAL = "critical"
 
 
+class EvidenceRecordKind(StrEnum):
+    """A typed evidence item attached to a finding — plans/harness/03-earned-
+    finding-pipeline.md Step 1. This is the input domain ``confidence_for``
+    (services/confidence.py) branches on — never ``finding_type``."""
+
+    CORROBORATION = "corroboration"  # an independent source_tool also observed it
+    REPRODUCTION = "reproduction"  # a controlled PoC reproduced it (_is_proven)
+    VERIFICATION = "verification"  # a direct config/permission read confirmed it
+    ATTESTATION = "attestation"  # a human attested to it
+
+
+class EvidenceRecord(BaseModel):
+    kind: EvidenceRecordKind
+    source_tool: str = ""
+    observation_id: str = ""
+    detail: str = ""
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class Finding(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
     engagement_id: str = ""
@@ -88,7 +107,7 @@ class Finding(BaseModel):
     title: str
     description: str = ""
     evidence: str = ""
-    confidence: FindingConfidence = FindingConfidence.CONFIRMED
+    confidence: FindingConfidence = FindingConfidence.HYPOTHESIS
     claim_severity: ClaimSeverity = ClaimSeverity.NONE
     source_tool: str = ""
     target: str = ""
@@ -111,6 +130,18 @@ class Finding(BaseModel):
     node_id: str | None = Field(
         default=None, description="Primary graph node this finding concerns (read-only)."
     )
+    # --- Earned-finding provenance (plans/harness/03-earned-finding-pipeline.md) ---
+    # The claim's evidentiary basis. ``confidence`` above is a pure function of
+    # these (``services.confidence.confidence_for``) for every finding built via
+    # ``platform_file_finding``/``promote_observations`` — the only two writers
+    # once every legacy Finding-minting call site is migrated (Step 6/7). Kept
+    # optional/default-empty here so the field exists without yet breaking a
+    # Finding built the old way; the hard "observation_ids required" assertion
+    # lands once nothing else constructs Finding directly on the hot paths.
+    observation_ids: list[str] = Field(default_factory=list)
+    source_tools: list[str] = Field(default_factory=list)
+    evidence_records: list[EvidenceRecord] = Field(default_factory=list)
+    evidence_summary: str = ""
 
 
 # Types whose label (title) recurs legitimately across hosts — the same technology
@@ -218,3 +249,31 @@ class GroupedFindingListResponse(BaseModel):
     groups: list[GroupedFinding]
     total_groups: int
     total_findings: int
+
+
+class FileFindingResponse(BaseModel):
+    """``finding`` is None exactly when an FP-cache pattern suppressed this
+    candidate (plans/harness/04-learning-fp-cache.md) — check ``suppressed``
+    rather than assuming a finding was created."""
+
+    finding: Finding | None = None
+    suppressed: bool = False
+    suppressed_reason: str = ""
+
+
+class FileFindingRequest(BaseModel):
+    """Request body for POST /findings/file — plans/harness/03-earned-
+    finding-pipeline.md Step 3. Deliberately has no ``confidence`` field: the
+    caller attaches evidence, ``confidence_for`` computes it."""
+
+    engagement_id: str
+    run_id: str = ""
+    title: str
+    finding_type: FindingType
+    observation_ids: list[str]
+    claim_severity: ClaimSeverity = ClaimSeverity.NONE
+    description: str = ""
+    evidence_records: list[EvidenceRecord] = Field(default_factory=list)
+    target: str = ""
+    tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)

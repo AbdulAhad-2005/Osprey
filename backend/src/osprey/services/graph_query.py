@@ -73,6 +73,8 @@ def _query_multi_hop(
             if nid in node_by_id
             else "",
             "label": node_by_id[nid].label if nid in node_by_id else nid,
+            "confidence": node_by_id[nid].confidence if nid in node_by_id else "",
+            "observation_ids": node_by_id[nid].observation_ids if nid in node_by_id else [],
             "hops": p["hops"],
             "via_relationship": p["via_relationship"],
             "via_from": p["via_from"],
@@ -140,8 +142,14 @@ def query_graph(
             "id": n.id,
             "type": getattr(n.asset_type, "value", str(n.asset_type)),
             "label": label,
+            "confidence": n.confidence,
+            "observation_ids": n.observation_ids,
             "metadata": n.metadata or {},
         }
+        if n.conflicts:
+            node_out["conflicts"] = {
+                slot: [c.model_dump() for c in values] for slot, values in n.conflicts.items()
+            }
         sev = sev_map.get(n.id)
         if sev:
             node_out["max_severity"] = sev
@@ -160,6 +168,7 @@ def query_graph(
                     "target": e.target_id,
                     "rel": rel,
                     "hypothesis": rel.startswith("hypothesis_"),
+                    "observation_ids": e.observation_ids,
                 }
                 if e.metadata:
                     edge_out["evidence"] = e.metadata

@@ -1,15 +1,16 @@
 """Parsers for the first-class web-recon tools (content / parameter / JS / policy).
 
-All findings are RECON-phase: discovered paths, hidden parameters, JS endpoints
-and secrets, cloud-storage exposure, and email/policy posture. Parameters and
-endpoints are additionally tagged ``injection_point_candidate`` so the eventual
-vuln phase inherits a ready-made attack-surface list instead of re-deriving it
-from raw URL dumps (the "attack-surface handoff" seed).
+All observations are RECON-phase structural facts: discovered paths, hidden
+parameters, JS endpoints and secrets, cloud-storage exposure, and email/policy
+posture. Parameters and endpoints are additionally tagged
+``injection_point_candidate`` so the eventual vuln phase inherits a
+ready-made attack-surface list instead of re-deriving it from raw URL dumps
+(the "attack-surface handoff" seed).
 
-Nothing here claims impact it did not observe: content hits are CONFIRMED (a
-live HTTP response was seen), hardcoded secrets are LIKELY confidence and
-capped at MEDIUM/LOW severity (their presence is seen, but validity is
-unverified), and archive/DNS-derived signals stay at LIKELY confidence too.
+Nothing here claims impact it did not observe — a content hit is a fact that
+an HTTP response was seen at that status; whether a hardcoded secret is valid,
+or a weak SPF policy is worth reporting, is `confidence_for`'s job (Plan 03),
+never this module's.
 """
 
 from __future__ import annotations
@@ -18,12 +19,7 @@ import json
 import re
 from urllib.parse import parse_qs, urlparse
 
-from osprey.schemas.finding import (
-    ClaimSeverity,
-    Finding,
-    FindingConfidence,
-    FindingType,
-)
+from osprey.schemas.observation import Observation, ObservationType
 from osprey.services.parsers._capping import cap_with_accounting
 
 _INTERESTING_PATH = (
@@ -54,25 +50,20 @@ def _content_hit(
     engagement_id: str,
     run_id: str,
     target: str,
-) -> Finding:
+) -> Observation:
     interesting = _is_interesting(url)
     tags = ["content-discovery", source_tool]
     if interesting:
         tags.append("interesting_path")
     if status in ("401", "403"):
         tags.append("access_controlled")
-    return Finding(
+    return Observation(
         engagement_id=engagement_id,
         run_id=run_id,
-        phase="recon",
-        finding_type=FindingType.URL,
-        title=f"{url} [{status}]",
-        description=f"Discovered path via {source_tool} (HTTP {status}, size {size})",
-        evidence=f"{status} {size} {url}"[:300],
-        confidence=FindingConfidence.CONFIRMED,
-        source_tool=source_tool,
+        type=ObservationType.URL,
         target=url,
-        metadata={
+        source_tool=source_tool,
+        details={
             "hostname": _host_of(url),
             "url": url,
             "status": status,
@@ -87,7 +78,7 @@ def _content_hit(
 # feroxbuster --json (NDJSON: {"type":"response","url":..,"status":..,"content_length":..})
 # ---------------------------------------------------------------------------
 def parse_feroxbuster(stdout, *, engagement_id="", run_id="", target=""):
-    out: list[Finding] = []
+    out: list[Observation] = []
     seen: set[str] = set()
     for line in (stdout or "").splitlines():
         line = line.strip()
@@ -114,7 +105,7 @@ def parse_feroxbuster(stdout, *, engagement_id="", run_id="", target=""):
 # ffuf -json (NDJSON: {"url":..,"status":..,"length":..,"input":{"FUZZ":..}})
 # ---------------------------------------------------------------------------
 def parse_ffuf(stdout, *, engagement_id="", run_id="", target=""):
-    out: list[Finding] = []
+    out: list[Observation] = []
     seen: set[str] = set()
     for line in (stdout or "").splitlines():
         line = line.strip()
@@ -136,13 +127,13 @@ def parse_ffuf(stdout, *, engagement_id="", run_id="", target=""):
         if not url or url in seen:
             continue
         seen.add(url)
-        f = _content_hit(
+        obs = _content_hit(
             url, str(rec.get("status") or ""), str(rec.get("length") or ""),
             source_tool="ffuf_scan", engagement_id=engagement_id, run_id=run_id, target=target,
         )
         if fuzz:
-            f.metadata["fuzz"] = fuzz
-        out.append(f)
+            obs.details["fuzz"] = fuzz
+        out.append(obs)
     return out or _dir_text_fallback(stdout, "ffuf_scan", engagement_id, run_id, target)
 
 
@@ -160,7 +151,7 @@ _GOBUSTER_DNS_IP_RE = re.compile(
 
 def parse_gobuster(stdout, *, engagement_id="", run_id="", target=""):
     base = (target or "").rstrip("/")
-    out: list[Finding] = []
+    out: list[Observation] = []
     seen: set[str] = set()
     for line in (stdout or "").splitlines():
         line = line.strip()
@@ -173,18 +164,13 @@ def parse_gobuster(stdout, *, engagement_id="", run_id="", target=""):
                 continue
             seen.add(host)
             out.append(
-                Finding(
+                Observation(
                     engagement_id=engagement_id,
                     run_id=run_id,
-                    phase="recon",
-                    finding_type=FindingType.SUBDOMAIN,
-                    title=host,
-                    description=f"Active DNS brute force (gobuster dns{(' on ' + target) if target else ''})",
-                    evidence=line[:400],
-                    confidence=FindingConfidence.LIKELY,
-                    source_tool="gobuster_scan",
+                    type=ObservationType.SUBDOMAIN,
                     target=target or host,
-                    metadata={"hostname": host, "source": "dns-bruteforce", "ips": ips},
+                    source_tool="gobuster_scan",
+                    details={"hostname": host, "source": "dns-bruteforce", "ips": ips},
                     tags=["dns", "active", "subdomain-enum"],
                 )
             )
@@ -207,7 +193,7 @@ def parse_gobuster(stdout, *, engagement_id="", run_id="", target=""):
 def _dir_text_fallback(stdout, source_tool, engagement_id, run_id, target):
     """Fallback for feroxbuster/ffuf default (non-JSON) text output."""
     base = (target or "").rstrip("/")
-    out: list[Finding] = []
+    out: list[Observation] = []
     seen: set[str] = set()
     for line in (stdout or "").splitlines():
         line = line.strip()
@@ -236,25 +222,20 @@ def _dir_text_fallback(stdout, source_tool, engagement_id, run_id, target):
 _ARJUN_FOUND_RE = re.compile(r"(?i)parameters?\s+found\s*[:>-]*\s*(.+)$")
 
 
-def _param_finding(param, url, *, source_tool, engagement_id, run_id, target):
-    return Finding(
+def _param_observation(param, url, *, source_tool, engagement_id, run_id, target):
+    return Observation(
         engagement_id=engagement_id,
         run_id=run_id,
-        phase="recon",
-        finding_type=FindingType.OBSERVATION,
-        title=f"Parameter '{param}'" + (f" on {_host_of(url)}" if url else ""),
-        description=f"HTTP parameter discovered via {source_tool} — injection-point candidate",
-        evidence=(f"{param} @ {url}" if url else param)[:300],
-        confidence=FindingConfidence.LIKELY,
-        source_tool=source_tool,
+        type=ObservationType.INJECTION_POINT,
         target=url or target,
-        metadata={"parameter": param, "url": url, "hostname": _host_of(url)},
+        source_tool=source_tool,
+        details={"parameter": param, "url": url, "hostname": _host_of(url)},
         tags=["parameter", "injection_point_candidate", source_tool],
     )
 
 
 def parse_arjun(stdout, *, engagement_id="", run_id="", target=""):
-    out: list[Finding] = []
+    out: list[Observation] = []
     seen: set[str] = set()
     for line in (stdout or "").splitlines():
         m = _ARJUN_FOUND_RE.search(line.strip())
@@ -265,7 +246,7 @@ def parse_arjun(stdout, *, engagement_id="", run_id="", target=""):
             if not param or not re.match(r"^[A-Za-z0-9_.\-\[\]]{1,40}$", param) or param in seen:
                 continue
             seen.add(param)
-            out.append(_param_finding(
+            out.append(_param_observation(
                 param, target, source_tool="arjun_scan",
                 engagement_id=engagement_id, run_id=run_id, target=target,
             ))
@@ -277,13 +258,13 @@ _X8_PARAM_TOKEN_RE = re.compile(r"^[A-Za-z0-9_.\-\[\]]{1,40}$")
 
 
 def parse_x8(stdout, *, engagement_id="", run_id="", target=""):
-    """x8 active param brute output → injection-point candidate findings.
+    """x8 active param brute output → injection-point candidate observations.
 
     x8's terminal output varies by version; it flags each discovered parameter,
     often as a bare token or after a 'found'/'reflects' marker. We accept both a
-    JSON list of params and line tokens, and reuse the shared param finding.
+    JSON list of params and line tokens, and reuse the shared param observation.
     """
-    out: list[Finding] = []
+    out: list[Observation] = []
     seen: set[str] = set()
     text = (stdout or "").strip()
 
@@ -295,7 +276,7 @@ def parse_x8(stdout, *, engagement_id="", run_id="", target=""):
         if param.lower() in {"get", "post", "put", "delete", "found", "new", "reflects", "none", "true", "false"}:
             return
         seen.add(param)
-        out.append(_param_finding(
+        out.append(_param_observation(
             param, target, source_tool="x8_parameter_discovery",
             engagement_id=engagement_id, run_id=run_id, target=target,
         ))
@@ -325,7 +306,7 @@ def extract_parameters_from_urls(urls, *, source_tool, engagement_id, run_id, ta
     """Passive param mining: pull unique parameter names out of a URL corpus
     (gau / wayback / katana output). Cheap replacement for the flaky paramspider
     CLI — the archive URLs we already collect ARE the parameter source."""
-    out: list[Finding] = []
+    out: list[Observation] = []
     seen: set[tuple[str, str]] = set()
     for url in urls:
         try:
@@ -338,7 +319,7 @@ def extract_parameters_from_urls(urls, *, source_tool, engagement_id, run_id, ta
             if key in seen or not re.match(r"^[A-Za-z0-9_.\-\[\]]{1,40}$", param):
                 continue
             seen.add(key)
-            out.append(_param_finding(
+            out.append(_param_observation(
                 param, url, source_tool=source_tool,
                 engagement_id=engagement_id, run_id=run_id, target=target,
             ))
@@ -351,7 +332,7 @@ def extract_parameters_from_urls(urls, *, source_tool, engagement_id, run_id, ta
 # katana -jsonl : {"timestamp":..,"request":{"endpoint":"http://.."},"response":{"status_code":..}}
 # ---------------------------------------------------------------------------
 def parse_katana(stdout, *, engagement_id="", run_id="", target=""):
-    out: list[Finding] = []
+    out: list[Observation] = []
     seen: set[str] = set()
     urls: list[str] = []
     for line in (stdout or "").splitlines():
@@ -371,13 +352,11 @@ def parse_katana(stdout, *, engagement_id="", run_id="", target=""):
             continue
         seen.add(url)
         urls.append(url)
-        out.append(Finding(
-            engagement_id=engagement_id, run_id=run_id, phase="recon",
-            finding_type=FindingType.URL, title=url[:300],
-            description="Endpoint discovered by katana crawl",
-            evidence=url[:300], confidence=FindingConfidence.CONFIRMED,
-            source_tool="katana_crawl",
-            target=url, metadata={"hostname": _host_of(url), "url": url},
+        out.append(Observation(
+            engagement_id=engagement_id, run_id=run_id,
+            type=ObservationType.URL,
+            target=url, source_tool="katana_crawl",
+            details={"hostname": _host_of(url), "url": url},
             tags=["crawl", "katana"] + (["interesting_path"] if _is_interesting(url) else []),
         ))
     # Attack-surface handoff: also mine parameters from the crawled URLs.
@@ -396,20 +375,18 @@ def parse_js_recon(stdout, *, engagement_id="", run_id="", target=""):
         return []
     if not isinstance(data, dict):
         return []
-    out: list[Finding] = []
+    out: list[Observation] = []
     tgt = data.get("target") or target
 
     all_endpoints = [str(ep) for ep in (data.get("endpoints") or [])]
     out.extend(cap_with_accounting(
         all_endpoints,
         max_items=400,
-        render=lambda ep: Finding(
-            engagement_id=engagement_id, run_id=run_id, phase="recon",
-            finding_type=FindingType.URL, title=ep[:300],
-            description="Endpoint extracted from JavaScript",
-            evidence=ep[:300], confidence=FindingConfidence.LIKELY,
-            source_tool="js_recon",
-            target=tgt, metadata={"endpoint": ep, "hostname": _host_of(ep) or _host_of(tgt)},
+        render=lambda ep: Observation(
+            engagement_id=engagement_id, run_id=run_id,
+            type=ObservationType.JS_ENDPOINT,
+            target=tgt, source_tool="js_recon",
+            details={"endpoint": ep, "hostname": _host_of(ep) or _host_of(tgt)},
             tags=["js-endpoint"] + (["interesting_path", "injection_point_candidate"]
                                     if _is_interesting(ep) else []),
         ),
@@ -421,31 +398,30 @@ def parse_js_recon(stdout, *, engagement_id="", run_id="", target=""):
     for sec in (data.get("secrets") or []):
         stype = str(sec.get("type") or "secret")
         high = bool(sec.get("high_signal"))
-        out.append(Finding(
-            engagement_id=engagement_id, run_id=run_id, phase="recon",
-            finding_type=FindingType.SECRET,
-            title=f"Hardcoded {stype} in JavaScript",
-            description=(
-                "Potential secret found in client-side JS. Exposure is observed; "
-                "validity is UNVERIFIED — confirm before claiming impact."
-            ),
-            evidence=f"{stype}: {sec.get('match')} (source {sec.get('source')})"[:300],
-            confidence=FindingConfidence.LIKELY,
-            claim_severity=ClaimSeverity.MEDIUM if high else ClaimSeverity.LOW,
-            source_tool="js_recon", target=tgt,
-            metadata={"secret_type": stype, "source": sec.get("source"), "high_signal": high},
+        out.append(Observation(
+            engagement_id=engagement_id, run_id=run_id,
+            type=ObservationType.SECRET,
+            target=tgt, source_tool="js_recon",
+            details={
+                "secret_type": stype,
+                "match": sec.get("match"),
+                "source": sec.get("source"),
+                "high_signal": high,
+            },
             tags=["secret", "js-secret", stype] + (["verify_validity"] if high else []),
         ))
 
     for c in (data.get("cloud_assets") or []):
-        out.append(Finding(
-            engagement_id=engagement_id, run_id=run_id, phase="recon",
-            finding_type=FindingType.OBSERVATION,
-            title=f"Cloud storage reference: {c.get('bucket')} ({c.get('type')})",
-            description="Cloud storage endpoint referenced in JS/target — check for public access.",
-            evidence=str(c.get("match"))[:300], confidence=FindingConfidence.LIKELY,
-            source_tool="js_recon", target=tgt,
-            metadata={"cloud_type": c.get("type"), "bucket": c.get("bucket")},
+        out.append(Observation(
+            engagement_id=engagement_id, run_id=run_id,
+            type=ObservationType.ENDPOINT,
+            target=tgt, source_tool="js_recon",
+            details={
+                "kind": "cloud_storage_reference",
+                "cloud_type": c.get("type"),
+                "bucket": c.get("bucket"),
+                "match": c.get("match"),
+            },
             tags=["cloud-asset", str(c.get("type"))],
         ))
     return out
@@ -476,26 +452,23 @@ def parse_email_security(stdout, *, engagement_id="", run_id="", target=""):
         elif section == "dkim" and line.startswith("DKIM_SELECTOR:"):
             dkim.append(line.split(":", 1)[1].strip())
 
-    out: list[Finding] = []
+    out: list[Observation] = []
     dom = (target or "").strip().lower()
-    meta = {
+    details = {
         "domain": dom, "mx_count": len(mx),
-        "has_spf": bool(spf), "has_dmarc": bool(dmarc), "dkim_selectors": ",".join(dkim),
+        "has_spf": bool(spf), "has_dmarc": bool(dmarc), "dkim_selectors": dkim,
+        "spf": spf[:200], "dmarc": dmarc[:200],
     }
-    out.append(Finding(
-        engagement_id=engagement_id, run_id=run_id, phase="recon",
-        finding_type=FindingType.OBSERVATION,
-        title=f"Email security posture: {dom or 'domain'}",
-        description=(
-            f"MX={len(mx)} SPF={'yes' if spf else 'NO'} "
-            f"DMARC={'yes' if dmarc else 'NO'} DKIM={len(dkim)} selector(s)"
-        ),
-        evidence=f"spf={spf[:120] or 'none'}; dmarc={dmarc[:120] or 'none'}"[:300],
-        confidence=FindingConfidence.CONFIRMED, 
-        source_tool="email_security_probe", target=dom, metadata=meta,
+    out.append(Observation(
+        engagement_id=engagement_id, run_id=run_id,
+        type=ObservationType.DNS_RECORD,
+        target=dom, source_tool="email_security_probe",
+        details=details,
         tags=["email-security", "dns"],
     ))
-    # Spoofing exposure: missing OR weak SPF/DMARC policy is reportable.
+    # Spoofing-exposure facts: missing OR weak SPF/DMARC policy is structural,
+    # reportable data — the earned-finding pipeline decides if it's worth a
+    # finding, this parser only states what it observed.
     weaknesses: list[str] = []
     if not spf:
         weaknesses.append("no SPF record")
@@ -507,22 +480,15 @@ def parse_email_security(stdout, *, engagement_id="", run_id="", target=""):
     else:
         pol = re.search(r"(?i)\bp\s*=\s*(none|quarantine|reject)", dmarc)
         policy = (pol.group(1).lower() if pol else "none")
-        meta["dmarc_policy"] = policy
+        details["dmarc_policy"] = policy
         if policy == "none":
             weaknesses.append("DMARC p=none — monitoring only, does not block spoofed mail")
     if weaknesses:
-        out.append(Finding(
-            engagement_id=engagement_id, run_id=run_id, phase="recon",
-            finding_type=FindingType.OBSERVATION,
-            title=f"Weak email anti-spoofing on {dom or 'domain'}",
-            description=(
-                "Email anti-spoofing is missing or weak — enables spoofing/phishing "
-                "in the organisation's name: " + "; ".join(weaknesses)
-            ),
-            evidence="; ".join(weaknesses)[:300], confidence=FindingConfidence.CONFIRMED,
-            claim_severity=ClaimSeverity.LOW,
-            source_tool="email_security_probe", target=dom,
-            metadata={**meta, "weaknesses": "; ".join(weaknesses)},
+        out.append(Observation(
+            engagement_id=engagement_id, run_id=run_id,
+            type=ObservationType.DNS_RECORD,
+            target=dom, source_tool="email_security_probe",
+            details={**details, "weaknesses": weaknesses},
             tags=["email-security", "spoofing", "misconfig"],
         ))
     return out
@@ -532,7 +498,7 @@ def parse_email_security(stdout, *, engagement_id="", run_id="", target=""):
 # well_known_probe — sectioned text (=== PATH /x === / STATUS: nnn / body)
 # ---------------------------------------------------------------------------
 def parse_well_known(stdout, *, engagement_id="", run_id="", target=""):
-    out: list[Finding] = []
+    out: list[Observation] = []
     base = (target or "").strip()
     cur_path = ""
     cur_status = ""
@@ -544,33 +510,31 @@ def parse_well_known(stdout, *, engagement_id="", run_id="", target=""):
         url = cur_path if cur_path.startswith("http") else f"{base.rstrip('/')}{cur_path}"
         body = "\n".join(body_lines)
         tags = ["well-known", "policy-file"]
-        meta = {"path": cur_path, "url": url, "status": cur_status, "hostname": _host_of(url)}
+        details = {
+            "path": cur_path, "url": url, "status": cur_status,
+            "hostname": _host_of(url), "body_snippet": body[:300],
+        }
         # robots.txt Disallow entries are attack-surface leads.
         disallow = re.findall(r"(?im)^\s*Disallow:\s*(\S+)", body)
         if disallow:
-            meta["disallow"] = ",".join(disallow[:40])
+            details["disallow"] = disallow[:40]
             tags.append("robots_disallow")
-        out.append(Finding(
-            engagement_id=engagement_id, run_id=run_id, phase="recon",
-            finding_type=FindingType.URL, title=f"{cur_path} present [200]",
-            description=f"Policy/well-known file exposed ({cur_path})"
-                        + (f"; {len(disallow)} Disallow path(s)" if disallow else ""),
-            evidence=(body[:300] or url), confidence=FindingConfidence.CONFIRMED,
-            source_tool="well_known_probe",
-            target=url, metadata=meta, tags=tags,
+        out.append(Observation(
+            engagement_id=engagement_id, run_id=run_id,
+            type=ObservationType.URL,
+            target=url, source_tool="well_known_probe",
+            details=details, tags=tags,
         ))
         # Emit the disallowed paths themselves as URL leads.
         for d in disallow[:30]:
             if not d or d == "/":
                 continue
             durl = f"{base.rstrip('/')}{d}" if d.startswith("/") else d
-            out.append(Finding(
-                engagement_id=engagement_id, run_id=run_id, phase="recon",
-                finding_type=FindingType.URL, title=f"robots Disallow: {d}",
-                description="Path the target asked crawlers not to index — often sensitive.",
-                evidence=f"Disallow: {d}", confidence=FindingConfidence.LIKELY,
-                source_tool="well_known_probe",
-                target=durl, metadata={"url": durl, "from": "robots_disallow"},
+            out.append(Observation(
+                engagement_id=engagement_id, run_id=run_id,
+                type=ObservationType.URL,
+                target=durl, source_tool="well_known_probe",
+                details={"url": durl, "from": "robots_disallow"},
                 tags=["robots_disallow"] + (["interesting_path"] if _is_interesting(durl) else []),
             ))
 
@@ -597,15 +561,15 @@ def parse_well_known(stdout, *, engagement_id="", run_id="", target=""):
 # ---------------------------------------------------------------------------
 # Tech-stack fingerprinting (tech_stack_analyze) and WAF identification
 # (wafw00f_scan) — both print human-readable text; neither had a backend
-# parser, so their findings always fell through to the raw "Output from …"
-# placeholder. TECHNOLOGY findings here feed the tree's tech_by_host and the
-# engine's tech-conditional dispatch (e.g. WordPress -> wpscan).
+# parser, so their observations always fell through to the raw "Output from …"
+# placeholder. TECHNOLOGY observations here feed the tree's tech_by_host and
+# the engine's tech-conditional dispatch (e.g. WordPress -> wpscan).
 # ---------------------------------------------------------------------------
 def parse_tech_stack(stdout, *, engagement_id="", run_id="", target=""):
     """tech_stack_analyze prints one JSON line per probe and a final line
     carrying unified_stack (the merged, deduped technology list). The last
     valid line wins — earlier probe lines are per-method detail."""
-    out: list[Finding] = []
+    out: list[Observation] = []
     data = None
     for line in (stdout or "").splitlines():
         line = line.strip()
@@ -633,30 +597,22 @@ def parse_tech_stack(stdout, *, engagement_id="", run_id="", target=""):
             continue
         seen.add(key)
         version = str(tech.get("version") or "").strip()
-        confidence = str(tech.get("confidence") or "low")
+        tool_confidence = str(tech.get("confidence") or "low")
         tech_target = target or str(tech.get("target") or "").strip()
-        title = f"{name} {version}".strip() if version else name
         out.append(
-            Finding(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="recon",
-                finding_type=FindingType.TECHNOLOGY,
-                title=title,
-                description=f"{name} fingerprint on {tech_target or 'target'}"
-                            + (f" (v{version})" if version else ""),
-                evidence=json.dumps(
-                    {k: tech.get(k) for k in ("name", "version", "categories", "detected_by", "confidence")},
-                    default=str,
-                )[:2000],
-                confidence=FindingConfidence.CONFIRMED if confidence == "high" else FindingConfidence.LIKELY,
-                source_tool="tech_stack_analyze",
+                type=ObservationType.TECHNOLOGY,
                 target=tech_target,
-                metadata={
+                source_tool="tech_stack_analyze",
+                details={
                     "hostname": tech_target,
+                    "name": name,
                     "version": version,
                     "categories": tech.get("categories", []),
-                    "confidence": confidence,
+                    "detected_by": tech.get("detected_by"),
+                    "tool_reported_confidence": tool_confidence,
                 },
                 tags=["technology", "fingerprint"],
             )
@@ -686,7 +642,7 @@ def parse_wafw00f(stdout, *, engagement_id="", run_id="", target=""):
     so strip escapes first and allow those characters. A run that detected
     nothing prints no WAF line — legitimately empty, not a raw placeholder
     (parse_tool_output suppresses the fallback for verdict tools)."""
-    out: list[Finding] = []
+    out: list[Observation] = []
     seen: set[str] = set()
     for raw_line in (stdout or "").splitlines():
         line = _ANSI_RE.sub("", raw_line)
@@ -698,20 +654,19 @@ def parse_wafw00f(stdout, *, engagement_id="", run_id="", target=""):
             continue
         seen.add(name.lower())
         verdict = m.group(1).lower()
-        confirmed = verdict in ("is",)
         out.append(
-            Finding(
+            Observation(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase="recon",
-                finding_type=FindingType.TECHNOLOGY,
-                title=f"{name} WAF",
-                description=f"wafw00f: {line.strip()[:300]}",
-                evidence=line.strip()[:500],
-                confidence=FindingConfidence.CONFIRMED if confirmed else FindingConfidence.LIKELY,
-                source_tool="wafw00f_scan",
+                type=ObservationType.WAF,
                 target=target,
-                metadata={"hostname": target, "waf": name, "verdict": verdict},
+                source_tool="wafw00f_scan",
+                details={
+                    "hostname": target,
+                    "waf": name,
+                    "verdict": verdict,
+                    "raw_line": line.strip()[:500],
+                },
                 tags=["waf", "technology"],
             )
         )

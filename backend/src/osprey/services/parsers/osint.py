@@ -1,10 +1,10 @@
 """Deterministic stdout parsers for passive-OSINT tools.
 
-Each parser turns a tool's stdout into typed identity findings (EMAIL / USERNAME /
-PERSON / PHONE / SOCIAL_ACCOUNT / DOCUMENT). Relationship hints go in ``metadata``
-(person / domain / username / network) so the engagement graph can build the
-name → email → account pivot edges. All OSINT findings are leads: person / social
-matches default to UNVERIFIED, structural leads to INFERRED (see finding.py).
+Each parser turns a tool's stdout into typed identity Observations (EMAIL /
+USERNAME / PERSON / PHONE / SOCIAL_ACCOUNT / DOCUMENT) — structural facts
+only. Relationship hints go in ``details`` (person / domain / username /
+network) so the engagement graph can build the name → email → account pivot
+edges once these are promoted to findings (Plan 03).
 """
 
 from __future__ import annotations
@@ -13,11 +13,7 @@ import json
 import re
 from urllib.parse import urlparse
 
-from osprey.schemas.finding import (
-    Finding,
-    FindingConfidence,
-    FindingType,
-)
+from osprey.schemas.observation import Observation, ObservationType
 from osprey.services.parsers.email_extract import (
     EMAIL_RE as _EMAIL_RE,
     email_domain,
@@ -57,35 +53,34 @@ def _valid_email(candidate: str) -> bool:
     return is_valid_email(candidate)
 
 
-def _email_finding(
+def _email_observation(
     addr: str,
     *,
     tool: str,
-    desc: str,
     engagement_id: str,
     run_id: str,
     target: str,
     source: str,
-    extra_meta: dict | None = None,
-) -> Finding:
+    extra_details: dict | None = None,
+) -> Observation:
     normalized = normalize_email(addr)
     host = email_domain(normalized)
-    meta = {
+    details = {
+        "email": normalized,
         "source": source,
         "email_domain": host,
         "matches_target_domain": matches_target_domain(normalized, target),
     }
-    if extra_meta:
-        meta.update(extra_meta)
+    if extra_details:
+        details.update(extra_details)
     return _mk(
-        FindingType.EMAIL,
+        ObservationType.EMAIL,
         normalized,
         tool=tool,
-        desc=desc,
         engagement_id=engagement_id,
         run_id=run_id,
         target=target,
-        metadata=meta,
+        details=details,
     )
 
 
@@ -109,30 +104,25 @@ def _network_of(url: str) -> str:
 
 
 def _mk(
-    ftype: FindingType,
+    otype: ObservationType,
     title: str,
     *,
     tool: str,
-    desc: str,
     engagement_id: str,
     run_id: str,
     target: str,
-    metadata: dict | None = None,
+    details: dict | None = None,
     tags: list[str] | None = None,
-    confidence: FindingConfidence = FindingConfidence.LIKELY,
-) -> Finding:
-    return Finding(
+) -> Observation:
+    d = dict(details or {})
+    d.setdefault("value", title[:200])
+    return Observation(
         engagement_id=engagement_id,
         run_id=run_id,
-        phase="osint",
-        finding_type=ftype,
-        title=title[:200],
-        description=desc,
-        evidence=title[:400],
-        confidence=confidence,
-        source_tool=tool,
+        type=otype,
         target=target,
-        metadata=metadata or {},
+        source_tool=tool,
+        details=d,
         tags=(tags or []) + ["osint"],
     )
 
@@ -141,7 +131,7 @@ def _mk(
 
 def parse_web_contact_harvest(
     stdout: str, *, engagement_id: str = "", run_id: str = "", target: str = ""
-) -> list[Finding]:
+) -> list[Observation]:
     data = extract_harvest_json(stdout)
     if data is None:
         # Last-chance: emails still sitting in a truncated / non-JSON dump.
@@ -150,11 +140,10 @@ def parse_web_contact_harvest(
             return []
         tgt = target or ""
         return [
-            _email_finding(
+            _email_observation(
                 addr, tool="web_contact_harvest",
-                desc=f"Email published on {tgt or 'target site'}",
                 engagement_id=engagement_id, run_id=run_id, target=tgt,
-                source="website", extra_meta={"partial": True},
+                source="website", extra_details={"partial": True},
             )
             for addr in recovered
         ]
@@ -163,18 +152,18 @@ def parse_web_contact_harvest(
 
     domain = str(data.get("domain") or target or "")
     tgt = target or domain
-    out: list[Finding] = []
+    out: list[Observation] = []
     seen_email: set[str] = set()
 
     # WAF/CDN block → record it so an empty crawl isn't mistaken for "no contacts".
     if data.get("blocked"):
         out.append(_mk(
-            FindingType.OBSERVATION,
+            ObservationType.HTTP_RESPONSE,
             f"web_contact_harvest blocked (HTTP {data.get('seed_status')}) on {domain}",
             tool="web_contact_harvest",
-            desc="Site behind WAF/CDN — passive crawl incomplete; use theharvester/crt.sh/gau",
             engagement_id=engagement_id, run_id=run_id, target=tgt,
-            metadata={"seed_status": data.get("seed_status")}, tags=["waf_blocked"],
+            details={"seed_status": data.get("seed_status"), "domain": domain},
+            tags=["waf_blocked"],
         ))
 
     emails = emails_from_json_value(data.get("emails", []))
@@ -185,9 +174,8 @@ def parse_web_contact_harvest(
         if email in seen_email:
             continue
         seen_email.add(email)
-        out.append(_email_finding(
+        out.append(_email_observation(
             email, tool="web_contact_harvest",
-            desc=f"Email published on {domain or 'target site'}",
             engagement_id=engagement_id, run_id=run_id, target=tgt,
             source="website",
         ))
@@ -196,17 +184,15 @@ def parse_web_contact_harvest(
         if not _valid_phone(phone):
             continue
         out.append(_mk(
-            FindingType.PHONE, phone, tool="web_contact_harvest",
-            desc=f"Phone published on {domain or 'target site'}",
+            ObservationType.PHONE, phone, tool="web_contact_harvest",
             engagement_id=engagement_id, run_id=run_id, target=tgt,
-            metadata={"source": "website"},
+            details={"phone": phone, "source": "website", "domain": domain},
         ))
     for name in data.get("names", []):
         out.append(_mk(
-            FindingType.PERSON, str(name), tool="web_contact_harvest",
-            desc=f"Person named on {domain or 'target site'}",
+            ObservationType.PERSON, str(name), tool="web_contact_harvest",
             engagement_id=engagement_id, run_id=run_id, target=tgt,
-            metadata={"organization": domain} if domain else {},
+            details={"organization": domain} if domain else {},
         ))
     for sa in data.get("social", []):
         if not isinstance(sa, dict):
@@ -216,31 +202,28 @@ def parse_web_contact_harvest(
             continue
         uname = str(sa.get("username") or "")
         net = str(sa.get("network") or _network_of(url))
-        meta = {"network": net}
+        details = {"network": net, "url": url}
         if uname:
-            meta["username"] = uname
+            details["username"] = uname
         out.append(_mk(
-            FindingType.SOCIAL_ACCOUNT, url, tool="web_contact_harvest",
-            desc=f"{net} account linked from {domain or 'target site'}",
+            ObservationType.SOCIAL_ACCOUNT, url, tool="web_contact_harvest",
             engagement_id=engagement_id, run_id=run_id, target=tgt,
-            metadata=meta, tags=[net] if net else [],
+            details=details, tags=[net] if net else [],
         ))
         if uname:
             out.append(_mk(
-                FindingType.USERNAME, uname, tool="web_contact_harvest",
-                desc=f"Handle used on {net}",
+                ObservationType.USERNAME, uname, tool="web_contact_harvest",
                 engagement_id=engagement_id, run_id=run_id, target=tgt,
-                metadata={"network": net},
+                details={"network": net},
             ))
     # Structured empty crawl: do not fall through to LLM/raw-output padding.
-    if not any(f.finding_type == FindingType.EMAIL for f in out) and not data.get("blocked"):
+    if not any(o.type == ObservationType.EMAIL for o in out) and not data.get("blocked"):
         out.append(_mk(
-            FindingType.OBSERVATION,
+            ObservationType.HTTP_RESPONSE,
             f"No public emails found on {domain or tgt or 'target'}",
             tool="web_contact_harvest",
-            desc="Harvest JSON parsed; no valid contact addresses after normalization",
             engagement_id=engagement_id, run_id=run_id, target=tgt,
-            metadata={"emails": 0, "pages_crawled": data.get("pages_crawled")},
+            details={"emails": 0, "pages_crawled": data.get("pages_crawled")},
             tags=["empty_result"],
         ))
     return out
@@ -262,8 +245,8 @@ def _theharvester_section(low: str) -> str | None:
 
 def parse_theharvester(
     stdout: str, *, engagement_id: str = "", run_id: str = "", target: str = ""
-) -> list[Finding]:
-    out: list[Finding] = []
+) -> list[Observation]:
+    out: list[Observation] = []
     seen_email: set[str] = set()
     seen_host: set[str] = set()
     section = ""
@@ -280,19 +263,17 @@ def parse_theharvester(
             if host_s and "." in host_s and " " not in host_s and host_s not in seen_host:
                 seen_host.add(host_s)
                 out.append(_mk(
-                    FindingType.SUBDOMAIN, host_s, tool="theharvester",
-                    desc=f"Host harvested for {tgt or 'target'}",
+                    ObservationType.SUBDOMAIN, host_s, tool="theharvester",
                     engagement_id=engagement_id, run_id=run_id, target=tgt,
-                    metadata={"hostname": host_s},
+                    details={"hostname": host_s},
                 ))
         for nm in payload.get("people") or payload.get("interesting_people") or []:
             name = str(nm).strip()
             if 3 <= len(name) <= 60 and _EMAIL_RE.search(name) is None:
                 out.append(_mk(
-                    FindingType.PERSON, name, tool="theharvester",
-                    desc="Person harvested from public sources (e.g. LinkedIn)",
+                    ObservationType.PERSON, name, tool="theharvester",
                     engagement_id=engagement_id, run_id=run_id, target=tgt,
-                    metadata={"organization": tgt} if tgt else {},
+                    details={"organization": tgt} if tgt else {},
                 ))
 
     for raw in text.splitlines():
@@ -312,42 +293,38 @@ def parse_theharvester(
             if host and "." in host and " " not in host and host not in seen_host:
                 seen_host.add(host)
                 out.append(_mk(
-                    FindingType.SUBDOMAIN, host, tool="theharvester",
-                    desc=f"Host harvested for {tgt or 'target'}",
+                    ObservationType.SUBDOMAIN, host, tool="theharvester",
                     engagement_id=engagement_id, run_id=run_id, target=tgt,
-                    metadata={"hostname": host},
+                    details={"hostname": host},
                 ))
         elif section == "people":
             nm = line.strip()
             if 3 <= len(nm) <= 60 and _EMAIL_RE.search(nm) is None:
                 out.append(_mk(
-                    FindingType.PERSON, nm, tool="theharvester",
-                    desc="Person harvested from public sources (e.g. LinkedIn)",
+                    ObservationType.PERSON, nm, tool="theharvester",
                     engagement_id=engagement_id, run_id=run_id, target=tgt,
-                    metadata={"organization": tgt} if tgt else {},
+                    details={"organization": tgt} if tgt else {},
                 ))
 
     # Whole-blob extract so partial/timeout dumps and emails outside the
-    # labelled section still become EMAIL findings.
+    # labelled section still become EMAIL observations.
     for addr in json_emails + extract_emails(text):
         if addr in seen_email:
             continue
         seen_email.add(addr)
-        out.append(_email_finding(
+        out.append(_email_observation(
             addr, tool="theharvester",
-            desc="Email harvested from public sources",
             engagement_id=engagement_id, run_id=run_id, target=tgt,
             source="search_engine",
         ))
 
     if saw_email_section and not seen_email:
         out.append(_mk(
-            FindingType.OBSERVATION,
+            ObservationType.HTTP_RESPONSE,
             f"No emails found by theharvester for {tgt or 'target'}",
             tool="theharvester",
-            desc="theHarvester reported an email section; no valid addresses after normalization",
             engagement_id=engagement_id, run_id=run_id, target=tgt,
-            metadata={"emails": 0},
+            details={"emails": 0},
             tags=["empty_result"],
         ))
     return out
@@ -355,15 +332,14 @@ def parse_theharvester(
 
 def _parse_username_sites(
     stdout: str, tool: str, *, engagement_id: str, run_id: str, target: str
-) -> list[Finding]:
+) -> list[Observation]:
     """Shared parser for sherlock / maigret style '[+] Site: url' output."""
-    out: list[Finding] = []
+    out: list[Observation] = []
     uname = target.strip()
     seen: set[str] = set()
     if uname:
         out.append(_mk(
-            FindingType.USERNAME, uname, tool=tool,
-            desc="Username searched across social/web sites",
+            ObservationType.USERNAME, uname, tool=tool,
             engagement_id=engagement_id, run_id=run_id, target=uname,
         ))
     for raw in (stdout or "").splitlines():
@@ -378,21 +354,20 @@ def _parse_username_sites(
             continue
         seen.add(url)
         net = _network_of(url)
-        meta = {"network": net}
+        details = {"network": net, "url": url}
         if uname:
-            meta["username"] = uname
+            details["username"] = uname
         out.append(_mk(
-            FindingType.SOCIAL_ACCOUNT, url, tool=tool,
-            desc=f"Account found on {net} for username '{uname}'",
+            ObservationType.SOCIAL_ACCOUNT, url, tool=tool,
             engagement_id=engagement_id, run_id=run_id, target=uname,
-            metadata=meta, tags=[net] if net else [],
+            details=details, tags=[net] if net else [],
         ))
     return out
 
 
 def parse_sherlock(
     stdout: str, *, engagement_id: str = "", run_id: str = "", target: str = ""
-) -> list[Finding]:
+) -> list[Observation]:
     return _parse_username_sites(
         stdout, "sherlock", engagement_id=engagement_id, run_id=run_id, target=target
     )
@@ -400,7 +375,7 @@ def parse_sherlock(
 
 def parse_maigret(
     stdout: str, *, engagement_id: str = "", run_id: str = "", target: str = ""
-) -> list[Finding]:
+) -> list[Observation]:
     return _parse_username_sites(
         stdout, "maigret", engagement_id=engagement_id, run_id=run_id, target=target
     )
@@ -408,7 +383,7 @@ def parse_maigret(
 
 def parse_social_analyzer(
     stdout: str, *, engagement_id: str = "", run_id: str = "", target: str = ""
-) -> list[Finding]:
+) -> list[Observation]:
     try:
         data = json.loads((stdout or "").strip())
     except (json.JSONDecodeError, ValueError):
@@ -417,7 +392,7 @@ def parse_social_analyzer(
         )
     detected = data.get("detected", []) if isinstance(data, dict) else []
     uname = target.strip()
-    out: list[Finding] = []
+    out: list[Observation] = []
     for item in detected:
         if not isinstance(item, dict):
             continue
@@ -425,29 +400,27 @@ def parse_social_analyzer(
         if not url:
             continue
         net = str(item.get("site") or _network_of(url))
-        meta = {"network": net}
+        details = {"network": net, "url": url}
         if uname:
-            meta["username"] = uname
+            details["username"] = uname
         out.append(_mk(
-            FindingType.SOCIAL_ACCOUNT, url, tool="social_analyzer",
-            desc=f"Detected {net} profile for '{uname}'",
+            ObservationType.SOCIAL_ACCOUNT, url, tool="social_analyzer",
             engagement_id=engagement_id, run_id=run_id, target=uname,
-            metadata=meta, tags=[net] if net else [],
+            details=details, tags=[net] if net else [],
         ))
     return out
 
 
 def parse_holehe(
     stdout: str, *, engagement_id: str = "", run_id: str = "", target: str = ""
-) -> list[Finding]:
+) -> list[Observation]:
     email = target.strip().lower()
-    out: list[Finding] = []
+    out: list[Observation] = []
     if email and _EMAIL_RE.fullmatch(email):
         out.append(_mk(
-            FindingType.EMAIL, email, tool="holehe",
-            desc="Email checked for account existence",
+            ObservationType.EMAIL, email, tool="holehe",
             engagement_id=engagement_id, run_id=run_id, target=email,
-            metadata={"source": "holehe"},
+            details={"source": "holehe"},
         ))
     for raw in (stdout or "").splitlines():
         line = raw.strip()
@@ -456,48 +429,46 @@ def parse_holehe(
         site = line[3:].strip().split()[0] if len(line) > 3 else ""
         if site:
             out.append(_mk(
-                FindingType.OBSERVATION, f"{email} registered at {site}", tool="holehe",
-                desc="Account exists for this email (existence only, no credentials)",
+                ObservationType.SCANNER_SIGNAL, f"{email} registered at {site}", tool="holehe",
                 engagement_id=engagement_id, run_id=run_id, target=email,
-                metadata={"email": email, "service": site}, tags=["email-account", site],
+                details={"email": email, "service": site, "kind": "account_exists"},
+                tags=["email-account", site],
             ))
     return out
 
 
 def parse_phoneinfoga(
     stdout: str, *, engagement_id: str = "", run_id: str = "", target: str = ""
-) -> list[Finding]:
+) -> list[Observation]:
     phone = target.strip()
-    out: list[Finding] = []
+    out: list[Observation] = []
     if phone:
         out.append(_mk(
-            FindingType.PHONE, phone, tool="phoneinfoga",
-            desc="Phone number profiled (country/carrier/footprint)",
+            ObservationType.PHONE, phone, tool="phoneinfoga",
             engagement_id=engagement_id, run_id=run_id, target=phone,
-            metadata={"source": "phoneinfoga"},
+            details={"source": "phoneinfoga"},
         ))
     for raw in (stdout or "").splitlines():
         low = raw.strip().lower()
         if any(k in low for k in ("carrier:", "country:", "line type:", "local:")):
             out.append(_mk(
-                FindingType.OBSERVATION, raw.strip()[:160], tool="phoneinfoga",
-                desc="Phone footprint detail",
+                ObservationType.SCANNER_SIGNAL, raw.strip()[:160], tool="phoneinfoga",
                 engagement_id=engagement_id, run_id=run_id, target=phone,
-                metadata={"phone": phone}, tags=["phone"],
+                details={"phone": phone, "detail": raw.strip()[:160]}, tags=["phone"],
             ))
     return out
 
 
 def parse_dnstwist(
     stdout: str, *, engagement_id: str = "", run_id: str = "", target: str = ""
-) -> list[Finding]:
+) -> list[Observation]:
     try:
         data = json.loads((stdout or "").strip())
     except (json.JSONDecodeError, ValueError):
         return []
     if not isinstance(data, list):
         return []
-    out: list[Finding] = []
+    out: list[Observation] = []
     for row in data:
         if not isinstance(row, dict):
             continue
@@ -507,10 +478,9 @@ def parse_dnstwist(
         if not (row.get("dns_a") or row.get("dns-a") or row.get("dns_ns") or row.get("dns-ns")):
             continue
         out.append(_mk(
-            FindingType.OBSERVATION, f"Look-alike domain: {perm}", tool="dnstwist",
-            desc=f"Registered typosquat / look-alike of {target}",
+            ObservationType.DNS_RECORD, f"Look-alike domain: {perm}", tool="dnstwist",
             engagement_id=engagement_id, run_id=run_id, target=target,
-            metadata={"lookalike_domain": perm, "fuzzer": str(row.get("fuzzer", ""))},
+            details={"lookalike_domain": perm, "fuzzer": str(row.get("fuzzer", ""))},
             tags=["typosquat", "brand-abuse"],
         ))
     return out
@@ -518,8 +488,8 @@ def parse_dnstwist(
 
 def parse_metagoofil(
     stdout: str, *, engagement_id: str = "", run_id: str = "", target: str = ""
-) -> list[Finding]:
-    out: list[Finding] = []
+) -> list[Observation]:
+    out: list[Observation] = []
     seen: set[str] = set()
     for raw in (stdout or "").splitlines():
         for m in _URL_RE.findall(raw):
@@ -532,17 +502,16 @@ def parse_metagoofil(
                 continue
             seen.add(url)
             out.append(_mk(
-                FindingType.DOCUMENT, url, tool="metagoofil",
-                desc="Public document indexed for the target domain",
+                ObservationType.DOCUMENT, url, tool="metagoofil",
                 engagement_id=engagement_id, run_id=run_id, target=target,
-                metadata={"domain": target}, tags=["document"],
+                details={"domain": target, "url": url}, tags=["document"],
             ))
     return out
 
 
 def parse_email_permute(
     stdout: str, *, engagement_id: str = "", run_id: str = "", target: str = ""
-) -> list[Finding]:
+) -> list[Observation]:
     try:
         data = json.loads((stdout or "").strip())
     except (json.JSONDecodeError, ValueError):
@@ -551,18 +520,16 @@ def parse_email_permute(
         return []
     name = str(data.get("name") or "")
     mx = bool(data.get("mx"))
-    out: list[Finding] = []
+    out: list[Observation] = []
     for cand in data.get("candidates", []):
         addr = str(cand)
         if not _valid_email(addr):
             continue
         out.append(_mk(
-            FindingType.EMAIL, normalize_email(addr), tool="email_permute",
-            desc=f"Candidate email for '{name}' (format guess — unconfirmed)",
+            ObservationType.EMAIL, normalize_email(addr), tool="email_permute",
             engagement_id=engagement_id, run_id=run_id, target=target,
-            metadata={"person": name, "mx": mx},
+            details={"person": name, "mx": mx, "guessed": True},
             tags=["candidate"],
-            confidence=FindingConfidence.HYPOTHESIS,
         ))
     return out
 
@@ -590,8 +557,8 @@ _EXIF_LINE_RE = re.compile(r"^([A-Za-z0-9 /\-]+?)\s*:\s*(.+)$")
 
 def parse_exiftool(
     stdout: str, *, engagement_id: str = "", run_id: str = "", target: str = ""
-) -> list[Finding]:
-    out: list[Finding] = []
+) -> list[Observation]:
+    out: list[Observation] = []
     seen_people: set[str] = set()
     for raw in (stdout or "").splitlines():
         m = _EXIF_LINE_RE.match(raw.strip())
@@ -611,20 +578,17 @@ def parse_exiftool(
                 continue
             seen_people.add(key)
             out.append(_mk(
-                FindingType.PERSON, name, tool="exiftool_extract",
-                desc=f"Person from document metadata ({tag})",
+                ObservationType.PERSON, name, tool="exiftool_extract",
                 engagement_id=engagement_id, run_id=run_id, target=target,
-                metadata={"person": name, "source": "document_metadata", "exif_tag": tag},
+                details={"person": name, "source": "document_metadata", "exif_tag": tag},
                 tags=["document-metadata", "person-lead"],
             ))
         elif tag in _EXIF_INFO_TAGS or tag in _EXIF_MAYBE_PERSON_TAGS:
             out.append(_mk(
-                FindingType.OBSERVATION, f"{tag}: {value}"[:120], tool="exiftool_extract",
-                desc=f"Document metadata ({tag})",
+                ObservationType.HTTP_RESPONSE, f"{tag}: {value}"[:120], tool="exiftool_extract",
                 engagement_id=engagement_id, run_id=run_id, target=target,
-                metadata={"exif_tag": tag, "value": value[:200]},
+                details={"exif_tag": tag, "value": value[:200]},
                 tags=["document-metadata", tag.replace(" ", "_")],
-                confidence=FindingConfidence.CONFIRMED,
             ))
     return out
 

@@ -1,45 +1,41 @@
-# Universal stdout → finding promotion. Applies to EVERY tool/script/shell.
+# Universal stdout → Observation extraction. Applies to EVERY tool/script/shell.
 # New tools inherit these rules automatically — add patterns here, don't fork code.
-# Config owns patterns. The LLM owns interpretation, relations, and next probes.
+# Config owns pattern-based structural extraction only — never a verdict
+# (no confidence/severity here; see plans/harness/02-evidence-and-observation-layer.md
+# and plans/harness/03-earned-finding-pipeline.md's confidence_for). The LLM/
+# reasoner owns interpretation, relations, and next probes.
 #
 # applies_when: no_parser  → this rule only fires for tools that have NO dedicated
 # stdout parser (platform_shell/platform_script/nikto/…). When the source tool
 # has a registered parser, that parser is authoritative and this loose rule is
-# skipped to avoid duplicate/mis-paired findings. Rules with no applies_when key
-# always fire. This is the single source of truth for suppression — no Python set.
+# skipped to avoid duplicate/mis-paired observations. Rules with no applies_when
+# key always fire. This is the single source of truth for suppression — no
+# Python set.
 
 rules:
   - id: vendor_fingerprint_header
     applies_when: no_parser
     pattern: '(?i)(?:^|\n)((?:X-[A-Z0-9-]{3,40}|Server|X-Powered-By):\s*[^\n]{3,120})'
-    finding_type: technology
-    confidence: confirmed
-    claim_severity: medium
+    type: technology
     title_template: "HTTP fingerprint header: {match}"
     tags: [auto_ingest, banner, product_hint]
 
   - id: cors_star
     pattern: '(?i)Access-Control-Allow-Origin:\s*\*'
-    finding_type: observation
-    confidence: confirmed
-    claim_severity: medium
+    type: header
     title_template: "CORS Allow-Origin: * observed"
     tags: [auto_ingest, cors]
 
   - id: open_port_line
     applies_when: no_parser
     pattern: '(?i)(\d{1,5})/(tcp|udp)\s+open(?:\s+(\S+))?'
-    finding_type: port
-    confidence: likely
-    claim_severity: info
+    type: port
     title_template: "Open port {g1}/{g2} {g3}"
     tags: [auto_ingest, port]
 
   - id: spa_catchall_suspect
     pattern: '(?i)(<!DOCTYPE html|<div id=["'']root["'']|ng-version=|__NEXT_DATA__)'
-    finding_type: observation
-    confidence: hypothesis
-    claim_severity: info
+    type: http_response
     title_template: "SPA/HTML shell body — do not treat path as open API without JSON proof"
     tags: [auto_ingest, spa_catchall_suspect]
     require_path_hint: true
@@ -47,38 +43,30 @@ rules:
 
   - id: json_api_body
     pattern: '(?i)^\s*[\{\[][\s\S]{20,}("users"|"data"|"items"|"token"|"access")'
-    finding_type: observation
-    confidence: confirmed
-    claim_severity: high
+    type: http_response
     title_template: "JSON API-shaped body with sensitive keys"
     tags: [auto_ingest, api_json]
 
   - id: console_or_app_path
     applies_when: no_parser
     pattern: '(?i)(/(?:console|manager|login|admin|owa|ecp|OA_HTML|AppsLocalLogin|frmservlet)[^\s"'']{0,60})'
-    finding_type: url
-    confidence: confirmed
-    claim_severity: medium
+    type: url
     title_template: "Console/app path indicator: {match}"
     tags: [auto_ingest, console_path, product_hint]
 
   # Passive OSINT: any tool that surfaces an email (whois registrant, TLS cert
-  # contact, theHarvester, crawl) promotes it to an EMAIL entity in the graph.
+  # contact, theHarvester, crawl) becomes an EMAIL observation.
   - id: osint_email_address
     applies_when: no_parser
     pattern: '(?i)([a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,})'
-    finding_type: email
-    confidence: likely
-    claim_severity: info
+    type: email
     title_template: "{match}"
     tags: [auto_ingest, osint, email]
 
   - id: subdomain_line
     applies_when: no_parser
     pattern: '(?i)^(?:\*\.)?([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)\s*$'
-    finding_type: subdomain
-    confidence: likely
-    claim_severity: info
+    type: subdomain
     title_template: "{g1}"
     tags: [auto_ingest, subdomain]
     multiline: true
@@ -88,78 +76,60 @@ rules:
   - id: http_status_title
     applies_when: no_parser
     pattern: '(?i)(?:^|\n)(?:https?://\S+\s+)?\[?(\d{3})\]?\s+[^\n]{0,40}?\[([^\]]{2,80})\]'
-    finding_type: observation
-    confidence: confirmed
-    claim_severity: info
+    type: http_response
     title_template: "HTTP {g1} title: {g2}"
     tags: [auto_ingest, http_title]
 
   - id: httpx_status_line
     applies_when: no_parser
     pattern: '(?i)(https?://[^\s]+)\s+\[(\d{3})\](?:\s+\[([^\]]{1,80})\])?'
-    finding_type: url
-    confidence: confirmed
-    claim_severity: info
+    type: url
     title_template: "{g1} [{g2}] {g3}"
     tags: [auto_ingest, http_probe, http_title]
 
   - id: www_authenticate
     pattern: '(?i)(WWW-Authenticate:\s*[^\n]{3,160})'
-    finding_type: observation
-    confidence: confirmed
-    claim_severity: medium
+    type: header
     title_template: "Auth challenge: {match}"
     tags: [auto_ingest, auth_challenge, product_hint]
 
   - id: set_cookie_domain
     pattern: '(?i)Set-Cookie:\s*([^\n]{5,200})'
-    finding_type: observation
-    confidence: confirmed
-    claim_severity: info
+    type: cookie
     title_template: "Set-Cookie: {match}"
     tags: [auto_ingest, cookie, auth_surface]
 
   - id: location_redirect
     pattern: '(?i)(?:^|\n)((?:Location|location):\s*https?://[^\s\n]{5,200})'
-    finding_type: observation
-    confidence: confirmed
-    claim_severity: info
+    type: redirect
     title_template: "Redirect: {match}"
     tags: [auto_ingest, redirect]
 
   - id: redirect_chain_marker
     applies_when: no_parser
     pattern: '(?i)(?:redirect(?:ed|s|ion)?\s*(?:to|→|->|:)\s*|final[_ -]?url[=:]\s*)(https?://[^\s\n]{5,200})'
-    finding_type: url
-    confidence: likely
-    claim_severity: info
+    type: url
     title_template: "Redirect target: {g1}"
     tags: [auto_ingest, redirect]
 
   - id: tls_san_or_cn
     applies_when: no_parser
     pattern: '(?i)(?:DNS:|subject(?:AltName)?[=:]|CN\s*=\s*|commonName\s*=\s*)([a-z0-9*.-]{3,120})'
-    finding_type: observation
-    confidence: likely
-    claim_severity: info
+    type: cert
     title_template: "TLS name hint: {g1}"
     tags: [auto_ingest, tls, cert_name]
 
   - id: certificate_issuer
     applies_when: no_parser
     pattern: '(?i)(?:issuer[=:]\s*|i:\s*)([^\n]{5,160})'
-    finding_type: observation
-    confidence: likely
-    claim_severity: info
+    type: cert
     title_template: "TLS issuer: {g1}"
     tags: [auto_ingest, tls, cert_issuer]
 
   - id: version_banner
     applies_when: no_parser
     pattern: '(?i)((?:SSH|OpenSSH|FTP|SMTP|MySQL|PostgreSQL|Redis|MongoDB|Apache|nginx|IIS)[^\n]{0,80}(?:version|/|\s)\s*[\w.()-]{2,40})'
-    finding_type: technology
-    confidence: confirmed
-    claim_severity: medium
+    type: technology
     title_template: "Service banner: {match}"
     tags: [auto_ingest, banner, version]
 
@@ -169,30 +139,24 @@ rules:
     # newline — \s matches \n, and when nmap has no inline version (a plain
     # "80/tcp open  http" line, common whenever -sV didn't fingerprint it)
     # this rule was grabbing the *next line* instead — usually an NSE script
-    # result like "|_http-title: ..." — producing a garbage "service" finding
+    # result like "|_http-title: ..." — producing a garbage "service" fact
     # whose title was really two unrelated lines concatenated. Same bug class
     # already fixed once below for tech_version_line; never applied here.
     pattern: '(?i)(\d{1,5})/(tcp|udp)[ \t]+open[ \t]+(\S+)[ \t]+([^\n]{3,100})'
-    finding_type: service
-    confidence: confirmed
-    claim_severity: info
+    type: service
     title_template: "Service {g1}/{g2} {g3}: {g4}"
     tags: [auto_ingest, service, banner]
 
   - id: json_content_type
     pattern: '(?i)(Content-Type:\s*application/json[^\n]*)'
-    finding_type: observation
-    confidence: confirmed
-    claim_severity: info
+    type: header
     title_template: "JSON content-type: {match}"
     tags: [auto_ingest, api_json, content_type]
 
   - id: js_route_hint
     applies_when: no_parser
     pattern: '(?i)["''`](/(?:api|rest|v[0-9]+|graphql|backend)[/a-z0-9_\-{}:.]{2,80})["''`]'
-    finding_type: url
-    confidence: likely
-    claim_severity: info
+    type: url
     title_template: "JS route hint: {g1}"
     tags: [auto_ingest, js_route, app_depth]
 
@@ -201,9 +165,7 @@ rules:
   - id: whatweb_technology
     applies_when: no_parser
     pattern: '(?i)"technology"\s*:\s*"([^"]+)".*?"version"\s*:\s*"([^"]*)"'
-    finding_type: technology
-    confidence: confirmed
-    claim_severity: info
+    type: technology
     title_template: "Technology detected: {g1} {g2}"
     tags: [auto_ingest, technology, fingerprint]
     multiline: true
@@ -211,9 +173,7 @@ rules:
   - id: wappalyzer_category
     applies_when: no_parser
     pattern: '(?i)"categories"\s*:\s*\[([^\]]{3,120})\]'
-    finding_type: technology
-    confidence: likely
-    claim_severity: info
+    type: technology
     title_template: "Tech category: {g1}"
     tags: [auto_ingest, technology, wappalyzer]
     multiline: true
@@ -221,9 +181,7 @@ rules:
   - id: whatweb_plugin_name
     applies_when: no_parser
     pattern: '(?i)"plugins"\s*:\s*\{[^}]*"([A-Z][a-zA-Z0-9]+)"\s*:\s*\{'
-    finding_type: technology
-    confidence: confirmed
-    claim_severity: info
+    type: technology
     title_template: "WhatWeb plugin: {g1}"
     tags: [auto_ingest, technology, whatweb]
     multiline: true
@@ -231,9 +189,7 @@ rules:
   - id: security_concern_line
     applies_when: no_parser
     pattern: '(?i)(?:security_concern|concern|follow_up)[^:]*:\s*(.{10,200})'
-    finding_type: observation
-    confidence: likely
-    claim_severity: medium
+    type: scanner_signal
     title_template: "Security concern: {g1}"
     tags: [auto_ingest, security_concern, tech_analysis]
 
@@ -242,46 +198,36 @@ rules:
     # [ \t] (not \s) between tokens so the match can't cross a newline —
     # \s matches \n, which previously let this rule read a table header
     # like nmap's "PORT STATE SERVICE VERSION" on one line and the port
-    # number on the next as a fake "SERVICE 80" technology finding.
+    # number on the next as a fake "SERVICE 80" technology fact.
     # [ \t]+ (not *) BEFORE the keyword so the bare "v" alternative can't glue
     # onto the end of a hostname token. Requiring whitespace first means
     # the keyword must be its own token ("nginx v1.2.3", "Apache version 2.4").
     pattern: '(?i)([a-zA-Z][a-zA-Z0-9._-]{2,30})[ \t]+(?:version|v)[ \t]*[:=]?[ \t]*([\d.]{2,20})'
-    finding_type: technology
-    confidence: likely
-    claim_severity: info
+    type: technology
     title_template: "Version detected: {g1} {g2}"
     tags: [auto_ingest, technology, version]
 
   # ── Secrets / credentials (high-precision only — feeds exploit/post-exploit) ──
   - id: aws_access_key
     pattern: '\b(AKIA[0-9A-Z]{16})\b'
-    finding_type: secret
-    confidence: confirmed
-    claim_severity: high
+    type: secret
     title_template: "AWS access key id exposed: {g1}"
     tags: [auto_ingest, secret, aws, credential_material]
 
   - id: private_key_block
     pattern: '-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----'
-    finding_type: secret
-    confidence: confirmed
-    claim_severity: high
+    type: secret
     title_template: "Private key material exposed in output"
     tags: [auto_ingest, secret, private_key, credential_material]
 
   - id: jwt_token
     pattern: '\b(eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b'
-    finding_type: credential
-    confidence: confirmed
-    claim_severity: medium
+    type: credential
     title_template: "JWT exposed in output (verify scope/expiry before trusting)"
     tags: [auto_ingest, credential, jwt, token]
 
   - id: google_api_key
     pattern: '\b(AIza[0-9A-Za-z_\-]{35})\b'
-    finding_type: secret
-    confidence: confirmed
-    claim_severity: medium
+    type: secret
     title_template: "Google API key exposed: {g1}"
     tags: [auto_ingest, secret, google, credential_material]

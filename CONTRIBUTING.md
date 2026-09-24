@@ -44,7 +44,7 @@ Enhancement suggestions are tracked as GitHub issues. When creating an issue, pl
    ```
 4. **Make Your Changes**:
    - Ensure backend code follows Python 3.12+ type hints and standard FastAPI patterns.
-   - Run tests before committing (`pytest backend/tests/`).
+   - Run tests before committing (`pytest backend/tests/`). The repo's `.env` points `DATABASE_URL` at the `postgres` Docker-Compose hostname, which only resolves inside the compose network — running pytest natively on your host (not in the `osprey-backend` container) needs a reachable DB instead. Either run tests inside the container (`docker compose exec backend pytest backend/tests/`), or override for a disposable local run: `DATABASE_URL=sqlite:///./scratch.db pytest backend/tests/` (SQLite is a built-in zero-dependency fallback, see `backend/src/osprey/db/session.py`).
    - Format code using `ruff`.
 5. **Commit & Push**:
    ```bash

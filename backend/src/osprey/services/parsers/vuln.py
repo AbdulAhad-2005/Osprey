@@ -1,16 +1,20 @@
 """Deterministic stdout parsers for the vulnerability-analysis phase.
 
-Each scanner is normalized into ``VULNERABILITY`` findings carrying a
-``claim_severity`` (impact if real) and a ``confidence`` (how sure we are it's
-real), so the graph and report treat a nuclei CVE hit, a wpscan plugin vuln,
-and a confirmed sqlmap injection uniformly.
+Each scanner is normalized into ``SCANNER_SIGNAL`` observations carrying the
+scanner's *own claimed* severity and whether it actually extracted/verified
+anything — never a judged ``VULNERABILITY`` finding. A nuclei template match,
+a wpscan plugin hit, and a sqlmap injection are all, at this layer, "a scanner
+said something" facts; whether any of them earns a real finding is
+`confidence_for`'s job (Plan 03), applying the same evidence law to all of
+them uniformly rather than this module asserting a verdict per scanner.
 
-Evidence discipline (see skills/vuln/verification-and-severity.md): a scanner
-*match* — a template fired, an injection point detected with no data pulled —
-is a DETECTION: confidence LIKELY, and severity may still reflect real impact
-if the underlying issue is genuine, but the finding's own text must say
-"detected", never "confirmed"/"exploited". Only actual extraction (rows
-dumped, a shell obtained, a credential validated) earns CONFIRMED.
+Evidence discipline preserved as structural fact (see
+skills/vuln/verification-and-severity.md): a scanner *match* — a template
+fired, an injection point detected with no data pulled — is recorded with
+``details.extracted=False``; only actual extraction (rows dumped, a shell
+obtained, a credential validated) sets ``details.extracted=True``. That
+distinction is what the evidence-producing capabilities (Plan 03 Step 4) key
+off of — never a confidence/severity this parser assigned itself.
 """
 
 from __future__ import annotations
@@ -19,30 +23,18 @@ import json
 import re
 from typing import Any
 
-from osprey.schemas.finding import (
-    ClaimSeverity,
-    Finding,
-    FindingConfidence,
-    FindingType,
-)
+from osprey.schemas.observation import Observation, ObservationType
 
-_PHASE = "vuln"
-
-_SEVERITY_MAP = {
-    "critical": ClaimSeverity.CRITICAL,
-    "high": ClaimSeverity.HIGH,
-    "medium": ClaimSeverity.MEDIUM,
-    "moderate": ClaimSeverity.MEDIUM,
-    "low": ClaimSeverity.LOW,
-    "info": ClaimSeverity.INFO,
-    "informational": ClaimSeverity.INFO,
-    "unknown": ClaimSeverity.INFO,
-    "": ClaimSeverity.INFO,
-}
+_SEVERITY_VALUES = frozenset({"critical", "high", "medium", "low", "info"})
 
 
-def _sev(value: Any) -> ClaimSeverity:
-    return _SEVERITY_MAP.get(str(value or "").strip().lower(), ClaimSeverity.INFO)
+def _sev(value: Any) -> str:
+    v = str(value or "").strip().lower()
+    if v == "moderate":
+        return "medium"
+    if v in ("unknown", ""):
+        return "info"
+    return v if v in _SEVERITY_VALUES else "info"
 
 
 def _first(value: Any) -> str:
@@ -52,7 +44,7 @@ def _first(value: Any) -> str:
     return str(value or "").strip()
 
 
-def _vuln_finding(
+def _scanner_signal(
     *,
     engagement_id: str,
     run_id: str,
@@ -60,50 +52,49 @@ def _vuln_finding(
     title: str,
     description: str,
     evidence: str,
-    severity: ClaimSeverity,
+    claimed_severity: str,
     source_tool: str,
-    confidence: FindingConfidence = FindingConfidence.LIKELY,
-    metadata: dict[str, Any] | None = None,
+    extracted: bool = False,
+    verified: bool = False,
+    details: dict[str, Any] | None = None,
     tags: list[str] | None = None,
-) -> Finding:
-    meta = dict(metadata or {})
-    base_tags = [source_tool, "vuln", f"severity:{severity.value}"]
+) -> Observation:
+    d = dict(details or {})
+    d.update({
+        "title": title[:200],
+        "description": description[:500],
+        "evidence": evidence[:800],
+        "claimed_severity": claimed_severity,
+        "extracted": extracted,
+        "verified": verified,
+    })
+    base_tags = [source_tool, "vuln_scanner", f"claimed_severity:{claimed_severity}"]
     for extra in tags or []:
         if extra and extra not in base_tags:
             base_tags.append(extra)
-    return Finding(
+    return Observation(
         engagement_id=engagement_id,
         run_id=run_id,
-        phase=_PHASE,
-        finding_type=FindingType.VULNERABILITY,
-        title=title[:200],
-        description=description,
-        evidence=evidence[:800],
-        confidence=confidence,
-        claim_severity=severity,
-        source_tool=source_tool,
+        type=ObservationType.SCANNER_SIGNAL,
         target=target,
-        metadata=meta,
+        source_tool=source_tool,
+        details=d,
         tags=base_tags,
     )
 
 
-def _unparsed(stdout: str, *, tool: str, engagement_id: str, run_id: str, target: str) -> list[Finding]:
+def _unparsed(stdout: str, *, tool: str, engagement_id: str, run_id: str, target: str) -> list[Observation]:
     stripped = (stdout or "").strip()
     if not stripped:
         return []
     return [
-        Finding(
+        Observation(
             engagement_id=engagement_id,
             run_id=run_id,
-            phase=_PHASE,
-            finding_type=FindingType.OBSERVATION,
-            title=f"{tool} raw output",
-            description="Unparsed vuln-scanner output (stored for agent context)",
-            evidence=stripped[:2000],
-            confidence=FindingConfidence.LIKELY,
-            source_tool=tool,
+            type=ObservationType.RAW,
             target=target,
+            source_tool=tool,
+            details={"snippet": stripped[:2000]},
             tags=[tool, "unparsed"],
         )
     ]
@@ -119,8 +110,8 @@ def parse_nuclei(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
-    out: list[Finding] = []
+) -> list[Observation]:
+    out: list[Observation] = []
     seen: set[str] = set()
     for line in (stdout or "").splitlines():
         line = line.strip()
@@ -145,36 +136,31 @@ def parse_nuclei(
             continue
         seen.add(key)
 
-        # info/low templates are often fingerprints, not vulns — keep them but
-        # they cannot exceed their (low) severity anyway.
         title = f"{name}" + (f" [{cve}]" if cve else "")
-        meta = {
+        details = {
             "template_id": template,
             "cve": cve,
             "cwe": cwe,
             "matched_at": matched,
-            "nuclei_tags": ",".join(tags[:8]),
+            "nuclei_tags": tags[:8],
             "url": matched,
         }
         extra_tags = ["nuclei"] + [t for t in ("cve", "rce", "lfi", "sqli", "xss", "ssrf") if t in tags]
         if cve:
             extra_tags.append(cve)
         out.append(
-            _vuln_finding(
+            _scanner_signal(
                 engagement_id=engagement_id,
                 run_id=run_id,
                 target=matched or target,
                 title=title,
-                description=str(info.get("description") or f"nuclei template {template} matched on {matched}").strip()[:500],
-                evidence=line[:800],
-                severity=severity,
+                description=str(info.get("description") or f"nuclei template {template} matched on {matched}").strip(),
+                evidence=line,
+                # A template match is a pattern match, not proof of exploitation.
+                claimed_severity=severity,
                 source_tool="nuclei_scan",
-                # A template match is a pattern match, not proof of exploitation
-                # — LIKELY regardless of severity. Nuclei's own template
-                # severity still drives `severity` above; confidence and
-                # severity are independent (see module docstring).
-                confidence=FindingConfidence.LIKELY,
-                metadata=meta,
+                extracted=False,
+                details=details,
                 tags=extra_tags,
             )
         )
@@ -194,8 +180,8 @@ def parse_nikto(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
-    out: list[Finding] = []
+) -> list[Observation]:
+    out: list[Observation] = []
     seen: set[str] = set()
     for line in (stdout or "").splitlines():
         text = line.strip()
@@ -210,23 +196,22 @@ def parse_nikto(
             continue
         seen.add(body)
         osvdb = _NIKTO_OSVDB_RE.search(body)
-        # Nikto rarely rates severity; most items are config/info issues. Header
-        # and disclosure items → LOW, everything else INFO, both OBSERVED.
-        sev = ClaimSeverity.LOW if any(k in low for k in ("osvdb", "vulnerab", "injection", "traversal", "disclosure", "outdated", "default")) else ClaimSeverity.INFO
-        meta = {"url": target, "tool": "nikto"}
+        # Nikto rarely rates severity; most items are config/info issues.
+        sev = "low" if any(k in low for k in ("osvdb", "vulnerab", "injection", "traversal", "disclosure", "outdated", "default")) else "info"
+        details = {"url": target, "tool": "nikto"}
         if osvdb:
-            meta["osvdb"] = osvdb.group(1)
+            details["osvdb"] = osvdb.group(1)
         out.append(
-            _vuln_finding(
+            _scanner_signal(
                 engagement_id=engagement_id,
                 run_id=run_id,
                 target=target,
                 title=f"nikto: {body}"[:180],
-                description=body[:500],
-                evidence=text[:500],
-                severity=sev,
+                description=body,
+                evidence=text,
+                claimed_severity=sev,
                 source_tool="nikto_scan",
-                metadata=meta,
+                details=details,
                 tags=["nikto", "misconfiguration"],
             )
         )
@@ -237,8 +222,8 @@ def parse_nikto(
 # wpscan — JSON (--format json)
 # --------------------------------------------------------------------------- #
 
-def _wpscan_vulns(container: dict, *, component: str, source: str, engagement_id: str, run_id: str, target: str) -> list[Finding]:
-    out: list[Finding] = []
+def _wpscan_vulns(container: dict, *, component: str, engagement_id: str, run_id: str, target: str) -> list[Observation]:
+    out: list[Observation] = []
     for vuln in container.get("vulnerabilities") or []:
         if not isinstance(vuln, dict):
             continue
@@ -246,24 +231,25 @@ def _wpscan_vulns(container: dict, *, component: str, source: str, engagement_id
         refs = vuln.get("references") or {}
         cve = _first(refs.get("cve"))
         fixed = str(vuln.get("fixed_in") or "").strip()
-        meta = {
+        cve_id = f"CVE-{cve}" if cve and not str(cve).upper().startswith("CVE") else cve
+        details = {
             "component": component,
-            "cve": f"CVE-{cve}" if cve and not str(cve).upper().startswith("CVE") else cve,
+            "cve": cve_id,
             "fixed_in": fixed,
             "url": target,
         }
         out.append(
-            _vuln_finding(
+            _scanner_signal(
                 engagement_id=engagement_id,
                 run_id=run_id,
                 target=target,
                 title=f"WordPress {component}: {title}"[:180],
                 description=(f"{title}." + (f" Fixed in {fixed}." if fixed else "") + " Verify the running version is affected.").strip(),
-                evidence=json.dumps({"title": title, "references": refs, "fixed_in": fixed}, sort_keys=True)[:800],
-                severity=ClaimSeverity.MEDIUM,
+                evidence=json.dumps({"title": title, "references": refs, "fixed_in": fixed}, sort_keys=True),
+                claimed_severity="medium",
                 source_tool="wpscan_analyze",
-                metadata=meta,
-                tags=["wpscan", "wordpress", "cms"] + ([meta["cve"]] if meta.get("cve") else []),
+                details=details,
+                tags=["wpscan", "wordpress", "cms"] + ([cve_id] if cve_id else []),
             )
         )
     return out
@@ -275,7 +261,7 @@ def parse_wpscan(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
+) -> list[Observation]:
     text = (stdout or "").strip()
     start = text.find("{")
     if start == -1:
@@ -287,17 +273,17 @@ def parse_wpscan(
     if not isinstance(data, dict):
         return _unparsed(stdout, tool="wpscan_analyze", engagement_id=engagement_id, run_id=run_id, target=target)
     tgt = str(data.get("target_url") or target).strip()
-    out: list[Finding] = []
+    out: list[Observation] = []
 
     version = data.get("version")
     if isinstance(version, dict):
-        out.extend(_wpscan_vulns(version, component="core", source="version", engagement_id=engagement_id, run_id=run_id, target=tgt))
+        out.extend(_wpscan_vulns(version, component="core", engagement_id=engagement_id, run_id=run_id, target=tgt))
     for slug, plugin in (data.get("plugins") or {}).items():
         if isinstance(plugin, dict):
-            out.extend(_wpscan_vulns(plugin, component=f"plugin:{slug}", source="plugin", engagement_id=engagement_id, run_id=run_id, target=tgt))
+            out.extend(_wpscan_vulns(plugin, component=f"plugin:{slug}", engagement_id=engagement_id, run_id=run_id, target=tgt))
     for slug, theme in (data.get("themes") or {}).items():
         if isinstance(theme, dict):
-            out.extend(_wpscan_vulns(theme, component=f"theme:{slug}", source="theme", engagement_id=engagement_id, run_id=run_id, target=tgt))
+            out.extend(_wpscan_vulns(theme, component=f"theme:{slug}", engagement_id=engagement_id, run_id=run_id, target=tgt))
 
     # Interesting findings (exposed files, debug logs, etc.) — INFO leads.
     for item in data.get("interesting_findings") or []:
@@ -308,16 +294,16 @@ def parse_wpscan(
         if not desc:
             continue
         out.append(
-            _vuln_finding(
+            _scanner_signal(
                 engagement_id=engagement_id,
                 run_id=run_id,
                 target=url,
                 title=f"WordPress: {desc}"[:180],
-                description=str(item.get("to_s") or desc)[:400],
-                evidence=json.dumps(item, sort_keys=True)[:600],
-                severity=ClaimSeverity.INFO,
+                description=str(item.get("to_s") or desc),
+                evidence=json.dumps(item, sort_keys=True),
+                claimed_severity="info",
                 source_tool="wpscan_analyze",
-                metadata={"url": url, "type": str(item.get("type") or "")},
+                details={"url": url, "type": str(item.get("type") or "")},
                 tags=["wpscan", "wordpress", "interesting"],
             )
         )
@@ -334,7 +320,7 @@ _SQLMAP_TYPE_RE = re.compile(r"^\s*Type:\s*(?P<type>.+)$", re.MULTILINE)
 # Phrases sqlmap only prints when it actually pulled something out of the
 # database or a shell — i.e. real extraction happened, not just "the
 # parameter appears injectable". Detecting an injection point is not the same
-# claim as having exploited it; only these upgrade a finding to CONFIRMED.
+# claim as having exploited it; only these set details.extracted=True.
 _SQLMAP_EXTRACTION_RE = re.compile(
     r"\[\d+\s+entries?\]"          # --dump: "[5 entries]" row-count banner
     r"|^Table:\s"                  # --dump: a table name was actually retrieved
@@ -353,7 +339,7 @@ def parse_sqlmap(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
+) -> list[Observation]:
     text = stdout or ""
     low = text.lower()
     injectable = (
@@ -366,41 +352,37 @@ def parse_sqlmap(
         # Explicit "not injectable" is a useful negative result, not noise.
         if "all tested parameters do not appear to be injectable" in low:
             return [
-                Finding(
+                Observation(
                     engagement_id=engagement_id,
                     run_id=run_id,
-                    phase=_PHASE,
-                    finding_type=FindingType.OBSERVATION,
-                    title="sqlmap: no SQL injection found",
-                    description=f"sqlmap tested {target or 'the endpoint'} — no injectable parameter.",
-                    evidence="all tested parameters do not appear to be injectable",
-                    confidence=FindingConfidence.LIKELY,
-                    source_tool="sqlmap_scan",
+                    type=ObservationType.SCANNER_SIGNAL,
                     target=target,
+                    source_tool="sqlmap_scan",
+                    details={
+                        "kind": "no_sqli",
+                        "evidence": "all tested parameters do not appear to be injectable",
+                    },
                     tags=["sqlmap", "no_sqli"],
                 )
             ]
         return _unparsed(stdout, tool="sqlmap_scan", engagement_id=engagement_id, run_id=run_id, target=target)
 
-    out: list[Finding] = []
+    out: list[Observation] = []
     techniques = [m.group("type").strip() for m in _SQLMAP_TYPE_RE.finditer(text)]
     dbms = ""
     dbms_m = re.search(r"back-end DBMS:\s*(.+)", text)
     if dbms_m:
         dbms = dbms_m.group(1).strip()
     # Detecting an injection point and actually pulling data out are different
-    # claims — only the latter earns CRITICAL/CONFIRMED. A bare "is vulnerable"
-    # with no --dump/--os-shell output is a real, actionable lead, but it's a
-    # detection, not proof of impact.
+    # claims — only the latter sets extracted=True.
     extracted = bool(_SQLMAP_EXTRACTION_RE.search(text))
-    severity = ClaimSeverity.CRITICAL if extracted else ClaimSeverity.HIGH
-    confidence = FindingConfidence.CONFIRMED if extracted else FindingConfidence.LIKELY
+    severity = "critical" if extracted else "high"
     verb = "extracted data from" if extracted else "detected (not yet exploited)"
     params = _SQLMAP_PARAM_RE.findall(text)
     if params:
         for param, place in params:
             out.append(
-                _vuln_finding(
+                _scanner_signal(
                     engagement_id=engagement_id,
                     run_id=run_id,
                     target=target,
@@ -408,28 +390,28 @@ def parse_sqlmap(
                     description=(f"sqlmap {verb} a SQL injection in parameter '{param.strip()}' ({place})."
                                 + (f" Techniques: {', '.join(techniques[:4])}." if techniques else "")
                                 + (f" DBMS: {dbms}." if dbms else "")),
-                    evidence=text[:800],
-                    severity=severity,
+                    evidence=text,
+                    claimed_severity=severity,
                     source_tool="sqlmap_scan",
-                    confidence=confidence,
-                    metadata={"parameter": param.strip(), "place": place, "dbms": dbms, "url": target,
-                              "techniques": ",".join(techniques[:6]), "extracted": extracted},
+                    extracted=extracted,
+                    details={"parameter": param.strip(), "place": place, "dbms": dbms, "url": target,
+                             "techniques": techniques[:6]},
                     tags=["sqlmap", "sqli", "injection"] + (["extracted"] if extracted else ["detected"]),
                 )
             )
     else:
         out.append(
-            _vuln_finding(
+            _scanner_signal(
                 engagement_id=engagement_id,
                 run_id=run_id,
                 target=target,
                 title="SQL injection confirmed by sqlmap" if extracted else "SQL injection detected by sqlmap",
                 description=f"sqlmap {verb} the target." + (f" DBMS: {dbms}." if dbms else ""),
-                evidence=text[:800],
-                severity=severity,
+                evidence=text,
+                claimed_severity=severity,
                 source_tool="sqlmap_scan",
-                confidence=confidence,
-                metadata={"dbms": dbms, "url": target, "extracted": extracted},
+                extracted=extracted,
+                details={"dbms": dbms, "url": target},
                 tags=["sqlmap", "sqli", "injection"] + (["extracted"] if extracted else ["detected"]),
             )
         )
@@ -446,7 +428,7 @@ def parse_dalfox(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
+) -> list[Observation]:
     text = (stdout or "").strip()
     records: list[dict] = []
     # dalfox --format json emits either a JSON array or one object per line.
@@ -466,7 +448,7 @@ def parse_dalfox(
     if not records:
         return _unparsed(stdout, tool="dalfox_xss_scan", engagement_id=engagement_id, run_id=run_id, target=target)
 
-    out: list[Finding] = []
+    out: list[Observation] = []
     for rec in records:
         poc_type = str(rec.get("type") or "").upper()  # V=verified, R=reflected, G=grep
         # Only 'V' (verified) is a confirmed XSS; R/G are leads.
@@ -474,20 +456,20 @@ def parse_dalfox(
         param = str(rec.get("param") or "").strip()
         data = str(rec.get("data") or rec.get("poc") or "").strip()
         cwe = str(rec.get("cwe") or "").strip()
-        severity = _sev(rec.get("severity")) if rec.get("severity") else (ClaimSeverity.HIGH if verified else ClaimSeverity.LOW)
+        severity = _sev(rec.get("severity")) if rec.get("severity") else ("high" if verified else "low")
         out.append(
-            _vuln_finding(
+            _scanner_signal(
                 engagement_id=engagement_id,
                 run_id=run_id,
                 target=data or target,
                 title=f"XSS ({'verified' if verified else poc_type or 'lead'}){f' in {param}' if param else ''}"[:180],
                 description=(f"dalfox {'verified' if verified else 'flagged'} a cross-site scripting vector"
                             + (f" in parameter '{param}'" if param else "") + "."),
-                evidence=(data or json.dumps(rec, sort_keys=True))[:800],
-                severity=severity,
+                evidence=(data or json.dumps(rec, sort_keys=True)),
+                claimed_severity=severity,
                 source_tool="dalfox_xss_scan",
-                confidence=FindingConfidence.CONFIRMED if verified else FindingConfidence.LIKELY,
-                metadata={"param": param, "cwe": cwe, "poc": data[:400], "poc_type": poc_type, "url": target},
+                verified=verified,
+                details={"param": param, "cwe": cwe, "poc": data[:400], "poc_type": poc_type, "url": target},
                 tags=["dalfox", "xss", "injection"] + (["verified"] if verified else ["reflected"]),
             )
         )
@@ -507,8 +489,8 @@ def parse_jaeles(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
-    out: list[Finding] = []
+) -> list[Observation]:
+    out: list[Observation] = []
     seen: set[str] = set()
     for m in _JAELES_RE.finditer(stdout or ""):
         sig = m.group("sig").strip()
@@ -518,16 +500,16 @@ def parse_jaeles(
             continue
         seen.add(key)
         out.append(
-            _vuln_finding(
+            _scanner_signal(
                 engagement_id=engagement_id,
                 run_id=run_id,
                 target=url or target,
                 title=f"jaeles: {sig}"[:180],
                 description=f"jaeles signature '{sig}' matched on {url}.",
-                evidence=m.group(0)[:500],
-                severity=_sev(m.group("sev")),
+                evidence=m.group(0),
+                claimed_severity=_sev(m.group("sev")),
                 source_tool="jaeles_vulnerability_scan",
-                metadata={"signature": sig, "url": url},
+                details={"signature": sig, "url": url},
                 tags=["jaeles"],
             )
         )
@@ -536,16 +518,16 @@ def parse_jaeles(
 
 def parse_searchsploit_lookup(
     stdout: str, *, engagement_id: str = "", run_id: str = "", target: str = ""
-) -> list[Finding]:
+) -> list[Observation]:
     """searchsploit -j — offline Exploit-DB matches for a CVE/product query.
 
-    Vulnerability-exploit correlation: each match is tagged with the CVE(s) it
-    covers (when present) so it's discoverable alongside the CVE finding that
-    triggered the lookup (matching tag, e.g. "CVE-2021-41773") without forcing
-    an artificial fingerprint merge across two different source tools/evidence.
-    A local DB hit on an exact CVE/product string is a direct correlation, not
-    an inference — OBSERVED grade; the finding records exploit *availability*,
-    not that the target is exploitable.
+    Each match records the CVE(s) it covers (when present) so it's
+    discoverable alongside the CVE observation that triggered the lookup
+    (matching tag, e.g. "CVE-2021-41773") without forcing an artificial
+    signature merge across two different source tools/evidence. A local DB
+    hit on an exact CVE/product string is a direct correlation, not an
+    inference — this records exploit *availability*, never that the target
+    is exploitable.
     """
     try:
         data = json.loads((stdout or "").strip() or "{}")
@@ -554,7 +536,7 @@ def parse_searchsploit_lookup(
     if not isinstance(data, dict):
         return _unparsed(stdout, tool="searchsploit_lookup", engagement_id=engagement_id, run_id=run_id, target=target)
 
-    out: list[Finding] = []
+    out: list[Observation] = []
     for entry in (data.get("RESULTS_EXPLOIT") or []) + (data.get("RESULTS_SHELLCODE") or []):
         if not isinstance(entry, dict):
             continue
@@ -565,36 +547,33 @@ def parse_searchsploit_lookup(
         codes = str(entry.get("Codes") or "")
         cves = [c.strip().upper() for c in re.findall(r"CVE-\d{4}-\d{4,7}", codes, re.IGNORECASE)]
         verified = str(entry.get("Verified") or "") in ("1", "true", "True")
-        meta: dict[str, Any] = {
+        details: dict[str, Any] = {
             "exploitdb_id": edb_id,
             "exploit_path": str(entry.get("Path") or ""),
             "exploit_type": str(entry.get("Type") or ""),
             "platform": str(entry.get("Platform") or ""),
-            "verified": verified,
         }
         if cves:
-            meta["cve"] = cves[0]
+            details["cve"] = cves[0]
             if len(cves) > 1:
-                meta["cve_all"] = cves
+                details["cve_all"] = cves
         tags = ["searchsploit", "exploit_available"] + cves
         out.append(
-            Finding(
+            _scanner_signal(
                 engagement_id=engagement_id,
                 run_id=run_id,
-                phase=_PHASE,
-                finding_type=FindingType.VULNERABILITY,
+                target=target,
                 title=f"Exploit-DB {edb_id}: {title}"[:300],
                 description=(
                     f"Public exploit available (Exploit-DB {edb_id})"
                     + (", verified" if verified else "")
                     + (f" for {', '.join(cves)}" if cves else "")
                 ),
-                evidence=f"EDB-ID {edb_id} | {entry.get('Path', '')}"[:500],
-                confidence=FindingConfidence.CONFIRMED if verified else FindingConfidence.LIKELY,
-                claim_severity=ClaimSeverity.MEDIUM,
+                evidence=f"EDB-ID {edb_id} | {entry.get('Path', '')}",
+                claimed_severity="medium",
                 source_tool="searchsploit_lookup",
-                target=target,
-                metadata=meta,
+                verified=verified,
+                details=details,
                 tags=tags,
             )
         )
@@ -608,10 +587,10 @@ def parse_searchsploit_lookup(
 # Weak protocol versions → (label, severity). SSLv2/3 are broken; TLS 1.0/1.1
 # are deprecated (PCI-DSS fail).
 _WEAK_PROTOCOLS = {
-    "ssl_2_0_cipher_suites": ("SSLv2", ClaimSeverity.HIGH),
-    "ssl_3_0_cipher_suites": ("SSLv3", ClaimSeverity.HIGH),
-    "tls_1_0_cipher_suites": ("TLS 1.0", ClaimSeverity.MEDIUM),
-    "tls_1_1_cipher_suites": ("TLS 1.1", ClaimSeverity.MEDIUM),
+    "ssl_2_0_cipher_suites": ("SSLv2", "high"),
+    "ssl_3_0_cipher_suites": ("SSLv3", "high"),
+    "tls_1_0_cipher_suites": ("TLS 1.0", "medium"),
+    "tls_1_1_cipher_suites": ("TLS 1.1", "medium"),
 }
 _ALL_CIPHER_SCANS = (
     "ssl_2_0_cipher_suites", "ssl_3_0_cipher_suites", "tls_1_0_cipher_suites",
@@ -619,10 +598,10 @@ _ALL_CIPHER_SCANS = (
 )
 # Weak cipher name substrings → severity.
 _WEAK_CIPHER_MARKERS = (
-    ("_NULL_", ClaimSeverity.HIGH), ("_RC4_", ClaimSeverity.MEDIUM),
-    ("_RC2_", ClaimSeverity.MEDIUM), ("_DES_", ClaimSeverity.MEDIUM),
-    ("_3DES_", ClaimSeverity.MEDIUM), ("_EXPORT", ClaimSeverity.HIGH),
-    ("_anon_", ClaimSeverity.HIGH), ("_MD5", ClaimSeverity.LOW),
+    ("_NULL_", "high"), ("_RC4_", "medium"),
+    ("_RC2_", "medium"), ("_DES_", "medium"),
+    ("_3DES_", "medium"), ("_EXPORT", "high"),
+    ("_anon_", "high"), ("_MD5", "low"),
 )
 
 
@@ -639,7 +618,7 @@ def parse_sslyze(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
+) -> list[Observation]:
     text = (stdout or "").strip()
     start = text.find("{")
     if start == -1:
@@ -649,7 +628,7 @@ def parse_sslyze(
     except json.JSONDecodeError:
         return _unparsed(stdout, tool="sslyze_scan", engagement_id=engagement_id, run_id=run_id, target=target)
 
-    out: list[Finding] = []
+    out: list[Observation] = []
     for server in data.get("server_scan_results") or []:
         loc = server.get("server_location") or {}
         host = str(loc.get("hostname") or target).strip()
@@ -661,14 +640,14 @@ def parse_sslyze(
         for cmd, (label, sev) in _WEAK_PROTOCOLS.items():
             accepted = (_sslyze_scan_block(scan, cmd) or {}).get("accepted_cipher_suites") or []
             if accepted:
-                out.append(_vuln_finding(
+                out.append(_scanner_signal(
                     engagement_id=engagement_id, run_id=run_id, target=tgt,
                     title=f"Weak TLS protocol enabled: {label}",
                     description=f"{host} accepts {label} ({len(accepted)} cipher suite(s)). "
                                 "Deprecated/broken — disable it (PCI-DSS requires ≥ TLS 1.2).",
                     evidence=f"{label}: {len(accepted)} accepted cipher suites",
-                    severity=sev, source_tool="sslyze_scan",
-                    metadata={"protocol": label, "host": host, "port": str(port)},
+                    claimed_severity=sev, source_tool="sslyze_scan",
+                    details={"protocol": label, "host": host, "port": str(port)},
                     tags=["sslyze", "tls", "weak_protocol"],
                 ))
 
@@ -683,12 +662,12 @@ def parse_sslyze(
                 for marker, sev in _WEAK_CIPHER_MARKERS:
                     if marker in name and name not in weak_seen:
                         weak_seen.add(name)
-                        out.append(_vuln_finding(
+                        out.append(_scanner_signal(
                             engagement_id=engagement_id, run_id=run_id, target=tgt,
                             title=f"Weak cipher suite: {name}",
                             description=f"{host} accepts weak cipher {name} — susceptible to known crypto attacks.",
-                            evidence=name, severity=sev, source_tool="sslyze_scan",
-                            metadata={"cipher": name, "host": host},
+                            evidence=name, claimed_severity=sev, source_tool="sslyze_scan",
+                            details={"cipher": name, "host": host},
                             tags=["sslyze", "tls", "weak_cipher"],
                         ))
                         break
@@ -696,57 +675,57 @@ def parse_sslyze(
         # 3) Known TLS vulnerabilities
         hb = _sslyze_scan_block(scan, "heartbleed")
         if hb.get("is_vulnerable_to_heartbleed"):
-            out.append(_vuln_finding(
+            out.append(_scanner_signal(
                 engagement_id=engagement_id, run_id=run_id, target=tgt,
                 title="Heartbleed (CVE-2014-0160)",
                 description=f"{host} is vulnerable to Heartbleed — memory disclosure of keys/secrets.",
                 evidence="sslyze: is_vulnerable_to_heartbleed=true",
-                severity=ClaimSeverity.CRITICAL, source_tool="sslyze_scan",
-                metadata={"cve": "CVE-2014-0160", "host": host}, tags=["sslyze", "tls", "heartbleed"],
+                claimed_severity="critical", source_tool="sslyze_scan",
+                details={"cve": "CVE-2014-0160", "host": host}, tags=["sslyze", "tls", "heartbleed"],
             ))
         ccs = _sslyze_scan_block(scan, "openssl_ccs_injection")
         if ccs.get("is_vulnerable_to_ccs_injection"):
-            out.append(_vuln_finding(
+            out.append(_scanner_signal(
                 engagement_id=engagement_id, run_id=run_id, target=tgt,
                 title="OpenSSL CCS injection (CVE-2014-0224)",
                 description=f"{host} is vulnerable to CCS injection — MITM can decrypt traffic.",
                 evidence="sslyze: is_vulnerable_to_ccs_injection=true",
-                severity=ClaimSeverity.HIGH, source_tool="sslyze_scan",
-                metadata={"cve": "CVE-2014-0224", "host": host}, tags=["sslyze", "tls", "ccs"],
+                claimed_severity="high", source_tool="sslyze_scan",
+                details={"cve": "CVE-2014-0224", "host": host}, tags=["sslyze", "tls", "ccs"],
             ))
         robot = _sslyze_scan_block(scan, "robot").get("robot_result")
         if robot and "NOT_VULNERABLE" not in str(robot).upper():
-            out.append(_vuln_finding(
+            out.append(_scanner_signal(
                 engagement_id=engagement_id, run_id=run_id, target=tgt,
                 title="ROBOT attack (RSA padding oracle)",
                 description=f"{host} shows a ROBOT oracle ({robot}) — RSA decryption/signing possible.",
-                evidence=f"sslyze robot_result={robot}", severity=ClaimSeverity.HIGH,
-                source_tool="sslyze_scan", metadata={"robot": str(robot), "host": host},
+                evidence=f"sslyze robot_result={robot}", claimed_severity="high",
+                source_tool="sslyze_scan", details={"robot": str(robot), "host": host},
                 tags=["sslyze", "tls", "robot"],
             ))
 
         # 4) Certificate deployment issues
         for dep in (_sslyze_scan_block(scan, "certificate_info").get("certificate_deployments") or []):
             if isinstance(dep, dict) and dep.get("leaf_certificate_subject_matches_hostname") is False:
-                out.append(_vuln_finding(
+                out.append(_scanner_signal(
                     engagement_id=engagement_id, run_id=run_id, target=tgt,
                     title="TLS certificate hostname mismatch",
                     description=f"The certificate served by {host} does not match the hostname.",
                     evidence="sslyze: leaf_certificate_subject_matches_hostname=false",
-                    severity=ClaimSeverity.MEDIUM, source_tool="sslyze_scan",
-                    metadata={"host": host},
+                    claimed_severity="medium", source_tool="sslyze_scan",
+                    details={"host": host},
                     tags=["sslyze", "tls", "cert_mismatch"],
                 ))
             path_results = dep.get("path_validation_results") or [] if isinstance(dep, dict) else []
             if path_results and all(p.get("was_validation_successful") is False for p in path_results):
-                out.append(_vuln_finding(
+                out.append(_scanner_signal(
                     engagement_id=engagement_id, run_id=run_id, target=tgt,
                     title="TLS certificate chain not trusted",
                     description=f"The certificate chain for {host} failed validation against all trust stores "
                                 "(self-signed / expired / incomplete chain).",
                     evidence="sslyze: all path_validation_results unsuccessful",
-                    severity=ClaimSeverity.LOW, source_tool="sslyze_scan",
-                    metadata={"host": host},
+                    claimed_severity="low", source_tool="sslyze_scan",
+                    details={"host": host},
                     tags=["sslyze", "tls", "cert_untrusted"],
                 ))
 
@@ -763,7 +742,7 @@ def parse_graphql_cop(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
+) -> list[Observation]:
     text = (stdout or "").strip()
     start = text.find("[")
     obj_start = text.find("{")
@@ -775,7 +754,7 @@ def parse_graphql_cop(
         return _unparsed(stdout, tool="graphql_cop_scan", engagement_id=engagement_id, run_id=run_id, target=target)
     # graphql-cop emits a JSON list of check objects; some builds wrap in a dict.
     items = data if isinstance(data, list) else (data.get("results") or data.get("checks") or [])
-    out: list[Finding] = []
+    out: list[Observation] = []
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -788,13 +767,13 @@ def parse_graphql_cop(
         desc = str(item.get("description") or "").strip()
         impact = str(item.get("impact") or "").strip()
         out.append(
-            _vuln_finding(
+            _scanner_signal(
                 engagement_id=engagement_id, run_id=run_id, target=target,
                 title=f"GraphQL: {title}"[:180],
                 description=(desc + (f" Impact: {impact}." if impact else "")).strip() or title,
-                evidence=json.dumps({k: item.get(k) for k in ("title", "severity", "impact", "curl_verify") if k in item}, sort_keys=True)[:600],
-                severity=severity, source_tool="graphql_cop_scan",
-                metadata={"check": title, "url": target},
+                evidence=json.dumps({k: item.get(k) for k in ("title", "severity", "impact", "curl_verify") if k in item}, sort_keys=True),
+                claimed_severity=severity, source_tool="graphql_cop_scan",
+                details={"check": title, "url": target},
                 tags=["graphql", "api", "graphql_cop"],
             )
         )
@@ -805,13 +784,15 @@ def parse_graphql_cop(
 # digests
 # --------------------------------------------------------------------------- #
 
-def _vuln_digest(tool: str, findings: list[Finding]) -> str:
-    if not findings:
+def _vuln_digest(tool: str, observations: list[Observation]) -> str:
+    if not observations:
         return ""
     by_sev: dict[str, int] = {}
-    for f in findings:
-        if f.finding_type == FindingType.VULNERABILITY:
-            by_sev[f.claim_severity.value] = by_sev.get(f.claim_severity.value, 0) + 1
+    for o in observations:
+        if o.type == ObservationType.SCANNER_SIGNAL:
+            sev = str(o.details.get("claimed_severity") or "")
+            if sev:
+                by_sev[sev] = by_sev.get(sev, 0) + 1
     if not by_sev:
         return ""
     order = ["critical", "high", "medium", "low", "info"]

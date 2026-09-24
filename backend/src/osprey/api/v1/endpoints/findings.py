@@ -4,16 +4,19 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
 from osprey.platform.handoff import export_structured_findings
 from osprey.schemas.agent_run import StructuredFindingsExport
 from osprey.schemas.finding import (
+    FileFindingRequest,
+    FileFindingResponse,
     Finding,
     FindingListResponse,
     FindingType,
     GroupedFindingListResponse,
 )
+from osprey.schemas.fp_cache import FpPatternListResponse
 from osprey.services.engagement_graph import get_engagement_graph
 from osprey.services.findings_store import get_findings_store
 from osprey.services.target_utils import resolve_ipv4
@@ -162,6 +165,100 @@ def finding_occurrences(finding_id: str) -> dict[str, Any]:
         "recurrence": store.recurrence(finding_id=finding_id),
         "occurrences": store.occurrences(finding_id=finding_id),
     }
+
+
+@router.post("/file", response_model=FileFindingResponse)
+def file_finding_endpoint(request: FileFindingRequest) -> FileFindingResponse:
+    """Explicit filing (plans/harness/03-earned-finding-pipeline.md Step 3) —
+    the only LLM/human→finding path. Note there is no ``confidence`` field on
+    the request: the caller attaches evidence, ``confidence_for`` computes it.
+    ``finding`` is null in the response when an FP-cache pattern
+    (plans/harness/04-learning-fp-cache.md) suppressed this candidate — check
+    ``suppressed`` rather than assuming a finding was created.
+    """
+    from osprey.services.finding_pipeline import FileFindingError, file_finding
+
+    try:
+        result = file_finding(
+            engagement_id=request.engagement_id,
+            title=request.title,
+            finding_type=request.finding_type,
+            observation_ids=request.observation_ids,
+            claim_severity=request.claim_severity,
+            description=request.description,
+            evidence_records=request.evidence_records,
+            run_id=request.run_id,
+            target=request.target,
+            tags=request.tags,
+            metadata=request.metadata,
+        )
+    except FileFindingError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return FileFindingResponse(
+        finding=result.finding,
+        suppressed=result.finding is None,
+        suppressed_reason=result.suppressed_reason,
+    )
+
+
+@router.post("/promote")
+def promote_observations_endpoint(
+    engagement_id: str = Query(...), run_id: str = Query(default=""),
+) -> FindingListResponse:
+    """Deterministic promotion (Step 5) — the no-LLM route. Clusters
+    SCANNER_SIGNAL observations, attaches whatever corroboration already
+    exists, and files each through the same evidence law as ``file_finding``.
+    """
+    from osprey.services.finding_pipeline import promote_observations
+
+    findings = promote_observations(engagement_id, run_id=run_id)
+    return FindingListResponse(findings=findings, total=len(findings))
+
+
+@router.post("/{finding_id}/fp")
+def mark_false_positive_endpoint(
+    finding_id: str,
+    reason: str = Query(default=""),
+    target_glob: str = Query(default="", description="Scope the pattern; empty defaults to this finding's own target"),
+) -> dict[str, Any]:
+    """Mark a finding as noise — plans/harness/04-learning-fp-cache.md Step 3.
+    Appends an FP-cache pattern and retracts the finding from this
+    engagement; every future promotion of the same pattern is suppressed."""
+    from osprey.services.finding_pipeline import MarkFalsePositiveError, mark_false_positive
+
+    try:
+        pattern = mark_false_positive(finding_id, reason=reason, target_glob=target_glob)
+    except MarkFalsePositiveError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"pattern": pattern.model_dump(mode="json"), "retracted_finding_id": finding_id}
+
+
+@router.get("/fp/patterns", response_model=FpPatternListResponse)
+def list_fp_patterns_endpoint() -> FpPatternListResponse:
+    from osprey.services import fp_cache
+
+    patterns = fp_cache.list_patterns()
+    return FpPatternListResponse(patterns=patterns, total=len(patterns))
+
+
+@router.delete("/fp/patterns/{pattern_id}")
+def remove_fp_pattern_endpoint(pattern_id: str) -> dict[str, Any]:
+    from osprey.services import fp_cache
+
+    removed = fp_cache.remove_pattern(pattern_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"no FP pattern with id '{pattern_id}'")
+    return {"removed": True, "pattern_id": pattern_id}
+
+
+@router.get("/fp/suppressed")
+def list_suppressed_promotions_endpoint(engagement_id: str = Query(...)) -> dict[str, Any]:
+    """Audit view (Step 4) — promotions an FP pattern suppressed, never a
+    silent drop."""
+    from osprey.services import suppressed_promotion_store
+
+    items = suppressed_promotion_store.list_for_engagement(engagement_id)
+    return {"suppressed": [s.model_dump(mode="json") for s in items], "total": len(items)}
 
 
 @router.post("/", response_model=Finding)

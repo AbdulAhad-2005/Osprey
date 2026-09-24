@@ -1,21 +1,24 @@
 """Parsers for credential-harvesting sources (IntelX, Resecurity, and the shared
 helper the private creds-manager overlay reuses).
 
-These turn a source tool's JSON stdout into typed findings:
+These turn a source tool's JSON stdout into typed Observations — structural
+facts, never a judged CREDENTIAL finding:
 
-* CREDENTIAL — a username/email + password pair. The real values are kept intact
-  (offensive use, never masked) so the report can show the leaked credential, and
-  the exploit phase (`exploit_pipeline._credential_candidates`) can promote it to a
-  ``credential_bruteforce`` task. ``metadata.hostname`` links it to its host in the
-  engagement graph (``exposes_credential`` edge).
-* EMAIL — every address seen (harvested or leaked), an INFERRED identity lead.
-* SUBDOMAIN — hosts IntelX's phonebook surfaces for the domain.
+* CREDENTIAL observation — a username/email + password pair. The real values
+  are kept intact (offensive use, never masked) so a human/LLM can act on the
+  leaked credential, and the exploit phase can source a
+  ``credential_bruteforce`` candidate from it (Plan 03 Step 6). ``details.hostname``
+  links it to its host in the engagement graph.
+* EMAIL observation — every address seen (harvested or leaked).
+* SUBDOMAIN observation — hosts IntelX's phonebook surfaces for the domain.
 
-Priority ordering (what the operator asked for): credentials *scraped live during
-the engagement* outrank a *verified-working* credential-manager hit, which outranks
-an *unverified* breach-DB leak. That order is carried directly by ``confidence``
-(scraped/working = CONFIRMED; unverified breach leaks = LIKELY, capped at MEDIUM
-severity) plus an explicit ``metadata.cred_priority`` integer for downstream sorting.
+Source priority (scraped-live > verified creds-manager hit > unverified
+breach-DB leak) is preserved as structural fact (``details.source_class``,
+``details.creds_status``, ``details.cred_priority``) — it is no longer baked
+into a confidence/severity policy table here. Whether a credential earns a
+``confirmed`` finding is ``confidence_for``'s job (Plan 03): a live-scraped or
+verified-working credential is exactly the kind of fact a verification-evidence
+capability turns into a reproduction/verification record.
 """
 
 from __future__ import annotations
@@ -23,30 +26,13 @@ from __future__ import annotations
 import json
 from urllib.parse import urlparse
 
-from osprey.schemas.finding import (
-    ClaimSeverity,
-    Finding,
-    FindingConfidence,
-    FindingType,
-)
+from osprey.schemas.observation import Observation, ObservationType
 from osprey.services.parsers.email_extract import (
     email_domain,
     is_valid_email,
     normalize_email,
 )
 from osprey.services.parsers.registry import register_many
-
-# source_class → (confidence, claimed severity, priority weight).
-# An unverified breach-DB leak stays capped at MEDIUM severity directly (no
-# clamp needed — the parser just doesn't assign higher), so it can never
-# out-claim a working/scraped credential.
-_SOURCE_POLICY = {
-    "scraped": (FindingConfidence.CONFIRMED, ClaimSeverity.HIGH, 100),
-    "creds_manager_working": (FindingConfidence.CONFIRMED, ClaimSeverity.HIGH, 90),
-    "creds_manager_unknown": (FindingConfidence.LIKELY, ClaimSeverity.MEDIUM, 60),
-    "creds_manager_not_working": (FindingConfidence.LIKELY, ClaimSeverity.LOW, 30),
-    "breach_db": (FindingConfidence.LIKELY, ClaimSeverity.MEDIUM, 40),
-}
 
 
 def _host_from(*values: str) -> str:
@@ -70,29 +56,39 @@ def _policy_key(source_class: str, creds_status: str) -> str:
         if status in ("working", "not_working"):
             return f"creds_manager_{status}"
         return "creds_manager_unknown"
-    return source_class if source_class in _SOURCE_POLICY else "breach_db"
+    return source_class
 
 
-def _email_finding(
+# source_class/status → relative priority weight for downstream sorting only
+# (no confidence/severity implied — structural fact, not a verdict).
+_PRIORITY = {
+    "scraped": 100,
+    "creds_manager_working": 90,
+    "creds_manager_unknown": 60,
+    "creds_manager_not_working": 30,
+    "breach_db": 40,
+}
+
+
+def _email_observation(
     addr: str, *, tool: str, engagement_id: str, run_id: str, target: str,
-    source: str, extra_meta: dict | None = None,
-) -> Finding | None:
+    source: str, extra_details: dict | None = None,
+) -> Observation | None:
     normalized = normalize_email(addr)
     if not is_valid_email(normalized):
         return None
-    meta = {"source": source, "email_domain": email_domain(normalized)}
-    if extra_meta:
-        meta.update(extra_meta)
-    return Finding(
-        engagement_id=engagement_id, run_id=run_id, phase="osint",
-        finding_type=FindingType.EMAIL, title=normalized[:200],
-        description=f"Email surfaced via {source}", evidence=normalized[:400],
-        confidence=FindingConfidence.LIKELY, source_tool=tool, target=target,
-        metadata=meta, tags=["osint", "email", source],
+    details = {"email": normalized, "email_domain": email_domain(normalized), "source": source}
+    if extra_details:
+        details.update(extra_details)
+    return Observation(
+        engagement_id=engagement_id, run_id=run_id,
+        type=ObservationType.EMAIL,
+        target=target, source_tool=tool,
+        details=details,
     )
 
 
-def credential_findings(
+def credential_observations(
     records: list[dict],
     *,
     tool: str,
@@ -101,14 +97,14 @@ def credential_findings(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
-) -> list[Finding]:
-    """Turn normalized credential dicts into CREDENTIAL (+ EMAIL) findings.
+) -> list[Observation]:
+    """Turn normalized credential dicts into CREDENTIAL (+ EMAIL) observations.
 
     Each record: {username, password, email, url?, host?, creds_status?, is_admin?,
     significance?, password_type?, source?}. Shared by the IntelX/Resecurity parsers
     and the private creds-manager overlay so all three store identically.
     """
-    out: list[Finding] = []
+    out: list[Observation] = []
     seen: set[tuple] = set()
     for rec in records:
         if not isinstance(rec, dict):
@@ -128,17 +124,16 @@ def credential_findings(
         seen.add(key)
 
         host = _host_from(str(rec.get("host") or ""), str(rec.get("url") or ""), target)
-        confidence, severity, priority = _SOURCE_POLICY[_policy_key(source_class, creds_status)]
+        policy_key = _policy_key(source_class, creds_status)
+        priority = _PRIORITY.get(policy_key, _PRIORITY["breach_db"])
         is_admin = bool(rec.get("is_admin"))
-        if is_admin and severity == ClaimSeverity.HIGH:
-            severity = ClaimSeverity.CRITICAL  # admin + verified credential → real, high-value access
 
-        meta = {
+        details = {
             "username": username,
-            "password": password,           # kept intact — offensive use / report visibility
+            "password": password,  # kept intact — offensive use / report visibility
             "email": email,
             "url": str(rec.get("url") or ""),
-            "hostname": host,               # graph reads this to build exposes_credential edge
+            "hostname": host,  # graph reads this to build exposes_credential edge
             "provider": provider,
             "source_class": source_class,
             "creds_status": creds_status or "unknown",
@@ -148,28 +143,15 @@ def credential_findings(
             "breach_source": str(rec.get("source") or provider),
             "cred_priority": priority,
         }
-        tags = ["credential", provider, source_class]
-        if creds_status:
-            tags.append(creds_status)
-        if is_admin:
-            tags.append("admin")
-        if confidence != FindingConfidence.CONFIRMED:
-            tags.append("verify_creds")  # unverified against the live target — test it
 
-        title = f"{identity} @ {host}" if host else identity
-        out.append(Finding(
-            engagement_id=engagement_id, run_id=run_id, phase="osint",
-            finding_type=FindingType.CREDENTIAL, title=title[:200],
-            description=(
-                f"Credential for {host or target or 'target'} via {provider} "
-                f"({source_class}, status={creds_status or 'unknown'})"
-            ),
-            evidence=f"{identity}:{password}"[:400],
-            confidence=confidence, claim_severity=severity,
-            source_tool=tool, target=host or target, metadata=meta, tags=tags,
+        out.append(Observation(
+            engagement_id=engagement_id, run_id=run_id,
+            type=ObservationType.CREDENTIAL,
+            target=host or target, source_tool=tool,
+            details=details,
         ))
         if email:
-            ef = _email_finding(
+            ef = _email_observation(
                 email, tool=tool, engagement_id=engagement_id, run_id=run_id,
                 target=host or target, source=f"{provider}_leak",
             )
@@ -183,7 +165,7 @@ def credential_findings(
 
 def parse_intelx(
     stdout: str, *, engagement_id: str = "", run_id: str = "", target: str = ""
-) -> list[Finding]:
+) -> list[Observation]:
     try:
         data = json.loads((stdout or "").strip())
     except (json.JSONDecodeError, ValueError):
@@ -199,28 +181,27 @@ def parse_intelx(
         data if data.get("mode") == "leaks" else {}
     )
 
-    out: list[Finding] = []
+    out: list[Observation] = []
     tgt = target or str(data.get("term") or "")
 
     if isinstance(phonebook, dict):
         for addr in phonebook.get("emails") or []:
-            ef = _email_finding(str(addr), tool="intelx_scan", engagement_id=engagement_id,
-                                run_id=run_id, target=tgt, source="intelx_phonebook")
+            ef = _email_observation(str(addr), tool="intelx_scan", engagement_id=engagement_id,
+                                     run_id=run_id, target=tgt, source="intelx_phonebook")
             if ef:
                 out.append(ef)
         for dom in phonebook.get("domains") or []:
             host = str(dom).strip().lower()
             if host and "." in host and (tgt.lower() in host or host.endswith(tgt.lower())):
-                out.append(Finding(
-                    engagement_id=engagement_id, run_id=run_id, phase="osint",
-                    finding_type=FindingType.SUBDOMAIN, title=host[:200],
-                    description="Host surfaced in IntelX phonebook", evidence=host[:400],
-                    source_tool="intelx_scan", target=tgt, metadata={"hostname": host},
-                    tags=["osint", "intelx"],
+                out.append(Observation(
+                    engagement_id=engagement_id, run_id=run_id,
+                    type=ObservationType.SUBDOMAIN,
+                    target=tgt, source_tool="intelx_scan",
+                    details={"hostname": host, "source": "intelx_phonebook"},
                 ))
 
     if isinstance(leaks, dict):
-        out.extend(credential_findings(
+        out.extend(credential_observations(
             leaks.get("credentials") or [], tool="intelx_scan", provider="intelx",
             source_class="breach_db", engagement_id=engagement_id, run_id=run_id, target=tgt,
         ))
@@ -232,7 +213,7 @@ def parse_intelx(
 
 def parse_resecurity(
     stdout: str, *, engagement_id: str = "", run_id: str = "", target: str = ""
-) -> list[Finding]:
+) -> list[Observation]:
     try:
         data = json.loads((stdout or "").strip())
     except (json.JSONDecodeError, ValueError):
@@ -240,13 +221,13 @@ def parse_resecurity(
     if not isinstance(data, dict):
         return []
     tgt = target or str(data.get("target") or "")
-    out = credential_findings(
+    out = credential_observations(
         data.get("credentials") or [], tool="resecurity_scan", provider="resecurity",
         source_class="breach_db", engagement_id=engagement_id, run_id=run_id, target=tgt,
     )
     for addr in data.get("emails") or []:
-        ef = _email_finding(str(addr), tool="resecurity_scan", engagement_id=engagement_id,
-                            run_id=run_id, target=tgt, source="resecurity")
+        ef = _email_observation(str(addr), tool="resecurity_scan", engagement_id=engagement_id,
+                                 run_id=run_id, target=tgt, source="resecurity")
         if ef:
             out.append(ef)
     return out

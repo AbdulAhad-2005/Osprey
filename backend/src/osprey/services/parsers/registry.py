@@ -1,4 +1,8 @@
-"""Parser and stdout digest registries — phases register tools without changing the kernel."""
+"""Parser and stdout digest registries — phases register tools without changing the kernel.
+
+Parsers extract structure only — they produce ``Observation``s, never a
+``Finding``. See plans/harness/02-evidence-and-observation-layer.md.
+"""
 
 from __future__ import annotations
 
@@ -6,19 +10,11 @@ import logging
 import re
 from typing import Callable
 
-from osprey.schemas.finding import (
-    Finding,
-    FindingConfidence,
-    FindingType,
-)
-from osprey.services.parsers.dynamic_fallback import (
-    NEEDS_DYNAMIC_STRUCTURING_TAG,
-    structure_unparsed_output,
-)
+from osprey.schemas.observation import Observation, ObservationType
 
 logger = logging.getLogger(__name__)
 
-ParserFn = Callable[..., list[Finding]]
+ParserFn = Callable[..., list[Observation]]
 DigestFn = Callable[[str], str]
 
 _OUTPUT_PARSERS: dict[str, ParserFn] = {}
@@ -48,28 +44,21 @@ def register_many(
 
 
 def _raw_observation_fallback(
-    tool_name: str, stdout: str, *, engagement_id: str, run_id: str, target: str, phase: str
-) -> list[Finding]:
-    """Last-resort fallback when no deterministic parser exists and dynamic
-    structuring is unavailable/fails — a single blob, never nothing."""
+    tool_name: str, stdout: str, *, engagement_id: str, run_id: str, target: str
+) -> list[Observation]:
+    """Last-resort fallback when no deterministic parser exists and LLM
+    extraction is unavailable/fails/suppressed — a single raw blob, never
+    nothing."""
     if not stdout.strip():
         return []
-    from osprey.services.tool_registry import get_tool_definition
-
-    tool_def = get_tool_definition(tool_name)
-    finding_phase = phase or (tool_def.category.value if tool_def else _DEFAULT_PHASE)
     return [
-        Finding(
+        Observation(
             engagement_id=engagement_id,
             run_id=run_id,
-            phase=finding_phase,
-            finding_type=FindingType.OBSERVATION,
-            title=f"Output from {tool_name}",
-            description="Unparsed tool output (stored for agent context)",
-            evidence=stdout[:2000],
-            confidence=FindingConfidence.LIKELY,
-            source_tool=tool_name,
+            type=ObservationType.RAW,
             target=target,
+            source_tool=tool_name,
+            details={"snippet": stdout[:2000]},
             tags=["unparsed"],
         )
     ]
@@ -78,9 +67,9 @@ def _raw_observation_fallback(
 # Host-list tools whose OUTPUT IS the host list: when a run produces no
 # host-like lines at all (e.g. amass without an API key prints only a
 # "Session Scope" banner, subfinder hitting no sources, fierce on a domain
-# with nothing to report), that is a legitimate EMPTY RESULT — the LLM
-# structuring fallback would otherwise re-phrase the banner into a fake
-# "Session Scope" observation and pad the report with noise.
+# with nothing to report), that is a legitimate EMPTY RESULT — LLM
+# extraction would otherwise re-phrase the banner into a fake "Session
+# Scope" observation and pad the report with noise.
 _HOST_LIST_TOOLS = frozenset({"subfinder_scan", "amass_scan", "fierce_scan", "dnsenum_scan"})
 
 _HOST_LIKE_RE = re.compile(r"^\s*[a-z0-9](?:[a-z0-9\-.]{0,251}[a-z0-9])?\.(?:[a-z]{2,24}|xn--[a-z0-9\-]+)\s*$", re.I)
@@ -142,51 +131,53 @@ async def parse_tool_output(
     run_id: str = "",
     target: str = "",
     phase: str = "",
-) -> list[Finding]:
+    allow_llm_fallback: bool = True,
+) -> list[Observation]:
     """A registered parser existing doesn't mean it recognized THIS run's
     output — a parser that legitimately finds nothing structured in a given
     stdout blob (e.g. crt_sh_query's JSON came back in an unexpected shape,
     wafw00f detected nothing) needs the exact same recovery as having no
-    parser at all: try the LLM structuring fallback before giving up to a
-    bare, severity-less "raw output" placeholder. Previously only the
-    no-parser-registered branch got that chance, so most of this platform's
-    tools — the ones WITH a parser — silently skipped straight to the
-    placeholder on every empty parse, whether or not an LLM was available to
-    do better. One recovery path now, used either way.
+    parser at all: try LLM structural extraction before giving up to a bare
+    "raw output" placeholder. One recovery path, used either way.
+
+    ``allow_llm_fallback=False`` disables that recovery path everywhere in
+    this function (deterministic replay — see services/benchmark/replay.py);
+    every other caller keeps the default and is unaffected. ``phase`` is
+    accepted for call-site compatibility but no longer stamped onto anything
+    here — Observations carry no phase; that's display-layer only now.
     """
     parser = _OUTPUT_PARSERS.get(tool_name)
-    parsed: list[Finding] = []
+    parsed: list[Observation] = []
     if parser is not None:
         # Parsers vary in accepted kwargs — try full then minimal.
         try:
             parsed = parser(stdout, engagement_id=engagement_id, run_id=run_id, target=target)
         except TypeError:
             parsed = parser(stdout, engagement_id=engagement_id, run_id=run_id)
-        parsed = await _expand_dynamic_structuring(parsed, tool_name=tool_name)
         if parsed:
             # Shared parsers (e.g. parse_subfinder handles subfinder_scan AND
             # amass_scan AND fierce_scan) may hardcode a default source_tool
-            # — findings must always be attributed to the tool that actually
-            # ran, never to its sibling that shares the parser.
-            relabeled: list[Finding] = []
-            for f in parsed:
-                if f.source_tool and f.source_tool != tool_name:
-                    f = f.model_copy(update={"source_tool": tool_name})
-                relabeled.append(f)
+            # — observations must always be attributed to the tool that
+            # actually ran, never to its sibling that shares the parser.
+            relabeled: list[Observation] = []
+            for o in parsed:
+                if o.source_tool and o.source_tool != tool_name:
+                    o = o.model_copy(update={"source_tool": tool_name})
+                relabeled.append(o)
             return relabeled
 
         # domain_hunter that printed a findings snapshot (table or JSON) but
-        # produced no sisters is an authoritative empty result — do not LLM-
-        # rewrite progress banners into fake affiliated domains.
+        # produced no sisters is an authoritative empty result — do not
+        # LLM-rewrite progress banners into fake affiliated domains.
         if tool_name == "domain_hunter" and (
             "=== Findings" in (stdout or "") or "# DHJSON " in (stdout or "")
         ):
             return []
 
-        # A host-list tool that found no hosts is a legitimate empty result — the
+    # A host-list tool that found no hosts is a legitimate empty result — the
     # deterministic parser already said "nothing", and the LLM would only
     # re-word the tool's own banner (amass "Session Scope") into fake
-    # observations. Skip the dynamic fallback for these.
+    # observations. Skip extraction for these.
     if _is_empty_host_list(tool_name, stdout):
         return []
 
@@ -198,49 +189,22 @@ async def parse_tool_output(
     if tool_name in _VERDICT_TOOLS and _tool_genuinely_ran(tool_name, stdout):
         return []
 
-    # An upstream error page is not tool output — no finding at all, not a
-    # raw placeholder.
+    # An upstream error page is not tool output — no observation at all, not
+    # a raw placeholder.
     if _looks_like_upstream_error(stdout):
         return []
-    from osprey.services.tool_registry import get_tool_definition
 
-    tool_def = get_tool_definition(tool_name)
-    finding_phase = phase or (tool_def.category.value if tool_def else _DEFAULT_PHASE)
-    structured = await structure_unparsed_output(
-        tool_name, stdout, engagement_id=engagement_id, run_id=run_id, target=target, phase=finding_phase,
-    )
-    if structured:
-        return structured
-    return _raw_observation_fallback(
-        tool_name, stdout, engagement_id=engagement_id, run_id=run_id, target=target, phase=phase
-    )
+    if allow_llm_fallback:
+        from osprey.services.parsers.observation_engine import extract as extract_observations
 
-
-async def _expand_dynamic_structuring(findings: list[Finding], *, tool_name: str) -> list[Finding]:
-    """A deterministic parser can tag an individual raw-capture placeholder
-    Finding (not the whole output — a sub-block it couldn't structure) with
-    NEEDS_DYNAMIC_STRUCTURING_TAG to opt just that chunk into the LLM
-    fallback. Registered parsers stay synchronous; this is the one place
-    that bridges to the async LLM call, so any parser can use the pattern
-    without itself becoming async."""
-    if not any(NEEDS_DYNAMIC_STRUCTURING_TAG in (f.tags or []) for f in findings):
-        return findings
-
-    expanded: list[Finding] = []
-    for finding in findings:
-        if NEEDS_DYNAMIC_STRUCTURING_TAG not in (finding.tags or []):
-            expanded.append(finding)
-            continue
-        structured = await structure_unparsed_output(
-            tool_name,
-            finding.evidence or finding.raw_data,
-            engagement_id=finding.engagement_id,
-            run_id=finding.run_id,
-            target=finding.target,
-            phase=finding.phase,
+        extracted = await extract_observations(
+            tool_name, stdout, engagement_id=engagement_id, run_id=run_id, target=target,
         )
-        expanded.extend(structured or [finding])
-    return expanded
+        if extracted:
+            return extracted
+    return _raw_observation_fallback(
+        tool_name, stdout, engagement_id=engagement_id, run_id=run_id, target=target
+    )
 
 
 def digest_tool_output(tool_name: str, stdout: str, *, max_items: int = 12) -> str:
