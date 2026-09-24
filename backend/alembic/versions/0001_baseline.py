@@ -31,8 +31,8 @@ def upgrade() -> None:
         sa.Column("rules_of_engagement_json", sa.Text(), nullable=False, server_default="{}"),
         sa.Column("findings_count", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("tools_executed", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_engagements_target", "engagements", ["target"], unique=False)
@@ -41,7 +41,7 @@ def upgrade() -> None:
         "runs",
         sa.Column("id", sa.String(length=12), nullable=False),
         sa.Column("engagement_id", sa.String(length=12), nullable=False),
-        sa.Column("started_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("started_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.ForeignKeyConstraint(["engagement_id"], ["engagements.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
@@ -70,9 +70,9 @@ def upgrade() -> None:
         sa.Column("raw_data", sa.Text(), nullable=False, server_default=""),
         sa.Column("notes", sa.Text(), nullable=False, server_default=""),
         sa.Column("occurrence_count", sa.Integer(), nullable=False, server_default="1"),
-        sa.Column("first_seen_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("last_seen_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("first_seen_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("last_seen_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("engagement_id", "fingerprint", name="uq_findings_engagement_fingerprint"),
     )
@@ -94,7 +94,7 @@ def upgrade() -> None:
         sa.Column("phase", sa.String(length=64), nullable=False, server_default=""),
         sa.Column("evidence_grade", sa.String(length=32), nullable=False, server_default="inferred"),
         sa.Column("evidence", sa.Text(), nullable=False, server_default=""),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.ForeignKeyConstraint(["finding_id"], ["findings.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
@@ -112,8 +112,8 @@ def upgrade() -> None:
         sa.Column("evidence_grade", sa.String(length=32), nullable=False, server_default="inferred"),
         sa.Column("confidence", sa.String(length=32), nullable=False, server_default="confirmed"),
         sa.Column("metadata_json", sa.Text(), nullable=False, server_default="{}"),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.PrimaryKeyConstraint("engagement_id", "id"),
     )
     op.create_index("ix_asset_nodes_engagement_type", "asset_nodes", ["engagement_id", "asset_type"], unique=False)
@@ -129,7 +129,7 @@ def upgrade() -> None:
         sa.Column("metadata_json", sa.Text(), nullable=False, server_default="{}"),
         sa.Column("run_id", sa.String(length=12), nullable=False, server_default=""),
         sa.Column("source_tool", sa.String(length=128), nullable=False, server_default=""),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
             "engagement_id", "source_id", "target_id", "relationship",
@@ -148,7 +148,7 @@ def upgrade() -> None:
         sa.Column("findings_count", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("success", sa.Integer(), nullable=False, server_default="1"),
         sa.Column("notes", sa.Text(), nullable=False, server_default=""),
-        sa.Column("completed_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("completed_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
             "engagement_id", "tool_name", "asset",
@@ -169,7 +169,7 @@ def upgrade() -> None:
         sa.Column("shadow_strategy", sa.String(length=64), nullable=False, server_default=""),
         sa.Column("llm_subsequent_tool", sa.String(length=128), nullable=True),
         sa.Column("llm_subsequent_success", sa.Integer(), nullable=True),
-        sa.Column("observed_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("observed_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("resolved_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id"),
     )

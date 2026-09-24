@@ -13,7 +13,12 @@ import threading
 from sqlalchemy import func, select
 
 from osprey.db.session import SessionLocal
-from osprey.models.finding import AssetEdgeRow, AssetNodeRow, FindingRow
+from osprey.models.finding import (
+    AssetEdgeRow,
+    AssetNodeRow,
+    FindingOccurrenceRow,
+    FindingRow,
+)
 from osprey.schemas.hybrid import CommanderContext
 from osprey.services.attack_surface_tree import (
     build_attack_surface_tree,
@@ -121,10 +126,13 @@ def _active_phase_skills_index(readiness: dict, *, limit: int = 100) -> str:
 # Version-keyed context cache. Assembly loads findings + graph several times and
 # builds trees/surfaces on every read; that work only changes when the engagement's
 # memory changes. We cache the assembled packet keyed by a cheap version fingerprint
-# (findings/nodes/edges counts) and, on a hit, refresh just the fast-changing
-# ephemerals (jobs, stdout index, pipeline line, delta). A count change ⇒ miss ⇒
-# rebuild, so the cache is always consistent with what's in the store.
-_CTX_CACHE: dict[tuple[str, str, str], tuple[tuple[int, int, int], CommanderContext]] = {}
+# (canonical counts plus mutation watermarks) and, on a hit, refresh just the
+# fast-changing ephemerals (jobs, stdout index, pipeline line, delta).  Counts
+# alone are insufficient: a repeated observation can strengthen confidence or
+# severity without creating a canonical finding, and graph-node metadata can be
+# enriched without adding a node.
+ContextVersion = tuple[int, int, int, int, str]
+_CTX_CACHE: dict[tuple[str, str, str], tuple[ContextVersion, CommanderContext]] = {}
 _CTX_CACHE_MAX = 64
 _CTX_LOCK = threading.Lock()
 
@@ -138,8 +146,13 @@ _NO_CHANGE_DELTA = {
 }
 
 
-def _engagement_version(engagement_id: str) -> tuple[int, int, int] | None:
-    """Cheap fingerprint of engagement memory: (findings, nodes, edges) counts.
+def _engagement_version(engagement_id: str) -> ContextVersion | None:
+    """Cheap fingerprint of canonical structure plus evidence/graph mutations.
+
+    ``occurrence_count`` advances for every merged observation, covering
+    confidence/severity strengthening on an existing finding.  The latest node
+    update timestamp covers graph metadata/provenance enrichment.
+
     Returns None on any DB error so the caller falls back to an uncached build."""
     if not engagement_id:
         return None
@@ -161,11 +174,39 @@ def _engagement_version(engagement_id: str) -> tuple[int, int, int] | None:
                     AssetEdgeRow.engagement_id == engagement_id
                 )
             )
-            return (int(f or 0), int(n or 0), int(e or 0))
+            occurrences = db.scalar(
+                select(func.count()).select_from(FindingOccurrenceRow).where(
+                    FindingOccurrenceRow.engagement_id == engagement_id
+                )
+            )
+            node_updated = db.scalar(
+                select(func.max(AssetNodeRow.updated_at)).where(
+                    AssetNodeRow.engagement_id == engagement_id
+                )
+            )
+            node_watermark = node_updated.isoformat() if node_updated is not None else ""
+            return (
+                int(f or 0),
+                int(n or 0),
+                int(e or 0),
+                int(occurrences or 0),
+                node_watermark,
+            )
         finally:
             db.close()
     except Exception:  # noqa: BLE001
         return None
+
+
+def invalidate_commander_context(engagement_id: str | None = None) -> None:
+    """Discard cached context for one engagement, or all engagements."""
+    eid = (engagement_id or "").strip()
+    with _CTX_LOCK:
+        if not eid:
+            _CTX_CACHE.clear()
+            return
+        for key in [key for key in _CTX_CACHE if key[0] == eid]:
+            _CTX_CACHE.pop(key, None)
 
 
 def _refresh_ephemeral(ctx: CommanderContext, engagement_id: str) -> CommanderContext:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -10,11 +9,21 @@ from fastapi import HTTPException
 
 from osprey.schemas.audit import AuditAction
 from osprey.schemas.hybrid import EscalationQuery, HybridExecutionMeta
-from osprey.schemas.tools import ToolExecutionRequest, ToolExecutionResponse, ToolSafetyLevel
+from osprey.schemas.tools import (
+    ToolExecutionRequest,
+    ToolExecutionResponse,
+    ToolSafetyLevel,
+)
 from osprey.services.audit_log import get_audit_log
 from osprey.services.command_builder import build_command_for_tool
 from osprey.services.engagement_graph import get_engagement_graph
+from osprey.services.engagement_scheduler import get_engagement_execution_scheduler
 from osprey.services.engagement_store import get_engagement_store
+from osprey.services.escalation_registry import (
+    auto_fallback_config,
+    detect_signals,
+    suggest_escalations,
+)
 from osprey.services.exec_cache import get_exec_cache
 from osprey.services.mcp_client import get_mcp_client
 from osprey.services.output_budget import truncate_stdout
@@ -24,14 +33,8 @@ from osprey.services.rate_governor import (
     banned_targets,
     is_exempt,
     mark_ban,
-    register_call,
+    pace_call,
     scan_for_ban,
-    wait_seconds_for,
-)
-from osprey.services.escalation_registry import (
-    auto_fallback_config,
-    detect_signals,
-    suggest_escalations,
 )
 from osprey.services.run_store import get_run_store
 from osprey.services.session_context import resolve_for_tool_execution, resolve_session
@@ -80,6 +83,17 @@ def _detect_soft_failure(stdout: str, stderr: str) -> str:
     if _UPSTREAM_ERR_RE.search(out) and ("<html" in low or "<title" in low or "<body" in low):
         return "response body is an upstream HTTP 5xx error page — provider unreachable, not data"
     return ""
+
+
+def _evidence_streams(response: ToolExecutionResponse) -> tuple[str, str]:
+    """Return streams eligible for target-evidence promotion.
+
+    Preserve permissive parsing of stdout even after a partial/failed run, but
+    never promote failed-process stderr into target findings.  Stderr remains
+    fully retained in artifacts, recovery diagnostics, and the audit trail.
+    """
+
+    return response.stdout or "", (response.stderr or "") if response.success else ""
 
 
 def _tool_unavailable_response(tool_def) -> "ToolExecutionResponse | None":
@@ -371,20 +385,20 @@ async def execute_tool_request(
         # never a gate — exempt passive/external lookups, and never wait longer
         # than the configured ceiling.
         if not is_exempt(request.tool_name):
-            wait_s = wait_seconds_for(session.engagement_id, target)
+            wait_s = await pace_call(session.engagement_id, target)
             if wait_s > 0:
                 logger.info(
-                    "rate governor: pacing %s on %s for %.1fs (engagement %s)",
+                    "rate governor: paced %s on %s for %.1fs (engagement %s)",
                     request.tool_name, target, wait_s, session.engagement_id,
                 )
-                await asyncio.sleep(wait_s)
-            register_call(session.engagement_id, target)
-        response = await mcp.call_tool(
-            tool_name=request.tool_name,
-            params=validation.normalized_params,
-            timeout=request.timeout,
-            prebuilt_command=preview_command,
-        )
+        scheduler = get_engagement_execution_scheduler()
+        async with scheduler.tool_slot(session.engagement_id):
+            response = await mcp.call_tool(
+                tool_name=request.tool_name,
+                params=validation.normalized_params,
+                timeout=request.timeout,
+                prebuilt_command=preview_command,
+            )
     finally:
         try:
             get_tool_coverage_store().release(
@@ -415,7 +429,6 @@ async def execute_tool_request(
                     FindingConfidence,
                     FindingType,
                 )
-
                 from osprey.services.findings_store import get_findings_store
 
                 get_findings_store().add(
@@ -468,9 +481,10 @@ async def execute_tool_request(
             # Universal ingest — every tool inherits YAML rules (SPA demotion, banners, …).
             from osprey.services.ingest_promoter import apply_ingest_rules
 
+            evidence_stdout, evidence_stderr = _evidence_streams(response)
             ingested = apply_ingest_rules(
-                response.stdout or "",
-                response.stderr or "",
+                evidence_stdout,
+                evidence_stderr,
                 engagement_id=session.engagement_id,
                 run_id=request.run_id or "",
                 source_tool=request.tool_name,
@@ -497,7 +511,9 @@ async def execute_tool_request(
 
     if request.exploit_candidate_id:
         try:
-            from osprey.services.exploit_candidate_store import get_exploit_candidate_store
+            from osprey.services.exploit_candidate_store import (
+                get_exploit_candidate_store,
+            )
 
             result_finding = findings[0] if findings else None
             result_finding_id = result_finding.id if result_finding else ""
@@ -636,12 +652,26 @@ async def execute_tool_request(
             tool_name=request.tool_name,
             target=target,
             engagement_id=session.engagement_id,
-            command=f"{request.tool_name}({request.params})",
+            run_id=request.run_id or "",
+            command=response.command or preview_command,
             success=response.success,
             returncode=response.returncode,
             duration_seconds=response.duration_seconds,
             error=response.error,
             recovery_action=response.alternative_tool_suggested,
+            metadata={
+                "params": request.params,
+                "additional_args": request.additional_args or "",
+                "cache_key": response.cache_key or cache_key,
+                "cache_hit": bool(response.cache_hit),
+                "timed_out": bool(response.timed_out),
+                "partial": bool(response.partial),
+                "artifacts": (
+                    dict(response.hybrid.get("artifacts") or {})
+                    if isinstance(response.hybrid, dict)
+                    else {}
+                ),
+            },
         )
     )
 
@@ -765,7 +795,10 @@ def _attach_digest(response: ToolExecutionResponse) -> None:
     if not response.success or not (response.stdout or "").strip():
         return
     try:
-        from osprey.services.parsers.registry import digest_tool_output, ensure_parsers_loaded
+        from osprey.services.parsers.registry import (
+            digest_tool_output,
+            ensure_parsers_loaded,
+        )
 
         ensure_parsers_loaded()
         digest = digest_tool_output(response.tool_name, response.stdout)
@@ -895,7 +928,9 @@ def _shadow_classify_and_observe(
         return
     try:
         from osprey.services.execution_recovery import classify_error, next_strategy
-        from osprey.services.recovery_observation_store import get_recovery_observation_store
+        from osprey.services.recovery_observation_store import (
+            get_recovery_observation_store,
+        )
 
         store = get_recovery_observation_store()
 

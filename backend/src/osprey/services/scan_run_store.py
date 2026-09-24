@@ -57,6 +57,8 @@ class ScanRunStore:
         max_passes: int = 0,
         include_low_confidence: bool = False,
         progress: str = "",
+        request: dict | None = None,
+        command_preview: str = "",
         results_log: list[str] | None = None,
         result: dict | None = None,
         error: str = "",
@@ -86,6 +88,10 @@ class ScanRunStore:
                     row.include_low_confidence = 1 if include_low_confidence else row.include_low_confidence
                     if progress:
                         row.progress = progress[:2000]
+                    if request is not None:
+                        row.request_json = _dumps(request)
+                    if command_preview:
+                        row.command_preview = command_preview[:8000]
                     if results_log is not None:
                         row.results_log_json = _dumps(results_log[-500:])
                     if result is not None:
@@ -96,6 +102,7 @@ class ScanRunStore:
                         row.started_at = _ts(started_at)
                     if finished_at is not None:
                         row.finished_at = _ts(finished_at)
+                    row.heartbeat_at = datetime.now(timezone.utc)
                     db.commit()
                 except Exception:
                     db.rollback()
@@ -186,12 +193,15 @@ class ScanRunStore:
             "max_passes": row.max_passes,
             "include_low_confidence": bool(row.include_low_confidence),
             "progress": row.progress,
+            "request": _loads(row.request_json, {}),
+            "command_preview": row.command_preview,
             "results_log": _loads(row.results_log_json, []),
             "result": _loads(row.result_json, None),
             "error": row.error,
             "created_at": row.created_at.isoformat() if row.created_at else None,
             "started_at": row.started_at.isoformat() if row.started_at else None,
             "finished_at": row.finished_at.isoformat() if row.finished_at else None,
+            "heartbeat_at": row.heartbeat_at.isoformat() if row.heartbeat_at else None,
         }
 
 

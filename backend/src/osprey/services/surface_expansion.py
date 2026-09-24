@@ -27,15 +27,26 @@ from pydantic import BaseModel
 from osprey.schemas.engagement_graph import AssetNode, AssetType
 from osprey.services.config_loader import read_config
 from osprey.services.engagement_graph import get_engagement_graph
-from osprey.services.parallelism_config import max_running_jobs
-from osprey.services.target_utils import is_ipv4, registrable_apex, resolve_host_ip
 from osprey.services.surface_expansion_store import (
     ExpansionState,
     get_surface_expansion_store,
 )
-from osprey.services.tool_registry import list_tools
+from osprey.services.target_utils import is_ipv4, registrable_apex, resolve_host_ip
+from osprey.services.tool_registry import get_tool
 
 logger = logging.getLogger(__name__)
+
+
+async def _execute_request(request: Any) -> Any:
+    """Single execution seam for the deterministic expansion orchestrator.
+
+    Production delegates to the shared tool kernel; tests can replace this one
+    boundary without patching imports inside dozens of concurrent tasks.
+    """
+
+    from osprey.services.tool_execution import execute_tool_request
+
+    return await execute_tool_request(request)
 
 # Data-driven frontier tool map (config/expansion.yaml). Making the tool
 # selection config instead of a hardcoded tuple is what generalizes the engine
@@ -160,12 +171,12 @@ def _installed_steps(section: str) -> list[tuple[str, str, dict[str, Any]]]:
     installed tools. extra_params carries the entry's static fields beyond
     tool/param (mode, wordlist, additional_args, …) so the YAML can configure
     per-tool invocation without hardcoding it in the engine."""
-    installed = {t.name for t in list_tools() if t.installed}
     steps: list[tuple[str, str, dict[str, Any]]] = []
     for entry in _expansion_config().get(section, []) or []:
         tool = str(entry.get("tool", "")).strip()
         param = str(entry.get("param", "target")).strip() or "target"
-        if tool and tool in installed:
+        availability = get_tool(tool) if tool else None
+        if availability is not None and availability.installed:
             extra = {
                 k: v for k, v in entry.items()
                 if k not in ("tool", "param") and v not in (None, "")
@@ -614,8 +625,6 @@ async def run_expansion_pass(
         for e in graph.list_edges(engagement_id=engagement_id, limit=50_000)
     }
 
-    sem = asyncio.Semaphore(max(1, max_running_jobs()))
-
     # Live "what's running right now" visibility: every in-flight tool call
     # registers itself here for the duration of its own wait_for-bounded call,
     # so a caller polling mid-pass sees actual tool names, not just silence
@@ -686,66 +695,66 @@ async def run_expansion_pass(
         # e.g. wafw00f_scan needs more than the 120s live-host default). It is
         # a dispatch concern, not a tool param — pop it before the static
         # fields merge into params.
-        per_tool_timeout = None
-        if extra:
-            per_tool_timeout = extra.pop("timeout", None)
+        static_params = dict(extra or {})
+        per_tool_timeout = static_params.pop("timeout", None)
+        if static_params:
             merged = dict(params)
-            merged.update(extra)
+            merged.update(static_params)
             params = merged
+        execution_timeout = min(int(per_tool_timeout or timeout), 300)
         target_label = next((str(v) for v in params.values() if v), "")
         label = f"{tool_name}({target_label})"
-        async with sem:
-            in_flight.add(label)
-            _report(stage)
-            try:
-                from osprey.schemas.tools import ToolExecutionRequest
-                from osprey.services.tool_execution import execute_tool_request
+        in_flight.add(label)
+        _report(stage)
+        try:
+            from osprey.schemas.tools import ToolExecutionRequest
 
-                resp = await asyncio.wait_for(
-                    execute_tool_request(
-                        ToolExecutionRequest(
-                            tool_name=tool_name,
-                            params=params,
-                            engagement_id=engagement_id,
-                            run_id=run_id,
-                            record_findings=True,
-                            # A per-attempt budget scoped to this stage's real
-                            # cost — not the schema's 900s default, which is
-                            # sized for heavy scans, not a curl-based lookup.
-                            timeout=min(int(per_tool_timeout or timeout), 300),
-                        )
-                    ),
-                    timeout=timeout,
+            # execute_tool_request owns both the shared queue and the actual
+            # MCP-call timeout.  An outer wait_for here used to count legitimate
+            # queue time against execution and could cancel a request before it
+            # acquired a slot.  Let the kernel start the budget at execution.
+            resp = await _execute_request(
+                ToolExecutionRequest(
+                    tool_name=tool_name,
+                    params=params,
+                    engagement_id=engagement_id,
+                    run_id=run_id,
+                    record_findings=True,
+                    # A per-attempt budget scoped to this stage's real cost —
+                    # not the schema's 900s default, which is sized for heavy
+                    # scans, not a curl-based lookup.
+                    timeout=execution_timeout,
                 )
-                # Classify the outcome for the pass-level health diagnostic. An
-                # exit-0 run with empty stdout is the silent case that makes a
-                # broken execution backend look like an empty target.
-                if getattr(resp, "timed_out", False):
-                    _record_health("timeout", tool=tool_name)
-                elif not getattr(resp, "success", False):
-                    _record_health(
-                        "failed", tool=tool_name,
-                        err=getattr(resp, "error", "") or (getattr(resp, "stderr", "") or ""),
-                    )
-                elif not (getattr(resp, "stdout", "") or "").strip():
-                    _record_health("empty", tool=tool_name)
-                else:
-                    _record_health("ok", tool=tool_name)
-            except TimeoutError:
+            )
+            # Classify the outcome for the pass-level health diagnostic. An
+            # exit-0 run with empty stdout is the silent case that makes a
+            # broken execution backend look like an empty target.
+            if getattr(resp, "timed_out", False):
                 _record_health("timeout", tool=tool_name)
-                logger.debug(
-                    "Surface expansion: %s timed out after %ss for %s (non-fatal, pass continues)",
-                    tool_name, timeout, params,
+            elif not getattr(resp, "success", False):
+                _record_health(
+                    "failed", tool=tool_name,
+                    err=getattr(resp, "error", "") or (getattr(resp, "stderr", "") or ""),
                 )
-            except Exception as exc:
-                _record_health("failed", tool=tool_name, err=str(exc))
-                logger.debug(
-                    "Surface expansion: %s failed for %s (non-fatal, pass continues)",
-                    tool_name, params, exc_info=True,
-                )
-            finally:
-                in_flight.discard(label)
-                _report(stage)
+            elif not (getattr(resp, "stdout", "") or "").strip():
+                _record_health("empty", tool=tool_name)
+            else:
+                _record_health("ok", tool=tool_name)
+        except TimeoutError:
+            _record_health("timeout", tool=tool_name)
+            logger.debug(
+                "Surface expansion: %s timed out after %ss for %s (non-fatal, pass continues)",
+                tool_name, timeout, params,
+            )
+        except Exception as exc:
+            _record_health("failed", tool=tool_name, err=str(exc))
+            logger.debug(
+                "Surface expansion: %s failed for %s (non-fatal, pass continues)",
+                tool_name, params, exc_info=True,
+            )
+        finally:
+            in_flight.discard(label)
+            _report(stage)
 
     # --- 0. Self-seed: if the graph has no domain root yet, create one from the
     # engagement record. Binding creates the engagement, not the node — so every
@@ -760,19 +769,35 @@ async def run_expansion_pass(
     # leaves `engagement` unbound on later passes (when the seed node already
     # exists), and every frontier built against it then crashes.
     engagement = get_engagement_store().get(engagement_id)
-    target_label = (engagement.target if engagement else "") or ""
+    seed_target = (engagement.target if engagement else "") or ""
+    # Domain discovery must start at the registrable apex.  A user may bind a
+    # concrete host such as ``www.example.com``; enumerating that host as if it
+    # were an apex misses siblings while also losing the original host from the
+    # live-probe frontier.  Keep both identities and their deterministic edge.
+    target_label = registrable_apex(seed_target)
 
     existing_domains = graph.list_nodes(
         engagement_id=engagement_id, asset_type=AssetType.DOMAIN, limit=1,
     )
     if not existing_domains:
-        if engagement and engagement.target:
+        if seed_target:
             graph.ensure_node(
                 engagement_id=engagement_id,
                 asset_type=AssetType.DOMAIN,
-                label=engagement.target,
+                label=target_label,
                 metadata={"expanded": False, "depth": 0},
             )
+            if seed_target.lower() != target_label.lower():
+                graph.operator_link(
+                    engagement_id=engagement_id,
+                    source_type=AssetType.SUBDOMAIN,
+                    source_label=seed_target,
+                    target_type=AssetType.DOMAIN,
+                    target_label=target_label,
+                    relationship="subdomain_of",
+                    run_id=run_id,
+                    source_tool="engagement_seed",
+                )
 
     # --- 1a. Sister/associated-domain discovery — runs first, across the apex
     # frontier, and is awaited to completion before stage 1b starts. The

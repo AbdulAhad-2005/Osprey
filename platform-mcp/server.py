@@ -14,26 +14,27 @@ import os
 import re
 import sys
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
 from mcp.server.fastmcp import FastMCP
-
+from typed_browser import register_typed_browser_tools
+from typed_exploit import register_typed_exploit_tools
+from typed_osint import register_typed_osint_tools
+from typed_proxy import register_typed_proxy_tools
+from typed_recon_content import register_typed_recon_content_tools
 from typed_recon_network import register_typed_recon_network_tools
 from typed_tech_identification import register_typed_tech_identification_tools
-from typed_osint import register_typed_osint_tools
-from typed_recon_content import register_typed_recon_content_tools
 from typed_vuln import register_typed_vuln_tools
-from typed_browser import register_typed_browser_tools
-from typed_proxy import register_typed_proxy_tools
 from typed_web_search import register_typed_web_search_tools
-from typed_exploit import register_typed_exploit_tools
 
 API_BASE = os.environ.get("PENTEST_API_BASE", "http://localhost:9000").rstrip("/")
 QUICK_TIMEOUT = float(os.environ.get("PENTEST_QUICK_TIMEOUT", "60"))
 # Long exec/script posts — keep ≥ OpenCode mcp.timeout (ms) / 1000
 HTTP_TIMEOUT = float(os.environ.get("PENTEST_HTTP_TIMEOUT", "900"))
-SESSION_RUN_ID = os.environ.get("PENTEST_RUN_ID", "") or uuid.uuid4().hex[:12]
+_CONFIGURED_RUN_ID = os.environ.get("PENTEST_RUN_ID", "").strip()
+SESSION_RUN_ID = _CONFIGURED_RUN_ID or uuid.uuid4().hex[:12]
 
 # Active session — one engagement per target (domain / IP / CIDR / host)
 _SESSION_TARGET = ""
@@ -45,32 +46,55 @@ _SESSION_SWITCH_NOTICE = ""
 _SESSION_TARGET_KIND = "domain"
 _SESSION_SCOPE = ""
 
-# The binding above is process-local, so an interrupted call that makes the host
-# respawn this MCP server drops it → the next tool fails "No active target" and
-# forces a re-bind. Mirror it to a small state file (keyed by PENTEST_RUN_ID when
-# set, else a shared default) so a respawned process can restore it. Engagements
-# are durable + deterministic by target, so restoring a prior binding is safe.
+# The binding above is process-local. A host that supplies a unique
+# PENTEST_RUN_ID gets crash/respawn persistence for that one session. Processes
+# without an explicit run id deliberately do NOT share a fallback state file:
+# the old ``..._default.json`` made unrelated MCP clients overwrite and restore
+# one another's targets.
 import json as _json
 import tempfile as _tempfile
 
-_SESSION_STATE_FILE = os.path.join(
-    _tempfile.gettempdir(),
-    f"pentest_mcp_session_{os.environ.get('PENTEST_RUN_ID', '') or 'default'}.json",
+_SESSION_STATE_FILE = (
+    os.path.join(_tempfile.gettempdir(), f"pentest_mcp_session_{_CONFIGURED_RUN_ID}.json")
+    if _CONFIGURED_RUN_ID
+    else None
 )
 
 
+@dataclass(frozen=True)
+class _EngagementContext:
+    """All engagement-scoped values needed by one MCP call."""
+
+    engagement_id: str
+    target: str
+    run_id: str
+    kind: str = "domain"
+    scope: str = ""
+    pinned: bool = False
+
+
+_ENGAGEMENT_CACHE: dict[str, dict[str, str]] = {}
+_ENGAGEMENT_RUN_IDS: dict[str, str] = {}
+_REGISTERED_RUNS: set[tuple[str, str]] = set()
+
+
 def _persist_session() -> None:
+    if not _SESSION_STATE_FILE:
+        return
     try:
-        with open(_SESSION_STATE_FILE, "w", encoding="utf-8") as fh:
+        temporary = f"{_SESSION_STATE_FILE}.{os.getpid()}.tmp"
+        with open(temporary, "w", encoding="utf-8") as fh:
             _json.dump(
                 {
                     "target": _SESSION_TARGET,
                     "engagement_id": _SESSION_ENGAGEMENT_ID,
                     "kind": _SESSION_TARGET_KIND,
                     "scope": _SESSION_SCOPE,
+                    "run_id": SESSION_RUN_ID,
                 },
                 fh,
             )
+        os.replace(temporary, _SESSION_STATE_FILE)
     except Exception:  # noqa: BLE001
         pass
 
@@ -78,7 +102,10 @@ def _persist_session() -> None:
 def _restore_session() -> bool:
     """Reload a persisted binding into the globals after a process respawn.
     Returns True if a binding was restored. Best-effort."""
-    global _SESSION_TARGET, _SESSION_ENGAGEMENT_ID, _SESSION_TARGET_KIND, _SESSION_SCOPE
+    global SESSION_RUN_ID, _SESSION_TARGET, _SESSION_ENGAGEMENT_ID
+    global _SESSION_TARGET_KIND, _SESSION_SCOPE
+    if not _SESSION_STATE_FILE:
+        return False
     try:
         with open(_SESSION_STATE_FILE, encoding="utf-8") as fh:
             data = _json.load(fh)
@@ -92,8 +119,48 @@ def _restore_session() -> bool:
     _SESSION_ENGAGEMENT_ID = eid
     _SESSION_TARGET_KIND = data.get("kind") or "domain"
     _SESSION_SCOPE = data.get("scope") or ""
+    SESSION_RUN_ID = (data.get("run_id") or _CONFIGURED_RUN_ID or SESSION_RUN_ID).strip()
+    _ENGAGEMENT_CACHE[eid] = {
+        "target": tgt,
+        "kind": _SESSION_TARGET_KIND,
+        "scope": _SESSION_SCOPE,
+    }
+    _ENGAGEMENT_RUN_IDS[eid] = SESSION_RUN_ID
     _log(f"restored session binding {eid} for target {tgt} after process respawn")
     return True
+
+
+def _clear_persisted_session() -> None:
+    if not _SESSION_STATE_FILE:
+        return
+    try:
+        os.unlink(_SESSION_STATE_FILE)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        _log(f"session state cleanup warning: {exc}")
+
+
+def _clear_session(*, engagement_id: str = "") -> None:
+    """Clear an ambient binding and every local cache entry that can revive it."""
+    global _SESSION_TARGET, _SESSION_ENGAGEMENT_ID, _SESSION_SWITCH_NOTICE
+    global _SESSION_TARGET_KIND, _SESSION_SCOPE
+
+    eid = (engagement_id or _SESSION_ENGAGEMENT_ID).strip()
+    if eid:
+        _ENGAGEMENT_CACHE.pop(eid, None)
+        _ENGAGEMENT_RUN_IDS.pop(eid, None)
+        _REGISTERED_RUNS.difference_update(
+            {key for key in _REGISTERED_RUNS if key[0] == eid}
+        )
+        _CTX_SECTION_CACHE.pop(eid, None)
+    if not engagement_id or eid == _SESSION_ENGAGEMENT_ID:
+        _SESSION_TARGET = ""
+        _SESSION_ENGAGEMENT_ID = ""
+        _SESSION_SWITCH_NOTICE = ""
+        _SESSION_TARGET_KIND = "domain"
+        _SESSION_SCOPE = ""
+        _clear_persisted_session()
 
 # Section-level context delta — collapse LARGE, slow-changing context sections to
 # a one-line placeholder when their rendered content is byte-identical to the
@@ -230,13 +297,17 @@ def _new_run_id() -> str:
     return SESSION_RUN_ID
 
 
-def _ensure_run_registered(engagement_id: str) -> None:
+def _ensure_run_registered(engagement_id: str, run_id: str) -> None:
+    key = (engagement_id, run_id)
+    if key in _REGISTERED_RUNS:
+        return
     try:
         _post(
             f"/api/v1/engagements/{engagement_id}/runs/ensure",
-            {"run_id": SESSION_RUN_ID},
+            {"run_id": run_id},
             timeout=10,
         )
+        _REGISTERED_RUNS.add(key)
     except Exception as exc:
         _log(f"run bind warning: {exc}")
 
@@ -284,7 +355,13 @@ def _bind_target(target: str, *, force_new: bool = False, kind: str = "domain", 
     _SESSION_ENGAGEMENT_ID = data["id"]
     _SESSION_TARGET_KIND = kind or "domain"
     _SESSION_SCOPE = scope or ""
-    _ensure_run_registered(_SESSION_ENGAGEMENT_ID)
+    _ENGAGEMENT_CACHE[_SESSION_ENGAGEMENT_ID] = {
+        "target": _SESSION_TARGET,
+        "kind": _SESSION_TARGET_KIND,
+        "scope": _SESSION_SCOPE,
+    }
+    _ENGAGEMENT_RUN_IDS[_SESSION_ENGAGEMENT_ID] = SESSION_RUN_ID
+    _ensure_run_registered(_SESSION_ENGAGEMENT_ID, SESSION_RUN_ID)
     _persist_session()
 
     created = bool(data.get("created"))
@@ -319,8 +396,8 @@ def _require_bound_target() -> str:
     return _SESSION_TARGET
 
 
-def _resolve_engagement(engagement_id_override: str = "") -> tuple[str, str]:
-    """Resolve (engagement_id, target_label) for one call, preferring an explicit pin.
+def _resolve_engagement(engagement_id_override: str = "") -> _EngagementContext:
+    """Resolve one complete engagement context, preferring an explicit pin.
 
     This MCP process holds ONE ambient session (_SESSION_TARGET /
     _SESSION_ENGAGEMENT_ID). If the host reuses this same server process for
@@ -332,30 +409,59 @@ def _resolve_engagement(engagement_id_override: str = "") -> tuple[str, str]:
     regardless of what the shared ambient session currently holds. Empty
     override = existing single-chat behavior (unchanged).
     """
-    eid = (engagement_id_override or "").strip()
-    if eid:
-        label = _SESSION_TARGET if eid == _SESSION_ENGAGEMENT_ID else f"(pinned engagement_id={eid})"
-        return eid, label
-    _require_bound_target()
-    return _SESSION_ENGAGEMENT_ID, _SESSION_TARGET
-
-
-def _session_header(engagement_id: str = "", target: str = "") -> str:
-    pinned = bool(engagement_id and engagement_id != _SESSION_ENGAGEMENT_ID)
-    if not engagement_id:
+    requested = (engagement_id_override or "").strip()
+    pinned = bool(requested)
+    if not requested:
         _require_bound_target()
-    eid = engagement_id or _SESSION_ENGAGEMENT_ID
-    tgt = target or _SESSION_TARGET
-    target_line = f"target: {tgt}"
-    if not pinned and _SESSION_TARGET_KIND and _SESSION_TARGET_KIND != "domain":
-        target_line += f"  [kind: {_SESSION_TARGET_KIND}"
-        target_line += f"; scope: {_SESSION_SCOPE}]" if _SESSION_SCOPE else "]"
+        requested = _SESSION_ENGAGEMENT_ID
+
+    metadata = _ENGAGEMENT_CACHE.get(requested)
+    if metadata is None and requested == _SESSION_ENGAGEMENT_ID and _SESSION_TARGET:
+        metadata = {
+            "target": _SESSION_TARGET,
+            "kind": _SESSION_TARGET_KIND,
+            "scope": _SESSION_SCOPE,
+        }
+        _ENGAGEMENT_CACHE[requested] = metadata
+    if metadata is None:
+        data = _get(f"/api/v1/engagements/{requested}", timeout=15)
+        target = str(data.get("target") or "").strip()
+        if not target:
+            raise RuntimeError(f"Engagement {requested!r} did not return a target")
+        metadata = {
+            "target": target,
+            "kind": str(data.get("target_kind") or data.get("kind") or "domain"),
+            "scope": str(data.get("scope") or ""),
+        }
+        _ENGAGEMENT_CACHE[requested] = metadata
+
+    run_id = _ENGAGEMENT_RUN_IDS.get(requested)
+    if not run_id:
+        run_id = SESSION_RUN_ID if requested == _SESSION_ENGAGEMENT_ID else uuid.uuid4().hex[:12]
+        _ENGAGEMENT_RUN_IDS[requested] = run_id
+    _ensure_run_registered(requested, run_id)
+    return _EngagementContext(
+        engagement_id=requested,
+        target=metadata["target"],
+        run_id=run_id,
+        kind=metadata.get("kind") or "domain",
+        scope=metadata.get("scope") or "",
+        pinned=pinned,
+    )
+
+
+def _session_header(context: _EngagementContext | None = None) -> str:
+    ctx = context or _resolve_engagement()
+    target_line = f"target: {ctx.target}"
+    if ctx.kind and ctx.kind != "domain":
+        target_line += f"  [kind: {ctx.kind}"
+        target_line += f"; scope: {ctx.scope}]" if ctx.scope else "]"
     lines = [
         target_line,
-        f"engagement_id: {eid}",
-        f"run_id: {SESSION_RUN_ID}",
+        f"engagement_id: {ctx.engagement_id}",
+        f"run_id: {ctx.run_id}",
     ]
-    if pinned:
+    if ctx.pinned:
         lines.append(
             "notice: PINNED via explicit engagement_id= — this call bypassed the "
             f"shared ambient session (ambient session is currently bound to "
@@ -366,12 +472,12 @@ def _session_header(engagement_id: str = "", target: str = "") -> str:
     return "\n".join(lines)
 
 
-def _memory_params() -> dict[str, str]:
+def _memory_params(context: _EngagementContext | None = None) -> dict[str, str]:
     """Engagement-wide memory reads — omit run_id so graph/findings are not empty."""
-    _require_bound_target()
+    ctx = context or _resolve_engagement()
     return {
-        "engagement_id": _SESSION_ENGAGEMENT_ID,
-        "seed_target": _SESSION_TARGET,
+        "engagement_id": ctx.engagement_id,
+        "seed_target": ctx.target,
     }
 
 
@@ -578,13 +684,16 @@ def platform_expand(max_passes: int = 5, engagement_id: str = "", full_engine: b
     engagement_id: optional pin — see platform_exec.
     """
     def _run() -> str:
-        eid, tgt = _resolve_engagement(engagement_id)
+        ctx = _resolve_engagement(engagement_id)
         job = _start_expansion_job(
-            eid, SESSION_RUN_ID, max_passes=max_passes, include_vuln_dispatch=full_engine
+            ctx.engagement_id,
+            ctx.run_id,
+            max_passes=max_passes,
+            include_vuln_dispatch=full_engine,
         )
         parts = [
             "### OPERATOR MIRROR — SURFACE EXPANSION (background job)",
-            _session_header(eid, tgt),
+            _session_header(ctx),
             f"**job_id:** `{job.get('job_id')}` | **status:** {job.get('status')}",
             job.get("hint") or "",
             "",
@@ -672,17 +781,29 @@ def platform_pipeline(action: str = "start", engagement_id: str = "") -> str:
     Read platform_findings for what's landed in shared memory either way.
     """
     def _run() -> str:
-        eid, tgt = _resolve_engagement(engagement_id)
+        ctx = _resolve_engagement(engagement_id)
         act = (action or "start").strip().lower()
         if act == "status":
-            data = _get("/api/v1/pipeline/status", params={"engagement_id": eid}, timeout=15)
+            data = _get(
+                "/api/v1/pipeline/status",
+                params={"engagement_id": ctx.engagement_id},
+                timeout=15,
+            )
         elif act == "stop":
-            data = _post("/api/v1/pipeline/stop", {"engagement_id": eid}, timeout=15)
+            data = _post(
+                "/api/v1/pipeline/stop",
+                {"engagement_id": ctx.engagement_id},
+                timeout=15,
+            )
         else:
-            data = _post("/api/v1/pipeline/start", {"engagement_id": eid, "run_id": SESSION_RUN_ID}, timeout=30)
+            data = _post(
+                "/api/v1/pipeline/start",
+                {"engagement_id": ctx.engagement_id, "run_id": ctx.run_id},
+                timeout=30,
+            )
         parts = [
             f"### OPERATOR MIRROR — PHASE PIPELINE ({act})",
-            _session_header(eid, tgt),
+            _session_header(ctx),
         ]
         note = (data.get("note") or "").strip()
         if note:
@@ -719,15 +840,21 @@ def platform_spawn_agent(
     spawn-budget caps; if it says the cap is hit, let one finish first.
     """
     def _run() -> str:
-        eid, tgt = _resolve_engagement(engagement_id)
+        ctx = _resolve_engagement(engagement_id)
         data = _post(
             "/api/v1/pipeline/spawn-agent",
-            {"engagement_id": eid, "run_id": SESSION_RUN_ID, "role": role, "task": task, "scope": scope},
+            {
+                "engagement_id": ctx.engagement_id,
+                "run_id": ctx.run_id,
+                "role": role,
+                "task": task,
+                "scope": scope,
+            },
             timeout=30,
         )
         return "\n\n".join([
             f"### OPERATOR MIRROR — SPAWN {role.upper()} AGENT",
-            _session_header(eid, tgt),
+            _session_header(ctx),
             f"**job_id:** `{data.get('job_id')}` | **status:** {data.get('status')} | role: {data.get('role')}",
             data.get("hint") or "",
             f"Keep working. platform_job_poll(job_id='{data.get('job_id')}') for progress; "
@@ -750,8 +877,6 @@ def platform_delete_engagement(target: str = "", engagement_id: str = "") -> str
     - If both are empty, deletes data for the currently active target bound in session.
     """
     def _run() -> str:
-        global _SESSION_TARGET, _SESSION_ENGAGEMENT_ID, _SESSION_SWITCH_NOTICE
-
         t_raw = (target or "").strip()
         e_id = (engagement_id or "").strip()
 
@@ -763,19 +888,21 @@ def platform_delete_engagement(target: str = "", engagement_id: str = "") -> str
 
         if e_id:
             res = _delete(f"/api/v1/engagements/{e_id}", timeout=15)
-            if e_id == _SESSION_ENGAGEMENT_ID:
-                _SESSION_TARGET = ""
-                _SESSION_ENGAGEMENT_ID = ""
-                _SESSION_SWITCH_NOTICE = ""
+            _clear_session(engagement_id=e_id)
             return f"Deleted engagement '{e_id}'.\n\n{_block('Deletion Result', res)}"
 
         norm = _normalize_target(t_raw)
         res = _delete("/api/v1/engagements/by-target", params={"target": norm}, timeout=15)
 
-        if norm == _SESSION_TARGET:
-            _SESSION_TARGET = ""
-            _SESSION_ENGAGEMENT_ID = ""
-            _SESSION_SWITCH_NOTICE = ""
+        cached_ids = [
+            eid
+            for eid, metadata in _ENGAGEMENT_CACHE.items()
+            if _normalize_target(metadata.get("target") or "") == norm
+        ]
+        for cached_id in cached_ids:
+            _clear_session(engagement_id=cached_id)
+        if norm == _normalize_target(_SESSION_TARGET):
+            _clear_session()
 
         return f"Successfully deleted engagements and stored memory for target domain '{norm}'.\n\n{_block('Deletion Result', res)}"
 
@@ -806,7 +933,7 @@ def _execution_readiness_line() -> str:
 
 
 @mcp.tool()
-def platform_health(target: str = "") -> str:
+def platform_health(target: str = "", engagement_id: str = "") -> str:
     """
     Check backend health + tool-execution readiness. Pass target= when the user
     names scope (may be short name). Short names trigger clarification.
@@ -822,12 +949,8 @@ def platform_health(target: str = "") -> str:
             if clarified.startswith("## Target needs clarification"):
                 return clarified
             return f"{_session_header()}\n\n{health_block}\n\n{clarified}"
-        if not _SESSION_ENGAGEMENT_ID:
-            return (
-                "ERROR: No active target. Pass target='example.com' or a short name "
-                "like target='zong' (will ask you to clarify), or call platform_set_target."
-            )
-        return f"{_session_header()}\n\n{health_block}"
+        ctx = _resolve_engagement(engagement_id)
+        return f"{_session_header(ctx)}\n\n{health_block}"
 
     result = _safe(_run)
     if result.startswith("ERROR"):
@@ -835,9 +958,10 @@ def platform_health(target: str = "") -> str:
     return result
 
 
-def _fetch_context(engagement_id: str = "", target: str = "", *, full: bool = False) -> str:
-    eid = engagement_id or _SESSION_ENGAGEMENT_ID
-    tgt = target or _SESSION_TARGET
+def _fetch_context(context: _EngagementContext | None = None, *, full: bool = False) -> str:
+    ctx = context or _resolve_engagement()
+    eid = ctx.engagement_id
+    tgt = ctx.target
     data = _get(
         "/api/v1/hybrid/context/auto",
         params={"engagement_id": eid, "seed_target": tgt},
@@ -876,7 +1000,7 @@ def _fetch_context(engagement_id: str = "", target: str = "", *, full: bool = Fa
     pipeline_line = (data.get("pipeline_line") or "").strip()
     readiness_text = data.get("phase_readiness_text") or ""
 
-    parts = [_session_header(eid, tgt), f"**Jobs:** {jobs_line}"]
+    parts = [_session_header(ctx), f"**Jobs:** {jobs_line}"]
     if pipeline_line:
         parts.append(f"**Pipeline:** {pipeline_line}")
     # Operator profile — the human's confirmed preferences. Placed high so any
@@ -1004,27 +1128,28 @@ def platform_context(target: str = "", engagement_id: str = "", full: bool = Fal
                 return clarified
             # A fresh target bind is a first look — always render in full.
             return _fetch_context(full=True)
-        eid, tgt = _resolve_engagement(engagement_id)
-        return _fetch_context(engagement_id=eid, target=tgt, full=full)
+        return _fetch_context(_resolve_engagement(engagement_id), full=full)
 
     return _safe(_run)
 
 
 @mcp.tool()
-def platform_artifact(path: str = "", offset: int = 0, limit: int = 80000) -> str:
+def platform_artifact(
+    path: str = "", offset: int = 0, limit: int = 80000, engagement_id: str = ""
+) -> str:
     """
     Read a slice of a Kali artifact (full tool stdout that didn't fit the card).
     Empty path → list recent index + workdir listing.
     path = basename or /tmp/pentest/<engagement>/….stdout.txt
     """
     def _run() -> str:
-        _require_bound_target()
-        params = dict(_memory_params())
+        ctx = _resolve_engagement(engagement_id)
+        params = dict(_memory_params(ctx))
         if not (path or "").strip():
             idx = _get("/api/v1/hybrid/stdout-index", params={**params, "limit": 8})
             listing = _get("/api/v1/hybrid/artifacts", params=params)
             return (
-                f"{_session_header()}\n\n"
+                f"{_session_header(ctx)}\n\n"
                 f"**Index:**\n{idx.get('text') or '(empty)'}\n\n"
                 f"**Workdir:** `{listing.get('workdir')}`\n"
                 f"```\n{(listing.get('listing') or '')[:4000]}\n```\n"
@@ -1043,7 +1168,7 @@ def platform_artifact(path: str = "", offset: int = 0, limit: int = 80000) -> st
             return f"ERROR: {data.get('error') or data}"
         body = data.get("content") or ""
         return (
-            f"{_session_header()}\n"
+            f"{_session_header(ctx)}\n"
             f"path={data.get('path')} bytes={data.get('returned_bytes')}/"
             f"{data.get('total_bytes')} offset={data.get('offset')}\n"
             f"truncated={data.get('truncated')} next_offset={data.get('next_offset')}\n\n"
@@ -1053,7 +1178,9 @@ def platform_artifact(path: str = "", offset: int = 0, limit: int = 80000) -> st
     return _safe(_run)
 
 
-def _format_exec_result(data: dict[str, Any], *, engagement_id: str = "", target: str = "") -> str:
+def _format_exec_result(
+    data: dict[str, Any], *, context: _EngagementContext | None = None
+) -> str:
     # The backend already trims stdout to this tool's budget before this
     # response is sent (osprey.services.output_budget, applied in
     # tool_execution.execute_tool_request) — that is the ONE place raw-output
@@ -1069,7 +1196,7 @@ def _format_exec_result(data: dict[str, Any], *, engagement_id: str = "", target
 
     parts = [
         "### OPERATOR MIRROR — EXECUTION",
-        _session_header(engagement_id, target),
+        _session_header(context),
         f"success: {data.get('success')} | returncode: {data.get('returncode')} | "
         f"timed_out: {data.get('timed_out')} | cache_hit: {data.get('cache_hit')}"
         + (f" | cache_key: `{data.get('cache_key')}`" if data.get("cache_key") else "")
@@ -1134,13 +1261,13 @@ def _execute_catalog_tool(
     "" through is equivalent to the caller never mentioning the field.
     """
     timeout_seconds = max(30, min(int(timeout_seconds), 900))
-    eid, tgt = _resolve_engagement(engagement_id)
+    ctx = _resolve_engagement(engagement_id)
     body: dict[str, Any] = {
         "tool_name": tool,
         "params": params,
         "additional_args": additional_args,
-        "engagement_id": eid,
-        "run_id": SESSION_RUN_ID,
+        "engagement_id": ctx.engagement_id,
+        "run_id": ctx.run_id,
         "record_findings": True,
         "use_recovery": True,
         "use_cache": not bool(force_refresh),
@@ -1152,15 +1279,15 @@ def _execute_catalog_tool(
     if exploit_candidate_id.strip():
         body["exploit_candidate_id"] = exploit_candidate_id.strip()
     _log(
-        f"exec {tool} target={tgt} engagement={eid} "
-        f"run={SESSION_RUN_ID} force_refresh={force_refresh}"
+        f"exec {tool} target={ctx.target} engagement={ctx.engagement_id} "
+        f"run={ctx.run_id} force_refresh={force_refresh}"
     )
     # Buffer must exceed the backend's WHOLE response time, not just the tool's
     # run: a slow tool that hits its own timeout (dnsenum routinely does) then
     # drains partial output + parses + ingests before responding. +60s covers
     # that post-timeout processing so the partial always makes it back.
     data = _post("/api/v1/mcp/execute", body, timeout=timeout_seconds + 60)
-    return _format_exec_result(data, engagement_id=eid, target=tgt)
+    return _format_exec_result(data, context=ctx)
 
 
 @mcp.tool()
@@ -1169,6 +1296,7 @@ def platform_think(
     plan: str = "",
     evidence: str = "",
     next_tool: str = "",
+    engagement_id: str = "",
 ) -> str:
     """
     Optional: persist a hypothesis into engagement memory (and mirror to operator).
@@ -1177,9 +1305,10 @@ def platform_think(
     narration for routine moves. Stored as unverified observation (not proof).
     """
     def _run() -> str:
+        ctx = _resolve_engagement(engagement_id) if engagement_id or _SESSION_ENGAGEMENT_ID else None
         parts = [
             "### OPERATOR MIRROR — THINKING",
-            _session_header() if _SESSION_ENGAGEMENT_ID else "(no engagement bound yet)",
+            _session_header(ctx) if ctx else "(no engagement bound yet)",
             f"**Hypothesis:** {hypothesis.strip() or '(empty)'}",
         ]
         if plan.strip():
@@ -1188,13 +1317,13 @@ def platform_think(
             parts.append(f"**Evidence so far:** {evidence.strip()}")
         if next_tool.strip():
             parts.append(f"**Next tool:** `{next_tool.strip()}`")
-        if _SESSION_ENGAGEMENT_ID and hypothesis.strip():
+        if ctx and hypothesis.strip():
             data = _post(
                 "/api/v1/hybrid/think",
                 {
-                    "engagement_id": _SESSION_ENGAGEMENT_ID,
-                    "run_id": SESSION_RUN_ID,
-                    "seed_target": _SESSION_TARGET,
+                    "engagement_id": ctx.engagement_id,
+                    "run_id": ctx.run_id,
+                    "seed_target": ctx.target,
                     "hypothesis": hypothesis.strip(),
                     "plan": plan.strip(),
                     "evidence": evidence.strip(),
@@ -1221,6 +1350,7 @@ def platform_graph_link(
     evidence: str,
     confidence: str = "likely",
     derived_from: str = "",
+    engagement_id: str = "",
 ) -> str:
     """
     Create an operator-named graph edge (cognition write-back).
@@ -1232,11 +1362,11 @@ def platform_graph_link(
     derived_from: optional comma-separated finding ids this link builds on.
     """
     def _run() -> str:
-        _require_bound_target()
+        ctx = _resolve_engagement(engagement_id)
         body: dict[str, Any] = {
-            "engagement_id": _SESSION_ENGAGEMENT_ID,
-            "run_id": SESSION_RUN_ID,
-            "seed_target": _SESSION_TARGET,
+            "engagement_id": ctx.engagement_id,
+            "run_id": ctx.run_id,
+            "seed_target": ctx.target,
             "source": source,
             "target": target,
             "relation": relation,
@@ -1249,7 +1379,7 @@ def platform_graph_link(
         return "\n".join(
             [
                 "### OPERATOR MIRROR — GRAPH LINK",
-                _session_header(),
+                _session_header(ctx),
                 f"**{data.get('source_id')}** --`{data.get('relationship')}`--> "
                 f"**{data.get('target_id')}**",
                 f"confidence={data.get('confidence')} hypothesis={data.get('hypothesis')} "
@@ -1271,6 +1401,7 @@ def platform_graph_link_many(
     targets_json: Any = "[]",
     links_json: Any = "[]",
     derived_from: str = "",
+    engagement_id: str = "",
 ) -> str:
     """
     Persist MANY operator-named graph edges in ONE call — the bulk sibling of
@@ -1314,13 +1445,13 @@ def platform_graph_link_many(
         return []
 
     def _run() -> str:
-        _require_bound_target()
+        ctx = _resolve_engagement(engagement_id)
         targets = _parse_list(targets_json)
         links = _parse_list(links_json)
         body: dict[str, Any] = {
-            "engagement_id": _SESSION_ENGAGEMENT_ID,
-            "run_id": SESSION_RUN_ID,
-            "seed_target": _SESSION_TARGET,
+            "engagement_id": ctx.engagement_id,
+            "run_id": ctx.run_id,
+            "seed_target": ctx.target,
             "evidence": evidence,
             "confidence": confidence,
             "source": source,
@@ -1333,7 +1464,7 @@ def platform_graph_link_many(
         data = _post("/api/v1/hybrid/graph/link-many", body, timeout=45)
         lines = [
             "### OPERATOR MIRROR — BULK GRAPH LINK",
-            _session_header(),
+            _session_header(ctx),
             f"Persisted {data.get('count', 0)} edge(s): "
             f"{data.get('confirmed_count', 0)} asserted, "
             f"{data.get('hypothesis_count', 0)} hypothesis.",
@@ -1350,7 +1481,7 @@ def platform_graph_link_many(
 
 
 @mcp.tool()
-def platform_finalize_check() -> str:
+def platform_finalize_check(engagement_id: str = "") -> str:
     """
     The conductor's phase-readiness snapshot — evidence-based, not a gate.
 
@@ -1362,15 +1493,15 @@ def platform_finalize_check() -> str:
     another recon pass. Purely informational — you decide what to do with it.
     """
     def _run() -> str:
-        _require_bound_target()
+        ctx = _resolve_engagement(engagement_id)
         data = _get(
             "/api/v1/hybrid/phase-readiness",
-            params={"engagement_id": _SESSION_ENGAGEMENT_ID},
+            params={"engagement_id": ctx.engagement_id},
             timeout=45,
         )
         parts = [
             "### OPERATOR MIRROR — PHASE READINESS",
-            _session_header(),
+            _session_header(ctx),
             data.get("text") or _block("phase_readiness", data),
         ]
         return "\n\n".join(parts)
@@ -1379,21 +1510,21 @@ def platform_finalize_check() -> str:
 
 
 @mcp.tool()
-def platform_report_outline() -> str:
+def platform_report_outline(engagement_id: str = "") -> str:
     """
     Structure a trusted report from memory: Confirmed / Likely / Hypotheses +
     the conductor's phase status. Call before COMPLETE or PARTIAL prose. Does
     not invent findings — only organizes what is stored.
     """
     def _run() -> str:
-        _require_bound_target()
+        ctx = _resolve_engagement(engagement_id)
         data = _get(
             "/api/v1/hybrid/report-outline",
-            params=_memory_params(),
+            params=_memory_params(ctx),
             timeout=45,
         )
         return (
-            f"{_session_header()}\n\n"
+            f"{_session_header(ctx)}\n\n"
             f"{data.get('text') or ''}\n\n"
             f"_{data.get('note') or ''}_"
         )
@@ -1402,7 +1533,7 @@ def platform_report_outline() -> str:
 
 
 @mcp.tool()
-def platform_memory_search(query: str, limit: int = 40) -> str:
+def platform_memory_search(query: str, limit: int = 40, engagement_id: str = "") -> str:
     """
     Free-text search across engagement memory (findings, graph nodes, attempts).
 
@@ -1413,14 +1544,18 @@ def platform_memory_search(query: str, limit: int = 40) -> str:
         return "ERROR: query is required (e.g. 'erp', '/api', 'Set-Cookie', 'amass')"
 
     def _run() -> str:
-        _require_bound_target()
+        ctx = _resolve_engagement(engagement_id)
         data = _get(
             "/api/v1/hybrid/memory-search",
-            params={**_memory_params(), "q": query.strip(), "limit": max(5, min(int(limit), 80))},
+            params={
+                **_memory_params(ctx),
+                "q": query.strip(),
+                "limit": max(5, min(int(limit), 80)),
+            },
             timeout=45,
         )
         return (
-            f"{_session_header()}\n\n"
+            f"{_session_header(ctx)}\n\n"
             f"{data.get('text') or ''}\n\n"
             f"_{data.get('note') or ''}_"
         )
@@ -1429,7 +1564,7 @@ def platform_memory_search(query: str, limit: int = 40) -> str:
 
 
 @mcp.tool()
-def platform_related(limit: int = 20) -> str:
+def platform_related(limit: int = 20, engagement_id: str = "") -> str:
     """
     Read-only cross-finding correlation — candidate relationships from memory.
 
@@ -1442,11 +1577,11 @@ def platform_related(limit: int = 20) -> str:
     """
 
     def _run() -> str:
-        _require_bound_target()
-        data = _post("/api/v1/hybrid/correlate", dict(_memory_params()), timeout=45)
+        ctx = _resolve_engagement(engagement_id)
+        data = _post("/api/v1/hybrid/correlate", dict(_memory_params(ctx)), timeout=45)
         cands = data.get("candidates") or []
         if not cands:
-            return f"{_session_header()}\n\nNo cross-finding correlations right now."
+            return f"{_session_header(ctx)}\n\nNo cross-finding correlations right now."
         lines: list[str] = []
         for c in cands[: max(1, min(int(limit), 60))]:
             if c.get("kind") == "link":
@@ -1460,7 +1595,7 @@ def platform_related(limit: int = 20) -> str:
                     f"{c.get('evidence')}"
                 )
         return (
-            f"{_session_header()}\n\n"
+            f"{_session_header(ctx)}\n\n"
             + "\n".join(lines)
             + f"\n\n_{data.get('note') or ''}_"
         )
@@ -1469,7 +1604,9 @@ def platform_related(limit: int = 20) -> str:
 
 
 @mcp.tool()
-def platform_evidence_chain(finding_id: str, depth: int = 4) -> str:
+def platform_evidence_chain(
+    finding_id: str, depth: int = 4, engagement_id: str = ""
+) -> str:
     """
     Walk derived_from parents and children for one finding id.
 
@@ -1480,11 +1617,11 @@ def platform_evidence_chain(finding_id: str, depth: int = 4) -> str:
         return "ERROR: finding_id required"
 
     def _run() -> str:
-        _require_bound_target()
+        ctx = _resolve_engagement(engagement_id)
         data = _get(
             "/api/v1/hybrid/evidence-chain",
             params={
-                **_memory_params(),
+                **_memory_params(ctx),
                 "finding_id": finding_id.strip(),
                 "depth": max(1, min(int(depth), 8)),
             },
@@ -1493,7 +1630,7 @@ def platform_evidence_chain(finding_id: str, depth: int = 4) -> str:
         if not data.get("ok"):
             return f"ERROR: {data.get('error') or data}"
         return (
-            f"{_session_header()}\n\n"
+            f"{_session_header(ctx)}\n\n"
             f"{data.get('text') or ''}\n\n"
             f"_{data.get('note') or ''}_"
         )
@@ -1502,7 +1639,9 @@ def platform_evidence_chain(finding_id: str, depth: int = 4) -> str:
 
 
 @mcp.tool()
-def platform_attempts(asset: str = "", contains: str = "", limit: int = 40) -> str:
+def platform_attempts(
+    asset: str = "", contains: str = "", limit: int = 40, engagement_id: str = ""
+) -> str:
     """
     Advisory history of tools already tried near an asset (or engagement-wide).
 
@@ -1510,15 +1649,15 @@ def platform_attempts(asset: str = "", contains: str = "", limit: int = 40) -> s
     whenever the experiment still makes sense.
     """
     def _run() -> str:
-        _require_bound_target()
-        params = {**_memory_params(), "limit": max(1, min(int(limit), 100))}
+        ctx = _resolve_engagement(engagement_id)
+        params = {**_memory_params(ctx), "limit": max(1, min(int(limit), 100))}
         if (asset or "").strip():
             params["asset"] = asset.strip()
         if (contains or "").strip():
             params["contains"] = contains.strip()
         data = _get("/api/v1/hybrid/attempts", params=params, timeout=30)
         return (
-            f"{_session_header()}\n\n"
+            f"{_session_header(ctx)}\n\n"
             f"{data.get('text') or ''}\n\n"
             f"_{data.get('note') or ''}_"
         )
@@ -1528,6 +1667,7 @@ def platform_attempts(asset: str = "", contains: str = "", limit: int = 40) -> s
 
 def _build_finding_body(
     *,
+    context: _EngagementContext,
     title: str,
     evidence: str,
     finding_type: str = "observation",
@@ -1564,8 +1704,8 @@ def _build_finding_body(
         conf = "likely"
 
     return {
-        "engagement_id": _SESSION_ENGAGEMENT_ID,
-        "run_id": SESSION_RUN_ID,
+        "engagement_id": context.engagement_id,
+        "run_id": context.run_id,
         "finding_type": (finding_type or "observation").strip().lower(),
         "title": title,
         "description": (description or "").strip(),
@@ -1573,7 +1713,7 @@ def _build_finding_body(
         "claim_severity": (claim_severity or "none").strip().lower(),
         "confidence": conf,
         "source_tool": source_tool or "operator_record",
-        "target": _SESSION_TARGET,
+        "target": context.target,
         "tags": tag_list,
         "metadata": meta,
         "extra": {},
@@ -1592,6 +1732,7 @@ def platform_record_finding(
     tags: str = "",
     metadata_json: Any = "",
     confidence: str = "likely",
+    engagement_id: str = "",
 ) -> str:
     """
     Persist ONE conclusion that lives only in your reasoning — not tool output.
@@ -1621,8 +1762,9 @@ def platform_record_finding(
     For many facts at once, prefer platform_record_findings (one call).
     """
     def _run() -> str:
-        _require_bound_target()
+        ctx = _resolve_engagement(engagement_id)
         body = _build_finding_body(
+            context=ctx,
             title=title,
             evidence=evidence,
             finding_type=finding_type,
@@ -1639,7 +1781,7 @@ def platform_record_finding(
         data = _post("/api/v1/findings/", body, timeout=30)
         return (
             "### OPERATOR MIRROR — RECORDED FINDING\n"
-            f"{_session_header()}\n"
+            f"{_session_header(ctx)}\n"
             f"Stored id={data.get('id')} type={data.get('finding_type')} "
             f"confidence={data.get('confidence')} sev={data.get('claim_severity')}\n"
             f"title: {data.get('title')}\n"
@@ -1650,7 +1792,7 @@ def platform_record_finding(
 
 
 @mcp.tool()
-def platform_record_findings(items_json: Any) -> str:
+def platform_record_findings(items_json: Any, engagement_id: str = "") -> str:
     """
     Persist MANY reason-only conclusions in one call (bulk platform_record_finding).
 
@@ -1671,7 +1813,7 @@ def platform_record_findings(items_json: Any) -> str:
     duplicates are de-duped by content.
     """
     def _run() -> str:
-        _require_bound_target()
+        ctx = _resolve_engagement(engagement_id)
         raw = items_json
         if isinstance(raw, str):
             try:
@@ -1692,6 +1834,7 @@ def platform_record_findings(items_json: Any) -> str:
                 errors.append(f"item {i}: not an object")
                 continue
             body = _build_finding_body(
+                context=ctx,
                 title=str(item.get("title") or ""),
                 evidence=str(item.get("evidence") or ""),
                 finding_type=str(item.get("finding_type") or "observation"),
@@ -1716,7 +1859,7 @@ def platform_record_findings(items_json: Any) -> str:
         stored = data.get("findings") or []
         parts = [
             "### OPERATOR MIRROR — RECORDED FINDINGS (bulk)",
-            _session_header(),
+            _session_header(ctx),
             f"Stored {len(stored)} finding(s) (of {len(raw)} submitted"
             + (f"; {len(bodies) - len(stored)} deduped" if len(bodies) > len(stored) else "")
             + ").",
@@ -1730,7 +1873,9 @@ def platform_record_findings(items_json: Any) -> str:
 
 
 @mcp.tool()
-def platform_tools(query: str = "", category: str = "") -> str:
+def platform_tools(
+    query: str = "", category: str = "", engagement_id: str = ""
+) -> str:
     """
     List registered catalog tool names (fixes 404 from short names).
 
@@ -1740,6 +1885,11 @@ def platform_tools(query: str = "", category: str = "") -> str:
     are also accepted.
     """
     def _run() -> str:
+        ctx = (
+            _resolve_engagement(engagement_id)
+            if engagement_id or _SESSION_ENGAGEMENT_ID
+            else None
+        )
         params: dict[str, Any] = {}
         if category.strip():
             params["category"] = category.strip().lower()
@@ -1797,7 +1947,7 @@ def platform_tools(query: str = "", category: str = "") -> str:
         readiness = _execution_readiness_line()
         return (
             "### OPERATOR MIRROR — TOOL CATALOG\n"
-            f"{_session_header() if _SESSION_ENGAGEMENT_ID else '(bind target optional for catalog)'}\n"
+            f"{_session_header(ctx) if ctx else '(bind target optional for catalog)'}\n"
             + (readiness + "\n" if readiness else "")
             + f"Showing {len(lines)} tools (OK={ok_n} MISSING={miss_n})"
             + (f" matching {query!r}" if q else "")
@@ -1835,9 +1985,9 @@ def platform_findings(
     limit = max(10, min(int(limit), 500))
 
     def _run() -> str:
-        eid, tgt = _resolve_engagement(engagement_id)
+        ctx = _resolve_engagement(engagement_id)
         params: dict[str, Any] = {
-            "engagement_id": eid,
+            "engagement_id": ctx.engagement_id,
             "limit": limit,
         }
         if finding_type.strip():
@@ -1845,12 +1995,12 @@ def platform_findings(
 
         parts = [
             "### OPERATOR MIRROR — FINDINGS",
-            _session_header(eid, tgt),
+            _session_header(ctx),
         ]
         if include_summary:
             summary = _get(
                 "/api/v1/findings/summary",
-                params={"engagement_id": eid},
+                params={"engagement_id": ctx.engagement_id},
                 timeout=30,
             )
             meta = summary if isinstance(summary, dict) else {}
@@ -1885,7 +2035,7 @@ def platform_findings(
         )
         parts.append(
             "Paste important rows into your chat reply so the operator sees them. "
-            "HIGH/CRITICAL only valid with grade=observed."
+            "Support HIGH/CRITICAL claims with the strongest evidence available."
         )
         return "\n\n".join(parts)
 
@@ -1912,16 +2062,16 @@ def platform_exploit_queue(
     limit = max(1, min(int(limit), 200))
 
     def _run() -> str:
-        eid, tgt = _resolve_engagement(engagement_id)
+        ctx = _resolve_engagement(engagement_id)
         data = _get(
             "/api/v1/exploit-queue/",
-            params={"engagement_id": eid, "limit": limit},
+            params={"engagement_id": ctx.engagement_id, "limit": limit},
             timeout=30,
         )
         candidates = data if isinstance(data, list) else []
         parts = [
             "### OPERATOR MIRROR — EXPLOIT QUEUE",
-            _session_header(eid, tgt),
+            _session_header(ctx),
         ]
         if not candidates:
             parts.append("(empty — no evidence-backed candidates yet, or none active)")
@@ -2059,11 +2209,11 @@ def platform_job_start(
     timeout_seconds = max(30, min(int(timeout_seconds), 3600))
 
     def _run() -> str:
-        eid, tgt = _resolve_engagement(engagement_id)
+        ctx = _resolve_engagement(engagement_id)
         body: dict[str, Any] = {
             "kind": kind_n,
-            "engagement_id": eid,
-            "run_id": SESSION_RUN_ID,
+            "engagement_id": ctx.engagement_id,
+            "run_id": ctx.run_id,
             "label": label,
             "timeout": timeout_seconds,
             "reason": reason,
@@ -2093,7 +2243,7 @@ def platform_job_start(
         data = _post("/api/v1/jobs/start", body, timeout=30)
         parts = [
             "### OPERATOR MIRROR — JOB STARTED (parallel branch)",
-            _session_header(eid, tgt),
+            _session_header(ctx),
             f"**job_id:** `{data.get('job_id')}`",
             f"**status:** {data.get('status')} | **label:** {data.get('label')}",
             f"**kind:** {data.get('kind')} | **tool:** {data.get('tool_name')}",
@@ -2130,26 +2280,33 @@ def platform_job_poll(job_id: str = "", engagement_id: str = "", wait_seconds: f
     When completed: findings already in memory — then platform_job_result for full stdout.
 
     engagement_id: optional pin — only matters for the "list all jobs" mode
-    (empty job_id). A specific job_id is already unambiguous. See platform_exec.
+    (empty job_id). For a specific job, its stored engagement is used and an
+    explicit mismatching pin is rejected. See platform_exec.
     """
     def _run() -> str:
-        eid, tgt = _resolve_engagement(engagement_id)
         jid = (job_id or "").strip()
         if not jid:
+            ctx = _resolve_engagement(engagement_id)
             data = _get(
                 "/api/v1/jobs",
-                params={"engagement_id": eid, "limit": "20"},
+                params={"engagement_id": ctx.engagement_id, "limit": "20"},
             )
-            return "\n\n".join([_session_header(eid, tgt), _block("Jobs (this engagement)", data)])
+            return "\n\n".join(
+                [_session_header(ctx), _block("Jobs (this engagement)", data)]
+            )
         wait = max(0.0, min(float(wait_seconds), 60.0))
         data = _get(f"/api/v1/jobs/{jid}", params={"wait_seconds": wait} if wait else None, timeout=wait + 30)
-        return "\n\n".join([_session_header(eid, tgt), _block(f"Job {jid}", data)])
+        job_eid = str(data.get("engagement_id") or "").strip()
+        if engagement_id and job_eid and engagement_id.strip() != job_eid:
+            return "ERROR: job does not belong to the pinned engagement_id"
+        ctx = _resolve_engagement(engagement_id or job_eid)
+        return "\n\n".join([_session_header(ctx), _block(f"Job {jid}", data)])
 
     return _safe(_run)
 
 
 @mcp.tool()
-def platform_job_result(job_id: str) -> str:
+def platform_job_result(job_id: str, engagement_id: str = "") -> str:
     """
     Fetch full result of a background job (stdout/stderr/findings) when completed/failed.
 
@@ -2161,13 +2318,16 @@ def platform_job_result(job_id: str) -> str:
         return "ERROR: job_id required"
 
     def _run() -> str:
-        _require_bound_target()
         data = _get(f"/api/v1/jobs/{jid}/result", timeout=60)
         job = data.get("job") or {}
+        job_eid = str(job.get("engagement_id") or "").strip()
+        if engagement_id and job_eid and engagement_id.strip() != job_eid:
+            return "ERROR: job does not belong to the pinned engagement_id"
+        ctx = _resolve_engagement(engagement_id or job_eid)
         result = data.get("result")
         parts = [
             "### OPERATOR MIRROR — JOB RESULT",
-            _session_header(),
+            _session_header(ctx),
             f"**job_id:** `{job.get('job_id')}` | **status:** {job.get('status')} | "
             f"**success:** {job.get('success')}",
             f"**label:** {job.get('label')} | **duration_s:** {job.get('duration_seconds')}",
@@ -2184,7 +2344,7 @@ def platform_job_result(job_id: str) -> str:
                 # stdout formatter would print nonsense against these keys.
                 parts.append(_render_expansion_report(result))
             elif isinstance(result, dict):
-                parts.append(_format_exec_result(result))
+                parts.append(_format_exec_result(result, context=ctx))
             else:
                 parts.append(_block("Result", result))
         else:
@@ -2215,18 +2375,18 @@ def platform_shell(
     timeout_seconds = max(30, min(int(timeout_seconds), 900))
 
     def _run() -> str:
-        eid, tgt = _resolve_engagement(engagement_id)
+        ctx = _resolve_engagement(engagement_id)
         body = {
             "command": command,
-            "engagement_id": eid,
-            "run_id": SESSION_RUN_ID,
+            "engagement_id": ctx.engagement_id,
+            "run_id": ctx.run_id,
             "reason": reason,
             "timeout": timeout_seconds,
             "record_findings": True,
         }
-        _log(f"shell engagement={eid} cmd={command[:200]}")
+        _log(f"shell engagement={ctx.engagement_id} cmd={command[:200]}")
         data = _post("/api/v1/mcp/shell", body, timeout=timeout_seconds + 15)
-        return _format_exec_result(data, engagement_id=eid, target=tgt)
+        return _format_exec_result(data, context=ctx)
 
     return _safe(_run)
 
@@ -2268,12 +2428,12 @@ def platform_script(
     timeout_seconds = max(30, min(int(timeout_seconds), 900))
 
     def _run() -> str:
-        eid, tgt = _resolve_engagement(engagement_id)
+        ctx = _resolve_engagement(engagement_id)
         body = {
             "code": code,
             "language": language,
-            "engagement_id": eid,
-            "run_id": SESSION_RUN_ID,
+            "engagement_id": ctx.engagement_id,
+            "run_id": ctx.run_id,
             "reason": reason,
             "filename": filename,
             "packages": packages,
@@ -2281,11 +2441,11 @@ def platform_script(
             "record_findings": True,
         }
         _log(
-            f"script lang={language} engagement={eid} "
+            f"script lang={language} engagement={ctx.engagement_id} "
             f"bytes={len(code.encode('utf-8', errors='replace'))} pkgs={packages!r}"
         )
         data = _post("/api/v1/mcp/script", body, timeout=timeout_seconds + 120)
-        return _format_exec_result(data, engagement_id=eid, target=tgt)
+        return _format_exec_result(data, context=ctx)
 
     return _safe(_run)
 
@@ -2296,6 +2456,7 @@ def platform_install(
     manager: str = "pip",
     reason: str = "",
     timeout_seconds: int = 300,
+    engagement_id: str = "",
 ) -> str:
     """
     Install libraries in Kali for upcoming scripts.
@@ -2312,18 +2473,18 @@ def platform_install(
     timeout_seconds = max(60, min(int(timeout_seconds), 900))
 
     def _run() -> str:
-        _require_bound_target()
+        ctx = _resolve_engagement(engagement_id)
         body = {
             "manager": manager,
             "packages": packages,
-            "engagement_id": _SESSION_ENGAGEMENT_ID,
-            "run_id": SESSION_RUN_ID,
+            "engagement_id": ctx.engagement_id,
+            "run_id": ctx.run_id,
             "reason": reason,
             "timeout": timeout_seconds,
         }
         _log(f"install mgr={manager} pkgs={packages[:200]}")
         data = _post("/api/v1/mcp/install", body, timeout=timeout_seconds + 30)
-        return _format_exec_result(data)
+        return _format_exec_result(data, context=ctx)
 
     return _safe(_run)
 
@@ -2336,6 +2497,7 @@ def platform_fanout(
     confirm: bool = False,
     max_domains: int = 10,
     timeout_per_tool: int = 180,
+    engagement_id: str = "",
 ) -> str:
     """
     OPTIONAL explicit batch helper for sister-domain enum (dry_run by default).
@@ -2354,9 +2516,9 @@ def platform_fanout(
     timeout_per_tool = max(30, min(int(timeout_per_tool), 900))
 
     def _run() -> str:
-        _require_bound_target()
+        ctx = _resolve_engagement(engagement_id)
         body = {
-            "run_id": SESSION_RUN_ID,
+            "run_id": ctx.run_id,
             "tool_name": (tool_name or "subfinder_scan").strip(),
             "max_domains": max_domains,
             "timeout_per_tool": timeout_per_tool,
@@ -2366,11 +2528,11 @@ def platform_fanout(
         }
         timeout = QUICK_TIMEOUT if dry_run or not confirm else float(timeout_per_tool * max_domains + 60)
         data = _post(
-            f"/api/v1/engagements/{_SESSION_ENGAGEMENT_ID}/actions/enumerate-pending-sisters",
+            f"/api/v1/engagements/{ctx.engagement_id}/actions/enumerate-pending-sisters",
             body,
             timeout=timeout,
         )
-        return "\n\n".join([_session_header(), _block("Fan-out (explicit)", data)])
+        return "\n\n".join([_session_header(ctx), _block("Fan-out (explicit)", data)])
 
     return _safe(_run)
 
@@ -2398,7 +2560,9 @@ def _load_playbooks() -> dict[str, Any]:
 
 
 @mcp.tool()
-def platform_playbook(name: str = "", target: str = "") -> str:
+def platform_playbook(
+    name: str = "", target: str = "", engagement_id: str = ""
+) -> str:
     """
     Advisory playbook only — does NOT auto-run tools.
 
@@ -2425,11 +2589,16 @@ def platform_playbook(name: str = "", target: str = "") -> str:
             f"Known: {', '.join(sorted(books)) or '(none — check config/playbooks.yaml)'}"
         )
 
-    tgt = (target or _SESSION_TARGET or "{{target}}").strip()
+    ctx = (
+        _resolve_engagement(engagement_id)
+        if engagement_id or _SESSION_ENGAGEMENT_ID
+        else None
+    )
+    tgt = (target or (ctx.target if ctx else "") or "{{target}}").strip()
     steps = meta.get("steps") or []
     lines = [
         "### OPERATOR MIRROR — PLAYBOOK (advisory — you choose)",
-        _session_header() if _SESSION_ENGAGEMENT_ID else "(bind target optional)",
+        _session_header(ctx) if ctx else "(bind target optional)",
         f"**Playbook:** `{key}`",
         f"**Phase:** {meta.get('phase', '?')}",
         f"**Input:** {meta.get('input', 'target')} → `{tgt}`",
@@ -2511,6 +2680,7 @@ def platform_propose_skill(
     tags: str = "",
     evidence: str = "",
     update_existing: str = "",
+    engagement_id: str = "",
 ) -> str:
     """
     Propose a reusable-technique skill capturing something you learned (or refine
@@ -2535,11 +2705,16 @@ def platform_propose_skill(
     · update_existing= slug of a learned skill to refine (optional).
     """
     def _run() -> str:
+        ctx = (
+            _resolve_engagement(engagement_id)
+            if engagement_id or _SESSION_ENGAGEMENT_ID
+            else None
+        )
         body = {
             "name": name.strip(), "phase": phase.strip(), "description": description.strip(),
             "content": content, "evidence": evidence.strip(),
             "tags": [t.strip() for t in tags.split(",") if t.strip()],
-            "engagement_id": _SESSION_ENGAGEMENT_ID or "",
+            "engagement_id": ctx.engagement_id if ctx else "",
             "update_existing": update_existing.strip(),
         }
         data = _post("/api/v1/capabilities/learned-skills/propose", body)
@@ -2555,7 +2730,9 @@ def platform_propose_skill(
 
 
 @mcp.tool()
-def platform_remember_preference(preference: str = "", rationale: str = "") -> str:
+def platform_remember_preference(
+    preference: str = "", rationale: str = "", engagement_id: str = ""
+) -> str:
     """
     Remember a PREFERENCE of the human operator you inferred from how they work —
     e.g. "prefers concise output", "wants nuclei before nikto", "avoids brute-force
@@ -2569,9 +2746,14 @@ def platform_remember_preference(preference: str = "", rationale: str = "") -> s
     preference= one clear line · rationale= what you observed that suggests it (optional).
     """
     def _run() -> str:
+        ctx = (
+            _resolve_engagement(engagement_id)
+            if engagement_id or _SESSION_ENGAGEMENT_ID
+            else None
+        )
         body = {
             "preference": preference.strip(), "rationale": rationale.strip(),
-            "engagement_id": _SESSION_ENGAGEMENT_ID or "",
+            "engagement_id": ctx.engagement_id if ctx else "",
         }
         data = _post("/api/v1/capabilities/operator-profile/propose", body)
         return (
@@ -2622,6 +2804,7 @@ def platform_graph_query(
     limit: int = 80,
     from_asset: str = "",
     max_hops: int = 0,
+    engagement_id: str = "",
 ) -> str:
     """
     Query the engagement asset graph (not just the summary dump).
@@ -2640,11 +2823,11 @@ def platform_graph_query(
     max_hops = max(0, min(int(max_hops), 6))
 
     def _run() -> str:
-        _require_bound_target()
+        ctx = _resolve_engagement(engagement_id)
         data = _get(
             "/api/v1/hybrid/graph/query",
             params={
-                "engagement_id": _SESSION_ENGAGEMENT_ID,
+                "engagement_id": ctx.engagement_id,
                 "asset_type": asset_type,
                 "contains": contains,
                 "limit": str(limit),
@@ -2652,13 +2835,13 @@ def platform_graph_query(
                 "max_hops": str(max_hops),
             },
         )
-        return "\n\n".join([_session_header(), _block("Graph query", data)])
+        return "\n\n".join([_session_header(ctx), _block("Graph query", data)])
 
     return _safe(_run)
 
 
 @mcp.tool()
-def platform_thinking(limit: int = 10) -> str:
+def platform_thinking(limit: int = 10, engagement_id: str = "") -> str:
     """
     Optional: evidence → next-probe cards from current findings.
     Use when stuck on a fingerprint — not required every turn.
@@ -2666,15 +2849,15 @@ def platform_thinking(limit: int = 10) -> str:
     limit = max(1, min(int(limit), 30))
 
     def _run() -> str:
-        _require_bound_target()
+        ctx = _resolve_engagement(engagement_id)
         data = _get(
             "/api/v1/hybrid/thinking-hypotheses",
             params={
-                "engagement_id": _SESSION_ENGAGEMENT_ID,
+                "engagement_id": ctx.engagement_id,
                 "limit": str(limit),
             },
         )
-        return "\n\n".join([_session_header(), _block("Thinking hypotheses", data)])
+        return "\n\n".join([_session_header(ctx), _block("Thinking hypotheses", data)])
 
     return _safe(_run)
 
@@ -2689,6 +2872,7 @@ def platform_fanout_assets(
     timeout_per_tool: int = 120,
     additional_args: str = "",
     force_refresh: bool = False,
+    engagement_id: str = "",
 ) -> str:
     """
     Run one catalog tool across an EXPLICIT asset list (you choose — from graph_query/findings).
@@ -2712,7 +2896,7 @@ def platform_fanout_assets(
     timeout_per_tool = max(30, min(int(timeout_per_tool), 600))
 
     def _run() -> str:
-        _require_bound_target()
+        ctx = _resolve_engagement(engagement_id)
         body = {
             "assets": [str(a).strip() for a in assets if str(a).strip()],
             "tool_name": tool,
@@ -2721,7 +2905,7 @@ def platform_fanout_assets(
             "max_assets": max_assets,
             "timeout_per_tool": timeout_per_tool,
             "additional_args": additional_args,
-            "run_id": SESSION_RUN_ID,
+            "run_id": ctx.run_id,
             "force_refresh": bool(force_refresh),
         }
         timeout = (
@@ -2730,11 +2914,11 @@ def platform_fanout_assets(
             else float(timeout_per_tool * min(len(body["assets"]), max_assets) + 60)
         )
         data = _post(
-            f"/api/v1/engagements/{_SESSION_ENGAGEMENT_ID}/actions/fanout-assets",
+            f"/api/v1/engagements/{ctx.engagement_id}/actions/fanout-assets",
             body,
             timeout=timeout,
         )
-        return "\n\n".join([_session_header(), _block("Fan-out assets", data)])
+        return "\n\n".join([_session_header(ctx), _block("Fan-out assets", data)])
 
     return _safe(_run)
 
@@ -2770,9 +2954,9 @@ def platform_visualization(
     max_edges = max(10, min(int(max_edges), 2000))
 
     def _run() -> str:
-        eid, _ = _resolve_engagement(engagement_id)
+        ctx = _resolve_engagement(engagement_id)
         data = _get(
-            f"/api/v1/engagements/{eid}/visualization",
+            f"/api/v1/engagements/{ctx.engagement_id}/visualization",
             params={
                 "format": fmt,
                 "max_nodes": str(max_nodes),
@@ -2785,9 +2969,9 @@ def platform_visualization(
         response_fmt = data.get("format", fmt)
         body = data.get("data", "")
         if response_fmt == "mermaid" and isinstance(body, str):
-            return f"{_session_header()}\n\n## Attack Surface (Mermaid)\n\n```mermaid\n{body}\n```"
+            return f"{_session_header(ctx)}\n\n## Attack Surface (Mermaid)\n\n```mermaid\n{body}\n```"
         return "\n\n".join(
-            [_session_header(), _block(f"Visualization ({response_fmt})", body)]
+            [_session_header(ctx), _block(f"Visualization ({response_fmt})", body)]
         )
 
     return _safe(_run)
@@ -2804,12 +2988,12 @@ def platform_report_data(engagement_id: str = "") -> str:
     Use this tool for the quantitative payload (counts, grades, infra posture).
     """
     def _run() -> str:
-        eid, _ = _resolve_engagement(engagement_id)
+        ctx = _resolve_engagement(engagement_id)
         data = _get(
-            f"/api/v1/engagements/{eid}/report-data",
+            f"/api/v1/engagements/{ctx.engagement_id}/report-data",
             timeout=30,
         )
-        return "\n\n".join([_session_header(), _block("Report data", data)])
+        return "\n\n".join([_session_header(ctx), _block("Report data", data)])
 
     return _safe(_run)
 
@@ -2822,13 +3006,19 @@ def platform_handoff(engagement_id: str = "") -> str:
     Everything the next phase (exploitation / post-exploitation) needs, assembled
     from durable memory alone — no prior chat/agent context required: asset
     inventory (ip, ports, services, technologies, waf/cdn/os), credentials/secrets,
-    vulnerabilities with evidence grade, entry points, every finding with
+    vulnerabilities with confidence and evidence, entry points, every finding with
     provenance, and the relationship graph. This is the recon→exploit handoff.
     """
     def _run() -> str:
-        eid, _ = _resolve_engagement(engagement_id)
-        data = _get(f"/api/v1/findings/handoff?engagement_id={eid}", timeout=45)
-        return "\n\n".join([_session_header(), _block("Engagement handoff dossier", data)])
+        ctx = _resolve_engagement(engagement_id)
+        data = _get(
+            "/api/v1/findings/handoff",
+            params={"engagement_id": ctx.engagement_id},
+            timeout=45,
+        )
+        return "\n\n".join(
+            [_session_header(ctx), _block("Engagement handoff dossier", data)]
+        )
 
     return _safe(_run)
 

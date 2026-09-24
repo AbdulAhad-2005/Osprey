@@ -8,6 +8,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from osprey.contract import APP_VERSION
 from osprey.schemas.tools import (
     MCPServerCategory,
     ToolDefinition,
@@ -424,7 +425,10 @@ class MCPClient:
             "params": {
                 "protocolVersion": LATEST_PROTOCOL_VERSION,
                 "capabilities": {},
-                "clientInfo": {"name": "osprey-backend", "version": "0.1.0"},
+                "clientInfo": {
+                    "name": "osprey-backend",
+                    "version": APP_VERSION,
+                },
             },
         }
         raw = await self._send_and_receive(proc, init_request, timeout=15)

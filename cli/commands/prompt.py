@@ -45,7 +45,14 @@ def _get_runner(client: "APIClient") -> Runner | None:
             from dataclasses import replace
             config = replace(config, model=agent.model)
         tool_filter = agent.tool_allowed
-    runner = Runner(config=config, api_base_url=client.base_url, tool_filter=tool_filter)
+    runner = Runner(
+        config=config,
+        api_base_url=client.base_url,
+        engagement_id=client.active_engagement_id or "",
+        target=client.active_target or "",
+        tool_filter=tool_filter,
+        agent_prompt=(agent.prompt if agent is not None else ""),
+    )
     client.agent_runner = runner
     return runner
 
@@ -70,7 +77,7 @@ def _get_loop(client: "APIClient") -> asyncio.AbstractEventLoop:
     return loop
 
 
-def handle_prompt(prompt: str, client: "APIClient") -> None:
+def handle_prompt(prompt: str, client: "APIClient") -> bool:
     """Drive the CLI's own local agent loop and render its output live.
 
     The `Runner` and its conversation history, and the event loop itself,
@@ -79,31 +86,33 @@ def handle_prompt(prompt: str, client: "APIClient") -> None:
     stream and hoping something notices.
     """
     if not prompt.strip():
-        return
+        return True
 
     runner = _get_runner(client)
     if runner is None:
-        return
+        return False
 
     loop = _get_loop(client)
     asyncio.set_event_loop(loop)
     task = loop.create_task(_drive(prompt, client, runner))
     try:
-        loop.run_until_complete(task)
+        return bool(loop.run_until_complete(task))
     except KeyboardInterrupt:
         task.cancel()
         try:
             loop.run_until_complete(task)
         except asyncio.CancelledError:
             pass
+        return False
     except Exception as exc:  # noqa: BLE001 — final safety net: nothing that
         # can go wrong mid-turn (a bug in tool dispatch, an event-rendering
         # error, an LLM exception type friendly_llm_error doesn't recognize)
         # should ever take down the whole interactive session.
         print_error(f"Turn failed: {exc}")
+        return False
 
 
-async def _drive(prompt: str, client: "APIClient", runner: Runner) -> None:
+async def _drive(prompt: str, client: "APIClient", runner: Runner) -> bool:
     system_prompt = ""
     if not runner.messages:
         agent = getattr(client, "active_agent", None)
@@ -122,6 +131,7 @@ async def _drive(prompt: str, client: "APIClient", runner: Runner) -> None:
     # UI-agnostic, this is the one place that already renders everything.
     thinking = console.status("[dim]Thinking…[/]", spinner="dots")
     spinner_on = False
+    succeeded = True
     try:
         async for event in runner.run(prompt, system_prompt=system_prompt):
             if event.type == "llm_call_start":
@@ -129,6 +139,12 @@ async def _drive(prompt: str, client: "APIClient", runner: Runner) -> None:
                     thinking.start()
                     spinner_on = True
                 continue
+            if event.type == "error":
+                succeeded = False
+            elif event.type == "done" and str(event.data.get("content") or "").startswith(
+                "(stopped:"
+            ):
+                succeeded = False
             if spinner_on:
                 thinking.stop()
                 spinner_on = False
@@ -138,6 +154,7 @@ async def _drive(prompt: str, client: "APIClient", runner: Runner) -> None:
     finally:
         if spinner_on:
             thinking.stop()
+    return succeeded
 
 
 _BOILERPLATE_LINE_RE = re.compile(r"^(#{1,6}\s|target:|engagement_id:|run_id:)", re.I)

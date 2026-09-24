@@ -10,6 +10,7 @@ class AuditAction(BaseModel):
     tool_name: str
     target: str = ""
     engagement_id: str | None = None
+    run_id: str = ""
     command: str = ""
     success: bool = False
     returncode: int | None = None

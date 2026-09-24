@@ -1,11 +1,16 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Response, status
+
+from osprey.services.startup_readiness import snapshot
 
 router = APIRouter()
 
 
 @router.get("/", summary="Read service health")
-def read_health() -> dict[str, str]:
-    return {"status": "ok", "service": "osprey-api"}
+def read_health(response: Response) -> dict[str, object]:
+    payload = snapshot("osprey-api")
+    if not payload["ready"]:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return payload
 
 
 @router.get("/execution", summary="Report tool execution readiness (docker/native)")

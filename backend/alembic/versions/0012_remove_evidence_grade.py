@@ -49,39 +49,54 @@ _CONFIDENCE_TO_GRADE = {v: k for k, v in _GRADE_TO_CONFIDENCE.items()}
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+
     # findings: evidence_grade dropped outright — claim_severity is no longer
     # clamped by it; confidence (already present, already in the new
     # vocabulary) is the sole confidence axis.
-    with op.batch_alter_table("findings") as batch_op:
-        batch_op.drop_index("ix_findings_engagement_grade")
-        batch_op.drop_column("evidence_grade")
+    finding_columns = {column["name"] for column in inspector.get_columns("findings")}
+    if "evidence_grade" in finding_columns:
+        finding_indexes = {index["name"] for index in inspector.get_indexes("findings")}
+        with op.batch_alter_table("findings") as batch_op:
+            if "ix_findings_engagement_grade" in finding_indexes:
+                batch_op.drop_index("ix_findings_engagement_grade")
+            batch_op.drop_column("evidence_grade")
 
     # finding_occurrences: evidence_grade renamed to confidence — translate
     # existing values to the new vocabulary BEFORE the rename, while the
     # column is still named evidence_grade.
-    for old, new in _GRADE_TO_CONFIDENCE.items():
-        op.execute(
-            sa.text("UPDATE finding_occurrences SET evidence_grade = :new WHERE evidence_grade = :old")
-            .bindparams(old=old, new=new)
-        )
-    with op.batch_alter_table("finding_occurrences") as batch_op:
-        batch_op.alter_column(
-            "evidence_grade",
-            new_column_name="confidence",
-            existing_type=sa.String(length=32),
-            server_default="likely",
-        )
+    occurrence_columns = {
+        column["name"] for column in inspector.get_columns("finding_occurrences")
+    }
+    if "evidence_grade" in occurrence_columns:
+        for old, new in _GRADE_TO_CONFIDENCE.items():
+            op.execute(
+                sa.text(
+                    "UPDATE finding_occurrences SET evidence_grade = :new "
+                    "WHERE evidence_grade = :old"
+                ).bindparams(old=old, new=new)
+            )
+        with op.batch_alter_table("finding_occurrences") as batch_op:
+            batch_op.alter_column(
+                "evidence_grade",
+                new_column_name="confidence",
+                existing_type=sa.String(length=32),
+                server_default="likely",
+            )
 
     # asset_nodes: had both evidence_grade and confidence (duplicate axes,
     # same bug as findings) — drop evidence_grade, keep the existing
     # confidence column (already in the new vocabulary, untouched).
-    with op.batch_alter_table("asset_nodes") as batch_op:
-        batch_op.drop_column("evidence_grade")
-        batch_op.alter_column(
-            "confidence",
-            existing_type=sa.String(length=32),
-            server_default="likely",
-        )
+    asset_columns = {column["name"] for column in inspector.get_columns("asset_nodes")}
+    if "evidence_grade" in asset_columns:
+        with op.batch_alter_table("asset_nodes") as batch_op:
+            batch_op.drop_column("evidence_grade")
+            batch_op.alter_column(
+                "confidence",
+                existing_type=sa.String(length=32),
+                server_default="likely",
+            )
 
 
 def downgrade() -> None:

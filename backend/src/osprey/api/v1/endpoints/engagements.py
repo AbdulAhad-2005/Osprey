@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 
@@ -14,20 +15,27 @@ from osprey.schemas.engagement import (
 from osprey.schemas.fanout import FanoutSisterRequest, FanoutSisterResponse
 from osprey.schemas.network_surface import NetworkSurfaceSummary
 from osprey.services.attack_surface_tree import build_attack_surface_tree
-from osprey.services.markdown_report import build_recon_markdown
+from osprey.services.engagement_lifecycle import (
+    delete_engagement_safely,
+    delete_target_engagements_safely,
+)
 from osprey.services.engagement_store import get_engagement_store
 from osprey.services.fanout import enumerate_pending_sisters
-from osprey.services.fanout_assets import FanoutAssetsRequest, FanoutAssetsResponse, fanout_assets
+from osprey.services.fanout_assets import (
+    FanoutAssetsRequest,
+    FanoutAssetsResponse,
+    fanout_assets,
+)
+from osprey.services.markdown_report import build_recon_markdown
 from osprey.services.network_surface import build_network_surface
-from osprey.services.run_store import get_run_store
-from osprey.services.session_context import normalize_target
-from osprey.services.target_analysis import TargetAnalysis, analyze_target
-from osprey.services.visualization import get_visualization
 from osprey.services.report_generator import build_report_data
+from osprey.services.run_store import get_run_store
+from osprey.services.target_analysis import TargetAnalysis, analyze_target
 from osprey.services.tool_coverage_store import (
     ToolCoverageRecord,
     get_tool_coverage_store,
 )
+from osprey.services.visualization import get_visualization
 
 router = APIRouter()
 
@@ -285,20 +293,18 @@ def engagement_report_data(
 
 
 @router.delete("/by-target", summary="Delete all engagements and associated data for a domain target")
-def delete_engagements_by_target(
+async def delete_engagements_by_target(
     target: str = Query(..., min_length=1, description="Target domain e.g. example.com"),
 ) -> dict[str, Any]:
-    store = get_engagement_store()
-    res = store.delete_by_target(target)
+    res = await delete_target_engagements_safely(target)
     if not res.get("deleted"):
         raise HTTPException(status_code=404, detail=res.get("reason") or f"No engagements found for '{target}'")
     return res
 
 
 @router.delete("/{engagement_id}", summary="Delete an engagement and all its data")
-def delete_engagement(engagement_id: str) -> dict[str, Any]:
-    store = get_engagement_store()
-    res = store.delete(engagement_id)
+async def delete_engagement(engagement_id: str) -> dict[str, Any]:
+    res = await delete_engagement_safely(engagement_id)
     if not res.get("deleted"):
         raise HTTPException(status_code=404, detail=f"Engagement not found: {engagement_id}")
     return res

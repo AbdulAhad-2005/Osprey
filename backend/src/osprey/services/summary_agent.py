@@ -99,8 +99,23 @@ async def summarize_execution(
             else:
                 findings = list(findings) + freeform
 
-    if force_raw_observation and not findings and (stdout or stderr or response.error):
-        blob = stdout or stderr or (response.error or "")
+    if findings and not response.success:
+        # Preserve useful partial stdout without letting consumers mistake it
+        # for a clean run.  This is provenance, not a confidence downgrade:
+        # parser-specific evidence remains intact and the execution status is
+        # explicit on every resulting finding.
+        for finding in findings:
+            if "partial_failed_output" not in finding.tags:
+                finding.tags.append("partial_failed_output")
+
+    # A failed process's stderr/error describes the execution failure, not the
+    # target.  It remains available in the audit record and stderr artifact but
+    # must not become graph evidence.  Partial stdout is different: scanners
+    # commonly return useful observations before a timeout/non-zero exit, so it
+    # remains eligible for permissive parsing and a clearly marked raw record.
+    raw_evidence = stdout or (stderr if response.success else "")
+    if force_raw_observation and not findings and raw_evidence:
+        blob = raw_evidence
         status = "ok" if response.success else "failed"
         findings = [
             Finding(
@@ -124,7 +139,10 @@ async def summarize_execution(
                 confidence=FindingConfidence.HYPOTHESIS,
                 source_tool=tool_name,
                 target=target,
-                tags=["raw_output", "unparsed" if not response.success else "observation"],
+                tags=[
+                    "raw_output",
+                    "partial_failed_output" if not response.success else "observation",
+                ],
                 metadata={"command": (response.command or "")[:500]},
                 raw_data=blob[:24000],
                 notes=stderr[:4000] if stderr else "",

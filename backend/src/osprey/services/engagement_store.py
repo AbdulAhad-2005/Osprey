@@ -3,14 +3,18 @@ from __future__ import annotations
 import logging
 import threading
 from datetime import datetime, timezone
-
 from typing import Any
+
 import orjson
 from sqlalchemy import delete as sqlalchemy_delete
 from sqlalchemy.orm import Session
 
 from osprey.db.session import SessionLocal
+from osprey.models.audit_entry import AuditEntryRow
+from osprey.models.context_snapshot import ContextSnapshotRow
+from osprey.models.conversation import ConversationMessageRow
 from osprey.models.engagement import EngagementRow
+from osprey.models.exploit_candidate import ExploitCandidateRow
 from osprey.models.finding import (
     AssetEdgeRow,
     AssetNodeRow,
@@ -19,6 +23,9 @@ from osprey.models.finding import (
 )
 from osprey.models.recovery_observation import RecoveryObservationRow
 from osprey.models.run import RunRow
+from osprey.models.scan_run import ScanRunRow
+from osprey.models.surface_expansion import SurfaceExpansionRow
+from osprey.models.target_ban import TargetBanRow
 from osprey.models.tool_coverage import ToolCoverageRow
 from osprey.schemas.engagement import (
     Engagement,
@@ -173,6 +180,13 @@ class EngagementStore:
                 db.execute(sqlalchemy_delete(RunRow).where(RunRow.engagement_id == engagement_id))
                 db.execute(sqlalchemy_delete(ToolCoverageRow).where(ToolCoverageRow.engagement_id == engagement_id))
                 db.execute(sqlalchemy_delete(RecoveryObservationRow).where(RecoveryObservationRow.engagement_id == engagement_id))
+                db.execute(sqlalchemy_delete(ExploitCandidateRow).where(ExploitCandidateRow.engagement_id == engagement_id))
+                db.execute(sqlalchemy_delete(SurfaceExpansionRow).where(SurfaceExpansionRow.engagement_id == engagement_id))
+                db.execute(sqlalchemy_delete(ScanRunRow).where(ScanRunRow.engagement_id == engagement_id))
+                db.execute(sqlalchemy_delete(ContextSnapshotRow).where(ContextSnapshotRow.engagement_id == engagement_id))
+                db.execute(sqlalchemy_delete(TargetBanRow).where(TargetBanRow.engagement_id == engagement_id))
+                db.execute(sqlalchemy_delete(ConversationMessageRow).where(ConversationMessageRow.engagement_id == engagement_id))
+                db.execute(sqlalchemy_delete(AuditEntryRow).where(AuditEntryRow.engagement_id == engagement_id))
                 db.delete(row)
                 db.commit()
                 return {
@@ -209,6 +223,13 @@ class EngagementStore:
                 db.execute(sqlalchemy_delete(RunRow).where(RunRow.engagement_id.in_(engagement_ids)))
                 db.execute(sqlalchemy_delete(ToolCoverageRow).where(ToolCoverageRow.engagement_id.in_(engagement_ids)))
                 db.execute(sqlalchemy_delete(RecoveryObservationRow).where(RecoveryObservationRow.engagement_id.in_(engagement_ids)))
+                db.execute(sqlalchemy_delete(ExploitCandidateRow).where(ExploitCandidateRow.engagement_id.in_(engagement_ids)))
+                db.execute(sqlalchemy_delete(SurfaceExpansionRow).where(SurfaceExpansionRow.engagement_id.in_(engagement_ids)))
+                db.execute(sqlalchemy_delete(ScanRunRow).where(ScanRunRow.engagement_id.in_(engagement_ids)))
+                db.execute(sqlalchemy_delete(ContextSnapshotRow).where(ContextSnapshotRow.engagement_id.in_(engagement_ids)))
+                db.execute(sqlalchemy_delete(TargetBanRow).where(TargetBanRow.engagement_id.in_(engagement_ids)))
+                db.execute(sqlalchemy_delete(ConversationMessageRow).where(ConversationMessageRow.engagement_id.in_(engagement_ids)))
+                db.execute(sqlalchemy_delete(AuditEntryRow).where(AuditEntryRow.engagement_id.in_(engagement_ids)))
 
                 for row in rows:
                     db.delete(row)
@@ -220,6 +241,23 @@ class EngagementStore:
                     "engagements_deleted": len(engagement_ids),
                     "engagement_ids": engagement_ids,
                 }
+            finally:
+                db.close()
+
+    def ids_by_target(self, target: str) -> list[str]:
+        """Return engagement ids for a normalized target before lifecycle deletion."""
+        normalized = (target or "").strip().lower().rstrip(".")
+        if not normalized:
+            return []
+        with self._lock:
+            db = self._session()
+            try:
+                rows = (
+                    db.query(EngagementRow.id)
+                    .filter(EngagementRow.target == normalized)
+                    .all()
+                )
+                return [str(row[0]) for row in rows]
             finally:
                 db.close()
 

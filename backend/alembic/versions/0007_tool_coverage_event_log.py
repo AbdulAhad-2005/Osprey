@@ -12,6 +12,7 @@ Create Date: 2026-08-18
 
 from typing import Sequence, Union
 
+import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0007_tool_coverage_event_log"
@@ -21,34 +22,44 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.drop_constraint(
-        "uq_tool_coverage_engagement_tool_asset",
-        "tool_coverage",
-        type_="unique",
-    )
-    op.create_index(
-        "ix_tool_coverage_eng_tool_asset",
-        "tool_coverage",
-        ["engagement_id", "tool_name", "asset"],
-    )
-    op.drop_column("tool_coverage", "claimed_at")
-    op.drop_column("tool_coverage", "claimed_by")
+    # Batch mode is required for SQLite, which cannot ALTER constraints or
+    # drop columns in place.  It is also valid on Postgres, keeping one
+    # migration path for both supported databases.
+    inspector = sa.inspect(op.get_bind())
+    columns = {column["name"] for column in inspector.get_columns("tool_coverage")}
+    unique_constraints = {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("tool_coverage")
+        if constraint.get("name")
+    }
+    indexes = {index["name"] for index in inspector.get_indexes("tool_coverage")}
+    with op.batch_alter_table("tool_coverage") as batch_op:
+        if "uq_tool_coverage_engagement_tool_asset" in unique_constraints:
+            batch_op.drop_constraint(
+                "uq_tool_coverage_engagement_tool_asset",
+                type_="unique",
+            )
+        if "ix_tool_coverage_eng_tool_asset" not in indexes:
+            batch_op.create_index(
+                "ix_tool_coverage_eng_tool_asset",
+                ["engagement_id", "tool_name", "asset"],
+            )
+        if "claimed_at" in columns:
+            batch_op.drop_column("claimed_at")
+        if "claimed_by" in columns:
+            batch_op.drop_column("claimed_by")
 
 
 def downgrade() -> None:
-    import sqlalchemy as sa
-
-    op.add_column(
-        "tool_coverage",
-        sa.Column("claimed_by", sa.String(length=12), nullable=False, server_default=""),
-    )
-    op.add_column(
-        "tool_coverage",
-        sa.Column("claimed_at", sa.DateTime(timezone=True), nullable=True),
-    )
-    op.drop_index("ix_tool_coverage_eng_tool_asset", table_name="tool_coverage")
-    op.create_unique_constraint(
-        "uq_tool_coverage_engagement_tool_asset",
-        "tool_coverage",
-        ["engagement_id", "tool_name", "asset"],
-    )
+    with op.batch_alter_table("tool_coverage") as batch_op:
+        batch_op.add_column(
+            sa.Column("claimed_by", sa.String(length=12), nullable=False, server_default=""),
+        )
+        batch_op.add_column(
+            sa.Column("claimed_at", sa.DateTime(timezone=True), nullable=True),
+        )
+        batch_op.drop_index("ix_tool_coverage_eng_tool_asset")
+        batch_op.create_unique_constraint(
+            "uq_tool_coverage_engagement_tool_asset",
+            ["engagement_id", "tool_name", "asset"],
+        )

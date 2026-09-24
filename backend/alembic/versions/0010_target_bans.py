@@ -22,6 +22,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    if "target_bans" in sa.inspect(op.get_bind()).get_table_names():
+        return
     op.create_table(
         "target_bans",
         sa.Column("engagement_id", sa.String(length=12), primary_key=True),

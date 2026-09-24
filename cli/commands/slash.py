@@ -152,8 +152,11 @@ def handle_engagements(args: list[str], client: "APIClient") -> None:
         except Exception as exc:
             print_error(_api_error_text(exc))
     elif args[0] == "set" and len(args) >= 2:
-        client._set_active_engagement(args[1])
-        print_success(f"Active engagement set to: {args[1]}")
+        try:
+            data = client.get_engagement(args[1])
+            _bind_engagement(client, data)
+        except Exception as exc:
+            print_error(_api_error_text(exc))
     else:
         print_info("Usage: /engage list | /engage new <target> | /engage set <engagement_id>")
 
@@ -164,7 +167,10 @@ def _bind_engagement(client: "APIClient", data: dict) -> None:
     if not engagement_id:
         print_error(f"Engagement response had no id: {data}")
         return
-    client._set_active_engagement(engagement_id)
+    client._set_active_engagement(
+        engagement_id,
+        target=str(data.get("target") or ""),
+    )
     label = data.get("target") or engagement_id
     reused = data.get("reused", False)
     if reused:
@@ -192,6 +198,8 @@ def _api_error_text(exc: Exception) -> str:
                 return msg
             return f"Request failed: {inner}"
         return f"Request failed: {exc.response.status_code}"
+    if isinstance(exc, httpx.RequestError):
+        return f"Could not reach the backend: {exc}"
     return str(exc)
 
 
@@ -288,7 +296,70 @@ def handle_scan(args: list[str], client: "APIClient") -> None:
     handle_prompt(_PHASE_PROMPTS[phase].format(target=target), client)
 
 
-def _run_engine_scan(client: "APIClient", target: str, *, include_low_confidence: bool = False) -> None:
+def _poll_foreground_job(
+    client: "APIClient",
+    job: dict,
+    *,
+    label: str,
+    spinner_text: str,
+) -> dict | None:
+    """Poll one background job while presenting it as foreground CLI work.
+
+    Both deterministic scan commands use the same lifecycle: append-only result
+    log, changing progress text, and server-side cancellation on Ctrl+C.  A
+    transport failure does not imply that the server stopped the job, so retain
+    and report its id rather than silently orphaning it.
+    """
+    job_id = str(job.get("job_id") or "")
+    if not job_id:
+        print_error(f"{label} did not return a job id.")
+        return None
+
+    status = str(job.get("status") or "")
+    last_progress = ""
+    printed_results = 0
+    try:
+        with console.status(f"[bold cyan]{spinner_text}[/]", spinner="dots") as spinner:
+            while status in ("queued", "running"):
+                try:
+                    job = client.poll_job(job_id, wait_seconds=3)
+                except Exception as exc:
+                    print_error(_api_error_text(exc))
+                    print_info(
+                        f"Lost contact while {label.lower()} job {job_id} was running; "
+                        "the server-side job may still be active. Reconnect and check its status."
+                    )
+                    return None
+                status = str(job.get("status") or "")
+                results_log = job.get("results_log") or []
+                for line in results_log[printed_results:]:
+                    console.print(f"  [green]{line}[/]")
+                printed_results = len(results_log)
+
+                progress = str(job.get("progress") or "")
+                if progress and progress != last_progress:
+                    spinner.update(f"[bold cyan]{progress}[/]")
+                    last_progress = progress
+    except KeyboardInterrupt:
+        try:
+            client.cancel_job(job_id)
+            print_error(
+                f"Interrupted — {label.lower()} job cancelled. Findings gathered so far are saved. "
+                "Review them with /findings, or /report to export what was found so far."
+            )
+        except Exception:
+            print_error(
+                f"Interrupted — but the cancel request failed; {label.lower()} job {job_id} "
+                "may still be running server-side. Findings gathered so far are saved "
+                "(/findings, /report)."
+            )
+        return None
+    return job
+
+
+def _run_engine_scan(
+    client: "APIClient", target: str, *, include_low_confidence: bool = False
+) -> bool:
     """Engine mode: start the expansion job and poll to completion — a plain
     REST call the CLI drives directly, no LLM in the loop. The same backend
     endpoint a UI's "Scan" button or the MCP platform_expand tool would call —
@@ -298,14 +369,14 @@ def _run_engine_scan(client: "APIClient", target: str, *, include_low_confidence
     engagement_id = client.active_engagement_id
     if not engagement_id:
         print_error("No engagement bound.")
-        return
+        return False
     # Preflight: catch a dead execution backend (e.g. the Kali tools container
     # not started) up front, so the user gets one clear fix instead of watching
     # every tool in every stage report "(failed)".
     status = client.execution_status()
     if not status.get("ready", True):
         print_error(status.get("message", "Tool execution backend is not ready."))
-        return
+        return False
     if status.get("message"):
         print_info(status["message"])
     try:
@@ -315,68 +386,35 @@ def _run_engine_scan(client: "APIClient", target: str, *, include_low_confidence
         )
     except Exception as exc:
         print_error(_api_error_text(exc))
-        return
+        return False
 
     job_id = job.get("job_id", "")
     print_info(f"Engine started (job {job_id}) — running the full recon/network pipeline on {target}.")
     print_info("Sister domains -> subdomains (tools + wordlist brute force) -> IPs -> CDN/origin "
                 "detection -> subnet pivot -> ports -> services -> vuln scan -> OSINT, to a fixpoint.")
 
+    polled = _poll_foreground_job(
+        client, job, label="Engine", spinner_text="Engine starting…"
+    )
+    if polled is None:
+        return False
+    job = polled
     status = job.get("status", "")
-    last_progress = ""
-    printed_results = 0
-    try:
-        with console.status("[bold cyan]Engine starting…[/]", spinner="dots") as spinner:
-            while status in ("queued", "running"):
-                try:
-                    # Short wait_seconds keeps the live per-tool progress ticker
-                    # responsive; long-polling still returns early on any change,
-                    # so this isn't hammering the server.
-                    job = client.poll_job(job_id, wait_seconds=3)
-                except Exception as exc:
-                    print_error(_api_error_text(exc))
-                    return
-                status = job.get("status", "")
-                # results_log is append-only — print every entry we haven't shown
-                # yet. Unlike the ephemeral `progress` string (which the next
-                # in-flight update can overwrite before the next poll ever sees
-                # it), nothing here can be missed regardless of poll timing.
-                results_log = job.get("results_log") or []
-                for line in results_log[printed_results:]:
-                    console.print(f"  [green]{line}[/]")
-                printed_results = len(results_log)
-
-                progress = job.get("progress", "")
-                if progress and progress != last_progress:
-                    spinner.update(f"[bold cyan]{progress}[/]")
-                    last_progress = progress
-    except KeyboardInterrupt:
-        # Actually stop the server-side job — without this the engine keeps
-        # running in the background after the operator thinks they cancelled it,
-        # burning the target's rate budget and holding tool-coverage claims.
-        try:
-            client.cancel_job(job_id)
-            print_error("Interrupted — engine job cancelled. Findings gathered so far are saved. "
-                        "Review them with /findings, or /report to export what was found so far.")
-        except Exception:
-            print_error("Interrupted — but the cancel request failed; the engine job may still be "
-                        "running server-side. Findings gathered so far are saved (/findings, /report).")
-        return
 
     if status == "failed":
         print_error(f"Engine run failed: {job.get('error', 'unknown error')}")
-        return
+        return False
 
     if status == "cancelled":
         print_success("Engine stopped. Partial findings are saved.")
         print_info("Review them with /findings, or /report to export what was found so far.")
-        return
+        return False
 
     try:
         result = client.job_result(job_id)
     except Exception as exc:
         print_error(_api_error_text(exc))
-        return
+        return False
 
     report = (result.get("result") or {})
     passes = report.get("passes") or []
@@ -406,6 +444,7 @@ def _run_engine_scan(client: "APIClient", target: str, *, include_low_confidence
         )
 
     print_info("Findings are already in memory — use /findings to review.")
+    return True
 
 
 def handle_fast_scan(args: list[str], client: "APIClient") -> None:
@@ -442,15 +481,15 @@ def handle_fast_scan(args: list[str], client: "APIClient") -> None:
     _run_fast_scan(client, target)
 
 
-def _run_fast_scan(client: "APIClient", target: str) -> None:
+def _run_fast_scan(client: "APIClient", target: str) -> bool:
     engagement_id = client.active_engagement_id
     if not engagement_id:
         print_error("No engagement bound.")
-        return
+        return False
     status = client.execution_status()
     if not status.get("ready", True):
         print_error(status.get("message", "Tool execution backend is not ready."))
-        return
+        return False
     if status.get("message"):
         print_info(status["message"])
 
@@ -458,58 +497,35 @@ def _run_fast_scan(client: "APIClient", target: str) -> None:
         job = client.start_fast_scan_job(engagement_id, target)
     except Exception as exc:
         print_error(_api_error_text(exc))
-        return
+        return False
 
     job_id = job.get("job_id", "")
     print_info(f"Fast scan started (job {job_id}) on {target}.")
     print_info("whois -> subdomains -> TLS SANs -> resolve IPs/CNAMEs -> classify CDN vs origin -> "
                "httpx live-probe -> nmap (full on origin, light on CDN edges) -> takeover check.")
 
+    polled = _poll_foreground_job(
+        client, job, label="Fast scan", spinner_text="Fast scan starting…"
+    )
+    if polled is None:
+        return False
+    job = polled
     status_str = job.get("status", "")
-    last_progress = ""
-    printed_results = 0
-    try:
-        with console.status("[bold cyan]Fast scan starting…[/]", spinner="dots") as spinner:
-            while status_str in ("queued", "running"):
-                try:
-                    job = client.poll_job(job_id, wait_seconds=3)
-                except Exception as exc:
-                    print_error(_api_error_text(exc))
-                    return
-                status_str = job.get("status", "")
-                results_log = job.get("results_log") or []
-                for line in results_log[printed_results:]:
-                    console.print(f"  [green]{line}[/]")
-                printed_results = len(results_log)
-
-                progress = job.get("progress", "")
-                if progress and progress != last_progress:
-                    spinner.update(f"[bold cyan]{progress}[/]")
-                    last_progress = progress
-    except KeyboardInterrupt:
-        try:
-            client.cancel_job(job_id)
-            print_error("Interrupted — fast-scan job cancelled. Findings gathered so far are saved. "
-                        "Review them with /findings, or /report to export what was found so far.")
-        except Exception:
-            print_error("Interrupted — but the cancel request failed; the fast-scan job may still be "
-                        "running server-side. Findings gathered so far are saved (/findings, /report).")
-        return
 
     if status_str == "failed":
         print_error(f"Fast scan failed: {job.get('error', 'unknown error')}")
-        return
+        return False
 
     if status_str == "cancelled":
         print_success("Fast scan stopped. Partial findings are saved.")
         print_info("Review them with /findings, or /report to export what was found so far.")
-        return
+        return False
 
     try:
         result = client.job_result(job_id)
     except Exception as exc:
         print_error(_api_error_text(exc))
-        return
+        return False
 
     report = (result.get("result") or {})
     subs = report.get("subdomains_found", 0)
@@ -542,6 +558,7 @@ def _run_fast_scan(client: "APIClient", target: str) -> None:
         print_info("No IPs resolved from the discovered hosts — nothing to port-scan.")
 
     print_info("Findings are already in memory — use /findings to review.")
+    return True
 
 
 def handle_findings(args: list[str], client: "APIClient") -> None:
@@ -817,11 +834,14 @@ def handle_reconnect(args: list[str], client: "APIClient") -> None:
 
     from dotenv import load_dotenv
 
-    load_dotenv()
+    # This command explicitly promises to re-read .env.  Override the values
+    # loaded at process startup so edits made during the session take effect.
+    load_dotenv(override=True)
     new_url = os.getenv("API_BASE_URL", "http://localhost:9000")
     old_url = client.base_url
     client.reconnect(base_url=new_url)
     print_success(f"Reconnected: {old_url} -> {new_url}")
+    print_info("Engagement and agent context cleared; bind a target before the next tool run.")
 
 
 def _parse_skill_frontmatter(text: str) -> tuple[dict[str, str], str]:
@@ -953,7 +973,7 @@ def handle_profile(args: list[str], client: "APIClient") -> None:
                     print(line)
         elif sub == "approve" and len(args) > 1:
             client.approve_operator_preference(args[1])
-            print_success(f"Approved — added to your profile. It now shapes every engagement.")
+            print_success("Approved — added to your profile. It now shapes every engagement.")
         elif sub == "reject" and len(args) > 1:
             client.reject_operator_preference(args[1])
             print_info(f"Rejected preference {args[1]}.")
@@ -1058,7 +1078,13 @@ def execute_command(command_line: str, client: "APIClient") -> bool:
 
     if cmd in SLASH_COMMANDS:
         _, handler = SLASH_COMMANDS[cmd]
-        handler(args, client)
+        try:
+            handler(args, client)
+        except httpx.RequestError as exc:
+            # The REPL deliberately remains usable when the backend is down.
+            # A slash command should therefore report transport failure and
+            # return to the prompt, never tear down the whole session.
+            print_error(_api_error_text(exc))
         return True
 
     # Prompt-defined custom command? .osprey/commands/<name>.md — expand its

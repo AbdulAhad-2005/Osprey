@@ -57,9 +57,16 @@ def load_server(api_base_url: str) -> Any:
     """
     global _SERVER_MODULE
     if _SERVER_MODULE is not None:
+        # API_BASE is read by server.py at import time.  Keep the embedded MCP
+        # runtime aligned with APIClient after /reconnect instead of leaving
+        # agent tools pointed at the old backend.
+        _SERVER_MODULE.API_BASE = api_base_url.rstrip("/")
         return _SERVER_MODULE
 
-    os.environ.setdefault("PENTEST_API_BASE", api_base_url)
+    # The CLI's selected API URL is authoritative for its embedded gateway.
+    # Honouring a stale, unrelated PENTEST_API_BASE here creates a split-brain
+    # session where slash commands and agent tools reach different backends.
+    os.environ["PENTEST_API_BASE"] = api_base_url.rstrip("/")
     os.environ.setdefault("PENTEST_RUN_ID", uuid.uuid4().hex[:12])
     os.environ.setdefault("PENTEST_MCP_QUIET", "1")
 
@@ -71,6 +78,49 @@ def load_server(api_base_url: str) -> Any:
 
     _SERVER_MODULE = _server
     return _server
+
+
+def reconfigure_server(api_base_url: str) -> None:
+    """Point the already-imported embedded gateway at a reconnected backend.
+
+    Clear its ambient target too: an engagement id from the previous backend is
+    not safe to reuse against the new URL.  The next Runner bind establishes the
+    exact target/engagement pair again.
+    """
+    os.environ["PENTEST_API_BASE"] = api_base_url.rstrip("/")
+    server = _SERVER_MODULE
+    if server is None:
+        return
+    server.API_BASE = api_base_url.rstrip("/")
+    server._clear_session()
+
+
+def bind_session(*, engagement_id: str, target: str = "") -> None:
+    """Synchronize the embedded gateway with APIClient's explicit binding.
+
+    The CLI already resolved this exact engagement through REST.  Mirroring the
+    resolved identity avoids a second target resolution (which could select a
+    different force-created engagement) while ensuring ambient-only MCP tools
+    and explicitly pinned tools agree on the same engagement.
+    """
+    server = _SERVER_MODULE
+    if server is None:
+        raise RuntimeError("load_server() must be called before bind_session()")
+    server._SESSION_ENGAGEMENT_ID = (engagement_id or "").strip()
+    server._SESSION_TARGET = (target or "").strip()
+    server._SESSION_SWITCH_NOTICE = ""
+    if server._SESSION_ENGAGEMENT_ID:
+        server._ENGAGEMENT_CACHE[server._SESSION_ENGAGEMENT_ID] = {
+            "target": server._SESSION_TARGET,
+            "kind": "domain",
+            "scope": "",
+        }
+        server._ENGAGEMENT_RUN_IDS[server._SESSION_ENGAGEMENT_ID] = server.SESSION_RUN_ID
+        server._ensure_run_registered(
+            server._SESSION_ENGAGEMENT_ID,
+            server.SESSION_RUN_ID,
+        )
+        server._persist_session()
 
 
 # The bootstrap set for budget-constrained providers (see get_tool_schemas'

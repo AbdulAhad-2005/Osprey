@@ -31,6 +31,7 @@ and reports what it saw.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
@@ -122,6 +123,18 @@ def reload_governor_config() -> dict[str, Any]:
 
 
 _CLOCKS: dict[tuple[str, str], _TargetClock] = defaultdict(_TargetClock)
+_PACE_LOCKS: dict[tuple[int, str, str], asyncio.Lock] = {}
+
+
+def clear_engagement_state(engagement_id: str) -> None:
+    """Remove process-local pacing/cooldown state after engagement deletion."""
+    eid = (engagement_id or "").strip().lower()
+    if not eid:
+        return
+    for key in [key for key in _CLOCKS if key[0] == eid]:
+        _CLOCKS.pop(key, None)
+    for key in [key for key in _PACE_LOCKS if key[1] == eid]:
+        _PACE_LOCKS.pop(key, None)
 
 
 def _clock(engagement_id: str, target: str) -> _TargetClock:
@@ -161,6 +174,27 @@ def register_call(engagement_id: str, target: str) -> None:
     """Record that a call to this target is about to happen (or just did)."""
     clock = _clock(engagement_id, target)
     clock.calls.append(time.monotonic())
+
+
+async def pace_call(engagement_id: str, target: str) -> float:
+    """Atomically pace and register one target call.
+
+    The former ``wait_seconds_for(); sleep(); register_call()`` sequence raced
+    under fan-out: every coroutine could observe an empty window before any of
+    them registered, producing exactly the burst the governor was meant to
+    smooth.  Serialize that short decision per event-loop/engagement/target.
+    """
+
+    eid = (engagement_id or "").strip().lower()
+    tgt = (target or "").strip().lower()
+    key = (id(asyncio.get_running_loop()), eid, tgt)
+    lock = _PACE_LOCKS.setdefault(key, asyncio.Lock())
+    async with lock:
+        wait_s = wait_seconds_for(eid, tgt)
+        if wait_s > 0:
+            await asyncio.sleep(wait_s)
+        register_call(eid, tgt)
+        return wait_s
 
 
 def scan_for_ban(stdout: str) -> str:

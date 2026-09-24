@@ -15,7 +15,6 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from osprey.schemas.tools import ToolExecutionRequest
-from osprey.services.parallelism_config import max_running_jobs
 from osprey.services.tool_execution import execute_tool_request
 from osprey.services.tool_registry import get_tool_definition
 
@@ -133,48 +132,38 @@ async def fanout_assets(
             note=note,
         )
 
-    # Bounded concurrency, not one-asset-at-a-time: a sequential loop here was
-    # exactly what made bulk probing (e.g. httpx across 13+ hosts) blow past
-    # single-call timeouts — each asset waited for the previous one's full
-    # timeout_per_tool budget even on an unresponsive host. Reuses the same
-    # concurrency cap as background jobs (config/parallelism.yaml) so this
-    # doesn't open more simultaneous Kali execs than the rest of the platform
-    # already allows per engagement.
-    semaphore = asyncio.Semaphore(max_running_jobs())
-
     async def _run_one(asset: str) -> FanoutAssetResult:
         item = FanoutAssetResult(asset=asset, planned=True)
-        async with semaphore:
-            try:
-                params: dict[str, Any] = {primary: asset}
-                # httpx often wants URL-ish targets
-                if tool == "httpx_probe" and "://" not in asset:
-                    params[primary] = f"https://{asset}"
-                response = await execute_tool_request(
-                    ToolExecutionRequest(
-                        tool_name=tool,
-                        params=params,
-                        engagement_id=engagement_id,
-                        run_id=request.run_id or None,
-                        timeout=request.timeout_per_tool,
-                        additional_args=request.additional_args or "",
-                        use_recovery=False,
-                        record_findings=True,
-                        force_refresh=request.force_refresh,
-                        use_cache=not request.force_refresh,
-                    )
+        try:
+            params: dict[str, Any] = {primary: asset}
+            # httpx often wants URL-ish targets
+            if tool == "httpx_probe" and "://" not in asset:
+                params[primary] = f"https://{asset}"
+            response = await execute_tool_request(
+                ToolExecutionRequest(
+                    tool_name=tool,
+                    params=params,
+                    engagement_id=engagement_id,
+                    run_id=request.run_id or None,
+                    timeout=request.timeout_per_tool,
+                    additional_args=request.additional_args or "",
+                    use_recovery=False,
+                    record_findings=True,
+                    force_refresh=request.force_refresh,
+                    use_cache=not request.force_refresh,
                 )
-                item.executed = True
-                item.success = bool(response.success)
-                item.findings_count = len(response.finding_titles or [])
-                item.finding_titles = list(response.finding_titles or [])[:15]
-                item.command = response.command or ""
-                item.error = response.error or ""
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("fanout_assets failed for %s", asset)
-                item.executed = True
-                item.success = False
-                item.error = str(exc)
+            )
+            item.executed = True
+            item.success = bool(response.success)
+            item.findings_count = len(response.finding_titles or [])
+            item.finding_titles = list(response.finding_titles or [])[:15]
+            item.command = response.command or ""
+            item.error = response.error or ""
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("fanout_assets failed for %s", asset)
+            item.executed = True
+            item.success = False
+            item.error = str(exc)
         return item
 
     results = list(await asyncio.gather(*(_run_one(asset) for asset in assets)))

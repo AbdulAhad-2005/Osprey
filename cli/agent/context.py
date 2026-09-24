@@ -65,9 +65,14 @@ only when you need something that genuinely isn't there.
 async def build_system_prompt(
     engagement_id: str, *, tool_budget_active: bool = False, agent_prompt: str = ""
 ) -> str:
-    ctx = await platform_tools.call_tool(
-        "platform_context", {"engagement_id": engagement_id} if engagement_id else {}
-    )
+    context_args = {"full": True}
+    if engagement_id:
+        context_args["engagement_id"] = engagement_id
+    # A system prompt is a new agent's only baseline briefing.  Never let the
+    # MCP context-delta cache replace its sections with "unchanged" markers —
+    # that is useful for refreshes inside one conversation, not for a fresh
+    # Runner or spawned worker with no earlier copy.
+    ctx = await platform_tools.call_tool("platform_context", context_args)
     policy = _POLICY + (_TOOL_BUDGET_POLICY if tool_budget_active else "")
     # A prompt-defined agent/flow overlays its instructions on top of the base
     # policy — it ADDS to the harness's own guardrails (spawn/skill/finding rules

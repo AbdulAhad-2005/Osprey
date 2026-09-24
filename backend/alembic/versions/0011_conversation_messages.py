@@ -20,6 +20,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    if "conversation_messages" in sa.inspect(op.get_bind()).get_table_names():
+        return
     op.create_table(
         "conversation_messages",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
