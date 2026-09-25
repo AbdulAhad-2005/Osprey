@@ -488,10 +488,15 @@ def _safe(callable_fn) -> str:
         return (
             "### OPERATOR MIRROR — TIMEOUT\n"
             f"ERROR: Platform request timed out on {API_BASE}.\n"
-            "The backend may STILL be running — do NOT assume failure.\n"
-            "Next: retry with a SMALLER scope "
-            "(one IP, top ports only, timeout_seconds≤90). Never -p0-65535 in one MCP call. "
-            "Do not dump platform_findings yet — keep expanding."
+            "The backend likely FINISHED the run server-side — the result is recorded "
+            "durably. Do NOT assume failure or re-run blindly:\n"
+            "- Call platform_jobs to find the recorded run (it lists durable scan-runs "
+            "even for a synchronous call that timed out from your side), then "
+            "platform_job_result / platform_artifact to read its output.\n"
+            "- For genuinely long work, start it with platform_job_start instead of a "
+            "synchronous call, or retry with a SMALLER scope (one IP, top ports only, "
+            "timeout_seconds≤90; never -p0-65535 in one MCP call).\n"
+            "Keep expanding; don't dump platform_findings yet."
         )
     except httpx.HTTPStatusError as exc:
         code = exc.response.status_code if exc.response else "?"
@@ -2873,6 +2878,76 @@ def platform_job_result(job_id: str, engagement_id: str = "") -> str:
         parts.append(
             "\nBranch done — short chat note, then continue other work (or finalize if last pass)."
         )
+        return "\n".join(parts)
+
+    return _safe(_run)
+
+
+@mcp.tool()
+def platform_jobs(engagement_id: str = "", status: str = "", limit: int = 30) -> str:
+    """
+    List this engagement's background jobs and durable scan-run history — the
+    audit trail for recovering work after a disconnect or timeout.
+
+    Every tool run is recorded here, including a synchronous call that timed out
+    from your side (its process still finished server-side and the run is durably
+    stored) and jobs started before a crash — so nothing is silently lost. Find
+    the job_id, then platform_job_result(job_id) for its output, or
+    platform_artifact for full stdout. Scan-runs survive a backend restart; the
+    in-memory job list does not, which is exactly why both are shown.
+
+    status= filter the job list (queued|running|completed|failed).
+    engagement_id: optional pin — see platform_exec.
+    """
+    lim = max(1, min(int(limit), 100))
+
+    def _run() -> str:
+        ctx = _resolve_engagement(engagement_id)
+        job_params = {"engagement_id": ctx.engagement_id, "limit": str(lim)}
+        if status.strip():
+            job_params["status"] = status.strip()
+        jobs = _get("/api/v1/jobs", params=job_params, timeout=20)
+        runs = _get(
+            "/api/v1/jobs/scan-runs",
+            params={"engagement_id": ctx.engagement_id, "limit": str(min(lim * 2, 200))},
+            timeout=20,
+        )
+        parts = ["### OPERATOR MIRROR — JOBS & RUNS", _session_header(ctx)]
+
+        if isinstance(jobs, list) and jobs:
+            lines = []
+            for j in jobs:
+                bit = f"[{j.get('status')}] `{j.get('job_id')}` {j.get('kind')}"
+                if j.get("tool_name"):
+                    bit += f":{j.get('tool_name')}"
+                if j.get("label"):
+                    bit += f" · {j.get('label')}"
+                if j.get("duration_seconds") is not None:
+                    bit += f" · {j.get('duration_seconds')}s"
+                fc = len(j.get("finding_titles") or [])
+                if fc:
+                    bit += f" · {fc} finding(s)"
+                if j.get("error"):
+                    bit += f" · ERROR: {str(j.get('error'))[:80]}"
+                lines.append(bit)
+            parts.append(_block(f"Jobs ({len(jobs)}) — platform_job_result(job_id) for output", lines))
+        else:
+            parts.append("Jobs: none active/recent in the in-memory job store.")
+
+        if isinstance(runs, list) and runs:
+            lines = []
+            for r in runs[:lim]:
+                bit = f"[{r.get('status')}] `{r.get('job_id')}` {r.get('kind') or '?'}"
+                if r.get("target"):
+                    bit += f" · {r.get('target')}"
+                elif r.get("command_preview"):
+                    bit += f" · {str(r.get('command_preview'))[:60]}"
+                if r.get("error"):
+                    bit += f" · ERROR: {str(r.get('error'))[:80]}"
+                lines.append(bit)
+            parts.append(_block(f"Durable scan-runs ({len(runs)}) — survive restart", lines))
+        else:
+            parts.append("Scan-runs: none recorded yet.")
         return "\n".join(parts)
 
     return _safe(_run)
