@@ -28,7 +28,7 @@ def upgrade() -> None:
         sa.Column("title", sa.String(length=1024), nullable=False, server_default=""),
         sa.Column("reason", sa.Text(), nullable=False, server_default=""),
         sa.Column(
-            "suppressed_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
+            "suppressed_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
         sa.PrimaryKeyConstraint("id"),
     )

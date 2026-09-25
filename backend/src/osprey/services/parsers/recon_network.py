@@ -2108,6 +2108,20 @@ def parse_dnsenum(
     return out
 
 
+def _is_ptr_ip_placeholder(host: str, ip: str) -> bool:
+    """True when a PTR hostname just re-encodes its own IP — a provider auto-PTR,
+    not a real subdomain. Matches the dashed form (``115-186-143-17.example.com``,
+    whose leftmost label's digit groups are the IP's octets) and the dotted form
+    (``115.186.143.17.example.com``, which begins with the literal IP)."""
+    octets = ip.split(".")
+    if len(octets) != 4 or not all(o.isdigit() for o in octets):
+        return False
+    leftmost = host.split(".", 1)[0]
+    if re.findall(r"\d+", leftmost) == octets:
+        return True
+    return host.startswith(ip + ".")
+
+
 def parse_dnsx_reverse(
     stdout: str,
     *,
@@ -2115,7 +2129,14 @@ def parse_dnsx_reverse(
     run_id: str = "",
     target: str = "",
 ) -> list[Observation]:
-    """dnsx -ptr lines (``ip [PTR] [hostname]``) → hostname seeds from reverse DNS."""
+    """dnsx -ptr lines (``ip [PTR] [hostname]``) → hostname seeds from reverse DNS.
+
+    A PTR that merely re-encodes its own IP (provider auto-PTR such as
+    ``115-186-143-17.example.com`` or ``115.186.143.17.example.com``) is NOT a
+    real, distinct subdomain — treating it as one inflates the subdomain surface
+    and drives a recon-reopen storm against hosts that don't exist. Those are
+    recorded as DNS_RECORD evidence (kept, but not surface) while genuine PTR
+    hostnames still become SUBDOMAIN seeds."""
     stdout = _ANSI_RE.sub("", stdout or "")
     out: list[Observation] = []
     seen: set[tuple[str, str]] = set()
@@ -2135,15 +2156,16 @@ def parse_dnsx_reverse(
             if key in seen:
                 continue
             seen.add(key)
+            placeholder = _is_ptr_ip_placeholder(host, ip)
             out.append(
                 Observation(
                     engagement_id=engagement_id,
                     run_id=run_id,
-                    type=ObservationType.SUBDOMAIN,
+                    type=ObservationType.DNS_RECORD if placeholder else ObservationType.SUBDOMAIN,
                     target=target or host,
                     source_tool="dnsx_reverse",
                     details={"hostname": host, "ip": ip, "record_type": "ptr"},
-                    tags=["reverse_dns", "ptr"],
+                    tags=["reverse_dns", "ptr"] + (["ip_placeholder"] if placeholder else []),
                 )
             )
     return out or _unparsed_observation(

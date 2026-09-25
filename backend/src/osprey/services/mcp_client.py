@@ -8,6 +8,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from osprey.contract import APP_VERSION
 from osprey.schemas.tools import (
     MCPServerCategory,
     ToolDefinition,
@@ -31,7 +32,8 @@ _STDIO_LIMIT = 64 * 1024 * 1024
 
 # Forward selected OSINT / credential-intel secrets into Kali on each docker exec
 # (compose env alone is not enough if the key was added after the container
-# started). Private overlays (e.g. Hawkeye's creds-manager) add their own env
+# started). Private overlays (for example, a company credential manager) add
+# their own env
 # names via OSPREY_KALI_ENV_FORWARD (comma-separated) — no code change needed.
 _KALI_ENV_FORWARD_BASE = (
     "SHODAN_API_KEY",
@@ -423,7 +425,10 @@ class MCPClient:
             "params": {
                 "protocolVersion": LATEST_PROTOCOL_VERSION,
                 "capabilities": {},
-                "clientInfo": {"name": "osprey-backend", "version": "0.1.0"},
+                "clientInfo": {
+                    "name": "osprey-backend",
+                    "version": APP_VERSION,
+                },
             },
         }
         raw = await self._send_and_receive(proc, init_request, timeout=15)

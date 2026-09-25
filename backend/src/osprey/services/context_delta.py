@@ -18,6 +18,16 @@ _STORE: dict[str, dict[str, Any]] = {}
 _KEYS = ("nodes", "findings", "ports", "urls", "observed")
 
 
+def clear_context_snapshot_cache(engagement_id: str | None = None) -> None:
+    """Forget process-local delta baselines after engagement deletion."""
+    eid = (engagement_id or "").strip()
+    with _lock:
+        if eid:
+            _STORE.pop(eid, None)
+        else:
+            _STORE.clear()
+
+
 def _load_prev_from_db(eid: str) -> dict[str, Any] | None:
     try:
         from osprey.db.session import SessionLocal

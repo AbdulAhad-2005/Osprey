@@ -20,6 +20,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    if "context_snapshots" in sa.inspect(op.get_bind()).get_table_names():
+        return
     op.create_table(
         "context_snapshots",
         sa.Column("engagement_id", sa.String(length=12), primary_key=True),

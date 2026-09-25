@@ -36,7 +36,7 @@ def upgrade() -> None:
         sa.Column("duration_ms", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("observed", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column(
-            "created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
         sa.PrimaryKeyConstraint("id"),
     )
@@ -62,13 +62,13 @@ def upgrade() -> None:
         sa.Column("tags_json", sa.Text(), nullable=False, server_default="[]"),
         sa.Column("occurrence_count", sa.Integer(), nullable=False, server_default="1"),
         sa.Column(
-            "first_seen_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
+            "first_seen_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
         sa.Column(
-            "last_seen_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
+            "last_seen_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
         sa.Column(
-            "created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
@@ -97,7 +97,7 @@ def upgrade() -> None:
         sa.Column("source_tool", sa.String(length=128), nullable=False, server_default=""),
         sa.Column("extracted_by", sa.String(length=16), nullable=False, server_default="parser"),
         sa.Column(
-            "created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
         sa.ForeignKeyConstraint(["observation_id"], ["observations.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),

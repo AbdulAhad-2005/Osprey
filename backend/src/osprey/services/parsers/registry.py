@@ -251,7 +251,8 @@ def ensure_parsers_loaded() -> None:
         from osprey.services.parsers import creds  # noqa: F401
     except ImportError as exc:
         logger.debug("Creds parser module load skipped: %s", exc)
-    # Optional private-overlay parsers (e.g. Hawkeye's creds-manager). Absent in
+    # Optional private-overlay parsers (for example, a company credential
+    # manager). Absent in
     # public Osprey — a missing module is a no-op, not an error.
     try:
         from osprey.services.parsers import creds_private  # noqa: F401

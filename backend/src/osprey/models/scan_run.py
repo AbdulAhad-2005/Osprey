@@ -34,6 +34,8 @@ class ScanRunRow(Base):
     max_passes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     include_low_confidence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     progress: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    request_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    command_preview: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # JSON-serialized (Text, matching the rest of the schema — not native JSONB).
     results_log_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     result_json: Mapped[str] = mapped_column(Text, nullable=False, default="")
@@ -43,3 +45,4 @@ class ScanRunRow(Base):
     )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

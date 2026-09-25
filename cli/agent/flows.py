@@ -138,6 +138,8 @@ def expand_command(template: str, args: list[str]) -> str:
     (positional) in a command template. An unmatched ``$N`` is left as-is rather
     than blanked, so a malformed invocation is visibly wrong, not silently short."""
     out = template.replace("$ARGUMENTS", " ".join(args))
-    for i, arg in enumerate(args, start=1):
-        out = out.replace(f"${i}", arg)
+    # Replace higher indices first so a $1 pass never clobbers the leading digit
+    # of $10..$N. Unmatched $N (index > len(args)) is left as-is by construction.
+    for i in range(len(args), 0, -1):
+        out = out.replace(f"${i}", args[i - 1])
     return out

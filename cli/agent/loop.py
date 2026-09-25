@@ -205,8 +205,11 @@ class Runner:
         *,
         config: CLIModelConfig,
         api_base_url: str,
+        engagement_id: str = "",
+        target: str = "",
         allow_spawn: bool = True,
         tool_filter: "Callable[[str], bool] | None" = None,
+        agent_prompt: str = "",
     ) -> None:
         self.config = config
         self.messages: list[dict[str, Any]] = []
@@ -216,6 +219,14 @@ class Runner:
         # and inherited by spawned workers so a mode is consistent end to end.
         self._tool_filter = tool_filter
         platform_tools.load_server(api_base_url)
+        self._engagement_id = (engagement_id or "").strip()
+        self._target = (target or "").strip()
+        self._agent_prompt = agent_prompt
+        if self._engagement_id:
+            platform_tools.bind_session(
+                engagement_id=self._engagement_id,
+                target=self._target,
+            )
         self._api_base_url = api_base_url
         # Context management (budget resolved lazily on first use — needs the
         # model's real context window from litellm). The rolling checkpoint is
@@ -505,7 +516,7 @@ class Runner:
                 # so keep this constant in sync with that function by hand).
                 _CLI_HISTORY_CAP_CHARS = 3000
                 cap_history = self.config.tool_schema_budget_tokens > 0
-                engagement_id = platform_tools.current_engagement_id()
+                engagement_id = self._engagement_id or platform_tools.current_engagement_id()
                 for tc, (name, result, elapsed) in zip(tool_calls, results):
                     yield Event(
                         "tool_end",
@@ -540,7 +551,8 @@ class Runner:
             yield Event("done", {"content": "(stopped: reached the turn limit for this prompt)"})
         except asyncio.CancelledError:
             findings_readback = await platform_tools.call_tool(
-                "platform_findings", {"engagement_id": platform_tools.current_engagement_id()}
+                "platform_findings",
+                {"engagement_id": self._engagement_id or platform_tools.current_engagement_id()},
             )
             yield Event("cancelled", {"findings": findings_readback})
             raise
@@ -559,16 +571,33 @@ class Runner:
             )
         return await platform_tools.call_tool(name, args)
 
-    async def _worker_system_prompt(self, brief: str, scope: str) -> str:
-        """A specialized worker's system prompt — plans/harness/08-skill-
-        system-at-scale.md Step 4 (mirrors Strix's child-agent
-        specialization): minimal safety policy plus ONLY the skills ranked
-        relevant to THIS worker's own task (via find_skills/platform_skills),
-        never the full catalog and never the parent's full context packet —
-        keeps a spawned worker's context tight even as the skill library
-        grows. Previously a spawned worker got no system prompt at all (a
-        real gap, not a deliberate minimalism — it inherited zero policy and
-        zero skills), so this also closes that."""
+    async def _worker_system_prompt(self, brief: str, scope: str, *, engagement_id: str = "") -> str:
+        """A spawned worker's system prompt — plans/harness/08-skill-system-
+        at-scale.md Step 4. Previously a spawned worker got no system prompt
+        at all (a real gap, not a deliberate minimalism — it inherited zero
+        policy and zero skills). Two independent fixes landed for this and
+        both matter, so both are kept:
+
+        - The same complete base policy, engagement briefing (full
+          ``platform_context``), active-mode overlay, and tool-budget
+          instructions the parent gets (``build_system_prompt``) — without
+          this a worker doesn't know the spawn/record_findings/propose_skill
+          rules, ignores an operator-defined custom mode, and is blind to a
+          constrained tool-schema budget.
+        - ON TOP of that, skills ranked against THIS worker's own brief+scope
+          (mirrors Strix's child-agent specialization) — the context packet's
+          own RELEVANT SKILLS section ranks against the engagement's overall
+          top priorities, which can easily miss what one narrowly-scoped
+          worker specifically needs while the top-level priority list is
+          dominated by something else.
+        """
+        from cli.agent.context import build_system_prompt
+
+        base_prompt = await build_system_prompt(
+            engagement_id,
+            tool_budget_active=self.config.tool_schema_budget_tokens > 0,
+            agent_prompt=self._agent_prompt,
+        )
         query = f"{brief} {scope}".strip()
         try:
             skills_text = await platform_tools.call_tool(
@@ -576,15 +605,12 @@ class Runner:
             )
         except Exception:  # noqa: BLE001 — a skills-lookup failure must never block the worker
             skills_text = ""
-        return (
-            "You are a specialized Osprey subagent working one focused slice of a larger "
-            "engagement. Call tools directly — you have full tool access. Report back "
-            "concisely (what you found, with evidence) when your slice is done.\n"
-            "If a tool's output shows a security-relevant fact its own parser missed, call "
-            "platform_record_findings yourself.\n\n"
-            "Skills ranked relevant to your task (pull full text via platform_skills(path=...) "
-            "if one looks useful):\n" + (skills_text or "(none matched — proceed on judgment)")
+        task_skills_block = (
+            "\n---\n## SKILLS RANKED FOR YOUR SPECIFIC TASK\n"
+            "(pull full text via platform_skills(path=...) if one looks useful)\n"
+            + (skills_text or "(none matched — proceed on judgment)")
         )
+        return base_prompt + task_skills_block
 
     async def _spawn_subagents(
         self, tasks: list[dict[str, Any]], *, event_queue: "asyncio.Queue[Event] | None" = None
@@ -608,17 +634,19 @@ class Runner:
                 "line of work, just keep going in this turn instead."
             )
 
-        engagement_id = platform_tools.current_engagement_id()
+        engagement_id = self._engagement_id or platform_tools.current_engagement_id()
 
         async def _one(worker_num: int, task: dict[str, Any]) -> str:
             worker = Runner(
                 config=self.config, api_base_url=self._api_base_url,
+                engagement_id=engagement_id, target=self._target,
                 allow_spawn=False, tool_filter=self._tool_filter,
+                agent_prompt=self._agent_prompt,
             )
             scope = task.get("scope", "")
             brief = task.get("task", "")
             prompt = f"{brief}\n\n(engagement_id={engagement_id}" + (f", scope={scope})" if scope else ")")
-            system_prompt = await self._worker_system_prompt(brief, scope)
+            system_prompt = await self._worker_system_prompt(brief, scope, engagement_id=engagement_id)
             final = ""
             async for event in worker.run(prompt, system_prompt=system_prompt):
                 if event.type == "done":

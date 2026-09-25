@@ -21,7 +21,7 @@ def upgrade() -> None:
         "surface_expansion",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("engagement_id", sa.String(length=12), nullable=False, server_default=""),
-        sa.Column("last_pass_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("last_pass_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("last_new_nodes", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("last_new_edges", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("consecutive_zero_passes", sa.Integer(), nullable=False, server_default="0"),

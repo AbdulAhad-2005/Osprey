@@ -25,6 +25,7 @@ try:
     from dotenv import load_dotenv
     from prompt_toolkit import PromptSession
     from prompt_toolkit.completion import Completer, Completion
+    from prompt_toolkit.shortcuts import CompleteStyle
     from prompt_toolkit.formatted_text import HTML
     from prompt_toolkit.history import InMemoryHistory
     from prompt_toolkit.patch_stdout import patch_stdout
@@ -196,6 +197,7 @@ def _run_scan_noninteractive(args: argparse.Namespace) -> int:
             f"Cannot reach the backend at {api_url}. "
             "Start it with `docker compose up -d` (repo root) and try again."
         )
+        client.close()
         return 1
 
     target = args.target or args.target_arg
@@ -209,20 +211,23 @@ def _run_scan_noninteractive(args: argparse.Namespace) -> int:
         _bind_engagement(client, data)
     except Exception as exc:
         print_error(_api_error_text(exc))
+        client.close()
         return 1
 
     if args.engine:
         from cli.commands.slash import _run_engine_scan
 
-        _run_engine_scan(client, target, include_low_confidence=args.include_low_confidence)
+        succeeded = _run_engine_scan(
+            client, target, include_low_confidence=args.include_low_confidence
+        )
         client.close()
-        return 0
+        return 0 if succeeded else 1
 
     phase = args.phase
     print_info(f"Scanning {target} (phase: {phase}) — the agent will report back when done.")
-    handle_prompt(_PHASE_PROMPTS[phase].format(target=target), client)
+    succeeded = handle_prompt(_PHASE_PROMPTS[phase].format(target=target), client)
     client.close()
-    return 0
+    return 0 if succeeded else 1
 
 
 def _run_prompt_noninteractive(args: argparse.Namespace) -> int:
@@ -239,15 +244,18 @@ def _run_prompt_noninteractive(args: argparse.Namespace) -> int:
     if args.target:
         try:
             data = client.compile_engagement_for_target(args.target, force_new=args.force_new)
-            client._set_active_engagement(data.get("id") or data.get("engagement_id"))
+            client._set_active_engagement(
+                data.get("id") or data.get("engagement_id"),
+                target=str(data.get("target") or args.target),
+            )
         except Exception as exc:
             print_error(_api_error_text(exc))
             client.close()
             return 1
 
-    handle_prompt(prompt, client)
+    succeeded = handle_prompt(prompt, client)
     client.close()
-    return 0
+    return 0 if succeeded else 1
 
 
 def _print_scorecard(sc: dict) -> None:
@@ -334,8 +342,12 @@ def _run_benchmark_noninteractive(args: argparse.Namespace) -> int:
 
 
 def main() -> None:
-    # Load .env so API_BASE_URL and other env vars are available
-    load_dotenv()
+    # Load .env so API_BASE_URL / LLM_MODEL / LLM_API_KEY are available.
+    # override=True so an edited .env wins over a stale value already exported in
+    # the shell environment — without it, changing LLM_MODEL/LLM_API_KEY in .env
+    # and relaunching kept the old model (the value inherited from the environment
+    # shadowed the file), which forced a full container rebuild to change models.
+    load_dotenv(override=True)
 
     parser = argparse.ArgumentParser(
         prog=CLI_COMMAND,
@@ -402,6 +414,12 @@ def main() -> None:
         session = PromptSession(
             completer=CommandCompleter(),
             history=InMemoryHistory(),
+            # Show all slash commands as a scrollable grid rather than a short
+            # single-column list that only revealed one screenful — the command
+            # set outgrew the default menu. reserve_space_for_menu gives the grid
+            # real height so most commands are visible at once.
+            complete_style=CompleteStyle.MULTI_COLUMN,
+            reserve_space_for_menu=12,
         )
     else:
         # Piped/non-interactive stdin (CI, scripts): fall back to plain input().

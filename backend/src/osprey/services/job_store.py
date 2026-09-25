@@ -54,6 +54,7 @@ class _JobRecord:
         "task",
         "progress",
         "results_log",
+        "last_persisted_at",
     )
 
     def __init__(self, req: JobStartRequest) -> None:
@@ -92,6 +93,7 @@ class _JobRecord:
         # stage-complete result can never be silently clobbered by the next
         # in-flight ticker update before the next poll happens to land.
         self.results_log: list[str] = []
+        self.last_persisted_at = 0.0
 
 
 def _serialize_result(result: Any) -> dict[str, Any] | None:
@@ -165,6 +167,7 @@ def _durable_summary_from_row(row: dict[str, Any]) -> JobSummary:
         status = JobStatus.COMPLETED
 
     result = row.get("result")
+    request = row.get("request") if isinstance(row.get("request"), dict) else {}
     titles: list[str] = []
     success: bool | None = None
     if isinstance(result, dict):
@@ -184,6 +187,11 @@ def _durable_summary_from_row(row: dict[str, Any]) -> JobSummary:
         kind=kind,
         status=status,
         label=str(row.get("label") or ""),
+        tool_name=str(request.get("tool_name") or ""),
+        command_preview=str(row.get("command_preview") or ""),
+        role=str(request.get("role") or ""),
+        depth=int(request.get("depth") or 0),
+        parent_job_id=str(request.get("parent_job_id") or ""),
         created_at=_epoch(row.get("created_at")) or 0.0,
         started_at=started,
         finished_at=finished,
@@ -285,6 +293,53 @@ class JobStore:
             self._persist_job(rec)
         return summary
 
+    async def cancel_for_engagement(self, engagement_id: str) -> int:
+        """Cancel and settle every live job owned by an engagement.
+
+        Engagement deletion uses this before removing durable rows.  Merely
+        calling ``Task.cancel()`` and immediately deleting the engagement leaves
+        a race in which the task can resume at its next cancellation boundary
+        and write findings/job state back under an engagement that no longer
+        exists.  Waiting for all live tasks to settle closes that race.
+        """
+        eid = (engagement_id or "").strip()
+        if not eid:
+            return 0
+        with self._lock:
+            active_ids = [
+                j.job_id
+                for j in self._jobs.values()
+                if j.engagement_id == eid
+                and j.status in (JobStatus.QUEUED, JobStatus.RUNNING)
+            ]
+
+        tasks: list[asyncio.Task[None]] = []
+        for job_id in active_ids:
+            self.cancel(job_id)
+            with self._lock:
+                record = self._jobs.get(job_id)
+                task = record.task if record is not None else None
+            if task is not None and not task.done():
+                tasks.append(task)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        return len(active_ids)
+
+    def forget_engagement(self, engagement_id: str) -> int:
+        """Drop settled process-local job records after durable deletion."""
+        eid = (engagement_id or "").strip()
+        if not eid:
+            return 0
+        with self._lock:
+            job_ids = [
+                job_id
+                for job_id, record in self._jobs.items()
+                if record.engagement_id == eid
+            ]
+            for job_id in job_ids:
+                self._jobs.pop(job_id, None)
+        return len(job_ids)
+
     def running_count(self, engagement_id: str, *, kind: JobKind | None = None) -> int:
         with self._lock:
             return sum(
@@ -335,8 +390,20 @@ class JobStore:
         )
 
         if req.kind == JobKind.AGENT:
-            from osprey.services.llm_service import llm_configured, llm_not_configured_message
+            from osprey.services.llm_service import (
+                llm_configured,
+                llm_not_configured_message,
+            )
 
+            # Pure request invariants come before environment/provider checks.
+            # Otherwise a missing optional provider dependency can mask the
+            # actual malformed request (and makes this guard impossible to test
+            # without configuring an unrelated LLM).
+            if req.depth > max_spawn_depth():
+                raise ValueError(
+                    f"Spawn depth {req.depth} exceeds cap {max_spawn_depth()} — "
+                    "an agent chain nested too deep; do this work in the current agent."
+                )
             if not llm_configured():
                 # The direct platform_spawn_agent path (its REST endpoint turns
                 # this ValueError into a clear HTTP 429 detail message) — a
@@ -351,44 +418,62 @@ class JobStore:
             # Agents draw on a SEPARATE slot pool from tool jobs, plus a lifetime
             # budget and a nesting-depth cap so an agent that spawns agents can't
             # fork-bomb the engagement.
-            if req.depth > max_spawn_depth():
-                raise ValueError(
-                    f"Spawn depth {req.depth} exceeds cap {max_spawn_depth()} — "
-                    "an agent chain nested too deep; do this work in the current agent."
-                )
             budget = agent_spawn_budget()
-            if self.total_count(req.engagement_id, kind=JobKind.AGENT) >= budget:
-                raise ValueError(
-                    f"Agent spawn budget exhausted ({budget}) for this engagement."
-                )
             cap = max_running_agents()
-            running = self.running_count(req.engagement_id, kind=JobKind.AGENT)
-            if running >= cap:
-                raise ValueError(
-                    f"Too many concurrent agents ({running}/{cap}). "
-                    "Let one finish (platform_job_poll) before spawning more."
-                )
         else:
             cap = max_running_jobs()
-            running = self.running_count(req.engagement_id) - self.running_count(
-                req.engagement_id, kind=JobKind.AGENT
-            )
-            if running >= cap:
-                raise ValueError(
-                    f"Too many parallel jobs ({running}/{cap}). "
-                    "Poll completed jobs before starting more."
-                )
 
         record = _JobRecord(req)
         with self._lock:
+            # Admission and insertion are one critical section.  API requests
+            # can arrive on different threads, so separate running_count() calls
+            # allowed two callers to observe the same free final slot and both
+            # enter.  Count directly here to avoid re-entering the non-recursive
+            # lock and make the configured caps exact.
+            engagement_jobs = [
+                job for job in self._jobs.values()
+                if job.engagement_id == req.engagement_id
+            ]
+            if req.kind == JobKind.AGENT:
+                agents = [job for job in engagement_jobs if job.kind == JobKind.AGENT]
+                if len(agents) >= budget:
+                    raise ValueError(
+                        f"Agent spawn budget exhausted ({budget}) for this engagement."
+                    )
+                running = sum(
+                    job.status in (JobStatus.QUEUED, JobStatus.RUNNING)
+                    for job in agents
+                )
+                if running >= cap:
+                    raise ValueError(
+                        f"Too many concurrent agents ({running}/{cap}). "
+                        "Let one finish (platform_job_poll) before spawning more."
+                    )
+            else:
+                running = sum(
+                    job.kind != JobKind.AGENT
+                    and job.status in (JobStatus.QUEUED, JobStatus.RUNNING)
+                    for job in engagement_jobs
+                )
+                if running >= cap:
+                    raise ValueError(
+                        f"Too many parallel jobs ({running}/{cap}). "
+                        "Poll completed jobs before starting more."
+                    )
             self._jobs[record.job_id] = record
             self._prune_locked()
 
+        # Resolve the owning event loop only once every validation check has
+        # passed — the old order resolved it first, which meant a synchronous
+        # caller with no loop got "no event loop" instead of the actual
+        # problem (malformed request, LLM not configured, budget exhausted),
+        # and made the LLM-availability guard untestable without one.
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError as exc:
+            with self._lock:
+                self._jobs.pop(record.job_id, None)
             raise ValueError("Background jobs require an async server event loop") from exc
-
         record.task = loop.create_task(self._run(record.job_id), name=record.job_id)
         logger.info(
             "job spawned id=%s engagement=%s kind=%s label=%s",
@@ -414,7 +499,7 @@ class JobStore:
             from osprey.services.scan_run_store import get_scan_run_store
 
             eng = get_engagement_store().get(record.engagement_id)
-            result = record.result.model_dump() if record.result is not None else None
+            result = _serialize_result(record.result)
             get_scan_run_store().upsert(
                 job_id=record.job_id,
                 engagement_id=record.engagement_id,
@@ -426,6 +511,8 @@ class JobStore:
                 max_passes=record.request.max_passes,
                 include_low_confidence=record.request.include_low_confidence,
                 progress=record.progress,
+                request=record.request.model_dump(mode="json"),
+                command_preview=record.command_preview,
                 results_log=list(record.results_log),
                 result=result,
                 error=record.error,
@@ -469,6 +556,7 @@ class JobStore:
         self._persist_job(record)
 
         def _on_progress(text: str) -> None:
+            persist = False
             with self._lock:
                 rec = self._jobs.get(job_id)
                 if rec is None:
@@ -479,6 +567,14 @@ class JobStore:
                         rec.results_log = rec.results_log[-500:]
                 else:
                     rec.progress = text[:500]
+                now = time.monotonic()
+                if now - rec.last_persisted_at >= 2.0:
+                    rec.last_persisted_at = now
+                    persist = True
+            if persist:
+                # A throttled heartbeat makes partial progress restart-visible
+                # without turning every spinner update into a database write.
+                self._persist_job(rec)
 
         try:
             response = await self._execute(req, on_progress=_on_progress, job_id=job_id)

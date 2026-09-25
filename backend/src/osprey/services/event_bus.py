@@ -66,6 +66,15 @@ def is_active(engagement_id: str) -> bool:
     return bool(_subscribers.get((engagement_id or "").strip()))
 
 
+def clear_history(engagement_id: str) -> None:
+    """Drop replay history for a deleted engagement.
+
+    Existing subscribers are left registered until their connection closes;
+    deletion publishes a terminal event before invoking this cleanup.
+    """
+    _history.pop((engagement_id or "").strip(), None)
+
+
 async def subscribe(engagement_id: str, *, replay: int = 20) -> AsyncIterator[dict[str, Any]]:
     """Async-iterate every event for an engagement: recent history first (so a
     late/reconnecting subscriber isn't dropped into the middle of a run with

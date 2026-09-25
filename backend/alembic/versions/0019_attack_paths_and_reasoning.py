@@ -26,8 +26,8 @@ def upgrade() -> None:
         sa.Column("steps_json", sa.Text(), nullable=False, server_default="[]"),
         sa.Column("status", sa.String(length=32), nullable=False, server_default="hypothesized"),
         sa.Column("finding_id", sa.String(length=64), nullable=False, server_default=""),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_attack_paths_engagement", "attack_paths", ["engagement_id"], unique=False)
@@ -44,8 +44,8 @@ def upgrade() -> None:
         sa.Column("raised_by", sa.String(length=32), nullable=False, server_default="llm"),
         sa.Column("related_asset_id", sa.String(length=512), nullable=False, server_default=""),
         sa.Column("answer", sa.Text(), nullable=False, server_default=""),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_questions_engagement", "questions", ["engagement_id"], unique=False)
@@ -61,8 +61,8 @@ def upgrade() -> None:
         sa.Column("status", sa.String(length=16), nullable=False, server_default="active"),
         sa.Column("supporting_observation_ids_json", sa.Text(), nullable=False, server_default="[]"),
         sa.Column("contradicting_observation_ids_json", sa.Text(), nullable=False, server_default="[]"),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_hypotheses_engagement", "hypotheses", ["engagement_id"], unique=False)

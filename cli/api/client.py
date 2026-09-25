@@ -32,6 +32,7 @@ class APIClient:
         self._client = httpx.Client(timeout=self._timeout, follow_redirects=True)
         self._run_id: str | None = None
         self._engagement_id: str | None = None
+        self._engagement_target: str | None = None
         # The CLI's own local agent loop (cli/agent/loop.py) — lazily created
         # and attached by cli/commands/prompt.py, lives here so it persists
         # across prompts within one CLI session (follow-up questions keep
@@ -210,12 +211,39 @@ class APIClient:
                 return self.create_engagement({"target": target})
             raise
 
-    def _set_active_engagement(self, engagement_id: str | None) -> None:
-        self._engagement_id = engagement_id or None
+    def _set_active_engagement(
+        self, engagement_id: str | None, *, target: str | None = None
+    ) -> None:
+        """Select the engagement for this CLI session.
+
+        A Runner's system prompt and history are engagement-scoped.  Reusing it
+        after a target switch leaks the previous target's context into the new
+        one, so changing either identity invalidates the cached Runner.  The
+        event loop itself is process-scoped and remains reusable.
+        """
+        new_id = engagement_id or None
+        new_target = (target or "").strip() or None
+        changed = new_id != self._engagement_id
+        if new_target is not None and new_target != self._engagement_target:
+            changed = True
+        self._engagement_id = new_id
+        self._engagement_target = new_target
+        if changed:
+            self.agent_runner = None
 
     @property
     def active_engagement_id(self) -> str | None:
         return self._engagement_id
+
+    @property
+    def active_target(self) -> str | None:
+        return self._engagement_target
+
+    def get_engagement(self, engagement_id: str) -> dict[str, Any]:
+        """Resolve an engagement id to its full payload before binding it."""
+        resp = self._client.get(self._url(f"/api/v1/engagements/{engagement_id}"))
+        resp.raise_for_status()
+        return resp.json()
 
     def execution_status(self) -> dict[str, Any]:
         """Ask the backend whether tools can actually run (docker/native) and if
@@ -747,6 +775,15 @@ class APIClient:
         else:
             self.base_url = os.getenv("API_BASE_URL", "http://localhost:9000").rstrip("/")
         self._client = httpx.Client(timeout=self._timeout, follow_redirects=True)
+        # A backend URL is part of an agent session's identity.  Drop both the
+        # cached conversation and engagement binding instead of letting a
+        # reconnect silently keep sending an old system prompt / engagement id
+        # to a potentially different backend.
+        self._set_active_engagement(None)
+        self.agent_runner = None
+        from cli.agent import tools as platform_tools
+
+        platform_tools.reconfigure_server(self.base_url)
 
     def close(self) -> None:
         self._client.close()

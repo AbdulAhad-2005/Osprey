@@ -18,8 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import os
+import re
 from typing import Any
 
 import litellm
@@ -145,11 +145,17 @@ _PROVIDER_RUNTIME_DEPS: dict[str, tuple[str, ...]] = {
 def _missing_runtime_deps(provider: str) -> list[str]:
     import importlib.util
 
-    return [
-        module
-        for module in _PROVIDER_RUNTIME_DEPS.get(provider, ())
-        if importlib.util.find_spec(module) is None
-    ]
+    missing: list[str] = []
+    for module in _PROVIDER_RUNTIME_DEPS.get(provider, ()):
+        try:
+            available = importlib.util.find_spec(module) is not None
+        except (ImportError, ModuleNotFoundError):
+            # find_spec("google.auth") raises when the parent package itself is
+            # absent; that is exactly the ordinary "dependency missing" case.
+            available = False
+        if not available:
+            missing.append(module)
+    return missing
 
 
 def _is_model_configured(settings: LLMSettings) -> bool:
