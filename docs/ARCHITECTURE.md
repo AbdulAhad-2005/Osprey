@@ -131,7 +131,7 @@ Example: the LLM calls `httpx_probe(target="scanme.nmap.org")`.
 
 ### 5.1 platform-mcp gateway (`platform-mcp/server.py`)
 The only surface OpenCode sees. ~50 tools in three families:
-- **Memory / notebook:** `platform_context`, `platform_think`, `platform_graph_link[_many]`, `platform_findings`, `platform_record_finding`, `platform_memory_search`, `platform_evidence_chain`, `platform_attempts`, `platform_thinking`, `platform_finalize_check`, `platform_report_outline`, `platform_artifact`.
+- **Memory / notebook:** `platform_context`, `platform_think`, `platform_graph_link[_many]`, `platform_findings`, `platform_record_finding`, `platform_memory_search`, `platform_evidence_chain`, `platform_attempts`, `platform_priority`, `platform_finalize_check`, `platform_report_outline`, `platform_artifact`.
 - **Execution lanes:** typed `*_scan`/`*_probe` (36 recon/network), `platform_exec`, `platform_shell`, `platform_script`, `platform_install`, `platform_job_start/poll/result`, `platform_fanout[_assets]`.
 - Session binding is in-process: one root target → one `engagement_id`; switching targets rebinds automatically to isolated storage.
 

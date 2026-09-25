@@ -18,7 +18,7 @@ The LLM talks only to `platform-mcp/server.py` over stdio. It never touches `mcp
 | Family | Tools |
 |--------|-------|
 | **Session** | `platform_set_target`, `platform_delete_engagement`, `platform_health` |
-| **Memory / notebook** | `platform_context`, `platform_think`, `platform_thinking`, `platform_graph_link[_many]`, `platform_graph_query`, `platform_tag_asset`, `platform_crown_jewels`, `platform_findings`, `platform_record_finding`, `platform_memory_search`, `platform_evidence_chain`, `platform_attempts`, `platform_artifact` |
+| **Memory / notebook** | `platform_context`, `platform_think`, `platform_graph_link[_many]`, `platform_graph_query`, `platform_priority`, `platform_findings`, `platform_record_finding`, `platform_memory_search`, `platform_evidence_chain`, `platform_attempts`, `platform_artifact` |
 | **Report** | `platform_finalize_check`, `platform_report_outline` |
 | **Execution** | 36 typed `*_scan` / `*_probe` tools, `platform_exec`, `platform_shell`, `platform_script`, `platform_install` |
 | **Async / batch** | `platform_job_start`, `platform_job_poll`, `platform_job_result`, `platform_fanout`, `platform_fanout_assets` |

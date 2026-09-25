@@ -3,7 +3,7 @@ Step 4: a promotion an FP-cache pattern suppressed stays visible, never a
 silent drop.
 
 Revision ID: 0017_suppressed_promotions
-Revises: 0016_exploit_candidate_observation_id
+Revises: 0016_candidate_observation_id
 Create Date: 2026-09-23
 """
 
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0017_suppressed_promotions"
-down_revision: Union[str, None] = "0016_exploit_candidate_observation_id"
+down_revision: Union[str, None] = "0016_candidate_observation_id"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -281,6 +281,278 @@ class APIClient:
         resp.raise_for_status()
         return resp.json()
 
+    # --- Earned-finding pipeline (plans/harness/03-earned-finding-pipeline.md) ---
+    # The only two ways a Finding comes into existence — same REST endpoints
+    # platform_file_finding / platform_promote_observations call, so the CLI
+    # and any MCP harness produce identical results against the same engagement.
+    def file_finding(
+        self, *, engagement_id: str, title: str, finding_type: str, observation_ids: list[str],
+        claim_severity: str = "none", description: str = "", evidence_records: list[dict[str, Any]] | None = None,
+        run_id: str = "", target: str = "", tags: list[str] | None = None,
+    ) -> dict[str, Any]:
+        resp = self._client.post(
+            self._url("/api/v1/findings/file"),
+            json={
+                "engagement_id": engagement_id, "title": title, "finding_type": finding_type,
+                "observation_ids": observation_ids, "claim_severity": claim_severity,
+                "description": description, "evidence_records": evidence_records or [],
+                "run_id": run_id, "target": target, "tags": tags or [],
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def promote_observations(self, engagement_id: str, *, run_id: str = "") -> dict[str, Any]:
+        resp = self._client.post(
+            self._url("/api/v1/findings/promote"), params={"engagement_id": engagement_id, "run_id": run_id},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    # --- Observations (plans/harness/02-evidence-and-observation-layer.md) ---
+    def list_observations(
+        self, engagement_id: str, *, observation_type: str = "", target: str = "", limit: int = 200,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"engagement_id": engagement_id, "limit": limit}
+        if observation_type:
+            params["type"] = observation_type
+        if target:
+            params["target"] = target
+        resp = self._client.get(self._url("/api/v1/observations/"), params=params)
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_observation(self, observation_id: str) -> dict[str, Any]:
+        resp = self._client.get(self._url(f"/api/v1/observations/{observation_id}"))
+        resp.raise_for_status()
+        return resp.json()
+
+    # --- World model (plans/harness/05-world-model-and-attack-paths.md Step 2) ---
+    def world_model_assets(self, engagement_id: str, *, asset_type: str = "") -> dict[str, Any]:
+        params: dict[str, Any] = {"engagement_id": engagement_id}
+        if asset_type:
+            params["asset_type"] = asset_type
+        resp = self._client.get(self._url("/api/v1/reasoning/assets"), params=params)
+        resp.raise_for_status()
+        return resp.json()
+
+    def world_model_related(self, engagement_id: str, asset_id: str, *, max_hops: int = 2) -> dict[str, Any]:
+        resp = self._client.get(
+            self._url("/api/v1/reasoning/related"),
+            params={"engagement_id": engagement_id, "asset_id": asset_id, "max_hops": max_hops},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def world_model_incomplete(self, engagement_id: str) -> dict[str, Any]:
+        resp = self._client.get(self._url("/api/v1/reasoning/incomplete"), params={"engagement_id": engagement_id})
+        resp.raise_for_status()
+        return resp.json()
+
+    def world_model_unexplained(self, engagement_id: str) -> dict[str, Any]:
+        resp = self._client.get(self._url("/api/v1/reasoning/unexplained"), params={"engagement_id": engagement_id})
+        resp.raise_for_status()
+        return resp.json()
+
+    def world_model_conflicts(self, engagement_id: str) -> dict[str, Any]:
+        resp = self._client.get(self._url("/api/v1/reasoning/conflicts"), params={"engagement_id": engagement_id})
+        resp.raise_for_status()
+        return resp.json()
+
+    # --- Attack paths (plans/harness/05-world-model-and-attack-paths.md Step 3) ---
+    def propose_attack_path(self, engagement_id: str, *, title: str, steps: list[dict[str, Any]]) -> dict[str, Any]:
+        resp = self._client.post(
+            self._url("/api/v1/reasoning/attack-paths"),
+            json={"engagement_id": engagement_id, "title": title, "steps": steps},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def list_attack_paths(self, engagement_id: str, *, active_only: bool = True) -> dict[str, Any]:
+        resp = self._client.get(
+            self._url("/api/v1/reasoning/attack-paths"),
+            params={"engagement_id": engagement_id, "active_only": active_only},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_attack_path(self, path_id: str) -> dict[str, Any]:
+        resp = self._client.get(self._url(f"/api/v1/reasoning/attack-paths/{path_id}"))
+        resp.raise_for_status()
+        return resp.json()
+
+    def advance_attack_path(
+        self, path_id: str, *, status: str = "", finding_id: str = "", step: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"finding_id": finding_id}
+        if status:
+            body["status"] = status
+        if step:
+            body["step"] = step
+        resp = self._client.post(self._url(f"/api/v1/reasoning/attack-paths/{path_id}/advance"), json=body)
+        resp.raise_for_status()
+        return resp.json()
+
+    # --- Questions (plans/harness/05-world-model-and-attack-paths.md Step 4) ---
+    def raise_question(
+        self, engagement_id: str, *, text: str, raised_by: str = "operator", related_asset_id: str = "",
+    ) -> dict[str, Any]:
+        resp = self._client.post(
+            self._url("/api/v1/reasoning/questions"),
+            params={"engagement_id": engagement_id, "text": text, "raised_by": raised_by, "related_asset_id": related_asset_id},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def list_questions(self, engagement_id: str, *, open_only: bool = True) -> dict[str, Any]:
+        resp = self._client.get(
+            self._url("/api/v1/reasoning/questions"), params={"engagement_id": engagement_id, "open_only": open_only},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def answer_question(self, question_id: str, *, answer_text: str) -> dict[str, Any]:
+        resp = self._client.post(
+            self._url(f"/api/v1/reasoning/questions/{question_id}/answer"), params={"answer_text": answer_text},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def dismiss_question(self, question_id: str) -> dict[str, Any]:
+        resp = self._client.post(self._url(f"/api/v1/reasoning/questions/{question_id}/dismiss"))
+        resp.raise_for_status()
+        return resp.json()
+
+    # --- Hypotheses (plans/harness/05-world-model-and-attack-paths.md Step 4) ---
+    def raise_hypothesis(
+        self, engagement_id: str, *, statement: str, supporting_observation_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        params = [("engagement_id", engagement_id), ("statement", statement)]
+        params += [("supporting_observation_ids", oid) for oid in (supporting_observation_ids or [])]
+        resp = self._client.post(self._url("/api/v1/reasoning/hypotheses"), params=params)
+        resp.raise_for_status()
+        return resp.json()
+
+    def list_hypotheses(self, engagement_id: str, *, active_only: bool = True) -> dict[str, Any]:
+        resp = self._client.get(
+            self._url("/api/v1/reasoning/hypotheses"), params={"engagement_id": engagement_id, "active_only": active_only},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def add_hypothesis_evidence(self, hypothesis_id: str, *, observation_id: str, supports: bool) -> dict[str, Any]:
+        resp = self._client.post(
+            self._url(f"/api/v1/reasoning/hypotheses/{hypothesis_id}/evidence"),
+            params={"observation_id": observation_id, "supports": supports},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def resolve_hypothesis(self, hypothesis_id: str, *, status: str) -> dict[str, Any]:
+        resp = self._client.post(
+            self._url(f"/api/v1/reasoning/hypotheses/{hypothesis_id}/resolve"), params={"status": status},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    # --- Priority (plans/harness/06-prioritization-engine.md) ---
+    def top_priorities(self, engagement_id: str, *, kinds: str = "observation,asset,question,attack_path", limit: int = 20) -> dict[str, Any]:
+        resp = self._client.get(
+            self._url("/api/v1/priority/top"), params={"engagement_id": engagement_id, "kinds": kinds, "limit": limit},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def phase_priority(self, engagement_id: str, phase: str) -> dict[str, Any]:
+        resp = self._client.get(
+            self._url(f"/api/v1/priority/phase/{phase}"), params={"engagement_id": engagement_id},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    # --- Context packet (plans/harness/07-context-packet.md) ---
+    def get_context_packet(self, engagement_id: str) -> str:
+        resp = self._client.get(self._url("/api/v1/context/packet"), params={"engagement_id": engagement_id})
+        resp.raise_for_status()
+        return resp.json().get("packet", "")
+
+    # --- Skills (plans/harness/08-skill-system-at-scale.md) ---
+    def list_skills_index(self, *, phase: str = "") -> dict[str, Any]:
+        resp = self._client.get(self._url("/api/v1/capabilities/skills-index"), params={"phase": phase})
+        resp.raise_for_status()
+        return resp.json()
+
+    def find_skills(
+        self, *, query: str = "", phase: str = "", tags: str = "", mitre: str = "",
+        nist_csf: str = "", domain: str = "", asset_type: str = "", limit: int = 8,
+    ) -> dict[str, Any]:
+        resp = self._client.get(
+            self._url("/api/v1/capabilities/skills-find"),
+            params={
+                "query": query, "phase": phase, "tags": tags, "mitre": mitre,
+                "nist_csf": nist_csf, "domain": domain, "asset_type": asset_type, "limit": limit,
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_skill_file(self, path: str) -> dict[str, Any]:
+        resp = self._client.get(self._url("/api/v1/capabilities/skills-file"), params={"path": path})
+        resp.raise_for_status()
+        return resp.json()
+
+    # --- Operator memory: graph links + reasoned findings ---
+    def graph_link(
+        self, *, engagement_id: str, source: str, target: str, relation: str, evidence: str,
+        confidence: str = "likely", run_id: str = "", derived_from: str = "",
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "engagement_id": engagement_id, "run_id": run_id, "seed_target": "",
+            "source": source, "target": target, "relation": relation,
+            "evidence": evidence, "confidence": confidence,
+        }
+        if derived_from:
+            body["derived_from"] = derived_from
+        resp = self._client.post(self._url("/api/v1/hybrid/graph/link"), json=body)
+        resp.raise_for_status()
+        return resp.json()
+
+    def record_observation(
+        self, *, engagement_id: str, type: str, target: str = "", details: dict[str, Any] | None = None,
+        source_tool: str = "operator_record", tags: list[str] | None = None, extracted_by: str = "llm",
+    ) -> dict[str, Any]:
+        resp = self._client.post(
+            self._url("/api/v1/observations/"),
+            json={
+                "engagement_id": engagement_id, "type": type, "target": target,
+                "details": details or {}, "source_tool": source_tool, "tags": tags or [],
+                "extracted_by": extracted_by,
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def record_finding(
+        self, *, engagement_id: str, title: str, evidence: str, finding_type: str = "observation",
+        claim_severity: str = "none", description: str = "", source_tool: str = "operator_record",
+        target: str = "", tags: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Record a reasoned conclusion — no prior Observation exists for it.
+        Two calls under the hood (record_observation, then file_finding),
+        same as platform_record_finding: confidence is computed from the
+        attestation evidence, never asserted by the caller."""
+        obs = self.record_observation(
+            engagement_id=engagement_id, type="raw", target=target,
+            details={"title": title, "description": description}, source_tool=source_tool,
+            tags=tags or ["operator_recorded"],
+        )
+        return self.file_finding(
+            engagement_id=engagement_id, title=title, finding_type=finding_type,
+            observation_ids=[obs["id"]], claim_severity=claim_severity, description=description,
+            evidence_records=[{"kind": "attestation", "source_tool": source_tool, "detail": evidence}],
+            target=target, tags=tags or ["operator_recorded"],
+        )
+
     # --- Benchmark harness (plans/harness/01-replay-benchmark-harness.md) ---
     def benchmark_list_fixtures(self) -> dict[str, Any]:
         resp = self._client.get(self._url("/api/v1/benchmark/fixtures"))
@@ -343,20 +615,21 @@ class APIClient:
 
     def start_expansion_job(
         self, engagement_id: str, *, run_id: str = "", max_passes: int = 5,
-        include_low_confidence: bool = False, include_vuln_dispatch: bool = False,
+        include_low_confidence: bool = False,
     ) -> dict[str, Any]:
-        """Engine mode: run the no-LLM engine as a background job. Same job
-        kind/endpoint the MCP `platform_expand` tool and the auto-fire-on-bind
-        path use; the CLI is just another caller. `include_vuln_dispatch` turns
-        the recon-breadth pass into the full deterministic engine (recon → rule-
-        matched vuln tools → queue exploit candidates); off = recon breadth only."""
+        """Engine mode: run the no-LLM InvestigationDirector as a background
+        job (plans/harness/09-dual-mode-planner.md) — same job kind/endpoint
+        the MCP `platform_expand` tool and the auto-fire-on-bind path use;
+        the CLI is just another caller. Always does recon breadth AND, once
+        priority.should_unlock_phase says there's real evidence to work
+        with, vuln dispatch too — no caller-supplied boolean needed anymore;
+        the director decides from the same priority signal either way."""
         resp = self._client.post(
             self._url("/api/v1/jobs/start"),
             json={
                 "kind": "expansion", "engagement_id": engagement_id,
                 "run_id": run_id, "max_passes": max_passes,
                 "include_low_confidence": include_low_confidence,
-                "include_vuln_dispatch": include_vuln_dispatch,
                 "label": f"expand(max_passes={max_passes})",
             },
         )

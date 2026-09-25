@@ -129,14 +129,14 @@ LLM call (typed or platform_exec)
 |------|---------|
 | `platform_skills` / `platform_config` | Skills & allowlisted YAML are **visible** (no more “skills invisible”) |
 | `platform_graph_query` | Filter graph by type/substring — not summary-only |
-| `platform_crown_jewels` | Rank VPN/mail/Oracle/admin from evidence |
+| `platform_priority` | Rank what's worth doing next — multi-factor, decay-aware (plans/harness/06) |
 | `platform_fanout_assets` | Batch **your** shortlist (dry-run default) |
 | `platform_job_start` / `poll` / `result` | Parallel branches for long tools (job_id) |
 | `force_refresh` on `platform_exec` | Cache transparency + intentional re-run |
 | Finalize `spa_false_api_claims` | HTML catch-all on `/api` cannot support COMPLETE CRITICAL theater |
 
-Config: `config/ingest_rules.yaml`, `config/thinking_model.yaml` · skill: `skills/shared/evidence-to-hypothesis.md`
-(No per-vendor packs — extend signal classes in YAML; LLM supplies product knowledge.)
+Config: `config/ingest_rules.yaml` · skill: `skills/shared/evidence-to-hypothesis.md`, `skills/shared/attack-surface-instincts.md`
+(No per-vendor packs — extend signal classes in the skill layer; LLM supplies product knowledge.)
 
 Key files:
 
@@ -178,7 +178,7 @@ Pipes, loops, and compound shell → use **script**, not shell metacharacters.
 
 `platform_playbook(name=, target=)` reads `config/playbooks.yaml` (+ `.json`).
 
-Examples: `web_recon_light`, `network_crown_jewels`, `dns_deep`, `smb_followup`.
+Examples: `web_recon_light`, `network_port_confirm`, `dns_deep`, `smb_followup`.
 
 Returns ordered steps `{tool, why, suggested_params, fallback}` — **nothing auto-runs**. The LLM may follow, edit, or ignore.
 
@@ -371,9 +371,9 @@ python scripts/smoke_recon_network.py --api http://127.0.0.1:9000
 
 **Advise:** `platform_playbook`, `platform_skills`, `platform_config`  
 
-**Author memory:** `platform_graph_link`, `platform_graph_link_many`, `platform_tag_asset`, `platform_record_finding`  
+**Author memory:** `platform_graph_link`, `platform_graph_link_many`, `platform_record_finding`  
 
-**Query memory:** `platform_findings`, `platform_graph_query`, `platform_crown_jewels`, `platform_thinking`, `platform_memory_search`, `platform_evidence_chain`, `platform_attempts`, `platform_artifact`  
+**Query memory:** `platform_findings`, `platform_graph_query`, `platform_priority`, `platform_memory_search`, `platform_evidence_chain`, `platform_attempts`, `platform_artifact`  
 
 **Report:** `platform_finalize_check`, `platform_report_outline`
 

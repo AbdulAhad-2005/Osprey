@@ -6,6 +6,7 @@ from osprey.api.v1.endpoints import (
     benchmark,
     capabilities,
     config,
+    context,
     engagements,
     exploit_queue,
     findings,
@@ -16,6 +17,7 @@ from osprey.api.v1.endpoints import (
     models,
     observations,
     pipeline,
+    priority,
     reasoning,
     surface,
     tools,
@@ -40,3 +42,5 @@ api_v1_router.include_router(audit.router, prefix="/audit", tags=["audit"])
 api_v1_router.include_router(benchmark.router, prefix="/benchmark", tags=["benchmark"])
 api_v1_router.include_router(observations.router, prefix="/observations", tags=["observations"])
 api_v1_router.include_router(reasoning.router, prefix="/reasoning", tags=["reasoning"])
+api_v1_router.include_router(priority.router, prefix="/priority", tags=["priority"])
+api_v1_router.include_router(context.router, prefix="/context", tags=["context"])

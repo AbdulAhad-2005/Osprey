@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 from rich.markdown import Markdown
 from rich.markup import escape
 
-from cli.agent.context import build_system_prompt
+from cli.agent.context import build_system_prompt, summarize_last_action
 from cli.agent.llm import CLIModelConfig, LLMNotConfiguredError
 from cli.agent.loop import Runner, tool_result_failed
 from cli.ui.display import (
@@ -104,14 +104,20 @@ def handle_prompt(prompt: str, client: "APIClient") -> None:
 
 
 async def _drive(prompt: str, client: "APIClient", runner: Runner) -> None:
-    system_prompt = ""
-    if not runner.messages:
-        agent = getattr(client, "active_agent", None)
-        system_prompt = await build_system_prompt(
-            client.active_engagement_id or "",
-            tool_budget_active=runner.config.tool_schema_budget_tokens > 0,
-            agent_prompt=(agent.prompt if agent is not None else ""),
-        )
+    # Rebuilt every turn, not just the first (plans/harness/07-context-packet.md
+    # Step 2) — the packet inside it is a fresh read of the world model each
+    # time, so state discovered mid-session (a new host, a hot priority item,
+    # an attack path advancing) is never stuck at turn-1's snapshot, and
+    # compaction can never lose it since it's re-injected fresh regardless of
+    # what conversation history survives. Cheap: it's bounded store queries,
+    # not re-derivation from scratch.
+    agent = getattr(client, "active_agent", None)
+    system_prompt = await build_system_prompt(
+        client.active_engagement_id or "",
+        tool_budget_active=runner.config.tool_schema_budget_tokens > 0,
+        agent_prompt=(agent.prompt if agent is not None else ""),
+        last_action=summarize_last_action(runner.messages),
+    )
 
     # The one genuinely silent gap in a turn — the model call itself (seconds,
     # sometimes 10+ with complete()'s own retry-with-backoff) had zero visible

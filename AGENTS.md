@@ -96,9 +96,9 @@ Prefer parallelism, and prefer to watch it happen:
 8. **Profile each worthwhile host fully** — IP, tech, WAF, services on open ports, and an
    OS-detection attempt (`nmap_custom_scan -O`/`-A`, or `shodan_host_info`). OS is
    best-effort; the rest should have a real result, not just a tool having run once.
-9. **Deepen crown jewels first, but don't dismiss the rest.** A crown-jewel score is a
-   priority order, not permission to skip. "Probably behind the same firewall" is a guess —
-   a shared IP still means different vhosts/paths/apps until you've checked.
+9. **Deepen top-priority assets first, but don't dismiss the rest.** `platform_priority`'s
+   score is a priority order, not permission to skip. "Probably behind the same firewall"
+   is a guess — a shared IP still means different vhosts/paths/apps until you've checked.
 10. **Before calling it done**, if `platform_context`/`platform_pipeline` shows a large open
     count or an unlocked-but-untouched phase, don't explain it away in bulk — sample a few
     individually first. Then check in: say the surface looks exhausted and ask whether to go
@@ -131,9 +131,9 @@ SQLi, file upload, SSRF, SSTI, LFI, deserialization) has no dedicated tools — 
 session pattern (nohup+log for listeners, tmux for interactive sessions).
 
 **Memory/planning — reach for these like any other tool:**
-- **Where are we?** → `platform_context` (phase status, crown jewels, jobs, delta, skills index).
+- **Where are we?** → `platform_context` (phase status, priorities, jobs, delta, skills index).
 - **Phase tactics** → `platform_skills` (pull a skill's full text by `path`).
-- **What next / I'm stuck** → `platform_thinking` (hypotheses from your evidence) ·
+- **What next / I'm stuck** → `platform_priority` (multi-factor score over the world model) ·
   `platform_playbook` (tool suggestions).
 - **Persist a head-only conclusion** → `platform_think` (hypothesis) · `platform_graph_link[_many]`
   (a relationship you worked out) · `platform_record_findings` (bulk facts no tool emitted).

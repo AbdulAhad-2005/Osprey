@@ -74,15 +74,6 @@ class JobStartRequest(BaseModel):
             "them anyway."
         ),
     )
-    include_vuln_dispatch: bool = Field(
-        default=False,
-        description=(
-            "No-LLM engine: after recon reaches fixpoint, run the deterministic "
-            "tech_dispatch-matched vuln/web tools (nuclei/wpscan/sslyze/sqlmap/…) to a "
-            "bounded fixpoint, then queue exploit candidates. Never launches exploitation. "
-            "Off for a pure recon-breadth pass (platform_expand); on for the full no-LLM engine."
-        ),
-    )
     # kind=agent — a scoped LLM sub-agent
     role: str = Field(default="recon", description="Agent role → phase tool catalog (see AGENT_ROLES)")
     task: str = Field(default="", description="Free-form goal for the sub-agent")
@@ -132,5 +123,5 @@ class JobResultResponse(BaseModel):
     result: dict[str, Any] | None = None
     note: str = (
         "On completed: findings already ingested if record_findings=true. "
-        "Call platform_findings / platform_context / platform_thinking to analyze."
+        "Call platform_findings / platform_context / platform_priority to analyze."
     )

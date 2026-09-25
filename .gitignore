@@ -73,3 +73,7 @@ plans/harness.zip
 opencode_chatgpt_discussion.txt
 prompts.md
 plans/harness/
+
+# Unrelated personal staging content — not part of this project, never push.
+Prep-final-staging/
+tmp_iso_inventory.py

@@ -106,6 +106,24 @@ def tool_result_failed(result: str) -> bool:
     return bool(m) and m.group(1).lower() == "false"
 
 
+def refresh_system_message(messages: list[dict[str, Any]], system_prompt: str) -> list[dict[str, Any]]:
+    """Replace the current system message with a fresh one, or insert it if
+    there isn't one yet — plans/harness/07-context-packet.md Step 2/4. A pure
+    function (no I/O) so the "rebuild every turn, including across
+    compaction" behavior is directly testable without mocking the LLM/tool
+    machinery ``Runner.run()`` also needs. Mutates and returns ``messages``
+    for convenience; empty ``system_prompt`` is a no-op (keeps whatever's
+    already there unchanged)."""
+    if not system_prompt:
+        return messages
+    fresh = {"role": "system", "content": system_prompt}
+    if messages and messages[0].get("role") == "system":
+        messages[0] = fresh
+    else:
+        messages.insert(0, fresh)
+    return messages
+
+
 def _stall_notice(name: str, count: int) -> str:
     return (
         f"BLOCKED (no-progress guard): {name} returned the same result {count} times "
@@ -300,9 +318,17 @@ class Runner:
         what the engagement already has before the CancelledError propagates,
         since tool-call findings are already durably saved server-side by the
         time a tool call returns (nothing about that persistence depends on
-        this loop finishing)."""
-        if system_prompt and not any(m.get("role") == "system" for m in self.messages):
-            self.messages.insert(0, {"role": "system", "content": system_prompt})
+        this loop finishing).
+
+        ``system_prompt``, when given, REPLACES the current system message
+        rather than only being inserted the first time (plans/harness/07-
+        context-packet.md Step 2: the context packet is rebuilt from the
+        world model on every turn, not just the first — a caller that wants
+        it kept fresh passes a newly-built one on every call; the caller
+        decides how often to rebuild, this method only ever applies whatever
+        it's given). A caller that passes nothing keeps whatever system
+        message already exists, unchanged."""
+        refresh_system_message(self.messages, system_prompt)
         self.messages.append({"role": "user", "content": prompt})
 
         tool_schemas = self._tool_schemas()
@@ -533,6 +559,33 @@ class Runner:
             )
         return await platform_tools.call_tool(name, args)
 
+    async def _worker_system_prompt(self, brief: str, scope: str) -> str:
+        """A specialized worker's system prompt — plans/harness/08-skill-
+        system-at-scale.md Step 4 (mirrors Strix's child-agent
+        specialization): minimal safety policy plus ONLY the skills ranked
+        relevant to THIS worker's own task (via find_skills/platform_skills),
+        never the full catalog and never the parent's full context packet —
+        keeps a spawned worker's context tight even as the skill library
+        grows. Previously a spawned worker got no system prompt at all (a
+        real gap, not a deliberate minimalism — it inherited zero policy and
+        zero skills), so this also closes that."""
+        query = f"{brief} {scope}".strip()
+        try:
+            skills_text = await platform_tools.call_tool(
+                "platform_skills", {"query": query, "limit": 5} if query else {}
+            )
+        except Exception:  # noqa: BLE001 — a skills-lookup failure must never block the worker
+            skills_text = ""
+        return (
+            "You are a specialized Osprey subagent working one focused slice of a larger "
+            "engagement. Call tools directly — you have full tool access. Report back "
+            "concisely (what you found, with evidence) when your slice is done.\n"
+            "If a tool's output shows a security-relevant fact its own parser missed, call "
+            "platform_record_findings yourself.\n\n"
+            "Skills ranked relevant to your task (pull full text via platform_skills(path=...) "
+            "if one looks useful):\n" + (skills_text or "(none matched — proceed on judgment)")
+        )
+
     async def _spawn_subagents(
         self, tasks: list[dict[str, Any]], *, event_queue: "asyncio.Queue[Event] | None" = None
     ) -> str:
@@ -565,8 +618,9 @@ class Runner:
             scope = task.get("scope", "")
             brief = task.get("task", "")
             prompt = f"{brief}\n\n(engagement_id={engagement_id}" + (f", scope={scope})" if scope else ")")
+            system_prompt = await self._worker_system_prompt(brief, scope)
             final = ""
-            async for event in worker.run(prompt):
+            async for event in worker.run(prompt, system_prompt=system_prompt):
                 if event.type == "done":
                     final = event.data.get("content", "")
                 elif event_queue is not None and event.type in ("thinking", "tool_start", "tool_end", "error"):

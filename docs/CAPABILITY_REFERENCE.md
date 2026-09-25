@@ -190,20 +190,14 @@ Examples of LLM-authored relations:
 - `cors_exposes_to`
 - `belongs_to_app_suite`
 
-#### `platform_tag_asset`
+#### `platform_tag_asset` (removed)
 
-Adds an operator role, reason, and score adjustment:
-
-```text
-platform_tag_asset(
-  asset="api.example.com",
-  role="data_backend",
-  boost=35,
-  reason="Observed authenticated user-data endpoint"
-)
-```
-
-Tags improve crown-jewel prioritization without editing global scoring files.
+Removed along with the crown-jewel scorer it fed (harness-unification pass,
+`plans/README.md`). Prioritization is now entirely evidence-derived
+(`platform_priority` — see §17) rather than operator-boost-adjustable; there
+is no direct replacement for manually boosting one asset's score. To make an
+asset structurally more central (which *does* raise its priority via the
+graph-centrality factor), link it into the graph with `platform_graph_link`.
 
 #### `platform_think`
 
@@ -326,9 +320,11 @@ LLM can retrieve only the slices it needs.
 
 ### Prioritization and reporting
 
-#### `platform_crown_jewels`
+#### `platform_priority` (formerly `platform_crown_jewels`)
 
-Ranks high-value assets using evidence-derived reasons and operator tags.
+Ranks what's worth doing next — a real multi-factor score (evidence
+strength, novelty/decay, graph centrality, coverage gaps, and more) over the
+world model, not a fixed operator-tag boost. See §17.
 
 #### `platform_finalize_check`
 
@@ -434,11 +430,11 @@ claiming API impact.
 | `correlation_rules.yaml`   | Hypothesis links and tags     | Never manufacture observed impact            |
 | `parallelism.yaml`         | Job cap and soft hints        | Never auto-start                             |
 | `finalize_rules.yaml`      | Proof thresholds              | Hard claim integrity, soft workflow guidance |
-| `thinking_model.yaml`      | SIGNAL → CONFIRM → GRADE    | No per-vendor cognition packs                |
 | `tech_dispatch.yaml`       | Technology signals            | Advisory signals, not orders                 |
 | `escalation_matrix.yaml`   | Internal recovery             | Do not dump chains into normal MCP output    |
 | `recon_network_tools.yaml` | Tool definitions              | Capability catalog, not engagement sequence  |
 | `playbooks.yaml`           | Optional sequences            | LLM may alter, skip, or ignore               |
+| `priority.yaml`            | Multi-factor prioritization   | Decides what to look at next, never confidence |
 
 YAML is intended to be the source of truth.
 
@@ -752,8 +748,7 @@ Raw fallback findings retain up to 24,000 characters and use:
 
 ```text
 confidence=hypothesis
-evidence_grade=unverified
-tags=[raw_output, unparsed, grade:unverified]
+tags=[raw_output, unparsed]
 ```
 
 ### 14.2 Universal YAML promotion path
@@ -1097,145 +1092,31 @@ This is the main “no hardcoded engagement” property of graph write-back.
 
 ---
 
-## 17. Tags, crown-jewel ranking, and calculations
+## 17. Prioritization (formerly crown-jewel ranking)
 
-### 17.1 `platform_tag_asset`
+`platform_tag_asset` and the crown-jewel additive-regex scorer described in
+earlier revisions of this doc no longer exist — removed, along with
+`evidence_grade`, in the harness-unification pass (see `plans/README.md`).
+Every limitation that scorer had (no graph centrality, no recency decay, no
+exploitability signal, a real double-counting bug in its operator-boost
+math) is what `plans/harness/06-prioritization-engine.md` was built to fix,
+not patch.
 
-The call requires:
+**Current mechanism:** `services/priority.py`'s multi-factor score, exposed
+as `platform_priority` (MCP), `/api/v1/priority/top` (REST), and `/priority`
+(CLI). It scores every world-model item (observation, asset, question,
+attack path) on eleven factors — objective relevance, evidence strength,
+novelty/decay, potential impact, **graph centrality**, unexplained/
+conflicting behavior, validation ease, coverage gaps, minus cost/repetition/
+risk — weighted by `config/priority.yaml` (tunable, not hardcoded). Decay is
+a real exponential half-life per observation type, not a missing feature.
+Every score is a fresh computation (no double-counted boosts to accumulate),
+and it deliberately answers a different question from a Finding's confidence
+(Plan 03's one law): priority says what's worth doing next, never whether
+something is real.
 
-- Asset
-- Reason
-- Optional role
-- Optional boost
-
-Role normalization:
-
-```text
-lowercase
-hyphen → underscore
-remove characters outside [a-z0-9_]
-empty → operator_priority
-```
-
-Boost is clamped:
-
-```text
--50 <= boost <= 100
-```
-
-One call writes twice:
-
-1. Node metadata:
-
-```text
-operator_role
-operator_boost
-```
-
-2. Inferred observation finding:
-
-```text
-source_tool=operator_tag_asset
-confidence=likely
-severity=none
-metadata.asset
-metadata.asset_type
-metadata.operator_role
-metadata.operator_boost
-```
-
-Later tags overwrite node metadata, while earlier tag findings remain.
-
-### 17.2 Crown-jewel grouping
-
-For each finding:
-
-```text
-asset = finding.target or finding.title
-```
-
-HTTP-like assets are reduced to hostname. Scoring is additive and currently
-occurs once per finding, not once per unique fact.
-
-### 17.3 Exact score contributions
-
-For each finding:
-
-```text
-for each configured role regex matching asset or full finding blob:
-    score += role_weight
-
-for each technical regex matching the blob:
-    CORS wildcard     +20
-    SPA catch-all     -25
-    auth challenge    +15
-    vendor X-header   +12
-
-if evidence_grade == observed:
-    score += 8
-
-if severity is high or critical:
-    score += 12 when observed
-    score += 3 otherwise
-```
-
-Current role weights from `thinking_model.yaml`:
-
-```text
-remote access       40
-mail                38
-device management   36
-DevOps              35
-admin/identity      32
-voice               30
-API                 28
-business portal     24
-```
-
-For each graph node:
-
-```text
-matching role regex:
-    score += max(5, floor(role_weight / 2))
-
-operator_boost in node metadata:
-    score += operator_boost
-```
-
-Finally, the latest operator-tag finding for each asset adds its boost.
-
-Results:
-
-```text
-sort by score descending
-tie-break by asset string
-discard score <= 0
-return up to requested limit
-show at most 8 reasons per row
-```
-
-### 17.4 Current scoring defects and limits
-
-The same operator boost is currently added:
-
-1. From node metadata.
-2. Again from the operator-tag finding.
-
-Therefore `boost=40` commonly contributes `80`. This is a known defect, not the
-intended formula.
-
-Repeated findings also repeat role, technical, observed, and severity points.
-Current ranking has no:
-
-- Graph centrality
-- Unique-tool weighting
-- Edge-count weighting
-- Recency decay
-- Exploitability calculation
-- Business-impact model
-- Semantic deduplication
-
-Treat crown-jewel scores as prioritization hints, not objective risk values.
+Treat priority scores as prioritization hints, same as before — they rank
+what to look at next, not an objective risk model.
 
 ---
 
@@ -2226,7 +2107,7 @@ Graph and cognition:
 - `backend/src/osprey/services/operator_memory.py`
 - `backend/src/osprey/services/finding_correlator.py`
 - `backend/src/osprey/services/graph_query.py`
-- `backend/src/osprey/services/crown_jewels.py`
+- `backend/src/osprey/services/priority.py`
 - `backend/src/osprey/services/evidence_chain.py`
 
 Recall and context:
@@ -2258,7 +2139,7 @@ Configuration:
 - `config/correlation_rules.yaml`
 - `config/parallelism.yaml`
 - `config/finalize_rules.yaml`
-- `config/thinking_model.yaml`
+- `config/priority.yaml`
 
 MCP/API:
 

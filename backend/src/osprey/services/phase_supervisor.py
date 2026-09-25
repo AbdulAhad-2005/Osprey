@@ -1,4 +1,15 @@
-"""Phase supervisor — the deterministic conductor of the multi-agent pipeline.
+"""Phase supervisor — the read-only status/brief layer + capability helpers
+for the multi-agent pipeline.
+
+plans/harness/09-dual-mode-planner.md Step 2 moved the actual DRIVING loop
+(``run_pipeline``) into ``services/investigation_director.py``'s
+``run_agent_driven_pipeline`` — "one director, one path," not two. Everything
+below stays here because it has TWO live consumers, not one: the director's
+loop (spawn decisions, agent jobs) AND ``platform_pipeline``'s read-only
+status report (an external harness/the CLI's own loop asks "what would
+happen" without triggering anything). Moving it would have meant either
+duplicating it or making the read-only report import the driving module,
+backwards from what it should depend on.
 
 Instead of ONE agent walking recon → vuln → exploit in a single serial loop, a
 mechanical conductor runs *concurrent* phase agents and starts each downstream
@@ -15,8 +26,10 @@ Design (matches the operator's model):
     auto-started alongside the recon agent, since both target the same
     subdomains/IPs/ports/CDN-origin surface with the same tools and would just
     race the shared tool-execution cache instead of complementing each other.)
-  * As soon as recon has produced attack surface (sufficiency.should_trigger), a
-    vuln agent starts — recon keeps running.
+  * As soon as recon has produced attack surface worth a real pass
+    (priority.should_unlock_phase — a multi-factor priority score crossing a
+    threshold, plans/harness/06-prioritization-engine.md), a vuln agent
+    starts — recon keeps running.
   * As soon as vuln has produced something exploitable, an exploit agent starts —
     recon and vuln keep running.
   * Feedback: if a later phase discovers a new host/subdomain while recon is idle,
@@ -25,22 +38,21 @@ Design (matches the operator's model):
     brains. They coordinate ONLY through the shared per-engagement stores — no
     bespoke message bus. Each agent may itself spawn intra-phase sub-agents.
 
-The spawn/lifecycle DECISION is a pure function (``decide_actions``) so it is unit
-testable without an LLM; the async ``run_pipeline`` wraps it with the job store,
-findings deltas, and a hard time budget.
+The spawn/lifecycle DECISION is a pure function (``decide_actions``) so it is
+unit testable without an LLM; ``investigation_director.run_agent_driven_
+pipeline`` wraps it with the job store, findings deltas, and a hard time
+budget.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from osprey.schemas.jobs import JobKind, JobStartRequest, JobStatus
-from osprey.services import sufficiency
+from osprey.services import priority, sufficiency
 from osprey.services.job_store import get_job_store
 
 logger = logging.getLogger(__name__)
@@ -49,8 +61,6 @@ logger = logging.getLogger(__name__)
 # phase, handled separately; network/web/osint are left to the LLM/harness to
 # spawn explicitly via spawn_agent when it judges them worthwhile).
 _DOWNSTREAM_PHASES = ("vuln", "exploit")
-
-SupervisorEvent = Callable[[str, dict[str, Any]], Awaitable[None] | None]
 
 
 @dataclass
@@ -73,16 +83,20 @@ class PipelineState:
 
 def decide_actions(
     *,
-    signals: dict[str, int],
+    phase_unlock: dict[str, tuple[bool, str]],
     active_by_phase: dict[str, int],
     spawned_by_phase: dict[str, int],
     max_agents_per_phase: int,
 ) -> list[SpawnAction]:
     """Pure decision: which downstream phase agents to spawn right now.
 
-    A phase is spawned when the blackboard meets its trigger AND no agent for it
-    is currently active AND its per-phase spawn budget is not exhausted. Upstream
-    phases are never stopped — this only ADDS concurrent work.
+    A phase is spawned when it's unlocked (plans/harness/06-prioritization-
+    engine.md Step 4: a multi-factor priority score crossing a threshold, not
+    a finding-count trigger — ``phase_unlock`` is precomputed by the caller via
+    ``priority.should_unlock_phase`` since that needs DB/graph reads this pure
+    function deliberately stays free of) AND no agent for it is currently
+    active AND its per-phase spawn budget is not exhausted. Upstream phases
+    are never stopped — this only ADDS concurrent work.
     """
     actions: list[SpawnAction] = []
     for phase in _DOWNSTREAM_PHASES:
@@ -90,8 +104,9 @@ def decide_actions(
             continue
         if spawned_by_phase.get(phase, 0) >= max_agents_per_phase:
             continue
-        if sufficiency.should_trigger(phase, "", signals=signals):
-            actions.append(SpawnAction(phase=phase, reason=sufficiency.trigger_reason(phase, signals)))
+        unlocked, reason = phase_unlock.get(phase, (False, ""))
+        if unlocked:
+            actions.append(SpawnAction(phase=phase, reason=reason))
     return actions
 
 
@@ -147,14 +162,15 @@ def phase_readiness_snapshot(engagement_id: str, run_id: str = "") -> dict[str, 
         return {"engagement_id": "", "phases": {}, "signals": {}}
 
     signals = sufficiency.phase_signals(eid)
+    ctx = priority.build_context(eid)
     phases: dict[str, Any] = {
         "recon": {"always_active": True, "brief": subagent_brief("recon")}
     }
     for phase in _DOWNSTREAM_PHASES:
-        unlocked = sufficiency.should_trigger(phase, eid, signals=signals)
+        unlocked, reason = priority.should_unlock_phase(eid, phase, ctx=ctx)
         phases[phase] = {
             "unlocked": unlocked,
-            "reason": sufficiency.trigger_reason(phase, signals) if unlocked else "",
+            "reason": reason if unlocked else "",
             "brief": subagent_brief(phase) if unlocked else "",
         }
 
@@ -289,134 +305,6 @@ def _spawn_agent_job(
     except ValueError as exc:
         logger.info("supervisor: could not spawn %s agent — %s", role, exc)
         return None
-
-
-async def run_pipeline(
-    *,
-    engagement_id: str,
-    run_id: str = "",
-    on_event: SupervisorEvent | None = None,
-    stable_polls_to_finish: int = 3,
-) -> dict[str, Any]:
-    """Drive the concurrent phase pipeline to fixpoint or the time budget.
-
-    Returns a summary dict. Non-blocking for callers that want fire-and-forget:
-    wrap in ``asyncio.create_task``. The heavy work happens in the spawned agent
-    and expansion jobs; this loop only decides + monitors.
-    """
-    if not (engagement_id or "").strip():
-        return {"error": "engagement_id required"}
-
-    cfg = sufficiency.load_pipeline_config()
-    poll = float(cfg.get("supervisor_poll_seconds") or 8)
-    budget = float(cfg.get("pipeline_time_budget_seconds") or 3600)
-    max_per_phase = int(cfg.get("max_agents_per_phase") or 3)
-    reopen_types = sufficiency.recon_reopen_types()
-
-    state = PipelineState(engagement_id=engagement_id, run_id=run_id)
-
-    async def emit(event: str, data: dict[str, Any]) -> None:
-        if on_event is None:
-            return
-        result = on_event(event, {**data, "engagement_id": engagement_id})
-        if result is not None:
-            await result
-
-    # --- Kick off: the recon lead agent, not the deterministic breadth engine
-    # too. The two target the same ground (subdomains/sisters/IPs/ports/CDN-
-    # origin) with the same tools (domain_hunter, subfinder_scan, amass_scan,
-    # naabu_port_scan, httpx_probe, dnsx_resolve, nmap_service_scan) — running
-    # both here isn't complementary, it's overlapping work racing the shared
-    # tool-execution cache (same tool+params = cache hit; anything else, both
-    # genuinely execute). The engine's original purpose ("mechanical
-    # enumeration without burning LLM turns") predates the recon agent having
-    # full tool access and real judgment; now that it does, it's a strict
-    # superset, so the engine is no longer auto-started here. It's still
-    # available standalone via platform_expand for a genuinely LLM-free fast
-    # pass (e.g. before any LLM is configured at all).
-    recon_job = _spawn_agent_job(
-        engagement_id=engagement_id, run_id=run_id, role="recon",
-        task=subagent_brief("recon"),
-    )
-    state.spawned_by_phase["recon"] = 1 if recon_job else 0
-    await emit("pipeline_start", {"recon_job": recon_job})
-
-    while True:
-        await asyncio.sleep(poll)
-
-        if time.monotonic() - state.started_at > budget:
-            await emit("pipeline_stop", {"reason": "time_budget"})
-            break
-
-        signals = sufficiency.phase_signals(engagement_id)
-        active = _active_by_phase(engagement_id)
-
-        # 1) Trigger downstream phases (concurrent, additive).
-        for action in decide_actions(
-            signals=signals,
-            active_by_phase=active,
-            spawned_by_phase=state.spawned_by_phase,
-            max_agents_per_phase=max_per_phase,
-        ):
-            if action.phase == "vuln":
-                await _maybe_auto_scan_network_vulns(engagement_id=engagement_id, run_id=run_id)
-            job_id = _spawn_agent_job(
-                engagement_id=engagement_id, run_id=run_id, role=action.phase,
-                task=f"{subagent_brief(action.phase)}\n\nContext: triggered because "
-                     f"{action.reason}. Work the {action.phase} surface the earlier "
-                     "phases discovered.",
-            )
-            if job_id:
-                state.spawned_by_phase[action.phase] = state.spawned_by_phase.get(action.phase, 0) + 1
-                state.triggered.add(action.phase)
-                await emit("phase_triggered", {"phase": action.phase, "reason": action.reason, "job_id": job_id})
-
-        # 2) Feedback: new host/subdomain findings while recon is idle → reopen recon.
-        reopen_count = sum(signals.get(_reopen_signal(t), 0) for t in reopen_types)
-        recon_active = active.get("recon", 0) > 0
-        if (
-            not recon_active
-            and reopen_count > state.last_reopen_count
-            and state.spawned_by_phase.get("recon", 0) < max_per_phase * 2
-        ):
-            job_id = _spawn_agent_job(
-                engagement_id=engagement_id, run_id=run_id, role="recon",
-                task=f"{subagent_brief('recon')}\n\nContext: new hosts/subdomains were "
-                     "discovered by a later phase. Expand and probe these "
-                     "newly-surfaced assets.",
-            )
-            if job_id:
-                state.spawned_by_phase["recon"] = state.spawned_by_phase.get("recon", 0) + 1
-                await emit("recon_reopened", {"job_id": job_id, "reopen_count": reopen_count})
-        state.last_reopen_count = reopen_count
-
-        # 3) Fixpoint: no active agents AND no new findings for N stable polls.
-        findings_total = sum(signals.values())
-        any_active = bool(active) or _expansion_running(engagement_id)
-        if not any_active and findings_total == state.last_findings_total:
-            state.stable_polls += 1
-        else:
-            state.stable_polls = 0
-        state.last_findings_total = findings_total
-
-        await emit("pipeline_tick", {
-            "signals": signals,
-            "active": active,
-            "spawned": dict(state.spawned_by_phase),
-            "stable_polls": state.stable_polls,
-        })
-
-        if state.stable_polls >= stable_polls_to_finish:
-            await emit("pipeline_stop", {"reason": "fixpoint"})
-            break
-
-    return {
-        "engagement_id": engagement_id,
-        "run_id": run_id,
-        "spawned_by_phase": dict(state.spawned_by_phase),
-        "triggered": sorted(state.triggered),
-        "signals": sufficiency.phase_signals(engagement_id),
-    }
 
 
 def _reopen_signal(finding_type: str) -> str:

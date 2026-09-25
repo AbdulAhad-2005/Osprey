@@ -27,7 +27,7 @@ and Kali. Skills here sharpen judgment — they do not prescribe a fixed playboo
 - Use `platform_findings` so both you and the operator see stored evidence + confidence.  
 - Verify before CRITICAL/HIGH — assign severity honestly yourself; CRITICAL needs
   actual proof (data extracted, shell, validated credential), not just a scanner match.  
-- When stuck: `platform_thinking` (evidence→hypothesis cards) or `platform_playbook`, then adapt.  
+- When stuck: `platform_priority` (multi-factor score over the world model) or `platform_playbook`, then adapt.  
 - Unfamiliar product fingerprint → SIGNAL→CONFIRM→GRADE (no vendor skill packs).  
 - On empty/timeout: read the gap note + error, invent a different probe (flags, tool, script, chunk).  
 - Before any final report: `platform_finalize_check` — if BLOCKED, do not polish a fake complete report.

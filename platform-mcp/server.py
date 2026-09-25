@@ -422,18 +422,18 @@ def _format_clarification(analysis: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def _start_expansion_job(
-    engagement_id: str, run_id: str, *, max_passes: int = 5, include_vuln_dispatch: bool = False
-) -> dict[str, Any]:
-    """POST /api/v1/jobs/start with kind=expansion — the BFS engine runs as a
-    real background job (job_store.py's existing TOOL/SHELL/SCRIPT dispatch
-    mechanism, just one more kind) instead of a blocking call. A single pass
-    on a real domain can take minutes; nothing that can run that long should
-    ever be a synchronous MCP tool call regardless of client-side timeout —
-    that was the actual bug, not the timeout value. Returns immediately with
-    a job_id; progress is polled via platform_job_poll, final report via
-    platform_job_result. include_vuln_dispatch=True runs the full no-LLM engine
-    (recon → rule-matched vuln tools → queue exploit candidates)."""
+def _start_expansion_job(engagement_id: str, run_id: str, *, max_passes: int = 5) -> dict[str, Any]:
+    """POST /api/v1/jobs/start with kind=expansion — the InvestigationDirector
+    (plans/harness/09-dual-mode-planner.md) runs as a real background job
+    (job_store.py's existing TOOL/SHELL/SCRIPT dispatch mechanism, just one
+    more kind) instead of a blocking call. A single pass on a real domain can
+    take minutes; nothing that can run that long should ever be a synchronous
+    MCP tool call regardless of client-side timeout — that was the actual
+    bug, not the timeout value. Returns immediately with a job_id; progress
+    is polled via platform_job_poll, final report via platform_job_result.
+    Always does recon breadth, and vuln dispatch too once
+    priority.should_unlock_phase says there's real evidence to work with —
+    no boolean needed, the director decides from the same signal either way."""
     return _post(
         "/api/v1/jobs/start",
         {
@@ -441,7 +441,6 @@ def _start_expansion_job(
             "engagement_id": engagement_id,
             "run_id": run_id,
             "max_passes": max_passes,
-            "include_vuln_dispatch": include_vuln_dispatch,
             "label": f"expand(max_passes={max_passes})",
         },
         timeout=30,
@@ -550,19 +549,19 @@ def platform_set_target(target: str, force_new: bool = False, pick: str = "") ->
 
 
 @mcp.tool()
-def platform_expand(max_passes: int = 5, engagement_id: str = "", full_engine: bool = False) -> str:
+def platform_expand(max_passes: int = 5, engagement_id: str = "") -> str:
     """
-    Start the BFS surface-expansion engine as a background job: subdomains/
-    sisters -> live-host probe -> ports -> tech/CDN -> origin IPs, looping
-    until nothing new turns up or max_passes is hit. Deterministic and
-    mechanical — no LLM judgment involved in running it. Returns immediately
-    with a job_id — do NOT wait on it.
-
-    full_engine=True runs the complete no-LLM engine: after recon reaches
-    fixpoint it also runs the deterministic tech_dispatch-matched vuln/web
-    tools (nuclei/wpscan/sslyze/sqlmap/…) to a bounded fixpoint, then queues
-    exploit candidates — it never launches exploitation itself. Leave it False
-    for a pure recon-breadth pass.
+    Start the InvestigationDirector (plans/harness/09-dual-mode-planner.md)
+    as a background job: subdomains/sisters -> live-host probe -> ports ->
+    tech/CDN -> origin IPs, looping until nothing new turns up or max_passes
+    is hit — then, once priority.should_unlock_phase says there's real
+    evidence to work with, the deterministic tech_dispatch-matched vuln/web
+    tools (nuclei/wpscan/sslyze/sqlmap/…) to their own bounded fixpoint, then
+    queues exploit candidates. Never launches exploitation itself. Fully
+    deterministic and mechanical — no LLM judgment involved in running it,
+    and no boolean to remember to flip: the director decides both stages
+    from the same priority signal every time. Returns immediately with a
+    job_id — do NOT wait on it.
 
     A real domain can take minutes per pass; this never blocks the chat.
     Continue other work, then platform_job_poll(job_id, wait_seconds=20) to
@@ -579,9 +578,7 @@ def platform_expand(max_passes: int = 5, engagement_id: str = "", full_engine: b
     """
     def _run() -> str:
         eid, tgt = _resolve_engagement(engagement_id)
-        job = _start_expansion_job(
-            eid, SESSION_RUN_ID, max_passes=max_passes, include_vuln_dispatch=full_engine
-        )
+        job = _start_expansion_job(eid, SESSION_RUN_ID, max_passes=max_passes)
         parts = [
             "### OPERATOR MIRROR — SURFACE EXPANSION (background job)",
             _session_header(eid, tgt),
@@ -860,19 +857,6 @@ def _fetch_context(engagement_id: str = "", target: str = "", *, full: bool = Fa
 
     idx = data.get("stdout_index") or {}
     idx_text = (idx.get("text") if isinstance(idx, dict) else "") or ""
-
-    # Signal-based dispatch (e.g. "port 445 open -> smb enum").
-    dispatch_lines: list[str] = []
-    for d_ in (data.get("dispatch_rules") or [])[:6]:
-        if isinstance(d_, dict):
-            sig = d_.get("signal") or ""
-            tool = d_.get("default_tool") or ""
-            reason = (d_.get("reason") or "")[:100]
-            bit = f"[{sig}] → {tool}"
-            if reason:
-                bit += f" — {reason}"
-            dispatch_lines.append(bit)
-
     pipeline_line = (data.get("pipeline_line") or "").strip()
     readiness_text = data.get("phase_readiness_text") or ""
 
@@ -884,14 +868,25 @@ def _fetch_context(engagement_id: str = "", target: str = "", *, full: bool = Fa
     operator_profile = (data.get("operator_profile") or "").strip()
     if operator_profile:
         parts.append("**Operator profile — adapt to these preferences:**\n" + operator_profile)
+
+    # The context packet (plans/harness/07-context-packet.md) — world-model,
+    # priority, coverage, questions/hypotheses/attack-paths, recent evidence,
+    # tools-already-run and RoE constraints, rebuilt fresh from stores every
+    # call. Supersedes the old Finding-era network-surface/attack-surface-
+    # tree/findings-summary/dispatch-rules sections it replaces below: those
+    # were pre-Plan02/03 views built from Finding verdicts, not Observations;
+    # everything they showed is available here with better provenance.
+    if eid:
+        packet = _get("/api/v1/context/packet", params={"engagement_id": eid}, timeout=30).get("packet", "")
+    else:
+        packet = "no engagement bound"
+    parts.append(_ctx_delta(eid, "context_packet", packet, full=full, label="Context packet"))
+
     parts += [
-        "**Dispatch signals (from detected tech/ports):**\n"
-        + ("\n".join(dispatch_lines) if dispatch_lines else "(none yet)"),
-        _block("Context delta", data.get("context_delta") or {}),
         _ctx_delta(
             eid,
             "phase_readiness",
-            "**Phase status (conductor):**\n" + (readiness_text or "(no engagement bound)"),
+            "**Phase status (conductor) — spawn instructions:**\n" + (readiness_text or "(no engagement bound)"),
             full=full,
             label="Phase status",
         ),
@@ -903,42 +898,6 @@ def _fetch_context(engagement_id: str = "", target: str = "", *, full: bool = Fa
             label="Recent artifacts",
         ),
     ]
-    # Network surface: short only
-    ns = data.get("network_surface_text") or ""
-    if ns:
-        parts.append(
-            _ctx_delta(
-                eid,
-                "network_surface",
-                _block("Network surface", ns[:1500] + ("…" if len(ns) > 1500 else "")),
-                full=full,
-                label="Network surface",
-            )
-        )
-    # Tree: condensed, capped
-    tree = data.get("attack_surface_tree_text") or ""
-    if tree:
-        parts.append(
-            _ctx_delta(
-                eid,
-                "attack_surface_tree",
-                _block("Attack surface (condensed)", tree[:2000] + ("…" if len(tree) > 2000 else "")),
-                full=full,
-                label="Attack surface (condensed)",
-            )
-        )
-    # Findings: short summary only — full dump on demand via platform_findings
-    fs = data.get("findings_summary") or ""
-    if fs:
-        parts.append(
-            _ctx_delta(
-                eid,
-                "findings_brief",
-                _block("Findings (brief)", fs[:1200] + ("…" if len(fs) > 1200 else "")),
-                full=full,
-                label="Findings (brief)",
-            )
-        )
     # Role guidance: short operator-mindset reminder — full skill text on demand via platform_skills
     rg = (data.get("role_guidance") or "").strip()
     if rg:
@@ -1194,7 +1153,6 @@ def platform_think(
                 {
                     "engagement_id": _SESSION_ENGAGEMENT_ID,
                     "run_id": SESSION_RUN_ID,
-                    "seed_target": _SESSION_TARGET,
                     "hypothesis": hypothesis.strip(),
                     "plan": plan.strip(),
                     "evidence": evidence.strip(),
@@ -1203,8 +1161,8 @@ def platform_think(
                 timeout=30,
             )
             parts.append(
-                f"\nStored finding_id=`{data.get('finding_id')}` — "
-                "visible in platform_findings / context."
+                f"\nStored hypothesis_id=`{data.get('hypothesis_id')}` — "
+                "visible via platform_hypothesis(action='list') / the context packet."
             )
         else:
             parts.append("\n(No engagement bound — not persisted. Call platform_set_target first.)")
@@ -1236,7 +1194,6 @@ def platform_graph_link(
         body: dict[str, Any] = {
             "engagement_id": _SESSION_ENGAGEMENT_ID,
             "run_id": SESSION_RUN_ID,
-            "seed_target": _SESSION_TARGET,
             "source": source,
             "target": target,
             "relation": relation,
@@ -1253,7 +1210,6 @@ def platform_graph_link(
                 f"**{data.get('source_id')}** --`{data.get('relationship')}`--> "
                 f"**{data.get('target_id')}**",
                 f"confidence={data.get('confidence')} hypothesis={data.get('hypothesis')} "
-                f"finding_id=`{data.get('finding_id')}` "
                 f"derived_from={data.get('derived_from') or []}",
                 data.get("hint") or "",
             ]
@@ -1320,7 +1276,6 @@ def platform_graph_link_many(
         body: dict[str, Any] = {
             "engagement_id": _SESSION_ENGAGEMENT_ID,
             "run_id": SESSION_RUN_ID,
-            "seed_target": _SESSION_TARGET,
             "evidence": evidence,
             "confidence": confidence,
             "source": source,
@@ -1342,7 +1297,6 @@ def platform_graph_link_many(
             lines.append(f"  {e.get('source')} --`{e.get('relationship')}`--> {e.get('target')}")
         if data.get("count", 0) > 8:
             lines.append(f"  …(+{data['count'] - 8} more)")
-        lines.append(f"finding_id=`{data.get('finding_id')}`")
         lines.append(data.get("hint") or "")
         return "\n".join(lines)
 
@@ -1526,7 +1480,16 @@ def platform_attempts(asset: str = "", contains: str = "", limit: int = 40) -> s
     return _safe(_run)
 
 
-def _build_finding_body(
+_OBSERVATION_TYPE_VALUES = frozenset({
+    "subdomain", "host", "url", "port", "service", "technology", "dns_record",
+    "http_response", "header", "banner", "content_path", "js_endpoint", "endpoint",
+    "cookie", "redirect", "cert", "waf", "share", "account", "asn", "email",
+    "username", "person", "phone", "social_account", "organization", "document",
+    "credential", "secret", "scanner_signal", "injection_point", "raw",
+})
+
+
+def _record_reasoned_finding(
     *,
     title: str,
     evidence: str,
@@ -1537,9 +1500,22 @@ def _build_finding_body(
     derived_from: str = "",
     tags: str = "",
     metadata_json: Any = "",
-    confidence: str = "",
 ) -> dict[str, Any] | str:
-    """Assemble a Finding POST body from operator input, or return an ERROR string."""
+    """Record an operator/LLM-reasoned conclusion — no tool produced it, so
+    there's no Observation for it yet. plans/harness/03-earned-finding-
+    pipeline.md's one law (confidence = f(evidence), never asserted by a
+    caller) applies here exactly like everywhere else: this used to POST
+    straight to the raw Finding-create endpoint with a caller-supplied
+    ``confidence`` string — the exact bypass Plan 03 exists to close, just
+    not caught the first time since this call site predates the earned-
+    finding pipeline's observation-write endpoint. Fixed the complete way:
+    record an Observation first (extracted_by=llm — a fact, not a verdict),
+    then file_finding against it with evidence_kind=attestation ("I'm
+    personally attesting to this"). Confidence is still computed by
+    confidence_for, never asserted; only WHAT was observed is caller-supplied.
+
+    Returns the filed/suppressed finding dict, or an ERROR string.
+    """
     title = (title or "").strip()
     evidence = (evidence or "").strip()
     if not title or not evidence:
@@ -1548,10 +1524,6 @@ def _build_finding_body(
     meta = _coerce_params(metadata_json) if metadata_json not in ("", None) else {}
     if isinstance(meta, str):  # _coerce_params returned an error
         return f"ERROR: metadata_json invalid — {meta}"
-    if (derived_from or "").strip():
-        meta["derived_from"] = [
-            x.strip() for x in derived_from.replace(";", ",").split(",") if x.strip()
-        ]
 
     tag_list = ["operator_recorded"]
     for t in re.split(r"[,\s]+", tags or ""):
@@ -1559,25 +1531,38 @@ def _build_finding_body(
         if t and t not in tag_list:
             tag_list.append(t)
 
-    conf = (confidence or "").strip().lower()
-    if conf not in ("confirmed", "likely", "hypothesis"):
-        conf = "likely"
+    ftype = (finding_type or "observation").strip().lower()
+    obs = _post(
+        "/api/v1/observations/",
+        {
+            "engagement_id": _SESSION_ENGAGEMENT_ID,
+            "run_id": SESSION_RUN_ID,
+            "type": ftype if ftype in _OBSERVATION_TYPE_VALUES else "raw",
+            "target": _SESSION_TARGET,
+            "details": {"title": title, "description": description, **meta},
+            "source_tool": source_tool or "operator_record",
+            "tags": tag_list,
+            "extracted_by": "llm",
+        },
+        timeout=30,
+    )
 
-    return {
+    derived_ids = [x.strip() for x in (derived_from or "").replace(";", ",").split(",") if x.strip()]
+    file_body: dict[str, Any] = {
         "engagement_id": _SESSION_ENGAGEMENT_ID,
         "run_id": SESSION_RUN_ID,
-        "finding_type": (finding_type or "observation").strip().lower(),
         "title": title,
-        "description": (description or "").strip(),
-        "evidence": evidence,
+        "finding_type": ftype,
+        "observation_ids": [obs["id"]],
         "claim_severity": (claim_severity or "none").strip().lower(),
-        "confidence": conf,
-        "source_tool": source_tool or "operator_record",
+        "description": description,
+        "evidence_records": [{"kind": "attestation", "source_tool": source_tool or "operator_record", "detail": evidence}],
         "target": _SESSION_TARGET,
         "tags": tag_list,
-        "metadata": meta,
-        "extra": {},
     }
+    if derived_ids:
+        file_body["metadata"] = {"derived_from": derived_ids}
+    return _post("/api/v1/findings/file", file_body, timeout=30)
 
 
 @mcp.tool()
@@ -1591,7 +1576,6 @@ def platform_record_finding(
     derived_from: str = "",
     tags: str = "",
     metadata_json: Any = "",
-    confidence: str = "likely",
 ) -> str:
     """
     Persist ONE conclusion that lives only in your reasoning — not tool output.
@@ -1604,12 +1588,15 @@ def platform_record_finding(
     use platform_think. Prefer platform_record_findings (bulk) to flush several
     at a checkpoint. If it lives only in your chat answer, it should be here too.
 
-    confidence: confirmed|likely|hypothesis — how sure you are this is real.
+    There is NO confidence parameter — like platform_file_finding, you attach
+    evidence (the ``evidence`` text becomes an attestation — "I'm personally
+    attesting to this"), the platform computes confidence from it. Claiming
+    "confirmed" in your title changes nothing.
     finding_type: url|host|port|service|technology|observation|subdomain|
       vulnerability|credential|secret|http_response|access
       (use observation for anything that doesn't fit — it's the catch-all).
     claim_severity: the impact IF this is real — assign it honestly yourself;
-      it is not derived from confidence (see skills/vuln/verification-and-severity.md).
+      independent of confidence (see skills/vuln/verification-and-severity.md).
     derived_from: optional comma-separated parent finding ids (evidence chain).
 
     Flexibility (structure it your way — the platform stores whatever you give):
@@ -1622,7 +1609,7 @@ def platform_record_finding(
     """
     def _run() -> str:
         _require_bound_target()
-        body = _build_finding_body(
+        result = _record_reasoned_finding(
             title=title,
             evidence=evidence,
             finding_type=finding_type,
@@ -1632,16 +1619,22 @@ def platform_record_finding(
             derived_from=derived_from,
             tags=tags,
             metadata_json=metadata_json,
-            confidence=confidence,
         )
-        if isinstance(body, str):
-            return body
-        data = _post("/api/v1/findings/", body, timeout=30)
+        if isinstance(result, str):
+            return result
+        if result.get("suppressed"):
+            return (
+                "### OPERATOR MIRROR — SUPPRESSED (FP-cache)\n"
+                f"{_session_header()}\n"
+                f"title: {title}\n"
+                f"Not filed — matches a known false-positive pattern: {result.get('suppressed_reason')}"
+            )
+        data = result.get("finding") or {}
         return (
             "### OPERATOR MIRROR — RECORDED FINDING\n"
             f"{_session_header()}\n"
             f"Stored id={data.get('id')} type={data.get('finding_type')} "
-            f"confidence={data.get('confidence')} sev={data.get('claim_severity')}\n"
+            f"confidence={data.get('confidence')} (computed) sev={data.get('claim_severity')}\n"
             f"title: {data.get('title')}\n"
             "Call platform_findings to verify; then platform_finalize_check again."
         )
@@ -1661,14 +1654,15 @@ def platform_record_findings(items_json: Any) -> str:
     observations (never duplicates, never a loss), so flushing is cheap and safe.
 
     items_json: a JSON array (or JSON string of one). Each item accepts the same
-    fields as platform_record_finding — at minimum title + evidence:
+    fields as platform_record_finding (no confidence field — it's computed,
+    not asserted) — at minimum title + evidence:
       [
-        {"title":"...","evidence":"...","finding_type":"url","confidence":"confirmed",
+        {"title":"...","evidence":"...","finding_type":"url",
          "tags":"oracle,api","metadata_json":{"status":401}},
         {"title":"...","evidence":"...","finding_type":"observation"}
       ]
-    Each item is stored with the same graph ingest as a single write;
-    duplicates are de-duped by content.
+    Each item records its own Observation + files it (same as one
+    platform_record_finding call); duplicates still de-dupe by content.
     """
     def _run() -> str:
         _require_bound_target()
@@ -1682,16 +1676,17 @@ def platform_record_findings(items_json: Any) -> str:
             raw = [raw]
         if not isinstance(raw, list) or not raw:
             return "ERROR: items_json must be a non-empty JSON array of finding objects"
-        if len(raw) > 200:
-            return "ERROR: too many items (max 200 per call — split into batches)"
+        if len(raw) > 100:
+            return "ERROR: too many items (max 100 per call — split into batches)"
 
-        bodies: list[dict[str, Any]] = []
+        stored: list[dict[str, Any]] = []
+        suppressed_count = 0
         errors: list[str] = []
         for i, item in enumerate(raw):
             if not isinstance(item, dict):
                 errors.append(f"item {i}: not an object")
                 continue
-            body = _build_finding_body(
+            result = _record_reasoned_finding(
                 title=str(item.get("title") or ""),
                 evidence=str(item.get("evidence") or ""),
                 finding_type=str(item.get("finding_type") or "observation"),
@@ -1702,23 +1697,22 @@ def platform_record_findings(items_json: Any) -> str:
                 tags=str(item.get("tags") or "") if not isinstance(item.get("tags"), list)
                 else ",".join(str(x) for x in item.get("tags")),
                 metadata_json=item.get("metadata_json") or item.get("metadata") or "",
-                confidence=str(item.get("confidence") or ""),
             )
-            if isinstance(body, str):
-                errors.append(f"item {i}: {body}")
+            if isinstance(result, str):
+                errors.append(f"item {i}: {result}")
+            elif result.get("suppressed"):
+                suppressed_count += 1
             else:
-                bodies.append(body)
+                stored.append(result.get("finding") or {})
 
-        if not bodies:
+        if not stored and not suppressed_count:
             return "ERROR: no valid findings.\n" + "\n".join(errors[:20])
 
-        data = _post("/api/v1/findings/bulk", bodies, timeout=60)
-        stored = data.get("findings") or []
         parts = [
             "### OPERATOR MIRROR — RECORDED FINDINGS (bulk)",
             _session_header(),
             f"Stored {len(stored)} finding(s) (of {len(raw)} submitted"
-            + (f"; {len(bodies) - len(stored)} deduped" if len(bodies) > len(stored) else "")
+            + (f"; {suppressed_count} suppressed by FP-cache" if suppressed_count else "")
             + ").",
         ]
         if errors:
@@ -2416,6 +2410,56 @@ def platform_observations(
 
 
 @mcp.tool()
+def platform_priority(
+    kinds: str = "observation,asset,question,attack_path",
+    limit: int = 20,
+    phase: str = "",
+    engagement_id: str = "",
+) -> str:
+    """
+    What's worth doing next — plans/harness/06-prioritization-engine.md. A
+    multi-factor score (objective relevance, evidence strength, novelty/decay,
+    potential impact, graph centrality, unexplained/conflicting behavior,
+    validation ease, coverage gaps, minus cost/repetition/risk) over the world
+    model, ranked highest first. A DIFFERENT question from a Finding's
+    confidence (Plan 03) — a low-confidence lead can still be the top
+    priority; this never feeds back into confidence.
+
+    kinds: comma-separated subset of observation|asset|question|attack_path.
+    phase: optional — pass 'vuln' or 'exploit' instead to see whether that
+    area has crossed its unlock threshold (replaces the old finding-count
+    trigger) and what the single highest-priority item driving it is.
+    """
+    def _run() -> str:
+        eid, tgt = _resolve_engagement(engagement_id)
+        if phase.strip():
+            data = _get("/api/v1/priority/phase/" + phase.strip().lower(), params={"engagement_id": eid}, timeout=20)
+            return (
+                "### OPERATOR MIRROR — PHASE PRIORITY\n"
+                f"{_session_header(eid, tgt)}\n"
+                f"phase={data.get('phase')} unlocked={data.get('unlocked')}\n"
+                f"{data.get('gate_reason', '')}"
+            )
+        data = _get(
+            "/api/v1/priority/top",
+            params={"engagement_id": eid, "kinds": kinds.strip() or "observation,asset,question,attack_path", "limit": max(1, min(int(limit), 200))},
+            timeout=30,
+        )
+        items = data.get("items") or []
+        lines = [
+            f"- [{it['total']:.2f}] {it['item_kind']}:{it['type_key']} {it.get('label') or it.get('target', '')}"
+            for it in items
+        ]
+        return (
+            "### OPERATOR MIRROR — TOP PRIORITIES\n"
+            f"{_session_header(eid, tgt)}\n"
+            + ("\n".join(lines) if lines else "(nothing scored yet — no observations/assets/questions/attack paths)")
+        )
+
+    return _safe(_run)
+
+
+@mcp.tool()
 def platform_exploit_queue(
     limit: int = 50,
     engagement_id: str = "",
@@ -2985,13 +3029,25 @@ def platform_playbook(name: str = "", target: str = "") -> str:
 
 
 @mcp.tool()
-def platform_skills(path: str = "", phase: str = "", query: str = "") -> str:
+def platform_skills(
+    path: str = "", phase: str = "", query: str = "",
+    mitre: str = "", asset_type: str = "", tags: str = "", domain: str = "",
+    limit: int = 8,
+) -> str:
     """
-    Browse platform skill markdown (commander, recon, network, products, …).
+    Browse or query platform skill markdown (plans/harness/08-skill-system-
+    at-scale.md — ranked retrieval, not a flat dump).
 
-    Empty path → index of `name — description` lines. path='shared/evidence-to-hypothesis.md'
-    OR path='evidence-to-hypothesis' (bare skill name) → full text.
-    phase= / query= filter the index.
+    Empty path AND nothing else set → the router-level index (~1 line per
+    domain, always cheap regardless of library size). Give ANY of query=/
+    mitre=/asset_type=/tags=/domain= and this ranks every skill against what
+    you gave and returns the top matches — narrow to what's actually
+    relevant to the asset/technique in front of you instead of browsing
+    everything. mitre='T1098', asset_type='graphql_endpoint', tags='sqli,web'
+    are all valid alone or combined.
+
+    path='shared/evidence-to-hypothesis.md' OR path='evidence-to-hypothesis'
+    (bare skill name) → full text, on demand once you've picked one.
     """
     def _run() -> str:
         if path.strip():
@@ -3006,18 +3062,32 @@ def platform_skills(path: str = "", phase: str = "", query: str = "") -> str:
                     data.get("content") or "",
                 ]
             )
-        params: dict[str, str] = {}
-        if phase.strip():
-            params["phase"] = phase.strip()
-        if query.strip():
-            params["query"] = query.strip()
-        data = _get("/api/v1/capabilities/skills-index", params=params or None)
+        ranked = any(x.strip() for x in (query, mitre, asset_type, tags, domain))
+        if ranked:
+            data = _get(
+                "/api/v1/capabilities/skills-find",
+                params={
+                    "query": query.strip(), "phase": phase.strip(), "tags": tags.strip(),
+                    "mitre": mitre.strip(), "asset_type": asset_type.strip(),
+                    "domain": domain.strip(), "limit": max(1, min(int(limit), 50)),
+                },
+            )
+            header = "### OPERATOR MIRROR — SKILLS (ranked)"
+        else:
+            params: dict[str, str] = {}
+            if phase.strip():
+                params["phase"] = phase.strip()
+            data = _get("/api/v1/capabilities/skills-index", params=params or None)
+            header = "### OPERATOR MIRROR — SKILLS INDEX"
         lines = [
-            "### OPERATOR MIRROR — SKILLS INDEX",
+            header,
             f"count={data.get('count')}",
             "Call platform_skills(path='<name>') for full text.",
         ]
-        for it in data.get("skills") or []:
+        items = data.get("skills") or []
+        if not items:
+            lines.append("(no matches — try broader terms, or omit filters for the full index)")
+        for it in items:
             desc = it.get("description") or it.get("title") or ""
             lines.append(f"- [{it.get('phase')}] {it.get('name') or it.get('path')} — {desc}")
         return "\n".join(lines)
@@ -3180,26 +3250,15 @@ def platform_graph_query(
     return _safe(_run)
 
 
-@mcp.tool()
-def platform_thinking(limit: int = 10) -> str:
-    """
-    Optional: evidence → next-probe cards from current findings.
-    Use when stuck on a fingerprint — not required every turn.
-    """
-    limit = max(1, min(int(limit), 30))
 
-    def _run() -> str:
-        _require_bound_target()
-        data = _get(
-            "/api/v1/hybrid/thinking-hypotheses",
-            params={
-                "engagement_id": _SESSION_ENGAGEMENT_ID,
-                "limit": str(limit),
-            },
-        )
-        return "\n\n".join([_session_header(), _block("Thinking hypotheses", data)])
-
-    return _safe(_run)
+# platform_thinking (used to be here) is deleted — it called
+# GET /api/v1/hybrid/thinking-hypotheses, a route that was never registered
+# anywhere in the backend (verified: no @router.get for that path in any
+# endpoints module). A genuinely pre-existing, silently broken tool — every
+# call would 404. Its documented purpose ("what next / I'm stuck", evidence
+# → next-probe cards) is exactly what plans/harness/06-prioritization-
+# engine.md's platform_priority does for real: a working, tested,
+# multi-factor score over the world model. Use that instead.
 
 
 @mcp.tool()

@@ -62,8 +62,30 @@ only when you need something that genuinely isn't there.
 """
 
 
+def summarize_last_action(messages: list[dict]) -> str:
+    """One-line "what the loop just did" — plans/harness/07-context-packet.md's
+    LAST ACTION/NEXT section. This can't live in the backend packet
+    (services/context_packet.py): a second harness driving the same
+    engagement has a different last action, since it's local turn history,
+    not world-model state. Each caller derives its own from what it actually
+    has; this is the CLI loop's."""
+    for msg in reversed(messages):
+        if msg.get("role") != "assistant":
+            continue
+        tool_calls = msg.get("tool_calls") or []
+        if tool_calls:
+            names = ", ".join(tc["function"]["name"] for tc in tool_calls[:4])
+            more = f" (+{len(tool_calls) - 4} more)" if len(tool_calls) > 4 else ""
+            return f"called {names}{more}"
+        content = (msg.get("content") or "").strip()
+        if content:
+            return f"said: {content[:200]}"
+    return "(start of session)"
+
+
 async def build_system_prompt(
-    engagement_id: str, *, tool_budget_active: bool = False, agent_prompt: str = ""
+    engagement_id: str, *, tool_budget_active: bool = False, agent_prompt: str = "",
+    last_action: str = "",
 ) -> str:
     ctx = await platform_tools.call_tool(
         "platform_context", {"engagement_id": engagement_id} if engagement_id else {}
@@ -74,4 +96,5 @@ async def build_system_prompt(
     # above), never replaces them, so a custom mode can't disable a safety rail.
     if agent_prompt.strip():
         policy += "\n\n## Active mode (operator-defined flow)\n" + agent_prompt.strip()
-    return f"{policy}\n---\n{ctx}"
+    last_action_block = f"\n---\n## LAST ACTION\n{last_action}" if last_action else ""
+    return f"{policy}\n---\n{ctx}{last_action_block}"

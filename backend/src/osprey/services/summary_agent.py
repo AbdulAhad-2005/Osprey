@@ -197,7 +197,6 @@ async def extract_observations_for_execution(
                 stdout,
                 engagement_id=engagement_id,
                 run_id=run_id,
-                seed_target=target,
             )
         except Exception:
             logger.debug("REL marker apply failed", exc_info=True)

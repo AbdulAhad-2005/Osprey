@@ -27,7 +27,7 @@
 
 The platform is a writable, searchable operator notebook. Delivered:
 
-1. **Cognition write APIs** — the LLM authors memory: `platform_graph_link[_many]` (named edges), `platform_tag_asset` (crown-jewel boost), `platform_think` (durable hypotheses), script `FINDING|`/`REL|`/`HYPOTHESIS|` markers.
+1. **Cognition write APIs** — the LLM authors memory: `platform_graph_link[_many]` (named edges), `platform_record_finding[s]` (evidence-backed findings), `platform_think` (durable hypotheses), script `FINDING|`/`REL|`/`HYPOTHESIS|` markers.
 2. **Quiet suggestions** — open loops are *gaps*, not `try: nmap` orders; context is budgeted (~80 lines); details pulled on demand.
 3. **Ingest + correlation** — ~15–20 YAML ingest patterns; cross-finding correlator emits **hypothesis** edges (not observed facts); raw stdout index.
 4. **Speed** — background `platform_job_*`, bounded `platform_fanout`, parallel branches (`config/parallelism.yaml`).

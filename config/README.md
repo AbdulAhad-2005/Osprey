@@ -10,10 +10,10 @@ legacy — prefer deleting or ignoring them rather than maintaining two copies.
 | `correlation_rules.yaml` | soft hypothesis links/tags |
 | `parallelism.yaml` | job caps + long-tool soft hints |
 | `finalize_rules.yaml` | report referee (prefer soft warnings) |
-| `thinking_model.yaml` | universal SIGNAL→CONFIRM→GRADE |
 | `playbooks.yaml` | advisory sequences only |
 | `escalation_matrix.yaml` | internal recovery — not MCP orders |
 | `tech_dispatch.yaml` | soft signals |
 | `recon_network_tools.yaml` | tool catalog |
+| `priority.yaml` | multi-factor prioritization weights (plans/harness/06) |
 
 Motto: **config helps the LLM become elite — it does not script the engagement.**

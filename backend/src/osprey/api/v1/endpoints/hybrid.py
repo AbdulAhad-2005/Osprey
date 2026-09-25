@@ -228,7 +228,6 @@ def graph_link(body: dict) -> dict:
             evidence=str(body.get("evidence") or ""),
             confidence=str(body.get("confidence") or "likely"),
             run_id=str(body.get("run_id") or ""),
-            seed_target=str(body.get("seed_target") or ""),
             derived_from=body.get("derived_from"),
         )
     except ValueError as exc:
@@ -251,7 +250,6 @@ def graph_link_many(body: dict) -> dict:
             evidence=str(body.get("evidence") or ""),
             confidence=str(body.get("confidence") or "likely"),
             run_id=str(body.get("run_id") or ""),
-            seed_target=str(body.get("seed_target") or ""),
             derived_from=body.get("derived_from"),
             source=str(body.get("source") or ""),
             relation=str(body.get("relation") or ""),
@@ -264,7 +262,7 @@ def graph_link_many(body: dict) -> dict:
 
 @router.post("/think")
 def think_endpoint(body: dict) -> dict:
-    """Persist optional operator hypothesis into findings memory."""
+    """Persist optional operator hypothesis into hypothesis memory (plans/harness/05)."""
     from osprey.services.operator_memory import record_think
 
     try:
@@ -275,7 +273,6 @@ def think_endpoint(body: dict) -> dict:
             evidence=str(body.get("evidence") or ""),
             next_tool=str(body.get("next_tool") or ""),
             run_id=str(body.get("run_id") or ""),
-            seed_target=str(body.get("seed_target") or ""),
         )
     except ValueError as exc:
         raise HTTPException(400, detail=str(exc)) from exc

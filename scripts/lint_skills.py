@@ -44,7 +44,7 @@ def _is_router(path: Path) -> bool:
     return path.name == "SKILL.md"
 
 
-_LIST_FIELDS = ("tags", "phases", "mitre", "requires_tools")
+_LIST_FIELDS = ("tags", "phases", "mitre", "requires_tools", "nist_csf", "capabilities")
 
 
 def _malformed_list_fields(meta: dict[str, str]) -> list[str]:

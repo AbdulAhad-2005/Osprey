@@ -39,9 +39,8 @@ _CONFIG_ALLOWLIST = frozenset(
         "parallelism.yaml",
         "phase_pipeline",
         "phase_pipeline.yaml",
-        "thinking_model",
-        "thinking_model.yaml",
-        "thinking_model.json",
+        "priority",
+        "priority.yaml",
     }
 )
 
@@ -107,6 +106,14 @@ def _skill_record(path: Path) -> dict:
     phases = _parse_list_field(meta, "phases") or [folder]
     mitre = _parse_list_field(meta, "mitre")
     requires_tools = _parse_list_field(meta, "requires_tools")
+    # plans/harness/08-skill-system-at-scale.md Step 1 — a superset of fields
+    # for scale (819-skill retrieval), all optional/backward-compatible: none
+    # of the 78 skills authored before this plan set them, and that's fine —
+    # find_skills() below degrades gracefully to phase/tag/text matching when
+    # they're absent, same as it always did.
+    domain = meta.get("domain", "")
+    nist_csf = _parse_list_field(meta, "nist_csf")
+    capabilities = _parse_list_field(meta, "capabilities")
     return {
         "path": rel,
         "name": name,
@@ -117,6 +124,9 @@ def _skill_record(path: Path) -> dict:
         "tags": tags,
         "mitre": mitre,
         "requires_tools": requires_tools,
+        "domain": domain,
+        "nist_csf": nist_csf,
+        "capabilities": capabilities,
         "chars": len(text),
     }
 
@@ -157,6 +167,74 @@ def list_skills(*, phase: str = "", query: str = "") -> list[dict]:
                 continue
         out.append(rec)
     return out
+
+
+def find_skills(
+    *,
+    query: str = "",
+    phase: str = "",
+    tags: list[str] | None = None,
+    mitre: str = "",
+    nist_csf: str = "",
+    domain: str = "",
+    asset_type: str = "",
+    limit: int = 8,
+) -> list[dict]:
+    """Ranked top-K retrieval — plans/harness/08-skill-system-at-scale.md
+    Step 2/3. ``list_skills``/``skills_index_text`` return an unranked,
+    flat-capped list (fine for "show me everything in this phase", useless
+    once the library is large enough that "everything matching" isn't a
+    handful); this scores each candidate against however many of the given
+    dimensions the caller supplied and returns the best K, so retrieval
+    narrows to what's actually relevant to the asset/technique in front of
+    the caller instead of dumping the whole catalog.
+
+    ``phase`` is a hard filter (same scoping semantics as ``list_skills`` —
+    asking for the web phase should never surface an exploit-phase skill just
+    because it scored higher on something else). Every other dimension is
+    additive, soft ranking: pass what you know (a MITRE technique id, an
+    asset type like "graphql_endpoint", free text, or any combination) and
+    each match adds to the score; a skill matching nothing (after the phase
+    filter) scores 0 and is dropped. Deliberately simple (no ML, no
+    embeddings) — at a few hundred skills this is well under the plan's 50ms
+    budget, and every match is explainable (why did this rank here) rather
+    than opaque.
+    """
+    tag_terms = [t.strip().lower() for t in (tags or []) if t.strip()]
+    text_terms = [
+        t.strip().lower() for t in f"{query} {asset_type}".replace("_", " ").replace("-", " ").split()
+        if t.strip()
+    ]
+    mitre_l = mitre.strip().lower()
+    nist_l = nist_csf.strip().lower()
+    domain_l = domain.strip().lower()
+    phase_l = phase.strip().lower()
+
+    scored: list[tuple[float, dict]] = []
+    for rec in list_skills():
+        if phase_l and phase_l not in [p.lower() for p in rec["phases"]] and not rec["path"].startswith(phase_l + "/"):
+            continue
+        score = 0.0
+        if mitre_l and any(m.lower() == mitre_l or m.lower().startswith(mitre_l) for m in rec["mitre"]):
+            score += 3.0
+        if nist_l and any(n.lower() == nist_l for n in rec["nist_csf"]):
+            score += 3.0
+        if domain_l and rec["domain"].lower() == domain_l:
+            score += 2.0
+        rec_tags_l = [t.lower() for t in rec["tags"]]
+        for t in tag_terms:
+            if t in rec_tags_l:
+                score += 1.5
+        if text_terms:
+            haystack = " ".join(
+                [rec["name"], rec["description"], rec["title"], rec["domain"], " ".join(rec["tags"])]
+            ).lower()
+            score += sum(1.0 for term in text_terms if term in haystack)
+        if score > 0 or phase_l:
+            scored.append((score, rec))
+
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+    return [rec for _score, rec in scored[: max(1, limit)]]
 
 
 def get_skill(path: str) -> dict | None:

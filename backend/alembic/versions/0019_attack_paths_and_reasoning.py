@@ -2,7 +2,7 @@
 attack-paths.md Steps 3-5.
 
 Revision ID: 0019_attack_paths_and_reasoning
-Revises: 0018_graph_observation_provenance
+Revises: 0018_graph_obs_provenance
 Create Date: 2026-09-23
 """
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0019_attack_paths_and_reasoning"
-down_revision: Union[str, None] = "0018_graph_observation_provenance"
+down_revision: Union[str, None] = "0018_graph_obs_provenance"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

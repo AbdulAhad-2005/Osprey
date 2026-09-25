@@ -3,31 +3,13 @@
 # The phase supervisor is a deterministic conductor: it spawns a phase agent,
 # and as soon as an upstream phase has produced ENOUGH data (not "finished"), it
 # spawns the downstream phase agent CONCURRENTLY — recon, vuln and exploit can
-# all be running at once. These thresholds decide "enough". They are deliberately
-# LOW so downstream work starts early; correctness comes from the agents + the
-# shared blackboard, not from waiting.
+# all be running at once.
 #
-# requires_any: a downstream phase triggers when ANY listed signal meets its
-# threshold. Signals are counts of findings by type on the engagement blackboard.
-
-triggers:
-  vuln:            # start a vuln agent once recon has surfaced GENUINE breadth —
-                    # not the first scrap of evidence. A single service/host is not
-                    # "enough attack surface" for a real pass; a lone count-of-1
-                    # threshold let vuln unlock seconds into recon, racing it for
-                    # the same ground instead of complementing a real sweep.
-    requires_any:
-      live_hosts: 3
-      services: 5
-      technologies: 2
-      urls: 15
-  exploit:         # start an exploit agent once vuln has found something to chain —
-                    # one real vuln/credential/secret IS reason enough; unlike vuln's
-                    # breadth requirement, this stays a low bar on purpose.
-    requires_any:
-      vulnerabilities: 1
-      credentials: 1
-      secrets: 1
+# "Enough" used to be a finding-count threshold table here (requires_any).
+# plans/harness/06-prioritization-engine.md Step 4 retired that: a downstream
+# phase now unlocks when config/priority.yaml's phase_thresholds are crossed
+# by a real multi-factor priority score (services/priority.py), not a count —
+# see phase_thresholds/phase_item_types in that file.
 
 # Feedback loop: when a finding of one of these types appears during a LATER
 # phase (e.g. vuln discovers a new host), recon is re-opened for it.

@@ -1,13 +1,16 @@
-"""Deterministic phase-trigger signals over the shared engagement blackboard.
+"""Deterministic phase signals over the shared engagement blackboard.
 
-The phase supervisor never asks an LLM whether a phase is "ready" to start. These
-pure functions read finding counts and decide, against ``config/phase_pipeline``
-thresholds, whether an upstream phase has produced ENOUGH data to START a
-downstream phase — early and concurrently, not after the upstream is finished.
-
-This is the "engine owns routine/completeness, LLM owns judgment" split made
-mechanical: readiness is a count comparison; what the spawned agent then DOES
-with that surface is the LLM's call.
+Finding counts, and pipeline lifecycle/safety knobs (``config/phase_pipeline.
+yaml``) — spawn caps, time budget, poll interval, which finding types reopen
+recon. Counts are still surfaced for operator visibility (``phase_signals``),
+but Plan 06 (plans/harness/06-prioritization-engine.md Step 4) retired this
+module's old finding-count PHASE-UNLOCK triggers (``should_trigger``/
+``trigger_reason``) — a downstream phase now unlocks when
+``services.priority.should_unlock_phase`` says a multi-factor priority score
+crosses a threshold, not when a count crosses a hardcoded number. This is the
+"engine owns routine/completeness, LLM owns judgment" split made mechanical:
+readiness is computed, not guessed; what the spawned agent then DOES with that
+surface is the LLM's call.
 """
 
 from __future__ import annotations
@@ -23,10 +26,6 @@ from osprey.services.findings_store import get_findings_store
 logger = logging.getLogger(__name__)
 
 _DEFAULTS: dict[str, Any] = {
-    "triggers": {
-        "vuln": {"requires_any": {"live_hosts": 1, "services": 1, "technologies": 1, "urls": 5}},
-        "exploit": {"requires_any": {"vulnerabilities": 1, "credentials": 1, "secrets": 1}},
-    },
     "recon_reopen_on": ["subdomain", "host"],
     "max_agents_per_phase": 3,
     "pipeline_time_budget_seconds": 3600,
@@ -52,7 +51,6 @@ def load_pipeline_config() -> dict[str, Any]:
     raw = read_config("phase_pipeline.yaml")
     if isinstance(raw, dict):
         data.update(raw)
-    data.setdefault("triggers", _DEFAULTS["triggers"])
     return data
 
 
@@ -73,30 +71,6 @@ def phase_signals(engagement_id: str) -> dict[str, int]:
     for signal, types in _SIGNAL_TYPES.items():
         counts[signal] = sum(by_type.get(t.value, 0) for t in types)
     return counts
-
-
-def should_trigger(phase: str, engagement_id: str, *, signals: dict[str, int] | None = None) -> bool:
-    """True when the blackboard meets ANY threshold for starting ``phase``."""
-    cfg = load_pipeline_config()
-    trigger = (cfg.get("triggers") or {}).get(phase)
-    if not trigger:
-        return False
-    requires_any = trigger.get("requires_any") or {}
-    if not requires_any:
-        return True
-    sig = signals if signals is not None else phase_signals(engagement_id)
-    return any(sig.get(name, 0) >= int(threshold) for name, threshold in requires_any.items())
-
-
-def trigger_reason(phase: str, signals: dict[str, int]) -> str:
-    cfg = load_pipeline_config()
-    requires_any = ((cfg.get("triggers") or {}).get(phase) or {}).get("requires_any") or {}
-    met = [
-        f"{name}={signals.get(name, 0)}>={threshold}"
-        for name, threshold in requires_any.items()
-        if signals.get(name, 0) >= int(threshold)
-    ]
-    return ", ".join(met) or "no threshold met"
 
 
 def recon_reopen_types() -> frozenset[str]:

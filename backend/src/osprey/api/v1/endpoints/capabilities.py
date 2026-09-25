@@ -83,10 +83,36 @@ def skills_index(
     phase: str = Query(default=""),
     query: str = Query(default=""),
 ) -> dict:
-    """Browse all skills (name, description, phase, tags). Use /skills-file for full text."""
+    """Browse all skills (name, description, phase, tags), unranked. Use
+    /skills-find for ranked top-K retrieval, /skills-file for full text."""
     from osprey.services.knowledge_browser import list_skills
 
     items = list_skills(phase=phase, query=query)
+    return {"count": len(items), "skills": items}
+
+
+@router.get("/skills-find")
+def skills_find(
+    query: str = Query(default=""),
+    phase: str = Query(default=""),
+    tags: str = Query(default="", description="Comma-separated"),
+    mitre: str = Query(default=""),
+    nist_csf: str = Query(default=""),
+    domain: str = Query(default=""),
+    asset_type: str = Query(default=""),
+    limit: int = Query(default=8, ge=1, le=50),
+) -> dict:
+    """Ranked top-K retrieval — plans/harness/08-skill-system-at-scale.md.
+    Scores every skill against whichever dimensions are given and returns
+    the best matches; unlike /skills-index this never returns "everything",
+    which is what scales past a couple hundred skills."""
+    from osprey.services.knowledge_browser import find_skills
+
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+    items = find_skills(
+        query=query, phase=phase, tags=tag_list, mitre=mitre,
+        nist_csf=nist_csf, domain=domain, asset_type=asset_type, limit=limit,
+    )
     return {"count": len(items), "skills": items}
 
 

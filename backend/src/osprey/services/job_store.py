@@ -532,10 +532,8 @@ class JobStore:
         job_id: str = "",
     ) -> ToolExecutionResponse | Any:
         if req.kind == JobKind.EXPANSION:
-            from osprey.services.surface_expansion import (
-                _MIN_ORIGIN_CONFIDENCE,
-                run_expansion_to_fixpoint,
-            )
+            from osprey.services.investigation_director import run_to_completion
+            from osprey.services.surface_expansion import _MIN_ORIGIN_CONFIDENCE
 
             # Lead the run with the execution backend in use, so it's always
             # obvious from the results log whether tools ran in Kali (docker) or
@@ -563,11 +561,10 @@ class JobStore:
                     + (" — exhausted" if d.exhausted else "")
                 )
 
-            return await run_expansion_to_fixpoint(
+            return await run_to_completion(
                 engagement_id=req.engagement_id, run_id=req.run_id or "",
                 max_passes=req.max_passes, on_pass=_pass_cb, on_progress=on_progress,
                 min_origin_confidence=0.0 if req.include_low_confidence else _MIN_ORIGIN_CONFIDENCE,
-                include_vuln_dispatch=req.include_vuln_dispatch,
             )
         if req.kind == JobKind.AGENT:
             from osprey.services import event_bus
@@ -722,7 +719,7 @@ class JobStore:
         elif j.status == JobStatus.COMPLETED:
             hint = (
                 "Done — findings ingested. Call platform_job_result for stdout, then "
-                "platform_findings / platform_thinking to analyze this branch."
+                "platform_findings / platform_priority to analyze this branch."
             )
         elif j.status == JobStatus.FAILED:
             hint = "Failed — read error; retry with smaller scope or platform_script."

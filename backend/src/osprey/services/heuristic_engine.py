@@ -1,18 +1,21 @@
-"""No-LLM heuristic dispatch engine — the deterministic vuln/web decision stage.
+"""No-LLM vuln/web dispatch — a CAPABILITY ``investigation_director.
+run_to_completion`` selects (plans/harness/09-dual-mode-planner.md Step 5),
+not an independently-gated engine. It used to run whenever a caller passed
+``include_vuln_dispatch=True``; that boolean is gone — the director now
+decides WHETHER to call ``run_dispatch_stage`` at all, from
+``priority.should_unlock_phase(eid, "vuln")`` (plans/harness/06), the same
+real evidence signal every other phase-unlock decision in this codebase
+uses. This module still owns HOW, not WHEN: given the tech/services recon
+surfaced, deterministically pick and run the vuln/web tools that match —
+nuclei on a fingerprinted stack, wpscan on WordPress, sslyze on a TLS host,
+sqlmap on injection-point candidates — the same choices the LLM makes from
+``tech_dispatch``, but by rule instead of by reasoning.
 
-The recon breadth engine (``surface_expansion.run_expansion_to_fixpoint``) already
-maps the attack surface without an LLM. What it lacks is the *decision layer* the
-ticket calls for: given the tech/services recon surfaced, deterministically pick
-and run the vuln/web tools that match — nuclei on a fingerprinted stack, wpscan on
-WordPress, sslyze on a TLS host, sqlmap on injection-point candidates — the same
-choices the LLM makes from ``tech_dispatch``, but by rule instead of by reasoning.
-
-This is a *peer* to Commander, not a mode inside it. It reuses, with zero
-duplication:
+It reuses, with zero duplication:
   * ``tech_dispatch.suggest_dispatch`` — the signal→tool decision table (the rules).
   * ``tool_execution.execute_tool_request`` — the ONE execution kernel (governance,
     caching, parsing, findings ingest). No second tool-wrapper surface.
-  * ``sufficiency`` phase gating and ``exploit_candidate_store`` for queueing.
+  * ``exploit_candidate_store`` for queueing.
 
 Hard rule (operator decision): in no-LLM mode the engine runs recon→vuln and
 QUEUES exploit candidates — it never launches exploitation itself. Tools in the

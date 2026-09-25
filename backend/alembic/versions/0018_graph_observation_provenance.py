@@ -3,9 +3,14 @@ model-and-attack-paths.md Step 1: every edge cites >=1 observation_id, and
 node confidence is recomputed fresh from the current evidence set (never
 ratcheted) on each ingest.
 
-Revision ID: 0018_graph_observation_provenance
+Revision ID: 0018_graph_obs_provenance
 Revises: 0017_suppressed_promotions
 Create Date: 2026-09-23
+
+Revision id kept to 25 chars — alembic_version.version_num is VARCHAR(32);
+the original "0018_graph_observation_provenance" (33 chars) silently worked
+against SQLite (no length enforcement) but broke `upgrade head` on real
+Postgres. Filename is left as-is (only the id inside changed).
 """
 
 from typing import Sequence, Union
@@ -13,7 +18,7 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0018_graph_observation_provenance"
+revision: str = "0018_graph_obs_provenance"
 down_revision: Union[str, None] = "0017_suppressed_promotions"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

@@ -7,10 +7,8 @@ from __future__ import annotations
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from osprey.services.surface_expansion import (
-    ExpansionReport,
-    run_expansion_to_fixpoint,
-)
+from osprey.services.investigation_director import run_to_completion
+from osprey.services.surface_expansion import ExpansionReport
 
 router = APIRouter()
 
@@ -23,6 +21,6 @@ class ExpandRequest(BaseModel):
 
 @router.post("/expand", response_model=ExpansionReport)
 async def expand(request: ExpandRequest) -> ExpansionReport:
-    return await run_expansion_to_fixpoint(
+    return await run_to_completion(
         engagement_id=request.engagement_id, run_id=request.run_id, max_passes=request.max_passes,
     )

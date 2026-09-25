@@ -1,6 +1,11 @@
-"""Operator write-back into engagement memory (graph links, asset tags, durable think).
+"""Operator write-back into engagement memory (graph links, durable hypotheses).
 
-Config owns safety/defaults. The LLM authors relations, tags, and hypotheses here.
+The LLM authors relations and hypotheses here. Neither ``link_assets``/
+``link_assets_many`` nor ``record_think`` mint a ``Finding`` — a graph edge's
+confidence lives in its own metadata, and operator thinking is a Hypothesis
+(services/hypothesis_store.py, Plan 05), never a Finding with a caller-
+asserted confidence (Plan 03's one law: confidence is computed from
+evidence, never set by a caller).
 """
 
 from __future__ import annotations
@@ -9,14 +14,8 @@ import re
 from typing import Any
 
 from osprey.schemas.engagement_graph import AssetType
-from osprey.schemas.finding import (
-    ClaimSeverity,
-    Finding,
-    FindingConfidence,
-    FindingType,
-)
+from osprey.schemas.finding import FindingConfidence
 from osprey.services.engagement_graph import get_engagement_graph
-from osprey.services.findings_store import get_findings_store
 
 _REL_SAFE = re.compile(r"^[a-z][a-z0-9_]{0,48}$")
 _HYPOTHESIS_PREFIX = "hypothesis_"
@@ -98,7 +97,6 @@ def link_assets(
     evidence: str = "",
     confidence: str = "likely",
     run_id: str = "",
-    seed_target: str = "",
     derived_from: list[str] | str | None = None,
 ) -> dict[str, Any]:
     """Create an operator-named graph edge + durable observation finding."""
@@ -142,27 +140,13 @@ def link_assets(
         "edge_kind": "hypothesis" if is_hypothesis_relation(rel) else "asserted",
     }
     meta = merge_derived_from(meta, normalize_derived_from(derived_from))
-
-    finding = Finding(
-        engagement_id=eid,
-        run_id=run_id or "",
-        finding_type=FindingType.OBSERVATION,
-        title=f"REL {src_type.value}:{src_label} --{rel}--> {tgt_type.value}:{tgt_label}",
-        description=f"Operator graph link ({conf_s})",
-        evidence=ev[:2000],
-        confidence=conf,
-        claim_severity=ClaimSeverity.NONE,
-        source_tool="operator_graph_link",
-        target=seed_target or src_label,
-        metadata=meta,
-        tags=[
-            "operator_graph_link",
-            "hypothesis" if is_hypothesis_relation(rel) else "asserted_link",
-            f"rel:{rel[:40]}",
-        ],
-    )
-    stored = get_findings_store().add(finding)
-    # Do not re-ingest via normal finding→edge path; edge already written.
+    # No Finding is minted here — this used to also construct one with
+    # confidence=conf, a caller-asserted value Plan 03's one law forbids
+    # (confidence is computed from evidence, never set by a caller). The
+    # edge itself (operator_link above — a disclosed, documented exception
+    # in engagement_graph.py's module docstring) is the durable write;
+    # its own confidence lives in the edge/node metadata, queryable via
+    # platform_graph_query, with no need for a duplicate Finding beside it.
 
     return {
         "engagement_id": eid,
@@ -171,12 +155,11 @@ def link_assets(
         "relationship": rel,
         "confidence": conf_s,
         "hypothesis": is_hypothesis_relation(rel),
-        "finding_id": stored.id,
         "derived_from": meta.get("derived_from") or [],
         "hint": (
             "Hypothesis edge — not proof for COMPLETE/CRITICAL. "
-            "Confirm with real evidence, then re-link with confidence=confirmed "
-            "or platform_record_finding."
+            "Confirm with real evidence, then re-link with confidence=confirmed, "
+            "or file_finding once you have evidence to attach."
             if is_hypothesis_relation(rel)
             else "Asserted link stored. Still need confirmed proof for CRITICAL claims."
         ),
@@ -189,7 +172,6 @@ def link_assets_many(
     evidence: str = "",
     confidence: str = "likely",
     run_id: str = "",
-    seed_target: str = "",
     derived_from: list[str] | str | None = None,
     source: str = "",
     relation: str = "",
@@ -322,22 +304,10 @@ def link_assets_many(
         "edges": resolved,
     }
     meta = merge_derived_from(meta, all_derived)
-
-    finding = Finding(
-        engagement_id=eid,
-        run_id=run_id or "",
-        finding_type=FindingType.OBSERVATION,
-        title=f"BULK REL x{len(resolved)}: {sample}",
-        description=f"Operator bulk graph link ({n_confirmed} confirmed, {n_hypothesis} hypothesis)",
-        evidence=(evidence or "bulk edge batch — see per-edge evidence in metadata")[:2000],
-        confidence=FindingConfidence.CONFIRMED if n_hypothesis == 0 else FindingConfidence.HYPOTHESIS,
-        claim_severity=ClaimSeverity.NONE,
-        source_tool="operator_graph_link_many",
-        target=seed_target or (resolved[0]["source"] if resolved else ""),
-        metadata=meta,
-        tags=["operator_graph_link", "bulk_link", f"count:{len(resolved)}"],
-    )
-    stored = get_findings_store().add(finding)
+    # No Finding is minted here either — see link_assets above for why: a
+    # caller-asserted confidence (here, CONFIRMED/HYPOTHESIS picked from
+    # whether any edge was a hypothesis) is exactly what Plan 03's one law
+    # forbids. The edges themselves are the durable write.
 
     return {
         "engagement_id": eid,
@@ -345,12 +315,11 @@ def link_assets_many(
         "confirmed_count": n_confirmed,
         "hypothesis_count": n_hypothesis,
         "edges": resolved,
-        "finding_id": stored.id,
         "hint": (
             f"Persisted {len(resolved)} edge(s) in one call — "
-            f"{n_confirmed} asserted, {n_hypothesis} hypothesis (not proof yet). "
-            "This is the natural way to persist a whole tool run's relationships: "
-            "don't summarize in chat only, link everything you found."
+            f"{n_confirmed} asserted, {n_hypothesis} hypothesis (not proof yet): "
+            f"{sample}. This is the natural way to persist a whole tool run's "
+            "relationships: don't summarize in chat only, link everything you found."
         ),
     }
 
@@ -363,9 +332,19 @@ def record_think(
     evidence: str = "",
     next_tool: str = "",
     run_id: str = "",
-    seed_target: str = "",
 ) -> dict[str, Any]:
-    """Persist optional thinking as a durable hypothesis observation."""
+    """Persist operator thinking as a durable Hypothesis — plans/harness/05-
+    world-model-and-attack-paths.md's actual first-class object for "an
+    unresolved claim the reasoner is still testing," not a Finding. This used
+    to construct a ``Finding`` directly with a hardcoded ``confidence=
+    HYPOTHESIS`` — a caller-asserted confidence Plan 03's one law forbids
+    (confidence is computed from evidence by ``confidence_for``, never set by
+    a caller). A hypothesis was never actually a Finding in the first place;
+    routing it through ``hypothesis_store`` instead of contorting it to fit
+    the finding law is the complete fix, not a patch around the symptom.
+    """
+    from osprey.services import hypothesis_store
+
     eid = (engagement_id or "").strip()
     if not eid:
         raise ValueError("engagement_id required")
@@ -373,40 +352,21 @@ def record_think(
     if not hyp:
         raise ValueError("hypothesis required")
 
-    blob_parts = [hyp]
+    statement_parts = [hyp]
     if plan.strip():
-        blob_parts.append(f"Plan: {plan.strip()}")
+        statement_parts.append(f"Plan: {plan.strip()}")
     if evidence.strip():
-        blob_parts.append(f"Evidence: {evidence.strip()}")
+        statement_parts.append(f"Evidence: {evidence.strip()}")
     if next_tool.strip():
-        blob_parts.append(f"Next: {next_tool.strip()}")
-    body = "\n".join(blob_parts)
+        statement_parts.append(f"Next: {next_tool.strip()}")
+    statement = "\n".join(statement_parts)[:2000]
 
-    finding = Finding(
-        engagement_id=eid,
-        run_id=run_id or "",
-        finding_type=FindingType.OBSERVATION,
-        title=f"HYPOTHESIS: {hyp[:120]}",
-        description=plan.strip()[:400] or "Operator hypothesis",
-        evidence=(evidence.strip() or hyp)[:2000],
-        confidence=FindingConfidence.HYPOTHESIS,
-        claim_severity=ClaimSeverity.NONE,
-        source_tool="operator_think",
-        target=seed_target or "",
-        metadata={
-            "hypothesis": hyp[:500],
-            "plan": plan.strip()[:500],
-            "next_tool": next_tool.strip()[:120],
-        },
-        tags=["operator_think", "hypothesis"],
-        notes=body[:4000],
-    )
-    stored = get_findings_store().add(finding)
+    stored = hypothesis_store.raise_hypothesis(eid, statement=statement)
     return {
         "engagement_id": eid,
-        "finding_id": stored.id,
-        "title": stored.title,
-        "hint": "Hypothesis stored in memory — visible via platform_findings / context.",
+        "hypothesis_id": stored.id,
+        "statement": stored.statement,
+        "hint": "Hypothesis stored — visible via platform_hypothesis(action='list') / the context packet.",
     }
 
 
@@ -415,7 +375,6 @@ def apply_script_rel_markers(
     *,
     engagement_id: str,
     run_id: str = "",
-    seed_target: str = "",
 ) -> list[dict[str, Any]]:
     """Apply REL| lines from script stdout into the graph."""
     from osprey.services.parsers.freeform_probe import extract_rel_markers
@@ -432,7 +391,6 @@ def apply_script_rel_markers(
                     evidence=item["evidence"],
                     confidence=item.get("confidence") or "likely",
                     run_id=run_id,
-                    seed_target=seed_target,
                 )
             )
         except ValueError:

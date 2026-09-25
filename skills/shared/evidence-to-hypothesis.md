@@ -34,5 +34,5 @@ Mirror expansion plans and steps 1–3 with `platform_think`. Context may includ
 ## Platform helpers
 
 - `platform_context` / thinking hypotheses — cards from evidence
-- `platform_skills` — methodology (commander/recon/network), not vendor encyclopedias
-- `platform_config(name='thinking_model')` — extendable signal classes (data, not code forks)
+- `platform_skills` — ranked methodology retrieval (commander/recon/network), not vendor encyclopedias
+- `platform_priority` — what's worth doing next, from real evidence (not a hardcoded signal table)

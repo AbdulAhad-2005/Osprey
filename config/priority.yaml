@@ -1,0 +1,91 @@
+# Multi-factor prioritization weights — plans/harness/06-prioritization-engine.md.
+#
+# These are tunable prioritization DEFAULTS, not truth rules: they decide what
+# the conductor/planner looks at NEXT, never whether a finding is real (that
+# stays confidence_for's job alone, Plan 03's one law). Seed values below are a
+# rough judgement call (impact/cost/validation-ease) plus Pentest-Swarm's
+# pheromone half-life table for volatility — the benchmark (Plan 01) should
+# retune these over time, not code review alone.
+
+# Per-factor weight in the final score: total = sum(weight * factor) for the
+# additive factors, minus sum(weight * factor) for cost/repetition/risk.
+weights:
+  objective_relevance: 1.5
+  evidence_strength: 1.0
+  novelty: 1.0
+  potential_impact: 1.5
+  relationship_centrality: 1.0
+  unexplained_behavior: 1.2
+  validation_potential: 0.8
+  coverage_importance: 1.0
+  cost: 0.6
+  repetition: 1.0
+  risk: 1.0
+
+# Per-observation-type priors. impact/validation_ease are 0..1 judgement
+# scores; half_life_hours is how fast that kind of fact actually changes (an
+# open port is durable, a scanner signal is comparatively transient) — it
+# drives decay of novelty/evidence_strength, not confidence.
+observation_types:
+  # scanner_signal's impact here is the UNRATED fallback only — most real
+  # scanner_signal observations carry details.claimed_severity (nuclei/
+  # jaeles/nikto findings do) and get scored via severity_impact above
+  # instead, which can reach 1.0. This default covers the ones that don't
+  # (an OSINT hit, a raw CVE-tag mention, a browser signal) — kept moderate,
+  # not near-critical, so "we don't know how bad this is" can never
+  # outrank an explicitly critical single-tool hit just by accumulating
+  # corroboration count.
+  scanner_signal:  {impact: 0.5, cost: 0.3, validation_ease: 0.8, half_life_hours: 12}
+  injection_point: {impact: 0.8, cost: 0.4, validation_ease: 0.6, half_life_hours: 48}
+  credential:      {impact: 1.0, cost: 0.2, validation_ease: 0.9, half_life_hours: 72}
+  secret:          {impact: 1.0, cost: 0.2, validation_ease: 0.9, half_life_hours: 72}
+  account:         {impact: 0.6, cost: 0.3, validation_ease: 0.7, half_life_hours: 168}
+  share:           {impact: 0.5, cost: 0.3, validation_ease: 0.7, half_life_hours: 168}
+  service:         {impact: 0.5, cost: 0.3, validation_ease: 0.8, half_life_hours: 168}
+  waf:             {impact: 0.3, cost: 0.2, validation_ease: 0.7, half_life_hours: 168}
+  port:            {impact: 0.4, cost: 0.2, validation_ease: 0.9, half_life_hours: 168}
+  url:             {impact: 0.4, cost: 0.2, validation_ease: 0.9, half_life_hours: 96}
+  technology:      {impact: 0.4, cost: 0.1, validation_ease: 0.9, half_life_hours: 336}
+  subdomain:       {impact: 0.3, cost: 0.1, validation_ease: 0.9, half_life_hours: 336}
+  host:            {impact: 0.4, cost: 0.1, validation_ease: 0.9, half_life_hours: 336}
+  dns_record:      {impact: 0.2, cost: 0.1, validation_ease: 0.9, half_life_hours: 336}
+  cert:            {impact: 0.2, cost: 0.1, validation_ease: 0.9, half_life_hours: 336}
+  asn:             {impact: 0.2, cost: 0.1, validation_ease: 0.9, half_life_hours: 720}
+  raw:             {impact: 0.2, cost: 0.2, validation_ease: 0.5, half_life_hours: 24}
+
+# A scanner's OWN claimed severity (observation.details.claimed_severity —
+# already extracted by parsers/vuln.py etc., never assigned by this module)
+# overrides the flat per-type impact above when present. Root-cause fix for
+# a real scoring blind spot: without this, every scanner_signal scored the
+# same potential_impact (0.9) regardless of whether the scanner called it
+# critical or info, so a single-tool CRITICAL hit could rank behind a
+# three-tool-corroborated info-level one purely on evidence_strength. This
+# is a PRIORITY signal, not a confidence one — "the scanner claims critical"
+# is reason enough to look sooner, even though it stays unconfirmed until
+# real evidence is attached (Plan 03's one law is untouched by this).
+severity_impact:
+  critical: 1.0
+  high: 0.75
+  medium: 0.45
+  low: 0.2
+  info: 0.05
+
+# Any observation type not listed above (js_endpoint, cookie, redirect, email,
+# username, person, phone, social_account, organization, document, header,
+# banner, content_path, endpoint, http_response, …) falls back to this —
+# honest "unseeded, middling" default rather than a KeyError or a silent 0.
+default_observation_type: {impact: 0.4, cost: 0.3, validation_ease: 0.6, half_life_hours: 48}
+
+# Aggregate-priority thresholds an area must cross to be "worth entering" —
+# Step 4, replaces phase_pipeline.yaml's finding-count triggers. The gate is
+# the MAX scored item in that area, not a sum: one hot lead is reason enough,
+# matching the old exploit trigger's "one real vuln IS reason enough" spirit,
+# now generalized instead of being a hardcoded count-of-1.
+phase_thresholds:
+  vuln: 1.4
+  exploit: 2.2
+
+# Which observation types feed each phase's aggregate score.
+phase_item_types:
+  vuln: [port, service, technology, url, host, injection_point, waf]
+  exploit: [scanner_signal, credential, secret, injection_point]

@@ -135,7 +135,7 @@ osprey/           # repo root
 │   ├── escalation_matrix.yaml
 │   ├── tech_dispatch.yaml
 │   ├── ingest_rules.yaml
-│   └── thinking_model.yaml
+│   └── priority.yaml
 ├── skills/                   # Markdown playbooks
 │   ├── commander/  recon/  network/  summary/  shared/  …
 ├── backend/src/osprey/

@@ -21,8 +21,8 @@ Run this whenever ANY of these is true, not just on a fixed cadence:
 0. flush your reasoning        → one bulk call for anything you concluded but no
                                  tool emitted (platform_record_findings /
                                  platform_graph_link_many / platform_think)
-1. platform_thinking          → shows untested hypothesis cards from evidence
-2. platform_context           → phase-readiness, crown jewels, jobs, dispatch signals
+1. platform_priority          → top-ranked items from the multi-factor world-model score
+2. platform_context           → phase-readiness, priorities, jobs, dispatch signals
 ```
 
 Step 0 is the whole discipline: tool/script/shell output is already stored
