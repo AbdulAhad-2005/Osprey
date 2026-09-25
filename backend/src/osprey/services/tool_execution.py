@@ -254,7 +254,22 @@ async def execute_tool_request(
     if request.run_id:
         get_run_store().ensure(run_id=request.run_id, engagement_id=session.engagement_id)
 
-    exec_params = dict(request.params)
+    # Coerce scalar params to strings before validation. Tool catalog schemas
+    # declare every param as a string, but a caller (e.g. a job started with
+    # params_json={"exec_timeout": 300}) can legitimately pass an int/float/bool
+    # per the JobStartRequest schema — which then failed validation with an
+    # opaque 400. Booleans render lowercase ("true"/"false") to match CLI
+    # conventions; None is dropped so it doesn't become the string "None".
+    exec_params = {}
+    for _k, _v in dict(request.params).items():
+        if _v is None:
+            continue
+        if isinstance(_v, bool):
+            exec_params[_k] = "true" if _v else "false"
+        elif isinstance(_v, (int, float)):
+            exec_params[_k] = str(_v)
+        else:
+            exec_params[_k] = _v
     if request.additional_args:
         exec_params.setdefault("additional_args", request.additional_args)
 
