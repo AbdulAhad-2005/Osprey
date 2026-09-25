@@ -410,7 +410,16 @@ def _resolve_engagement(engagement_id_override: str = "") -> _EngagementContext:
     override = existing single-chat behavior (unchanged).
     """
     requested = (engagement_id_override or "").strip()
-    pinned = bool(requested)
+    # "Pinned" means something ACTIONABLE happened — the explicit id actually
+    # differs from what the ambient session currently holds. A CLI (or any
+    # single-focused-session driver) passes engagement_id= on every call by
+    # design (concurrent-chat safety), so bool(requested) alone made this
+    # notice fire on nearly every tool result even with zero divergence —
+    # pure noise, not signal, in the overwhelmingly common case of one
+    # session working one engagement. Only the real case (another chat's
+    # platform_set_target has overwritten the shared ambient session out
+    # from under this one) is worth an operator's attention.
+    pinned = bool(requested) and requested != _SESSION_ENGAGEMENT_ID
     if not requested:
         _require_bound_target()
         requested = _SESSION_ENGAGEMENT_ID
@@ -533,7 +542,7 @@ def _format_clarification(analysis: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def _start_expansion_job(engagement_id: str, run_id: str, *, max_passes: int = 5) -> dict[str, Any]:
+def _start_expansion_job(engagement_id: str, run_id: str, *, max_passes: int = 50) -> dict[str, Any]:
     """POST /api/v1/jobs/start with kind=expansion — the InvestigationDirector
     (plans/harness/09-dual-mode-planner.md) runs as a real background job
     (job_store.py's existing TOOL/SHELL/SCRIPT dispatch mechanism, just one
@@ -651,6 +660,14 @@ def platform_set_target(target: str, force_new: bool = False, pick: str = "") ->
     exact domain they meant, then call again with that FQDN (or pick='chosen.tld').
 
     Never invent a domain. Never start tools until bound to a confirmed FQDN.
+
+    force_new: False (default) REUSES an existing engagement on this exact
+    target if one exists — all its prior findings/observations/assets come
+    back with it. This is almost always what you want (don't throw away
+    earlier work on the same target). Pass force_new=True ONLY when the
+    operator explicitly asks for a fresh/new/clean engagement on a target
+    you've worked before — otherwise "start fresh" silently means "keep
+    working the old one," which is the opposite of what was asked.
     """
     def _run() -> str:
         chosen = (pick or "").strip() or (target or "").strip()
@@ -660,30 +677,55 @@ def platform_set_target(target: str, force_new: bool = False, pick: str = "") ->
 
 
 @mcp.tool()
-def platform_expand(max_passes: int = 5, engagement_id: str = "") -> str:
+def platform_expand(max_passes: int = 50, engagement_id: str = "") -> str:
     """
-    Start the InvestigationDirector (plans/harness/09-dual-mode-planner.md)
-    as a background job: subdomains/sisters -> live-host probe -> ports ->
-    tech/CDN -> origin IPs, looping until nothing new turns up or max_passes
-    is hit — then, once priority.should_unlock_phase says there's real
-    evidence to work with, the deterministic tech_dispatch-matched vuln/web
-    tools (nuclei/wpscan/sslyze/sqlmap/…) to their own bounded fixpoint, then
-    queues exploit candidates. Never launches exploitation itself. Fully
-    deterministic and mechanical — no LLM judgment involved in running it,
-    and no boolean to remember to flip: the director decides both stages
-    from the same priority signal every time. Returns immediately with a
-    job_id — do NOT wait on it.
+    Osprey's own built-in recon+vuln methodology — call this FIRST for
+    mechanical breadth work, not as a fallback or an alternate mode. Starts
+    the InvestigationDirector (plans/harness/09-dual-mode-planner.md) as a
+    background job: subdomains/sisters -> live-host probe -> ports -> tech/CDN
+    -> origin IPs, looping until nothing new turns up or max_passes is hit —
+    then, once priority.should_unlock_phase says there's real evidence to
+    work with, the deterministic tech_dispatch-matched vuln/web tools
+    (nuclei/wpscan/sslyze/sqlmap/…) to their own bounded fixpoint, then queues
+    exploit candidates. Never launches exploitation itself.
 
-    A real domain can take minutes per pass; this never blocks the chat.
-    Continue other work, then platform_job_poll(job_id, wait_seconds=20) to
-    check progress (updated after every pass) or platform_job_result(job_id)
-    once complete for the full pass-by-pass report — real new asset names,
-    not just counts, plus any new exploit candidates the pass surfaced.
+    max_passes=50 (the default) is a safety ceiling, not the real stop
+    condition — the loop already stops earlier, on its own, once a pass adds
+    nothing new. It's set this high because each pass is itself batch-capped
+    (~15 live hosts), so a low ceiling silently truncates coverage on any
+    real-sized target well before actual exhaustion. Raise it further for a
+    genuinely huge target; you rarely need to lower it.
 
-    Not auto-started — call it explicitly when you want the deterministic
-    breadth engine (mode=engine / no LLM judgment per step), or to re-check a
-    target you've been working for a while (new assets discovered manually
-    since the last pass get picked up too).
+    This is where Osprey's hard-won edge-case handling actually lives —
+    wildcard-domain canary guards, authoritative-DNS retry before killing a
+    flaky host, confidence-gated CDN-origin candidates, sister-domain trust
+    tiers — none of which you can reliably reconstruct tool-by-tool from
+    memory. Let it do the mechanical breadth work; apply your own judgment
+    on TOP of what it surfaces (go deeper on a priority item, chase
+    something it can't decide, chain toward exploitation) rather than
+    re-deriving what it already does with less rigor. Runs as a background
+    job for real (a full domain can take minutes per pass — no MCP client
+    should hold a single call open that long) — but that is a plumbing
+    detail, not permission to go silent.
+
+    WATCH IT, DON'T WALK AWAY: immediately after this returns, call
+    platform_job_poll(job_id=<this job's id>, wait_seconds=90) and REPEAT
+    that call as soon as each one returns, narrating every new
+    `results_log` line to the operator as it arrives — that field already
+    accumulates every tool name, target, and outcome the pass produces; it
+    is the "everything being called, shown on front" you're looking for,
+    not something you have to reconstruct. Keep polling until status is
+    completed/failed. Do NOT treat "returns immediately with a job_id" as
+    "go do something else and check back later" — the job is backgrounded
+    on the SERVER so a slow scan can't time out your call, not backgrounded
+    from the operator's view. If you genuinely have other independent work
+    to interleave, that's fine — but keep this poll loop running alongside
+    it, don't drop it.
+
+    Not auto-started — nothing triggers this on platform_set_target or by
+    itself; you (or the CLI's --engine mode) must call it. Safe to call more
+    than once on the same engagement — re-check a target you've been working
+    manually for a while and it picks up whatever's new.
 
     engagement_id: optional pin — see platform_exec.
     """
@@ -696,8 +738,9 @@ def platform_expand(max_passes: int = 5, engagement_id: str = "") -> str:
             f"**job_id:** `{job.get('job_id')}` | **status:** {job.get('status')}",
             job.get("hint") or "",
             "",
-            f"Continue other work. platform_job_poll(job_id='{job.get('job_id')}', wait_seconds=20) "
-            "for progress, platform_job_result once complete for the full report.",
+            f"Poll NOW and repeatedly — platform_job_poll(job_id='{job.get('job_id')}', "
+            "wait_seconds=90) — and narrate each new results_log line as it arrives. Keep "
+            "polling until it completes; this is not a fire-and-forget call.",
         ]
         return "\n\n".join(parts)
 
@@ -829,6 +872,14 @@ def platform_spawn_agent(
     land in shared memory and come back through platform_findings — no return
     channel needed. Use it to fan out: one agent per sister domain in recon, per
     host in vuln, per candidate in exploit.
+
+    ONE LLM identity rule: if your own harness has a native subagent/Task
+    mechanism, use THAT for this fan-out and do not also call this tool for the
+    same slice of work — this tool drives the backend's OWN configured LLM key,
+    a second, independent identity from whatever is running you. Calling both
+    for one piece of work means two LLM loops burning one account/budget
+    redundantly, not real extra parallelism. Use platform_spawn_agent only when
+    you have no subagent mechanism of your own.
 
     role:  recon | network | vuln | web | exploit | osint | custom
     task:  what this sub-agent should accomplish (free-form)
@@ -1603,6 +1654,10 @@ def platform_attempts(
 
     Data only — not a ban. Re-run with new params, force_refresh, job, or script
     whenever the experiment still makes sense.
+
+    platform_context already shows a TOOLS ALREADY RUN summary every call —
+    reach for THIS tool when you need it filtered to one asset=, or the
+    notes/success detail the summary leaves out.
     """
     def _run() -> str:
         ctx = _resolve_engagement(engagement_id)
@@ -1882,6 +1937,7 @@ def platform_file_finding(
     evidence_kind: str = "",
     evidence_detail: str = "",
     evidence_source_tool: str = "",
+    evidence_observation_id: str = "",
     engagement_id: str = "",
     target: str = "",
     tags: str = "",
@@ -1901,7 +1957,13 @@ def platform_file_finding(
       - corroboration: an independent tool also observed this (pass
         evidence_source_tool=<that tool's name>).
       - reproduction: you ran a controlled PoC and it reproduced (RoE/blast-
-        radius still apply to whatever you actually ran).
+        radius still apply to whatever you actually ran). evidence_detail must
+        quote a real excerpt (20+ chars) from that observation's actual
+        recorded tool output — a paraphrase or bare "it worked" is rejected,
+        deterministically, not on the platform's trust in you. Point
+        evidence_observation_id at whichever of observation_ids has that
+        output if it isn't the first one. No qualifying output to quote? Use
+        attestation instead — that one is trust-based on purpose.
       - verification: you read the config/permission directly and confirmed it.
       - attestation: you (the operator) are personally attesting to this.
     Omit evidence_kind for a bare signal with no extra evidence — it stays
@@ -1913,7 +1975,7 @@ def platform_file_finding(
       vulnerability|credential|secret|http_response|access.
     """
     def _run() -> str:
-        eid, _label = _resolve_engagement(engagement_id)
+        ctx = _resolve_engagement(engagement_id)
         ids = [x.strip() for x in observation_ids.split(",") if x.strip()]
         if not ids:
             return "ERROR: observation_ids is required — at least one Observation id."
@@ -1926,28 +1988,33 @@ def platform_file_finding(
                 "kind": kind,
                 "source_tool": evidence_source_tool.strip(),
                 "detail": evidence_detail.strip(),
+                # Default to the first observation this finding is about —
+                # explicit evidence_observation_id when it's a different one
+                # of several. Needed so a 'reproduction' claim has something
+                # concrete to be checked against (evidence_grounding.py).
+                "observation_id": evidence_observation_id.strip() or ids[0],
             })
         sev = (claim_severity or "none").strip().lower()
         if sev not in ("none", "info", "low", "medium", "high", "critical"):
             sev = "none"
         tag_list = [t.strip() for t in tags.replace(",", " ").split() if t.strip()]
         body = {
-            "engagement_id": eid,
-            "run_id": SESSION_RUN_ID,
+            "engagement_id": ctx.engagement_id,
+            "run_id": ctx.run_id,
             "title": title.strip()[:300],
             "finding_type": (finding_type or "observation").strip().lower(),
             "observation_ids": ids,
             "claim_severity": sev,
             "description": description.strip(),
             "evidence_records": evidence_records,
-            "target": target.strip() or _SESSION_TARGET,
+            "target": target.strip() or ctx.target,
             "tags": tag_list,
         }
         data = _post("/api/v1/findings/file", body, timeout=30)
         if data.get("suppressed"):
             return (
                 "### OPERATOR MIRROR — SUPPRESSED (FP-cache)\n"
-                f"{_session_header(eid)}\n"
+                f"{_session_header(ctx)}\n"
                 f"title: {title}\n"
                 f"Not filed — matches a known false-positive pattern: {data.get('suppressed_reason')}\n"
                 "Visible in the audit trail (platform_fp_list shows patterns; the suppressed-"
@@ -1956,7 +2023,7 @@ def platform_file_finding(
         f = data.get("finding") or {}
         return (
             "### OPERATOR MIRROR — FILED FINDING\n"
-            f"{_session_header(eid)}\n"
+            f"{_session_header(ctx)}\n"
             f"Stored id={f.get('id')} type={f.get('finding_type')} "
             f"confidence={f.get('confidence')} (computed) sev={f.get('claim_severity')}\n"
             f"title: {f.get('title')}\n"
@@ -1981,10 +2048,10 @@ def platform_promote_observations(engagement_id: str = "") -> str:
     HYPOTHESIS, not dropped or inflated.
     """
     def _run() -> str:
-        eid, _label = _resolve_engagement(engagement_id)
+        ctx = _resolve_engagement(engagement_id)
         resp = _client().post(
             "/api/v1/findings/promote",
-            params={"engagement_id": eid, "run_id": SESSION_RUN_ID},
+            params={"engagement_id": ctx.engagement_id, "run_id": ctx.run_id},
             timeout=min(60.0, HTTP_TIMEOUT),
         )
         resp.raise_for_status()
@@ -1996,7 +2063,7 @@ def platform_promote_observations(engagement_id: str = "") -> str:
             by_conf[f.get("confidence", "?")] = by_conf.get(f.get("confidence", "?"), 0) + 1
         return (
             "### OPERATOR MIRROR — PROMOTED OBSERVATIONS\n"
-            f"{_session_header(eid)}\n"
+            f"{_session_header(ctx)}\n"
             f"Promoted {total} finding(s): {by_conf}\n"
             "Call platform_findings to see them."
         )
@@ -2025,7 +2092,7 @@ def platform_mark_false_positive(finding_id: str, reason: str = "", target_glob:
     active, and removing a pattern re-enables promotion.
     """
     def _run() -> str:
-        eid, _label = _resolve_engagement("")
+        ctx = _resolve_engagement("")
         resp = _client().post(
             f"/api/v1/findings/{finding_id}/fp",
             params={"reason": reason.strip(), "target_glob": target_glob.strip()},
@@ -2038,12 +2105,64 @@ def platform_mark_false_positive(finding_id: str, reason: str = "", target_glob:
         pattern = data.get("pattern") or {}
         return (
             "### OPERATOR MIRROR — MARKED FALSE POSITIVE\n"
-            f"{_session_header(eid)}\n"
+            f"{_session_header(ctx)}\n"
             f"Retracted finding {finding_id}. New FP-cache pattern id={pattern.get('id')} "
             f"scope={pattern.get('target_glob')} type={pattern.get('finding_type') or 'any'}\n"
             f"title_contains: {pattern.get('title_contains')}\n"
             "This pattern now suppresses matching candidates on every future promotion. "
             "platform_fp_list to review/prune."
+        )
+
+    return _safe(_run)
+
+
+@mcp.tool()
+def platform_reverify_finding(finding_id: str, run_id: str = "", engagement_id: str = "") -> str:
+    """
+    Re-check whether a finding still holds — re-runs the tool(s) behind its
+    evidence and looks for the same signal.
+
+    confidence_for computes confidence once, at filing time, and never
+    revisits it — a finding CONFIRMED hours into a long engagement stays
+    reported as CONFIRMED even if the target's since been patched or the
+    WAF now blocks it. This closes that gap without ever touching history:
+    it NEVER edits or deletes past evidence (Plan 03's evidence is
+    append-only) — a recheck that fails to reproduce the signal appends a
+    RECHECK_FAILED record, which confidence_for weighs by recency (a
+    CONFIRMED finding whose most recent recheck failed reads as LIKELY, not
+    CONFIRMED — a later successful re-verification clears it again).
+
+    Only useful on a finding with a re-runnable observation behind it (a
+    real catalog tool, not an operator/LLM-only attestation) — those report
+    back plainly that there's nothing to re-run rather than guessing.
+
+    Call this before a final report on anything CRITICAL/CONFIRMED you filed
+    a while ago, or whenever you want to confirm a finding still holds right
+    now rather than whenever it was first observed.
+
+    engagement_id: optional pin — see platform_exec.
+    """
+    def _run() -> str:
+        ctx = _resolve_engagement(engagement_id)
+        resp = _client().post(
+            f"/api/v1/findings/{finding_id}/reverify",
+            params={"run_id": run_id.strip() or ctx.run_id},
+            timeout=min(120.0, HTTP_TIMEOUT),
+        )
+        if resp.status_code == 404:
+            return f"ERROR: no finding with id '{finding_id}'."
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("checked", 0) == 0:
+            return f"### OPERATOR MIRROR — REVERIFY\n{_session_header(ctx)}\n{data.get('note')}"
+        before, after = data.get("confidence_before"), data.get("confidence_after")
+        moved = f"{before} -> {after}" if before != after else f"{after} (unchanged)"
+        return (
+            "### OPERATOR MIRROR — REVERIFY\n"
+            f"{_session_header(ctx)}\n"
+            f"Checked {data.get('checked')} tool(s) behind finding {finding_id}: "
+            f"{data.get('reproduced')} reproduced, {data.get('failed')} did not.\n"
+            f"Confidence: {moved}."
         )
 
     return _safe(_run)
@@ -2089,9 +2208,15 @@ def platform_world_model(view: str, asset_id: str = "", asset_type: str = "", en
         material for a question/hypothesis (platform_question/platform_hypothesis).
       - conflicts: assets with a disputed slot (Step 2a, e.g. service@443
         nginx vs Apache) — both values kept, never silently picked.
+
+    platform_context's WORLD MODEL SUMMARY and COVERAGE sections already
+    cover a grouped/truncated view=assets and view=incomplete every call —
+    reach for THIS tool when you need the full untruncated list, one
+    asset_type= filter, or view=related/unexplained (not in context at all).
     """
     def _run() -> str:
-        eid, tgt = _resolve_engagement(engagement_id)
+        ctx = _resolve_engagement(engagement_id)
+        eid, tgt = ctx.engagement_id, ctx.target
         v = view.strip().lower()
         if v == "assets":
             params: dict[str, Any] = {"engagement_id": eid}
@@ -2133,7 +2258,7 @@ def platform_world_model(view: str, asset_id: str = "", asset_type: str = "", en
             return "ERROR: view must be one of assets|related|incomplete|unexplained|conflicts."
         return (
             "### OPERATOR MIRROR — WORLD MODEL\n"
-            f"{_session_header(eid, tgt)}\n"
+            f"{_session_header(ctx)}\n"
             f"view={v} count={len(items)}\n"
             + ("\n".join(lines) if lines else "(none)")
         )
@@ -2169,7 +2294,8 @@ def platform_attack_path(
       - list: active (hypothesized/investigating) paths for this engagement.
     """
     def _run() -> str:
-        eid, _tgt = _resolve_engagement(engagement_id)
+        ctx = _resolve_engagement(engagement_id)
+        eid = ctx.engagement_id
         a = action.strip().lower()
         if a == "propose":
             if not title.strip() or not step_ref_id.strip():
@@ -2181,7 +2307,7 @@ def platform_attack_path(
             data = _post("/api/v1/reasoning/attack-paths", body, timeout=30)
             return (
                 "### OPERATOR MIRROR — ATTACK PATH PROPOSED\n"
-                f"{_session_header(eid)}\nid={data.get('id')} status={data.get('status')}\n"
+                f"{_session_header(ctx)}\nid={data.get('id')} status={data.get('status')}\n"
                 "platform_attack_path(action='advance', path_id=..., step_ref_id=...) to add hops."
             )
         if a == "advance":
@@ -2199,7 +2325,7 @@ def platform_attack_path(
             data = resp.json()
             return (
                 "### OPERATOR MIRROR — ATTACK PATH ADVANCED\n"
-                f"{_session_header(eid)}\nid={data.get('id')} status={data.get('status')} "
+                f"{_session_header(ctx)}\nid={data.get('id')} status={data.get('status')} "
                 f"hops={len(data.get('steps') or [])}"
             )
         if a == "list":
@@ -2226,7 +2352,7 @@ def platform_question(
     action: raise | answer | dismiss | list
     """
     def _run() -> str:
-        eid, _tgt = _resolve_engagement(engagement_id)
+        eid = _resolve_engagement(engagement_id).engagement_id
         a = action.strip().lower()
         if a == "raise":
             if not text.strip():
@@ -2284,7 +2410,7 @@ def platform_hypothesis(
       - resolve: hypothesis_id= + status=confirmed|refuted.
     """
     def _run() -> str:
-        eid, _tgt = _resolve_engagement(engagement_id)
+        eid = _resolve_engagement(engagement_id).engagement_id
         a = action.strip().lower()
         if a == "raise":
             if not statement.strip():
@@ -2529,7 +2655,8 @@ def platform_observations(
     limit = max(10, min(int(limit), 500))
 
     def _run() -> str:
-        eid, tgt = _resolve_engagement(engagement_id)
+        ctx = _resolve_engagement(engagement_id)
+        eid = ctx.engagement_id
         params: dict[str, Any] = {"engagement_id": eid, "limit": limit}
         if observation_type.strip():
             params["type"] = observation_type.strip().lower()
@@ -2549,7 +2676,7 @@ def platform_observations(
             )
         parts = [
             "### OPERATOR MIRROR — OBSERVATIONS",
-            _session_header(eid, tgt),
+            _session_header(ctx),
             _block(
                 f"Observations list (showing {len(items)} / total field {total})",
                 "\n".join(lines) if lines else "(none)",
@@ -2579,18 +2706,24 @@ def platform_priority(
     confidence (Plan 03) — a low-confidence lead can still be the top
     priority; this never feeds back into confidence.
 
+    platform_context already shows your top 8 every time you call it — call
+    THIS tool only when you need more than 8, or a specific phase= unlock
+    check. If you just read platform_context this turn, you likely don't
+    need this call at all.
+
     kinds: comma-separated subset of observation|asset|question|attack_path.
     phase: optional — pass 'vuln' or 'exploit' instead to see whether that
     area has crossed its unlock threshold (replaces the old finding-count
     trigger) and what the single highest-priority item driving it is.
     """
     def _run() -> str:
-        eid, tgt = _resolve_engagement(engagement_id)
+        ctx = _resolve_engagement(engagement_id)
+        eid = ctx.engagement_id
         if phase.strip():
             data = _get("/api/v1/priority/phase/" + phase.strip().lower(), params={"engagement_id": eid}, timeout=20)
             return (
                 "### OPERATOR MIRROR — PHASE PRIORITY\n"
-                f"{_session_header(eid, tgt)}\n"
+                f"{_session_header(ctx)}\n"
                 f"phase={data.get('phase')} unlocked={data.get('unlocked')}\n"
                 f"{data.get('gate_reason', '')}"
             )
@@ -2606,8 +2739,47 @@ def platform_priority(
         ]
         return (
             "### OPERATOR MIRROR — TOP PRIORITIES\n"
-            f"{_session_header(eid, tgt)}\n"
+            f"{_session_header(ctx)}\n"
             + ("\n".join(lines) if lines else "(nothing scored yet — no observations/assets/questions/attack paths)")
+        )
+
+    return _safe(_run)
+
+
+@mcp.tool()
+def platform_anomalies(engagement_id: str = "") -> str:
+    """
+    What looks weird right now — plans/harness/14-pentester-intelligence.md.
+    Deterministic peer-comparison, no LLM: a host running much slower than
+    its siblings on the same tool, or an older version of the same product
+    its siblings run. Not a vuln class, just statistical surprise — the same
+    "notice the outlier" instinct a senior tester applies without needing a
+    rule for what's suspicious. Runs automatically after every recon pass
+    already; call this when you want a fresh read right now instead of
+    waiting for the next pass, or when platform_priority ranks something
+    high and you want to know WHY it's flagged unexplained.
+
+    Each result is also filed as an ordinary SCANNER_SIGNAL observation, so
+    it flows through the same evidence pipeline as anything else (visible in
+    platform_findings once corroborated, feeds platform_priority's
+    unexplained_behavior factor).
+    """
+    def _run() -> str:
+        ctx = _resolve_engagement(engagement_id)
+        data = _get("/api/v1/priority/anomalies", params={"engagement_id": ctx.engagement_id}, timeout=30)
+        anomalies = data.get("anomalies") or []
+        if not anomalies:
+            return (
+                "### OPERATOR MIRROR — ANOMALIES\n"
+                f"{_session_header(ctx)}\n"
+                "(nothing statistically odd yet — needs 3+ peer hosts under the same apex "
+                "with comparable tool runs before an outlier means anything)"
+            )
+        lines = [f"- [{a.get('kind')}] {a.get('title')}" for a in anomalies]
+        return (
+            "### OPERATOR MIRROR — ANOMALIES\n"
+            f"{_session_header(ctx)}\n"
+            + "\n".join(lines)
         )
 
     return _safe(_run)
@@ -2843,10 +3015,13 @@ def platform_job_poll(job_id: str = "", engagement_id: str = "", wait_seconds: f
     genuinely watchable turn-by-turn, not fire-and-forget. Read it instead of
     assuming a running job is a black box.
 
-    wait_seconds (0-60, default 0): long-poll — the call blocks server-side up to
+    wait_seconds (0-90, default 0): long-poll — the call blocks server-side up to
     this long for the job to finish or its progress to change, instead of you
-    firing off repeated polls in a tight loop. Pass e.g. 20 when you're going to
-    wait on a job anyway; it turns several round-trips into one.
+    firing off repeated polls in a tight loop. Pass 90 (the max) when you're
+    going to wait on a job anyway — for a genuinely multi-minute job (a full
+    platform_expand pass), that means ~2-3 poll calls instead of 8+; it still
+    returns the instant progress changes, so a short job never actually waits
+    the full 90s.
 
     When completed: findings already in memory — then platform_job_result for full stdout.
 
@@ -2865,7 +3040,7 @@ def platform_job_poll(job_id: str = "", engagement_id: str = "", wait_seconds: f
             return "\n\n".join(
                 [_session_header(ctx), _block("Jobs (this engagement)", data)]
             )
-        wait = max(0.0, min(float(wait_seconds), 60.0))
+        wait = max(0.0, min(float(wait_seconds), 90.0))
         data = _get(f"/api/v1/jobs/{jid}", params={"wait_seconds": wait} if wait else None, timeout=wait + 30)
         job_eid = str(data.get("engagement_id") or "").strip()
         if engagement_id and job_eid and engagement_id.strip() != job_eid:

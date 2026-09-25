@@ -190,6 +190,17 @@ def print_background_event(source: str, event_type: str, data: dict[str, Any]) -
         content = (data.get("content") or "").strip()
         if content:
             console.print(f"{label} [dim italic]{escape(content[:200])}[/]")
+    elif event_type == "expand_result":
+        # A recon/vuln-engine (platform_expand) stage or pass summary — an
+        # aggregate ("found 3 hosts"), not a single tool call, so it renders
+        # as its own line rather than going through tool_transcript.
+        msg = (data.get("message") or "").strip()
+        if msg:
+            console.print(f"{label} [bold green]✓[/] {escape(msg)}")
+    elif event_type == "expand_status":
+        msg = (data.get("message") or "").strip()
+        if msg:
+            console.print(f"{label} [dim]{escape(msg)}[/]")
     elif event_type == "error":
         console.print(
             f"{label} [bold red]✗[/] "

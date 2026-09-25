@@ -16,6 +16,42 @@ def _eid() -> str:
     return uuid.uuid4().hex[:12]
 
 
+def test_list_ranks_by_confidence_and_severity_before_recency():
+    """The gap a real operator transcript surfaced: FindingsStore.list()
+    ordered purely by created_at, so 118 confidence=hypothesis, sev=none
+    sister-domain guesses (domain_hunter, filed early) outranked 2
+    confidence=confirmed subdomains (subfinder_scan) in a truncated,
+    limit-bounded list — an operator/LLM scanning the first page of results
+    never reached what actually mattered. Confirmed/high-severity findings
+    must sort first regardless of creation order, with recency only as a
+    tiebreaker among equally-ranked items."""
+    eid = _eid()
+    store = get_findings_store()
+    # Filed in an order that would look "correct" under pure created_at
+    # ordering but is exactly backwards for what an operator wants to see
+    # first — the noisy hypothesis-tier guess is created LAST (most recent).
+    store.add(Finding(
+        engagement_id=eid, finding_type=FindingType.HOST, title="lookalike-domain.example",
+        target="lookalike-domain.example", source_tool="domain_hunter",
+        confidence="hypothesis", claim_severity=ClaimSeverity.NONE,
+    ))
+    store.add(Finding(
+        engagement_id=eid, finding_type=FindingType.VULNERABILITY, title="Critical RCE",
+        target="app.example.com", source_tool="nuclei_scan",
+        confidence="confirmed", claim_severity=ClaimSeverity.CRITICAL,
+    ))
+    store.add(Finding(
+        engagement_id=eid, finding_type=FindingType.SUBDOMAIN, title="confirmed-real.example",
+        target="confirmed-real.example", source_tool="subfinder_scan",
+        confidence="confirmed", claim_severity=ClaimSeverity.NONE,
+    ))
+
+    findings = store.list(engagement_id=eid, limit=50)
+    titles = [f.title for f in findings]
+    assert titles[0] == "Critical RCE"
+    assert titles.index("confirmed-real.example") < titles.index("lookalike-domain.example")
+
+
 def test_same_nse_script_across_many_ports_collapses_to_one_group():
     eid = _eid()
     store = get_findings_store()

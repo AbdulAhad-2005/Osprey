@@ -14,6 +14,7 @@ import httpx
 import pytest
 
 from cli.commands.slash import (
+    handle_anomalies,
     handle_attackpath,
     handle_context,
     handle_file,
@@ -186,6 +187,31 @@ def test_priority_requires_engagement():
     c.active_engagement_id = None
     handle_priority([], c)
     c.top_priorities.assert_not_called()
+
+
+def test_anomalies_lists_detected_outliers(client, capsys):
+    client.anomalies.return_value = {
+        "anomalies": [{"target": "slow.test", "kind": "timing_outlier", "title": "slow.test took 9000ms vs peer median 100ms"}],
+    }
+    handle_anomalies([], client)
+    client.anomalies.assert_called_once_with("eng1")
+    out = capsys.readouterr().out
+    assert "timing_outlier" in out
+    assert "slow.test" in out
+
+
+def test_anomalies_reports_nothing_odd_when_empty(client, capsys):
+    client.anomalies.return_value = {"anomalies": []}
+    handle_anomalies([], client)
+    out = capsys.readouterr().out
+    assert "odd" in out.lower()
+
+
+def test_anomalies_requires_engagement():
+    c = MagicMock()
+    c.active_engagement_id = None
+    handle_anomalies([], c)
+    c.anomalies.assert_not_called()
 
 
 def test_context_prints_the_packet(client, capsys):

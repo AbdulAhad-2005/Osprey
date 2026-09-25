@@ -628,30 +628,69 @@ class JobStore:
         job_id: str = "",
     ) -> ToolExecutionResponse | Any:
         if req.kind == JobKind.EXPANSION:
+            from osprey.services import event_bus
             from osprey.services.investigation_director import run_to_completion
             from osprey.services.surface_expansion import _MIN_ORIGIN_CONFIDENCE
+
+            _last_ephemeral_publish = 0.0
+
+            def _publish_progress(text: str) -> None:
+                # The EXPANSION engine (platform_expand — the primary recon/vuln
+                # engine) used to update only this job's own progress/results_log
+                # fields, pull-style (platform_job_poll). That made it invisible
+                # to anything watching the engagement's live event stream — the
+                # AGENT branch below has always published there, EXPANSION never
+                # did. Mirror that here so a caller subscribed to
+                # /api/v1/agent/events/{engagement_id} (e.g. the CLI's own
+                # background listener) sees background recon activity live, not
+                # just when it happens to poll. Distinct event names
+                # (expand_result/expand_status), not tool_start/tool_end — a
+                # RESULT:: line is an aggregate stage/pass summary, not one
+                # tool call, and forcing it through tool_transcript's
+                # single-call bookkeeping (duration/success/`/tool <id>`)
+                # would misrepresent it.
+                nonlocal _last_ephemeral_publish
+                if text.startswith("RESULT::"):
+                    event_bus.publish(
+                        req.engagement_id, "expand_result",
+                        {"message": text[len("RESULT::"):], "job_id": job_id},
+                        source="expand",
+                    )
+                else:
+                    # Ephemeral "what's running right now" ticks fire on every
+                    # dispatch start/finish within a stage — throttled so a
+                    # wide fanout doesn't flood the live stream with dozens of
+                    # near-duplicate lines a second; RESULT:: lines above are
+                    # already one-per-stage/pass and always publish immediately.
+                    now = time.monotonic()
+                    if now - _last_ephemeral_publish >= 1.0:
+                        _last_ephemeral_publish = now
+                        event_bus.publish(
+                            req.engagement_id, "expand_status",
+                            {"message": text, "job_id": job_id},
+                            source="expand",
+                        )
+                if on_progress is not None:
+                    on_progress(text)
 
             # Lead the run with the execution backend in use, so it's always
             # obvious from the results log whether tools ran in Kali (docker) or
             # natively — the difference between real output and silent failures.
-            if on_progress is not None:
-                try:
-                    from osprey.services.mcp_client import get_mcp_client
+            try:
+                from osprey.services.mcp_client import get_mcp_client
 
-                    st = get_mcp_client().execution_status()
-                    on_progress(f"RESULT::⚙ execution: {st.get('message', 'unknown')}")
-                except Exception:  # noqa: BLE001
-                    logger.debug("could not report execution status", exc_info=True)
+                st = get_mcp_client().execution_status()
+                _publish_progress(f"RESULT::⚙ execution: {st.get('message', 'unknown')}")
+            except Exception:  # noqa: BLE001
+                logger.debug("could not report execution status", exc_info=True)
 
             def _pass_cb(pass_report: Any) -> None:
-                if on_progress is None:
-                    return
                 d = pass_report.delta
                 # RESULT:: — same persistent-vs-ephemeral convention as the
                 # in-pass stage reports: a pass boundary is itself a result
                 # worth keeping visible, not something the next line should
                 # silently overwrite.
-                on_progress(
+                _publish_progress(
                     f"RESULT::■ pass {pass_report.pass_number}/{req.max_passes} complete: "
                     f"{d.frontier_processed} seed(s) -> +{d.new_nodes} assets, +{d.new_edges} edges"
                     + (" — exhausted" if d.exhausted else "")
@@ -659,7 +698,7 @@ class JobStore:
 
             return await run_to_completion(
                 engagement_id=req.engagement_id, run_id=req.run_id or "",
-                max_passes=req.max_passes, on_pass=_pass_cb, on_progress=on_progress,
+                max_passes=req.max_passes, on_pass=_pass_cb, on_progress=_publish_progress,
                 min_origin_confidence=0.0 if req.include_low_confidence else _MIN_ORIGIN_CONFIDENCE,
             )
         if req.kind == JobKind.AGENT:

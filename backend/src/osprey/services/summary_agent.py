@@ -83,6 +83,10 @@ async def extract_observations_for_execution(
             command=response.command or "",
             stdout_path=stdout_path,
             stderr_path=stderr_path,
+            # Captured once, here, from the response already in memory — see
+            # models/evidence.py's raw_excerpt docstring for why this exists
+            # alongside stdout_path instead of re-reading it later.
+            raw_excerpt=stdout or stderr,
             exit_code=response.returncode or 0,
             duration_ms=int((response.duration_seconds or 0) * 1000),
         )

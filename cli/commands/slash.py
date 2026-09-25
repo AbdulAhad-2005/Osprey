@@ -67,6 +67,7 @@ def handle_help(args: list[str], client: "APIClient") -> None:
         "/fp list | remove <id>": "Audit/prune FP-cache patterns",
         "/world assets|related|incomplete|unexplained|conflicts [asset_id]": "Query the observation-backed graph",
         "/priority [--kinds ..] [--limit N] | phase vuln|exploit": "What's worth doing next (multi-factor, decay-aware)",
+        "/anomalies [--engagement <id>]": "Peer-comparison outliers (timing/version drift) — feeds priority's unexplained_behavior",
         "/context": "Show the context packet (world model, priorities, coverage, questions, attack paths, RoE)",
         '/skills find "<query>" [--phase ..] [--mitre ..] [--asset-type ..]': "Ranked skill retrieval (replaces flat browsing at scale)",
         '/link <source> <relation> <target> "<evidence>" [--confidence ..]': "Create an operator-named graph edge",
@@ -656,18 +657,46 @@ def handle_findings(args: list[str], client: "APIClient") -> None:
 
 
 def handle_finding(args: list[str], client: "APIClient") -> None:
-    """Act on one finding by id — currently just false-positive marking.
+    """Act on one finding by id — false-positive marking or re-verification.
 
     Usage: /finding fp <id> [--scope <glob>] [reason...]
+           /finding reverify <id>
     plans/harness/04-learning-fp-cache.md: appends a pattern learned from
     this finding's (type, title) and retracts it from the current
     engagement. By default the pattern scopes to THIS finding's own target
     only — it cannot suppress the same-titled signal on a different host by
     accident. Pass --scope "*" (or a glob like "*.internal.corp") only when
     you deliberately want to widen it. /fp list to review.
+
+    reverify: re-runs the tool(s) behind this finding's evidence and checks
+    whether the signal still reproduces — never edits/deletes past evidence,
+    only appends a record of what a fresh check found. See
+    services.finding_reverification.
     """
+    if args and args[0].lower() == "reverify" and len(args) >= 2:
+        finding_id = args[1]
+        try:
+            result = client.reverify_finding(finding_id)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                print_error(f"No finding with id '{finding_id}'.")
+            else:
+                print_error(f"Reverify failed: {exc}")
+            return
+        if result.get("checked", 0) == 0:
+            print_info(result.get("note") or "Nothing re-runnable for this finding.")
+            return
+        before, after = result.get("confidence_before"), result.get("confidence_after")
+        moved = f"{before} -> {after}" if before != after else f"{after} (unchanged)"
+        print_success(
+            f"Reverified {finding_id}: checked {result.get('checked')} tool(s) "
+            f"({result.get('reproduced')} reproduced, {result.get('failed')} did not). "
+            f"Confidence: {moved}."
+        )
+        return
+
     if not args or args[0].lower() != "fp" or len(args) < 2:
-        print_info('Usage: /finding fp <id> [--scope "<glob>"] [reason...]')
+        print_info('Usage: /finding fp <id> [--scope "<glob>"] [reason...]\n       /finding reverify <id>')
         return
     finding_id = args[1]
     rest = list(args[2:])
@@ -1147,6 +1176,31 @@ def handle_priority(args: list[str], client: "APIClient") -> None:
         print_info(f"Top priorities ({len(items)}):")
         for it in items:
             print(f"  [{it['total']:.2f}] {it['item_kind']}:{it['type_key']} {it.get('label') or it.get('target', '')}")
+    except httpx.HTTPStatusError as exc:
+        print_error(_api_error_text(exc))
+
+
+def handle_anomalies(args: list[str], client: "APIClient") -> None:
+    """What looks weird right now — plans/harness/14-pentester-intelligence.md.
+    Deterministic peer comparison (timing/version drift among sibling hosts),
+    no LLM. Runs automatically after every recon pass already; this is for a
+    fresh read on demand.
+
+    Usage: /anomalies [--engagement <id>]
+    """
+    engagement_id, args = _take_flag(args, "--engagement")
+    engagement_id = engagement_id or client.active_engagement_id
+    if not _require_engagement(engagement_id):
+        return
+    try:
+        data = client.anomalies(engagement_id)
+        anomalies = data.get("anomalies") or []
+        if not anomalies:
+            print_info("Nothing statistically odd yet (needs 3+ peer hosts under the same apex).")
+            return
+        print_info(f"Anomalies ({len(anomalies)}):")
+        for a in anomalies:
+            print(f"  [{a.get('kind')}] {a.get('title')}")
     except httpx.HTTPStatusError as exc:
         print_error(_api_error_text(exc))
 
@@ -1747,13 +1801,14 @@ SLASH_COMMANDS: dict[str, tuple[str, "callable"]] = {
     "/fast-scan": ("Deterministic no-LLM scan: whois+subs+SANs+IPs+CDN-classify+httpx+nmap+takeover", handle_fast_scan),
     "/engage": ("Manage engagements", handle_engagements),
     "/findings": ("Show findings", handle_findings),
-    "/finding": ("Act on one finding by id (fp <id> [reason])", handle_finding),
+    "/finding": ("Act on one finding by id (fp <id> [reason] | reverify <id>)", handle_finding),
     "/fp": ("FP-cache patterns: list | remove <id>", handle_fp),
     "/observations": ("List stored Observations (structural facts, not verdicts)", handle_observations),
     "/promote": ("No-LLM: promote corroborated scanner-signal observations to findings", handle_promote),
     "/file": ("File an evidence-backed finding (no confidence flag — evidence computes it)", handle_file),
     "/world": ("Query the world model: assets|related|incomplete|unexplained|conflicts", handle_world),
     "/priority": ("What's worth doing next: top items, or phase <vuln|exploit> unlock status", handle_priority),
+    "/anomalies": ("What looks statistically weird right now (peer timing/version drift)", handle_anomalies),
     "/context": ("Show the context packet — the same world-model state injected into every LLM turn", handle_context),
     "/skills": ("Browse/query the skill library: list | find <query> | get <path>", handle_skills),
     "/link": ("Create an operator-named graph edge between two assets", handle_link),

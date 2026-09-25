@@ -32,7 +32,7 @@ invent when evidence says so. Do **not** treat this as autopilot stages.
 8. **Footprint** — banners, tech, emails/creds only when observed; on live web:
    stack, interesting paths/URLs, crawl high-value apps.
 9. **Invent** — catalog missing custom app work → `platform_script` (+ FINDING lines).
-10. **Deepen** — crown jewels / confirmed roles get app depth; then grades + finalize.
+10. **Deepen** — top-scored assets (`platform_priority`) / confirmed roles get app depth; then grades + finalize.
 
 ## Anti-patterns (why sessions go flat)
 

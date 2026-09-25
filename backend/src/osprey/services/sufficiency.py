@@ -28,7 +28,9 @@ logger = logging.getLogger(__name__)
 _DEFAULTS: dict[str, Any] = {
     "recon_reopen_on": ["subdomain", "host"],
     "max_agents_per_phase": 3,
-    "pipeline_time_budget_seconds": 3600,
+    # Safety backstop, not the primary stop condition — see
+    # config/phase_pipeline.yaml's own comment on this key.
+    "pipeline_time_budget_seconds": 86400,
     "supervisor_poll_seconds": 8,
 }
 

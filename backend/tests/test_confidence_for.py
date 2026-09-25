@@ -85,6 +85,43 @@ def test_a_brand_new_evidence_kind_invented_tomorrow_still_works():
     assert confidence_for([_FakeRecord()], source_tools=["another_tool"]) == FindingConfidence.LIKELY
 
 
+def test_recheck_failed_after_confirmation_downgrades_to_likely():
+    """The re-verification gap (services.finding_reverification): a finding
+    confirmed once, then a LATER recheck couldn't reproduce it — CONFIRMED
+    would be actively misleading, so it reads LIKELY instead. The past
+    REPRODUCTION record is untouched (evidence is append-only)."""
+    from datetime import datetime, timedelta, timezone
+
+    t0 = datetime.now(timezone.utc)
+    records = [
+        EvidenceRecord(kind=EvidenceRecordKind.REPRODUCTION, detail="sqlmap dumped 5 rows", created_at=t0),
+        EvidenceRecord(kind=EvidenceRecordKind.RECHECK_FAILED, detail="re-run found nothing", created_at=t0 + timedelta(hours=1)),
+    ]
+    assert confidence_for(records) == FindingConfidence.LIKELY
+
+
+def test_recheck_failed_before_a_later_confirmation_stays_confirmed():
+    """Order matters, not just presence: a recheck that failed BEFORE a
+    later successful re-verification must not drag confidence down — the
+    finding is confirmed again after that later record."""
+    from datetime import datetime, timedelta, timezone
+
+    t0 = datetime.now(timezone.utc)
+    records = [
+        EvidenceRecord(kind=EvidenceRecordKind.RECHECK_FAILED, detail="flaky target", created_at=t0),
+        EvidenceRecord(kind=EvidenceRecordKind.REPRODUCTION, detail="reproduced again", created_at=t0 + timedelta(hours=1)),
+    ]
+    assert confidence_for(records) == FindingConfidence.CONFIRMED
+
+
+def test_recheck_failed_alone_never_promotes_above_hypothesis():
+    """A recheck failure with no prior confirming evidence at all is not a
+    new negative signal to escalate — it just has nothing to say beyond
+    what the base tiers already compute."""
+    records = [EvidenceRecord(kind=EvidenceRecordKind.RECHECK_FAILED, detail="never confirmed to begin with")]
+    assert confidence_for(records) == FindingConfidence.HYPOTHESIS
+
+
 def test_evidence_summary_reflects_kinds_present():
     assert "No corroborating evidence" in evidence_summary_for([])
     records = [

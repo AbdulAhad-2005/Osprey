@@ -32,7 +32,7 @@ you do it here, at the checkpoint, in ONE bulk call. Never pause mid-probe to
 record, and never re-record a fact a tool already printed (it's a harmless no-op,
 just wasted effort).
 
-Then pick the highest-value hypothesis card or crown jewel. Run one tool against it. Repeat.
+Then pick the highest-value hypothesis card or top-priority asset (`platform_priority`). Run one tool against it. Repeat.
 
 ## Memory augments your context — it doesn't replace it
 

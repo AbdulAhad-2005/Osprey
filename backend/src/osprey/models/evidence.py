@@ -12,7 +12,13 @@ class EvidenceRow(Base):
     """One row per tool run — the queryable promotion of stdout_index/artifacts
     (plans/harness/02-evidence-and-observation-layer.md Step 1). The full body
     stays on disk at ``stdout_path``/``stderr_path``; this row is metadata +
-    pointer, cited by ``ObservationRow.evidence_id``."""
+    pointer, cited by ``ObservationRow.evidence_id``.
+
+    ``raw_excerpt`` (plans/harness/12-deterministic-evidence-verification.md):
+    a durable slice of the actual stdout, captured synchronously at record()
+    time — the substrate ``evidence_grounding.py`` checks a claimed
+    "reproduction" evidence_detail against, without needing an async
+    docker-exec round-trip into Kali to re-read ``stdout_path``."""
 
     __tablename__ = "evidence"
     __table_args__ = (
@@ -29,6 +35,7 @@ class EvidenceRow(Base):
     command: Mapped[str] = mapped_column(Text, nullable=False, default="")
     stdout_path: Mapped[str] = mapped_column(String(512), nullable=False, default="")
     stderr_path: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    raw_excerpt: Mapped[str] = mapped_column(Text, nullable=False, default="")
     exit_code: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     observed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

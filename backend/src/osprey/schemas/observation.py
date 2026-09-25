@@ -160,6 +160,7 @@ class Evidence(BaseModel):
     command: str = ""
     stdout_path: str = ""
     stderr_path: str = ""
+    raw_excerpt: str = ""
     exit_code: int = 0
     duration_ms: int = 0
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

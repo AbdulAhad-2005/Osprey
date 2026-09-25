@@ -1,6 +1,6 @@
 ---
 name: content-and-js-recon
-description: "Map the live application attack surface (paths, parameters, endpoints, secrets) on hosts confirmed up, prioritizing crown jewels; content, parameter, JS and policy-file recon."
+description: "Map the live application attack surface (paths, parameters, endpoints, secrets) on hosts confirmed up, prioritizing top-scored assets; content, parameter, JS and policy-file recon."
 phases: [recon]
 tags: [recon, content, javascript]
 ---
@@ -10,7 +10,7 @@ tags: [recon, content, javascript]
 Goal: map the **live application attack surface** on hosts already confirmed up
 (via httpx). Subdomain + port enumeration finds *hosts*; this finds the *paths,
 parameters, endpoints and secrets* an attacker actually targets. Do this on every
-live web host, prioritising crown jewels.
+live web host, prioritising the top-scored assets (`platform_priority`).
 
 ## Order of concerns (not rigid stages)
 

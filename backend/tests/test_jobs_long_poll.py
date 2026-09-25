@@ -49,7 +49,7 @@ def test_wait_seconds_returns_early_on_completion():
     assert resp.json()["status"] in ("completed", "failed")
 
 
-def test_wait_seconds_caps_at_60():
+def test_wait_seconds_caps_at_90():
     eid = _eid()
     with TestClient(app) as client:
         resp = client.get(f"/api/v1/jobs/does-not-exist-{eid}", params={"wait_seconds": 999})

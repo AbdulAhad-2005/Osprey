@@ -6,8 +6,10 @@ network), following this session's established pattern.
 from __future__ import annotations
 
 import asyncio
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from osprey.schemas.engagement import RulesOfEngagement
 from osprey.schemas.engagement_graph import AssetType
 from osprey.services.surface_expansion import run_expansion_pass
 
@@ -29,9 +31,17 @@ def _engagement_store(target: str):
     """Mock get_engagement_store() so _owned_apexes() has a real target_label —
     without this, engagement.target is None, owned_apexes is {""}, and every
     SUBDOMAIN node is (correctly, but not what the test wants) classified as
-    third-party/external and excluded from the live-host pool entirely."""
+    third-party/external and excluded from the live-host pool entirely.
+
+    rules_of_engagement is a REAL RulesOfEngagement (empty scope), not a bare
+    MagicMock — a MagicMock attribute is truthy by default even though
+    iterating it yields nothing (MagicMock.__iter__ defaults to iter([])), so
+    the real object's actual empty list is what the RoE scope pre-filter
+    (surface_expansion.py) needs to correctly no-op here, matching what
+    get_engagement_store().get() always returns in production."""
     engagement = MagicMock()
     engagement.target = target
+    engagement.rules_of_engagement = RulesOfEngagement()
     store = MagicMock()
     store.get.return_value = engagement
     return store
@@ -163,6 +173,48 @@ def test_domain_only_tools_run_for_domain_but_not_subdomain():
         assert len(whois_calls) == 1
         assert len(harvester_calls) == 1
         assert whois_calls[0].args[0].params == {"target": "example.com"}
+
+
+def test_breach_intel_tools_fire_only_when_keyed():
+    """AGENTS.md's 'passive intel / credential leaks when keyed' used to be an
+    LLM-judgment call only — this proves it's now mechanical: keyed tools
+    fire on the apex domain, unkeyed ones never do."""
+    domain_node = _node(AssetType.DOMAIN, "example.com", {})
+    graph = MagicMock()
+    graph.list_nodes.side_effect = lambda **kw: (
+        [domain_node] if kw.get("asset_type") == AssetType.DOMAIN else []
+    )
+    graph.list_edges.return_value = []
+
+    with patch("osprey.services.surface_expansion.get_engagement_graph", return_value=graph), \
+         patch.dict(os.environ, {"SHODAN_API_KEY": "test-key"}, clear=False), \
+         patch("osprey.services.tool_execution.execute_tool_request", new_callable=AsyncMock) as mock_exec:
+        os.environ.pop("INTELX_API_KEY", None)
+        os.environ.pop("RESECURITY_API_KEY", None)
+        _run(run_expansion_pass(engagement_id="e1", run_id="r1"))
+        called_tools = {c.args[0].tool_name for c in mock_exec.await_args_list}
+        assert "shodan_search" in called_tools
+        assert "intelx_scan" not in called_tools
+        assert "resecurity_scan" not in called_tools
+
+
+def test_no_breach_intel_tools_fire_when_nothing_keyed():
+    domain_node = _node(AssetType.DOMAIN, "example.com", {})
+    graph = MagicMock()
+    graph.list_nodes.side_effect = lambda **kw: (
+        [domain_node] if kw.get("asset_type") == AssetType.DOMAIN else []
+    )
+    graph.list_edges.return_value = []
+
+    with patch("osprey.services.surface_expansion.get_engagement_graph", return_value=graph), \
+         patch("osprey.services.tool_execution.execute_tool_request", new_callable=AsyncMock) as mock_exec:
+        for var in ("SHODAN_API_KEY", "INTELX_API_KEY", "RESECURITY_API_KEY"):
+            os.environ.pop(var, None)
+        _run(run_expansion_pass(engagement_id="e1", run_id="r1"))
+        called_tools = {c.args[0].tool_name for c in mock_exec.await_args_list}
+        assert "shodan_search" not in called_tools
+        assert "intelx_scan" not in called_tools
+        assert "resecurity_scan" not in called_tools
 
 
 def test_small_netblock_expands_into_subnet_sibling_ip_nodes():

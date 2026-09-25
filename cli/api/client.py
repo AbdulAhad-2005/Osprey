@@ -292,6 +292,14 @@ class APIClient:
         resp.raise_for_status()
         return resp.json()
 
+    def reverify_finding(self, finding_id: str, *, run_id: str = "") -> dict[str, Any]:
+        resp = self._client.post(
+            self._url(f"/api/v1/findings/{finding_id}/reverify"),
+            params={"run_id": run_id},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def list_fp_patterns(self) -> dict[str, Any]:
         resp = self._client.get(self._url("/api/v1/findings/fp/patterns"))
         resp.raise_for_status()
@@ -494,6 +502,14 @@ class APIClient:
     def phase_priority(self, engagement_id: str, phase: str) -> dict[str, Any]:
         resp = self._client.get(
             self._url(f"/api/v1/priority/phase/{phase}"), params={"engagement_id": engagement_id},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def anomalies(self, engagement_id: str) -> dict[str, Any]:
+        """plans/harness/14-pentester-intelligence.md — on-demand peer-anomaly check."""
+        resp = self._client.get(
+            self._url("/api/v1/priority/anomalies"), params={"engagement_id": engagement_id},
         )
         resp.raise_for_status()
         return resp.json()

@@ -88,6 +88,7 @@ class EvidenceRecordKind(StrEnum):
     REPRODUCTION = "reproduction"  # a controlled PoC reproduced it (_is_proven)
     VERIFICATION = "verification"  # a direct config/permission read confirmed it
     ATTESTATION = "attestation"  # a human attested to it
+    RECHECK_FAILED = "recheck_failed"  # a later re-run of the same check did NOT reproduce it
 
 
 class EvidenceRecord(BaseModel):

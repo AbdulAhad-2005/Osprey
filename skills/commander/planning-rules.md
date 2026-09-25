@@ -42,7 +42,7 @@ Summarize when the goal is a snapshot, the user says stop, or finalize is ALLOWE
 ## Visibility
 
 Private CoT is invisible. Use `platform_think` and chat narration every pivot.
-After tools, quote counts + crown jewels — do not leave results only inside MCP JSON.
+After tools, quote counts + top-priority assets (`platform_priority`) — do not leave results only inside MCP JSON.
 
 ## When tools fail
 

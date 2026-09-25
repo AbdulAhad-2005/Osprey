@@ -36,6 +36,7 @@ from osprey.schemas.observation import Observation, ObservationType, observation
 from osprey.services import fp_cache, suppressed_promotion_store
 from osprey.services.confidence import confidence_for, evidence_summary_for
 from osprey.services.engagement_graph import get_engagement_graph
+from osprey.services.evidence_grounding import ground_reproduction_claim
 from osprey.services.findings_store import get_findings_store
 from osprey.services.observation_store import get_observation_store
 
@@ -135,6 +136,21 @@ def file_finding(
         tool_set.update(store.distinct_source_tools(o.id))
     source_tools = sorted(tool_set)
     records = list(evidence_records or [])
+
+    # Ground every REPRODUCTION claim against real, already-recorded tool
+    # output before it's allowed anywhere near confidence_for() — see
+    # evidence_grounding.py. Defaults a blank observation_id to the first
+    # resolved observation so this backstops callers that bypass the MCP
+    # layer's own default too, not just platform_file_finding's.
+    by_id = {o.id: o for o in observations}
+    for er in records:
+        if er.kind != EvidenceRecordKind.REPRODUCTION:
+            continue
+        target_obs = by_id.get(er.observation_id) or observations[0]
+        grounded, reason = ground_reproduction_claim(er.detail, target_obs)
+        if not grounded:
+            raise FileFindingError(f"evidence_kind='reproduction' rejected: {reason}")
+
     confidence = confidence_for(records, source_tools=source_tools)
 
     finding = Finding(

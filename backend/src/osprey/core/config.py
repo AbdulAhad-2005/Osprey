@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 
 # Resolve .env relative to this file (config.py), not CWD, so it works
@@ -67,6 +68,36 @@ class LLMSettings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(env_prefix="LLM_", env_file=_DOTENV, env_file_encoding="utf-8", extra="ignore")
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Prefer the live .env FILE over already-set process env vars.
+
+        The default pydantic-settings order (env vars > dotenv file) is right
+        for a plain process, but wrong for how this platform actually runs:
+        docker-compose's `env_file:`/`environment:` bake LLM_MODEL/LLM_API_KEY
+        into the backend container's os.environ once, at `docker compose up`/
+        `restart` — after that, os.environ is frozen for the container's whole
+        lifetime, while a person editing the project .env (the one surface
+        this platform tells them to use — see set_dotenv_values below)
+        expects that edit to take effect on the next call, matching how the
+        CLI (a plain process, no container) already behaves. get_settings()
+        is deliberately never cached specifically so a fresh instantiation
+        picks up .env — but with the default source order, that fresh read
+        was always shadowed by the stale baked-in env var, silently. Putting
+        dotenv_settings before env_settings here means the live file wins,
+        so both CLI and backend converge on one LLM identity read from one
+        place, updated the same way. init_settings (explicit constructor
+        kwargs, e.g. in tests) still wins over everything.
+        """
+        return (init_settings, dotenv_settings, env_settings, file_secret_settings)
 
     model: str = Field(default="<model-provider>/<model-name>", description="LiteLLM model identifier")
     api_key: str = Field(default="", description="API key for the LLM provider")

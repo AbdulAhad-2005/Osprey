@@ -23,7 +23,7 @@ matters; it's passive (no exploitation) and fast.
 
 ## When to run
 
-- On any live HTTPS host, especially crown jewels and anything handling auth/payment/PII.
+- On any live HTTPS host, especially top-priority assets and anything handling auth/payment/PII.
 - After `tlsx_inspect` flags a host — tlsx tells you a cert exists; sslyze tells you if the
   config is weak.
 - It is one of the few *always-safe* vuln-phase actions — no payloads, just handshake probing.

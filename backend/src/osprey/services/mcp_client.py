@@ -611,7 +611,27 @@ class MCPClient:
                 env_val = (os.getenv(env_key) or "").strip()
                 if env_val:
                     docker_argv.extend(["-e", f"{env_key}={env_val}"])
-            docker_argv.extend([self._kali_container, "bash", "-c", command])
+            # Bound the process INSIDE the container, not just the local
+            # docker-exec client wrapper. `_kill_and_reap` below only kills
+            # the local `docker exec` process on timeout — that just detaches
+            # the attachment; a container-side process is a child of the
+            # container's own init, not of the killed client, so it keeps
+            # running orphaned regardless (the actual cause of dnsenum
+            # appearing to run for 40+ minutes: each 60s "timeout" killed the
+            # client and let the retry loop launch another attempt, while
+            # every prior dnsenum kept running inside Kali, piling up).
+            # `timeout` wraps the WHOLE `bash -c command` invocation (bash is
+            # the bounded child, not a prefix inside the shell string) so a
+            # compound command (`&&`/pipes) is bounded as a whole, not just
+            # its first segment — and it self-terminates a couple seconds
+            # before the outer asyncio timeout would fire, so it always
+            # actually exits instead of racing the client-side kill.
+            bounded_timeout = max(1, int(timeout) - 2)
+            docker_argv.extend([
+                self._kali_container,
+                "timeout", "--kill-after=5s", f"{bounded_timeout}s",
+                "bash", "-c", command,
+            ])
 
             proc = await asyncio.create_subprocess_exec(
                 *docker_argv,

@@ -25,7 +25,7 @@ from typing import Any, Callable
 from pydantic import BaseModel
 
 from osprey.schemas.engagement_graph import AssetNode, AssetType
-from osprey.services.config_loader import read_config
+from osprey.services.config_loader import read_config_layered
 from osprey.services.engagement_graph import get_engagement_graph
 from osprey.services.surface_expansion_store import (
     ExpansionState,
@@ -114,7 +114,13 @@ _DEFAULT_EXPANSION: dict[str, Any] = {
 
 @lru_cache(maxsize=1)
 def _expansion_config() -> dict[str, Any]:
-    """Expansion stage map — SINGLE source of truth is config/expansion.yaml.
+    """Expansion stage map — SINGLE source of truth is config/expansion.yaml
+    (+ its expansion.local.yaml overlay, plans/harness/13-systematic-vuln-
+    dispatch-and-extensibility.md Step 1 — an operator's own added step for
+    an existing section, e.g. host_expansion/web_depth, appends and actually
+    runs; entries have no `id` field in the shipped file today, so an
+    overlay entry can only ADD a step to a section, not edit/disable a
+    specific built-in one yet).
 
     The code defaults below exist only as a safety net for environments that
     ship without the config file; when the file is present it REPLACES each
@@ -128,7 +134,7 @@ def _expansion_config() -> dict[str, Any]:
     }
     data["work_sisters"] = bool(_DEFAULT_EXPANSION.get("work_sisters", False))
     batch_defaults = dict(_DEFAULT_EXPANSION.get("batch") or {})
-    raw = read_config("expansion.yaml")
+    raw = read_config_layered("expansion.yaml")
     if isinstance(raw, dict):
         for section, entries in raw.items():
             if section == "batch" and isinstance(entries, dict):
@@ -289,6 +295,37 @@ _CONTACT_DISCOVERY_TOOLS: tuple[tuple[str, str], ...] = (
     ("theharvester", "domain"),
     ("web_contact_harvest", "domain"),
 )
+
+# Domain-wide breach/passive-intel tools — AGENTS.md steps 2-3 ("Passive intel
+# when keyed", "Credential/identity leaks when keyed") used to be LLM-judgment
+# calls only: real, valuable, but easy to forget on any given engagement. A
+# senior tester who HAS the access always checks breach data; whether they
+# have the access is exactly what an API key configured in .env already
+# tells this platform, mechanically, with no judgment call needed — the same
+# pattern this file already uses for shodan_host_info (see the
+# SHODAN_API_KEY check at the live-host stage). Each entry only fires when
+# its own env var is actually set, so an unkeyed engagement pays nothing.
+# Findings mint into the SAME observation/exploit-candidate pipeline any
+# LLM-driven call would (exploit_pipeline.py's CREDENTIAL handling already
+# auto-suggests credential_bruteforce/hash_crack) — no separate wiring needed.
+#
+# Config-driven (config/breach_intel_tools.yaml + its .local.yaml overlay,
+# plans/harness/13-systematic-vuln-dispatch-and-extensibility.md Step 1) —
+# not a hardcoded tuple — so an operator's own keyed OSINT tool actually
+# gets run by this mechanical pass on every engagement once added there, the
+# same way the three built-in ones are, no Python edit needed.
+@lru_cache(maxsize=1)
+def _breach_intel_tool_entries() -> tuple[tuple[str, str, str], ...]:
+    data = read_config_layered("breach_intel_tools.yaml")
+    out: list[tuple[str, str, str]] = []
+    for entry in data.get("tools") or []:
+        if not isinstance(entry, dict) or entry.get("disabled"):
+            continue
+        try:
+            out.append((str(entry["env_var"]), str(entry["tool"]), str(entry["param"])))
+        except KeyError:
+            logger.warning("breach_intel_tools.yaml: skipping malformed entry %r", entry)
+    return tuple(out)
 
 # Netblocks larger than this are recorded (asn_enum's own finding) but never
 # auto-swept — sweeping an arbitrary /16 (65k addresses) on discovery would be
@@ -1474,7 +1511,7 @@ async def _expand_contacts(
     report_result: Callable[[str], None], snapshot: Callable[[], set[str]],
     report_stage_findings: Callable[[set[str], str], None],
 ) -> None:
-    """Stage 6 — OSINT contact discovery + enrichment.
+    """Stage 6 — OSINT contact discovery + enrichment + breach/passive intel.
 
     Discovery (per apex domain, once): theharvester + web_contact_harvest surface
     emails / phones / people / socials. Enrichment (per discovered contact):
@@ -1482,6 +1519,12 @@ async def _expand_contacts(
     a concrete contact as input, so they run on what discovery found, not on the
     domain. Idempotent across passes: discovery is gated by a graph flag, and
     enrichment repeats hit the exec cache instead of re-running.
+
+    Stage 6b — breach/passive intel (shodan_search/intelx_scan/resecurity_scan):
+    each fires only when its own API key is actually configured (mirrors the
+    SHODAN_API_KEY check the live-host stage already uses for
+    shodan_host_info) — this is AGENTS.md's "when keyed" OSINT guidance made
+    mechanical instead of an LLM judgment call.
     """
     from osprey.schemas.finding import FindingType
 
@@ -1512,6 +1555,42 @@ async def _expand_contacts(
             graph.ensure_node(
                 engagement_id=engagement_id, asset_type=AssetType.DOMAIN, label=node.label,
                 metadata={"contacts_harvested": True},
+            )
+
+    # Breach/passive-intel — separate flag from contacts_harvested so a key
+    # added mid-engagement (or a re-run after fixing one) still fires without
+    # needing a whole new pass structure.
+    breach_domain_nodes = [
+        n for n in graph.list_nodes(engagement_id=engagement_id, asset_type=AssetType.DOMAIN, limit=5000)
+        if not n.metadata.get("breach_intel_harvested")
+        and _is_expandable_apex(n, target_label=apex_label)
+    ][:_DOMAIN_BATCH_CAP]
+    active_breach_tools = [
+        (tool, param) for env_var, tool, param in _breach_intel_tool_entries() if os.getenv(env_var, "").strip()
+    ]
+    if breach_domain_nodes and active_breach_tools:
+        report_result(
+            f"▶ stage 6b — breach/passive intel ({', '.join(t for t, _ in active_breach_tools)}): "
+            f"{len(breach_domain_nodes)} domain(s)"
+        )
+        before = snapshot()
+        tasks = [
+            dispatch(tool, {param: node.label}, stage="breach intel", timeout=_CONTACT_TIMEOUT)
+            for node in breach_domain_nodes
+            for tool, param in active_breach_tools
+        ]
+        await asyncio.gather(*tasks)
+        report_stage_findings(before, "breach/passive intel")
+    if breach_domain_nodes:
+        # Marked regardless of whether any tool was actually keyed — an
+        # unkeyed engagement shouldn't re-check os.environ every single
+        # pass forever; adding a key mid-engagement is a rare enough event
+        # that a fresh pass (max_passes/force_new) is a reasonable way to
+        # pick it up, consistent with how contacts_harvested already works.
+        for node in breach_domain_nodes:
+            graph.ensure_node(
+                engagement_id=engagement_id, asset_type=AssetType.DOMAIN, label=node.label,
+                metadata={"breach_intel_harvested": True},
             )
 
     # Enrichment of the concrete contacts discovered so far (this pass or a prior

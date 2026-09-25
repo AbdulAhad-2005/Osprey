@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -68,6 +69,16 @@ import re as _re
 #     502 Bad Gateway HTML page) — the query reached a broken provider, not data.
 # Kept deliberately narrow so a scan that legitimately *reports* a 5xx (httpx
 # "url [502]") or mentions "usage" mid-output is never downgraded.
+# Concurrent-duplicate wait (tool_coverage_store's claim, see below): bounded
+# on purpose. Recon tools this covers finish in seconds-to-tens-of-seconds;
+# a genuinely long-running tool (masscan, a full nmap sweep) falls through to
+# running for real after this, which is correct — better than blocking a
+# caller's whole timeout budget waiting on something that might take minutes.
+# _CLAIM_STALE_AFTER (tool_coverage_store.py, 10min) is the hard ceiling that
+# keeps a crashed/leaked claim from ever wedging real execution regardless.
+_CLAIM_WAIT_SECONDS = 30.0
+_CLAIM_POLL_INTERVAL = 2.0
+
 _CLI_HELP_RE = _re.compile(r"^\s*usage:\s", _re.I)
 _UPSTREAM_ERR_RE = _re.compile(
     r"(?is)<(?:title|h1)[^>]*>\s*50[234]\b"
@@ -381,23 +392,49 @@ async def execute_tool_request(
     except (ValueError, OSError, ImportError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    # Best-effort parallel-agent safety: two branches (e.g. separate web/network
-    # jobs on the same engagement) hitting the same tool+asset concurrently is
-    # wasted work, not a correctness issue — so a failed claim is logged and the
-    # call proceeds anyway, same "advisory, never blocks" contract as the rest
-    # of tool_coverage_store. A bug in claim bookkeeping must never stall or
-    # error out normal single-agent execution.
+    # Parallel-agent/background-job dedup: two branches hitting the same
+    # tool+asset concurrently — a spawned subagent hand-running subfinder_scan
+    # while platform_expand's background pass is running the identical call
+    # on the same engagement is the common real case — used to be logged and
+    # left to happen anyway. Now: wait a bounded window for the in-flight
+    # holder to finish, re-checking BOTH the claim (it releases the moment
+    # the holder's request completes) and the exec cache (the holder's own
+    # completion writes there, so this caller can pick up the SAME result
+    # instead of re-running). Still never blocks indefinitely — falls
+    # through to running for real if nothing resolves within the window, so
+    # a bug in claim bookkeeping (or a genuinely long-running holder) can
+    # never wedge real execution; tool_coverage_store's own 10min staleness
+    # ceiling is the hard backstop regardless.
     claim_asset = target or str(request.params.get("domain", ""))
     got_claim = True
     try:
-        got_claim = get_tool_coverage_store().try_claim(
+        coverage_store = get_tool_coverage_store()
+        got_claim = coverage_store.try_claim(
             engagement_id=session.engagement_id, tool_name=request.tool_name,
             asset=claim_asset, run_id=request.run_id or "",
         )
+        waited = 0.0
+        while not got_claim and waited < _CLAIM_WAIT_SECONDS:
+            await asyncio.sleep(_CLAIM_POLL_INTERVAL)
+            waited += _CLAIM_POLL_INTERVAL
+            if use_cache:
+                cached = cache.get(cache_key)
+                if cached is not None:
+                    cached.cache_hit = True
+                    cached.cache_key = cache_key
+                    logger.info(
+                        "exec claim wait resolved via cache: %s on %s (engagement %s, waited %.1fs)",
+                        request.tool_name, claim_asset, session.engagement_id, waited,
+                    )
+                    return cached
+            got_claim = coverage_store.try_claim(
+                engagement_id=session.engagement_id, tool_name=request.tool_name,
+                asset=claim_asset, run_id=request.run_id or "",
+            )
         if not got_claim:
             logger.debug(
-                "Concurrent claim held for %s on %s (engagement %s) — proceeding anyway (advisory)",
-                request.tool_name, claim_asset, session.engagement_id,
+                "Concurrent claim still held for %s on %s (engagement %s) after %.1fs — proceeding anyway",
+                request.tool_name, claim_asset, session.engagement_id, waited,
             )
     except Exception as exc:  # noqa: BLE001
         logger.debug("Claim attempt skipped: %s", exc)

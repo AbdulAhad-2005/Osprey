@@ -19,5 +19,15 @@ recon_reopen_on:
 
 # Lifecycle / safety
 max_agents_per_phase: 3            # concurrent agents the supervisor runs per phase
-pipeline_time_budget_seconds: 3600 # hard wall for a whole pipeline run
+# Hard wall for a whole pipeline run — NOT the primary stop condition (that's
+# investigation_director.run_agent_driven_pipeline's own fixpoint: no active
+# agents AND no new findings for stable_polls_to_finish consecutive polls,
+# checked every supervisor_poll_seconds regardless of this value). This is
+# only the safety backstop for a run that genuinely never settles. 3600s (1
+# hour) made autonomous, unattended operation on a real target structurally
+# impossible — a large engagement's genuine recon/vuln/exploit work can
+# legitimately take far longer than that while still being productive.
+# 86400s (24h) as the default; raise further in config for a real multi-day
+# unattended campaign.
+pipeline_time_budget_seconds: 86400
 supervisor_poll_seconds: 8         # how often the conductor re-evaluates triggers
