@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import shutil
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -591,6 +592,35 @@ class MCPClient:
         if proc is not None:
             await _kill_and_reap(proc)
 
+    async def _kill_remote_process_group(self, pidfile: str) -> None:
+        """On a docker-exec timeout, killing the LOCAL docker-exec client process
+        (``_kill_and_reap``) does NOT terminate the REMOTE command still running
+        inside the Kali container — a local SIGKILL to the docker CLI client is
+        not proxied into the exec session, so the actual scan is orphaned and
+        keeps running.
+
+        The exec'd command is started under ``setsid`` and records its own pid
+        to ``pidfile`` before running (see ``_exec_docker_once``), so this can
+        reach the whole process group it heads — including children the tool
+        itself forks (dnsenum/amass do) — with one more docker-exec call.
+        Best-effort: never raises, never blocks more than a few seconds.
+        """
+        try:
+            kill_cmd = (
+                f'P=$(cat {pidfile} 2>/dev/null); '
+                f'[ -n "$P" ] && kill -TERM -"$P" 2>/dev/null; '
+                f'sleep 1; '
+                f'[ -n "$P" ] && kill -KILL -"$P" 2>/dev/null; '
+                f'rm -f {pidfile}'
+            )
+            proc = await asyncio.create_subprocess_exec(
+                "docker", "exec", "-i", self._kali_container, "bash", "-c", kill_cmd,
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(proc.wait(), timeout=8.0)
+        except Exception:
+            logger.warning("Remote process-group kill for %s failed (best-effort)", pidfile, exc_info=True)
+
     async def _exec_docker_once(
         self, command: str, timeout: int, *, run_as_root: bool = False
     ) -> tuple[str, str, int | None, bool]:
@@ -598,6 +628,26 @@ class MCPClient:
         never raises for a timeout (drains partial output instead), so the retry
         loop above has a uniform result shape to make a decision on."""
         proc: asyncio.subprocess.Process | None = None
+        # Unique per-call pidfile so a timeout can target the remote command's
+        # own process group directly (see _kill_remote_process_group). setsid
+        # makes the exec'd shell its own session/process-group leader; `$$`
+        # captured before `command` runs stays valid even once the real tool
+        # replaces the shell's process image (a plain `exec` keeps the pid),
+        # and covers children the tool forks (same process group by default).
+        # RC=$?/exit $RC around the real command preserves its exact exit
+        # status — the cleanup must never appear to change success/failure.
+        #
+        # setsid's `-w`/`--wait` is NOT optional: without it, setsid forks its
+        # target and returns/exits immediately itself, so `docker exec`'s own
+        # client (which tracks setsid's exit, not its child's) reports the
+        # call "done" the instant it forks — a real tool then runs forever,
+        # detached, while every caller sees an immediate false success. This
+        # would have been strictly worse than no fix at all: the real work
+        # keeps leaking exactly as before, but the TimeoutError branch that
+        # calls _kill_remote_process_group never even fires to catch it,
+        # since nothing ever looks like a timeout.
+        pidfile = f"/tmp/.osprey-exec-{uuid.uuid4().hex}.pid"
+        wrapped_command = f"echo $$ > {pidfile}; {command}; RC=$?; rm -f {pidfile}; exit $RC"
         try:
             docker_argv = ["docker", "exec", "-i"]
             if run_as_root:
@@ -611,7 +661,7 @@ class MCPClient:
                 env_val = (os.getenv(env_key) or "").strip()
                 if env_val:
                     docker_argv.extend(["-e", f"{env_key}={env_val}"])
-            docker_argv.extend([self._kali_container, "bash", "-c", command])
+            docker_argv.extend([self._kali_container, "setsid", "-w", "bash", "-c", wrapped_command])
 
             proc = await asyncio.create_subprocess_exec(
                 *docker_argv,
@@ -626,6 +676,7 @@ class MCPClient:
         except asyncio.TimeoutError:
             partial_stdout, partial_stderr = await _drain_partial(proc)
             await _kill_and_reap(proc)
+            await self._kill_remote_process_group(pidfile)
             return partial_stdout, partial_stderr, None, True
 
     async def _call_via_docker_exec(
