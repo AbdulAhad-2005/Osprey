@@ -198,12 +198,6 @@ async def execute_tool_request(
     # of each call site needing its own alias-awareness.
     request.tool_name = tool_def.name
 
-    # Preflight: refuse a catalog tool the current environment cannot run, with one
-    # actionable message, instead of executing a doomed command that returns empty.
-    unavailable = _tool_unavailable_response(tool_def)
-    if unavailable is not None:
-        return unavailable
-
     target = extract_target(request.params)
 
     # When MCP passes a bound engagement_id, keep it — tool params may be subdomains/hosts.
@@ -230,6 +224,15 @@ async def execute_tool_request(
     if engagement is None:
         raise HTTPException(status_code=404, detail=f"Engagement not found: {session.engagement_id}")
 
+    # Authorization gate BEFORE the availability preflight below — deliberately.
+    # An environment-probing "is this tool installed" check must never be able to
+    # silently bypass a security decision: if the ROE gate ran after availability,
+    # an environment where the binary happens to be unreachable (Kali container
+    # down, PATH stale) would return "tool_unavailable" and skip the 403 entirely,
+    # so a caller could not distinguish "not authorized" from "not installed" —
+    # and, worse, the same call could start returning 403 only once someone else
+    # fixes the environment. The authorization boundary must hold regardless of
+    # infrastructure state.
     if tool_def.safety_level == ToolSafetyLevel.GATED:
         roe = engagement.rules_of_engagement
         if not roe.allow_exploitation:
@@ -250,6 +253,12 @@ async def execute_tool_request(
                     f"blast_radius='poc' or get destructive actions authorized on the engagement."
                 ),
             )
+
+    # Preflight: refuse a catalog tool the current environment cannot run, with one
+    # actionable message, instead of executing a doomed command that returns empty.
+    unavailable = _tool_unavailable_response(tool_def)
+    if unavailable is not None:
+        return unavailable
 
     if request.run_id:
         get_run_store().ensure(run_id=request.run_id, engagement_id=session.engagement_id)
