@@ -41,6 +41,11 @@ _MAX_CONCURRENT_TOOLS = 4
 # reserve (compaction.resolve_output_reserve) so we compact before the provider
 # would reject the request.
 _COMPLETION_MAX_TOKENS = 4096
+# How often to report "still waiting on the provider" while a completion call
+# is in flight — a genuinely overloaded provider can take several minutes
+# (complete()'s own 3-attempt x up to 120s retry) to finally fail; without a
+# periodic signal that's indistinguishable from a hang. See _complete_with_feedback.
+_STILL_WAITING_INTERVAL = 15.0
 
 
 def _is_context_overflow(exc: Exception) -> bool:
@@ -264,6 +269,43 @@ class Runner:
             schemas.append(_SPAWN_TOOL_SCHEMA)
         return schemas
 
+    async def _complete_with_feedback(self, tool_schemas: list[dict[str, Any]]) -> AsyncIterator[Event]:
+        """Run one ``complete()`` call, yielding a periodic ``llm_still_waiting``
+        event every ``_STILL_WAITING_INTERVAL`` seconds while it's in flight, then
+        exactly one final ``llm_result`` event carrying ``{"response": ...}`` on
+        success or ``{"error": exc}`` on failure.
+
+        ``complete()`` already retries transient provider errors internally (3
+        attempts x up to 120s each) — a genuinely overloaded provider can take
+        several minutes to finally fail, during which the caller previously had
+        no way to distinguish "still working" from "hung". Polling with
+        ``asyncio.wait(..., timeout=...)`` gives this loop a chance to report
+        elapsed time without needing complete() to know anything about events.
+        """
+        task = asyncio.ensure_future(
+            complete(
+                config=self.config, messages=self.messages,
+                tools=tool_schemas, max_tokens=_COMPLETION_MAX_TOKENS,
+            )
+        )
+        waited = 0.0
+        try:
+            while True:
+                done, _pending = await asyncio.wait({task}, timeout=_STILL_WAITING_INTERVAL)
+                if task in done:
+                    break
+                waited += _STILL_WAITING_INTERVAL
+                yield Event("llm_still_waiting", {"elapsed_seconds": waited})
+        except asyncio.CancelledError:
+            task.cancel()
+            raise
+        try:
+            yield Event("llm_result", {"response": task.result()})
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — handed to the caller, not raised here
+            yield Event("llm_result", {"error": exc})
+
     async def _manage_context(self, tool_schemas: list[dict[str, Any]]) -> AsyncIterator[Event]:
         """Keep the running prompt under the model's real context window.
 
@@ -357,21 +399,26 @@ class Runner:
                 # Signals the start of the one genuinely silent gap in this
                 # loop — everything else (tool calls, worker sub-events) has
                 # its own start/end events already; the model call itself
-                # (seconds, sometimes 10+ with the retry-with-backoff in
-                # complete()) previously had zero visible feedback. The
-                # renderer is responsible for turning this into a spinner and
-                # clearing it on whatever event comes next — this loop stays
-                # UI-agnostic, same as every other Event here.
+                # previously had zero visible feedback beyond a static spinner,
+                # which is indistinguishable from a real hang once a slow/
+                # overloaded provider's own retry-with-backoff (complete()'s
+                # 3 attempts x up to 120s each) stretches past a few minutes —
+                # confirmed live during QA: a genuinely overloaded provider
+                # produced ~6 minutes of total silence, easily mistaken for a
+                # hung CLI. _complete_with_feedback yields periodic
+                # "llm_still_waiting" events during that wait so the renderer
+                # can show elapsed time instead of one unchanging spinner.
                 yield Event("llm_call_start", {})
                 response = None
-                try:
-                    response = await complete(
-                        config=self.config, messages=self.messages,
-                        tools=tool_schemas, max_tokens=_COMPLETION_MAX_TOKENS,
-                    )
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:  # noqa: BLE001 — a failed model call
+                exc: Exception | None = None
+                async for ev in self._complete_with_feedback(tool_schemas):
+                    if ev.type == "llm_result":
+                        response, exc = ev.data.get("response"), ev.data.get("error")
+                    else:
+                        yield ev
+                if exc is not None:
+                    if isinstance(exc, asyncio.CancelledError):
+                        raise exc
                     # A context-overflow is the ONE failure a retry can fix:
                     # force a compaction and try once more. Previously this ended
                     # the turn with "(stopped: ...)" — a long engagement simply
@@ -381,15 +428,13 @@ class Runner:
                     # spawned worker's caller — so neither is left with nothing.
                     if _is_context_overflow(exc) and await self._compact_now():
                         yield Event("compaction", {"forced": True, "messages_after": len(self.messages)})
-                        try:
-                            response = await complete(
-                                config=self.config, messages=self.messages,
-                                tools=tool_schemas, max_tokens=_COMPLETION_MAX_TOKENS,
-                            )
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception as exc2:  # noqa: BLE001
-                            exc = exc2
+                        async for ev in self._complete_with_feedback(tool_schemas):
+                            if ev.type == "llm_result":
+                                response, exc = ev.data.get("response"), ev.data.get("error")
+                            else:
+                                yield ev
+                        if isinstance(exc, asyncio.CancelledError):
+                            raise exc
                     if response is None:
                         msg = friendly_llm_error(exc)
                         yield Event("error", {"message": msg})

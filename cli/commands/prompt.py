@@ -144,6 +144,17 @@ async def _drive(prompt: str, client: "APIClient", runner: Runner) -> bool:
                 if not spinner_on:
                     thinking.start()
                     spinner_on = True
+                thinking.update("[dim]Thinking…[/]")
+                continue
+            if event.type == "llm_still_waiting":
+                # A genuinely overloaded provider can take several minutes
+                # (complete()'s own retry-with-backoff) — without this, a static
+                # "Thinking…" spinner for that whole stretch is indistinguishable
+                # from a hung CLI. Update the same spinner in place with elapsed
+                # time so it's clear this is a slow provider, not a dead process.
+                elapsed = int(event.data.get("elapsed_seconds") or 0)
+                if spinner_on:
+                    thinking.update(f"[dim]Still waiting on the LLM provider… ({elapsed}s)[/]")
                 continue
             if event.type == "error":
                 succeeded = False
