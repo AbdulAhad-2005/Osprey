@@ -628,24 +628,13 @@ class MCPClient:
         never raises for a timeout (drains partial output instead), so the retry
         loop above has a uniform result shape to make a decision on."""
         proc: asyncio.subprocess.Process | None = None
-        # Unique per-call pidfile so a timeout can target the remote command's
-        # own process group directly (see _kill_remote_process_group). setsid
-        # makes the exec'd shell its own session/process-group leader; `$$`
-        # captured before `command` runs stays valid even once the real tool
-        # replaces the shell's process image (a plain `exec` keeps the pid),
-        # and covers children the tool forks (same process group by default).
-        # RC=$?/exit $RC around the real command preserves its exact exit
-        # status — the cleanup must never appear to change success/failure.
+        # Create a unique pidfile to track this command's process group for targeted timeout kills.
+        # `setsid` makes the shell a new session leader. Capturing `$$` before execution remains valid
+        # post-`exec` and includes any sub-processes. $RC preserves the command's original exit code.
         #
-        # setsid's `-w`/`--wait` is NOT optional: without it, setsid forks its
-        # target and returns/exits immediately itself, so `docker exec`'s own
-        # client (which tracks setsid's exit, not its child's) reports the
-        # call "done" the instant it forks — a real tool then runs forever,
-        # detached, while every caller sees an immediate false success. This
-        # would have been strictly worse than no fix at all: the real work
-        # keeps leaking exactly as before, but the TimeoutError branch that
-        # calls _kill_remote_process_group never even fires to catch it,
-        # since nothing ever looks like a timeout.
+        # MUST use `setsid -w`: without waiting, `setsid` forks and exits immediately, causing `docker exec`
+        # to report instant success while the command continues running detached in the background.#
+
         pidfile = f"/tmp/.osprey-exec-{uuid.uuid4().hex}.pid"
         wrapped_command = f"echo $$ > {pidfile}; {command}; RC=$?; rm -f {pidfile}; exit $RC"
         try:

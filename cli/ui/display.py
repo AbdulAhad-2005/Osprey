@@ -472,18 +472,12 @@ def print_chat_history(messages: list[dict[str, Any]], *, limit: int = 12) -> No
 
 
 def print_command_help(commands: dict[str, str]) -> None:
-    # `no_wrap=True` on Command forced the WHOLE table to fit its longest entry
-    # on one line — harmless when every command was short, but the catalog has
-    # grown to 35+ commands, some genuinely long (e.g.
-    # "/attackpath advance <id> [--status ..] [--finding ..] [--step ..]").
-    # On a normal ~80-column terminal that single long entry left no room for
-    # "What it does" at all: rich silently dropped the description column
-    # (or rendered a malformed box) instead of wrapping — every command showed
-    # with zero explanation of what it does, exactly the "user gets confused"
-    # failure mode this table exists to prevent. Wrapping the Command column
-    # (max_width caps how wide any one entry can push the table) restores
-    # descriptions at any realistic terminal width; ratio=1/2 gives
-    # descriptions the larger, more-important share of the space.
+    # `no_wrap=True` forced the table to match the longest command's width.
+    # As commands grew longer, Rich began dropping the description column on standard 
+    # ~80-col terminals. 
+
+    # Enabling wrapping with `max_width` restores descriptions at narrow terminal sizes, 
+    # while `ratio=1/2` ensures descriptions get most of the visual space.
     table = Table(
         title=f"{APP_NAME} Commands",
         show_header=True,
