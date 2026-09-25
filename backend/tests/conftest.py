@@ -3,9 +3,13 @@
 import os
 from pathlib import Path
 
-# Ensure tests default to SQLite if PostgreSQL container is not available locally
-db_url = os.environ.get("DATABASE_URL", "")
-if not db_url or "postgres:" in db_url:
+# Tests must NEVER run against the application's own configured DATABASE_URL —
+# only an explicit, dedicated OSPREY_TEST_DATABASE_URL (for CI pointing at a
+# disposable Postgres) opts out of the default isolated-per-process SQLite file.
+test_db_url = os.environ.get("OSPREY_TEST_DATABASE_URL", "")
+if test_db_url:
+    os.environ["DATABASE_URL"] = test_db_url
+else:
     test_root = Path(__file__).resolve().parents[1] / ".pytest-tmp"
     test_root.mkdir(parents=True, exist_ok=True)
     test_db = test_root / f"osprey-tests-{os.getpid()}.db"
