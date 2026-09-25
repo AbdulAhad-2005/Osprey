@@ -25,6 +25,7 @@ try:
     from dotenv import load_dotenv
     from prompt_toolkit import PromptSession
     from prompt_toolkit.completion import Completer, Completion
+    from prompt_toolkit.shortcuts import CompleteStyle
     from prompt_toolkit.formatted_text import HTML
     from prompt_toolkit.history import InMemoryHistory
     from prompt_toolkit.patch_stdout import patch_stdout
@@ -341,8 +342,12 @@ def _run_benchmark_noninteractive(args: argparse.Namespace) -> int:
 
 
 def main() -> None:
-    # Load .env so API_BASE_URL and other env vars are available
-    load_dotenv()
+    # Load .env so API_BASE_URL / LLM_MODEL / LLM_API_KEY are available.
+    # override=True so an edited .env wins over a stale value already exported in
+    # the shell environment — without it, changing LLM_MODEL/LLM_API_KEY in .env
+    # and relaunching kept the old model (the value inherited from the environment
+    # shadowed the file), which forced a full container rebuild to change models.
+    load_dotenv(override=True)
 
     parser = argparse.ArgumentParser(
         prog=CLI_COMMAND,
@@ -409,6 +414,12 @@ def main() -> None:
         session = PromptSession(
             completer=CommandCompleter(),
             history=InMemoryHistory(),
+            # Show all slash commands as a scrollable grid rather than a short
+            # single-column list that only revealed one screenful — the command
+            # set outgrew the default menu. reserve_space_for_menu gives the grid
+            # real height so most commands are visible at once.
+            complete_style=CompleteStyle.MULTI_COLUMN,
+            reserve_space_for_menu=12,
         )
     else:
         # Piped/non-interactive stdin (CI, scripts): fall back to plain input().

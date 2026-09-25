@@ -41,7 +41,7 @@ def handle_help(args: list[str], client: "APIClient") -> None:
             "registered tool with --all"
         ),
         "/models": "List supported LLM models",
-        "/model": "Show active LLM model + key status",
+        "/model [reload]": "Show active LLM model; `reload` re-reads .env model/key in place (keeps engagement)",
         "/scan [target] [phase] [--mcp|--engine] [--include-low-confidence]": (
             "Bind target + scan. --mcp = LLM-driven (default); "
             "--engine = autonomous trigger-graph pipeline, no LLM. "
@@ -110,7 +110,21 @@ def handle_model(args: list[str], client: "APIClient") -> None:
     """Show both models in play: the CLI's own driving model (what runs your
     prompts, in this process) and the backend's (what the deterministic
     `--engine` path's dynamic-fallback ingestion classifier uses, if
-    configured — a separate, optional concern from what's driving you)."""
+    configured — a separate, optional concern from what's driving you).
+
+    `/model reload` re-reads .env and rebuilds the driving model in place —
+    without dropping the engagement — so you can switch provider/model after a
+    rate limit and keep going (unlike /reconnect, which clears the session)."""
+    if args and args[0].lower() in ("reload", "refresh"):
+        import os
+
+        from dotenv import load_dotenv
+
+        load_dotenv(override=True)  # edited .env wins over the stale process env
+        client.agent_runner = None  # rebuilt lazily with fresh CLIModelConfig; engagement kept
+        model = (os.getenv("LLM_MODEL") or "").strip() or "NOT CONFIGURED"
+        print_success(f"Reloaded driving model from .env: {model} (engagement kept).")
+        return
     _print_cli_model_status()
     print_info("")
     _reload_backend_config(client)
@@ -1115,7 +1129,7 @@ SLASH_COMMANDS: dict[str, tuple[str, "callable"]] = {
     "/health": ("Check backend health", handle_health),
     "/tools": ("List MCP tools", handle_tools),
     "/models": ("List LLM models", handle_models),
-    "/model": ("Show active model", handle_model),
+    "/model": ("Show active model, or `/model reload` to re-read .env in place", handle_model),
     "/scan": ("Bind target + run full agent scan", handle_scan),
     "/fast-scan": ("Deterministic no-LLM scan: whois+subs+SANs+IPs+CDN-classify+httpx+nmap+takeover", handle_fast_scan),
     "/engage": ("Manage engagements", handle_engagements),
