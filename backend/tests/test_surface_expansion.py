@@ -60,7 +60,11 @@ def test_unexpanded_domain_triggers_passive_discovery_dispatch():
     graph.ensure_node.return_value = None
 
     with patch("osprey.services.surface_expansion.get_engagement_graph", return_value=graph), \
+         patch("osprey.services.surface_expansion.resolve_host_ip", return_value=None), \
          patch("osprey.services.tool_execution.execute_tool_request", new_callable=AsyncMock) as mock_exec:
+        # resolve_host_ip -> None keeps this apex out of the (separate, real-DNS-
+        # driven) live-host battery stage — this test is scoped to the passive
+        # discovery dispatch only, per the module's own "no network" contract.
         delta = _run(run_expansion_pass(engagement_id="e1", run_id="r1"))
         assert delta.frontier_processed == 1
         called_tools = {c.args[0].tool_name for c in mock_exec.await_args_list}
@@ -70,7 +74,16 @@ def test_unexpanded_domain_triggers_passive_discovery_dispatch():
 
 
 def test_already_expanded_nodes_skipped():
-    domain_node = _node(AssetType.DOMAIN, "example.com", {"expanded": True})
+    # Discovery (`expanded`), the apex's own live-host battery (`host_expanded`),
+    # and OSINT contact harvesting (`contacts_harvested`) are three INDEPENDENT
+    # completion flags by design (an apex domain is a discovery seed, a live web
+    # property, AND a contact-harvest target — see the "stage 4"/"stage 6"
+    # comments in surface_expansion.py) — a node fully done in every regard
+    # carries all three.
+    domain_node = _node(
+        AssetType.DOMAIN, "example.com",
+        {"expanded": True, "host_expanded": True, "contacts_harvested": True},
+    )
     graph = MagicMock()
     graph.list_nodes.side_effect = lambda **kw: (
         [domain_node] if kw.get("asset_type") == AssetType.DOMAIN else []
@@ -98,6 +111,7 @@ def test_one_tool_failure_does_not_abort_the_pass():
         return None
 
     with patch("osprey.services.surface_expansion.get_engagement_graph", return_value=graph), \
+         patch("osprey.services.surface_expansion.resolve_host_ip", return_value=None), \
          patch("osprey.services.tool_execution.execute_tool_request", side_effect=_flaky) as mock_exec:
         delta = _run(run_expansion_pass(engagement_id="e1", run_id="r1"))
         # one tool raised, the rest of the domain-discovery set still got called
@@ -348,9 +362,24 @@ def test_web_depth_runs_when_phase_enabled():
 
 def test_hung_tool_does_not_block_the_pass():
     """A tool that never returns (crt.sh hanging/502-looping in practice) must
-    not block the pass forever — the per-task wait_for ceiling must actually
-    fire. Every dispatched tool hangs here; if the ceiling didn't work, the
-    outer 5s wait_for around the whole pass would raise TimeoutError."""
+    not block the pass forever.
+
+    The per-task timeout ceiling used to be a `wait_for` INSIDE this engine's
+    own `_dispatch` — that changed (see `_dispatch`'s own comment): the
+    execution kernel (`execute_tool_request`/`mcp_client`) now owns the actual
+    call-cancellation, because an outer `wait_for` here previously counted
+    legitimate queue time against a tool's execution budget and could cancel a
+    request before it ever got a slot. So `_dispatch` no longer cancels
+    anything itself — it forwards a bounded `timeout=` to the kernel and
+    relies on the kernel to raise `TimeoutError` when that fires.
+
+    This test therefore simulates what the kernel does on a real hang (raise
+    TimeoutError promptly) rather than actually sleeping past an enforcement
+    point that no longer exists at this layer — mocking a real, unbounded
+    sleep here tests an architecture this module intentionally moved away
+    from, not the current one. What must still hold: `_dispatch`'s own
+    `except TimeoutError` absorbs the failure and the pass completes.
+    """
     domain_node = _node(AssetType.DOMAIN, "example.com", {})
     graph = MagicMock()
     graph.list_nodes.side_effect = lambda **kw: (
@@ -358,15 +387,21 @@ def test_hung_tool_does_not_block_the_pass():
     )
     graph.list_edges.return_value = []
 
-    async def _always_hangs(request):
-        await asyncio.sleep(3600)
+    async def _kernel_times_out(request):
+        raise TimeoutError(f"{request.tool_name} exceeded its {request.timeout}s budget")
 
     with patch("osprey.services.surface_expansion.get_engagement_graph", return_value=graph), \
-         patch("osprey.services.surface_expansion._DOMAIN_DISCOVERY_TIMEOUT", 0.05), \
-         patch("osprey.services.surface_expansion._DOMAIN_ONLY_TIMEOUT", 0.05), \
-         patch("osprey.services.tool_execution.execute_tool_request", side_effect=_always_hangs):
+         patch("osprey.services.surface_expansion.resolve_host_ip", return_value="1.2.3.4"), \
+         patch("osprey.services.tool_execution.execute_tool_request", side_effect=_kernel_times_out):
+        # resolve_host_ip is mocked live (not None) here, unlike the other
+        # tests above, so this apex also enters the live-host battery — every
+        # stage's dispatched call raises the same TimeoutError, so the whole
+        # pass must still reach completion, not just the discovery stage. The
+        # same virgin apex is counted once for discovery and once for the
+        # live-host battery (the two are independent completion flags — see
+        # test_already_expanded_nodes_skipped), hence 2, not 1.
         delta = _run(asyncio.wait_for(run_expansion_pass(engagement_id="e1", run_id="r1"), timeout=5))
-        assert delta.frontier_processed == 1
+        assert delta.frontier_processed == 2
 
 
 def test_on_progress_reports_in_flight_tool_names():
