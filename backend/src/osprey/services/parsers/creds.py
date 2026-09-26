@@ -190,15 +190,21 @@ def parse_intelx(
                                      run_id=run_id, target=tgt, source="intelx_phonebook")
             if ef:
                 out.append(ef)
+        tgt_l = tgt.lower().rstrip(".")
         for dom in phonebook.get("domains") or []:
-            host = str(dom).strip().lower()
-            if host and "." in host and (tgt.lower() in host or host.endswith(tgt.lower())):
+            host = str(dom).strip().lower().rstrip(".")
+            # Proper domain-suffix match (exact, or ending in ".<target>")
+            if host and "." in host and tgt_l and (host == tgt_l or host.endswith("." + tgt_l)):
                 out.append(Observation(
                     engagement_id=engagement_id, run_id=run_id,
                     type=ObservationType.SUBDOMAIN,
                     target=tgt, source_tool="intelx_scan",
                     details={"hostname": host, "source": "intelx_phonebook"},
                 ))
+        out.extend(credential_observations(
+            phonebook.get("credentials") or [], tool="intelx_scan", provider="intelx",
+            source_class="breach_db", engagement_id=engagement_id, run_id=run_id, target=tgt,
+        ))
 
     if isinstance(leaks, dict):
         out.extend(credential_observations(
