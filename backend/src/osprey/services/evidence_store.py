@@ -29,6 +29,7 @@ def _row_to_evidence(row: EvidenceRow) -> Evidence:
         command=row.command,
         stdout_path=row.stdout_path,
         stderr_path=row.stderr_path,
+        raw_excerpt=row.raw_excerpt or "",
         exit_code=row.exit_code,
         duration_ms=row.duration_ms,
         observed=bool(row.observed),
@@ -50,6 +51,7 @@ class EvidenceStore:
         command: str = "",
         stdout_path: str = "",
         stderr_path: str = "",
+        raw_excerpt: str = "",
         exit_code: int = 0,
         duration_ms: int = 0,
     ) -> Evidence | None:
@@ -65,6 +67,11 @@ class EvidenceStore:
             command=command or "",
             stdout_path=(stdout_path or "")[:512],
             stderr_path=(stderr_path or "")[:512],
+            # Bounded independently of stdout_path's own truncation (Kali
+            # artifacts keep up to 200_000 bytes) — this is a grounding-check
+            # substrate, not a full-fidelity copy; 20k chars is generous for
+            # a substring match and keeps the row small.
+            raw_excerpt=(raw_excerpt or "")[:20_000],
             exit_code=int(exit_code or 0),
             duration_ms=int(duration_ms or 0),
             observed=False,

@@ -33,7 +33,16 @@ async def run_to_completion(
     *,
     engagement_id: str,
     run_id: str,
-    max_passes: int = 5,
+    # A safety ceiling, not the primary stop condition — real exhaustion
+    # (run_expansion_pass returning exhausted=True after 2 consecutive
+    # passes with nothing new) already stops the loop earlier on typical
+    # targets. 5 made "exhaustive, tries all paths" structurally impossible
+    # on any real-sized target: each pass is itself batch-capped
+    # (config/expansion.yaml's batch.live_host=15), so 5 passes covers at
+    # most 75 live hosts ever, full stop, regardless of how much surface
+    # actually exists (a target with 267 live hosts, a real case seen in
+    # practice, would never get past its first ~28%).
+    max_passes: int = 50,
     on_pass: Callable[[Any], None] | None = None,
     on_progress: Callable[[str], None] | None = None,
     min_origin_confidence: float | None = None,
@@ -49,6 +58,7 @@ async def run_to_completion(
     """
     from osprey.services.exploit_candidate_store import get_exploit_candidate_store
     from osprey.services.exploit_pipeline import scan_for_candidates
+    from osprey.services.finding_pipeline import promote_observations
     from osprey.services.findings_store import get_findings_store
     from osprey.services.heuristic_engine import run_dispatch_stage
     from osprey.services.surface_expansion import (
@@ -83,6 +93,31 @@ async def run_to_completion(
             delta = await run_expansion_pass(
                 engagement_id=eid, run_id=run_id, on_progress=on_progress, min_origin_confidence=min_conf,
             )
+            # A recon pass fills the observation store, not the findings
+            # store (Plan 02's split) — nothing else in this loop ever
+            # promotes what it found into an actual Finding, so without this
+            # a full run_to_completion pass could gather real evidence
+            # (subdomains, live hosts, scanner signals) and platform_findings
+            # would still honestly report zero, forever. promote_observations
+            # is exactly the deterministic, no-LLM-judgment capability this
+            # loop already trusts for recon/vuln — calling it here is not a
+            # new judgment call, just the earned-finding pipeline's other
+            # half actually running.
+            try:
+                promote_observations(eid, run_id=run_id)
+            except Exception:  # noqa: BLE001 — promotion failure must never abort a recon pass
+                logger.debug("promote_observations failed after recon pass (non-fatal)", exc_info=True)
+            # Ambient peer-anomaly detection (plans/harness/14-pentester-
+            # intelligence.md) — runs the same way promote_observations does:
+            # deterministic, best-effort, every pass, so a statistically odd
+            # peer host surfaces without the operator needing to remember to
+            # ask for it.
+            try:
+                from osprey.services.anomaly_detection import detect_peer_anomalies
+
+                detect_peer_anomalies(eid)
+            except Exception:  # noqa: BLE001
+                logger.debug("anomaly detection failed after recon pass (non-fatal)", exc_info=True)
             after = findings_store.list(engagement_id=eid, limit=5000)
             new_titles = [f.title for f in after if f.id not in before_ids][:_TITLE_SAMPLE_CAP]
             pass_report = PassReport(pass_number=recon_pass_count, delta=delta, new_finding_titles=new_titles)
@@ -110,6 +145,10 @@ async def run_to_completion(
                 )
             except Exception:  # noqa: BLE001 — never let the vuln stage abort the whole run
                 logger.exception("vuln dispatch failed (non-fatal); continuing")
+            try:
+                promote_observations(eid, run_id=run_id)
+            except Exception:  # noqa: BLE001
+                logger.debug("promote_observations failed after vuln dispatch (non-fatal)", exc_info=True)
             state.vuln_exhausted = True
             continue
 

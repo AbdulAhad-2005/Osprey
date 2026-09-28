@@ -63,6 +63,27 @@ def test_pinned_context_resolves_real_target_and_owns_a_stable_run(server, monke
     ]
 
 
+def test_pinned_is_false_when_the_explicit_id_matches_ambient_session(server, monkeypatch) -> None:
+    """The noise a real operator transcript surfaced: every tool result in a
+    normal single-engagement CLI session showed a "PINNED... bypassed the
+    shared ambient session" notice, even though the CLI always passes
+    engagement_id= by design and it always matched the ambient session — a
+    warning about a divergence that never happened, on every single call.
+    `.pinned` must only be True when the explicit id actually DIFFERS from
+    the ambient one."""
+    server._SESSION_ENGAGEMENT_ID = "eng-ambient"
+    server._SESSION_TARGET = "ambient.example"
+    server._ENGAGEMENT_CACHE["eng-ambient"] = {"target": "ambient.example", "kind": "domain", "scope": ""}
+    server._ENGAGEMENT_RUN_IDS.setdefault("eng-ambient", "run-ambient")
+
+    same = server._resolve_engagement("eng-ambient")
+    assert same.pinned is False
+
+    monkeypatch.setattr(server, "_get", lambda path, **_kw: {"id": "eng-other", "target": "other.example"})
+    different = server._resolve_engagement("eng-other")
+    assert different.pinned is True
+
+
 def test_finding_body_uses_the_resolved_context_not_ambient_globals(server, monkeypatch) -> None:
     # Ambient session globals deliberately point somewhere ELSE — the whole
     # point of this test is that a pinned context must win over them, the

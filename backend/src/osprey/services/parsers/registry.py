@@ -248,6 +248,10 @@ def ensure_parsers_loaded() -> None:
     except ImportError as exc:
         logger.debug("Browser parser module load skipped: %s", exc)
     try:
+        from osprey.services.parsers import deterministic_confirm  # noqa: F401
+    except ImportError as exc:
+        logger.debug("Deterministic-confirm parser module load skipped: %s", exc)
+    try:
         from osprey.services.parsers import creds  # noqa: F401
     except ImportError as exc:
         logger.debug("Creds parser module load skipped: %s", exc)

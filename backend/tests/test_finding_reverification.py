@@ -1,0 +1,183 @@
+"""finding_reverification.reverify_finding + findings_store.append_evidence —
+the re-verification gap closed this session (adapted, not copied, from
+Pentest-Swarm-AI's ConfirmationAgent concept found during the alternatives
+survey): re-run the tool(s) behind a finding's evidence and check whether the
+signal still reproduces. Evidence stays append-only throughout — a failed
+recheck is never allowed to edit or delete a past confirming record.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from osprey.schemas.finding import ClaimSeverity, EvidenceRecord, EvidenceRecordKind, FindingType
+from osprey.schemas.observation import Observation, ObservationType
+from osprey.services import finding_reverification
+from osprey.services.finding_pipeline import file_finding
+from osprey.services.findings_store import get_findings_store
+from osprey.services.observation_store import get_observation_store
+
+
+def _make_engagement(target: str) -> str:
+    from fastapi.testclient import TestClient
+
+    from osprey.main import app
+
+    with TestClient(app) as client:
+        resp = client.post("/api/v1/engagements/", json={"target": target})
+        return resp.json()["id"]
+
+
+def _record_scanner_signal(eid: str, *, target: str, title: str, tool: str = "nuclei_scan") -> Observation:
+    return get_observation_store().record(Observation(
+        engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target=target,
+        source_tool=tool, details={"title": title, "claimed_severity": "critical"},
+    ))
+
+
+def test_append_evidence_recomputes_confidence_and_can_downgrade():
+    eid = _make_engagement("reverify-append.test")
+    obs = _record_scanner_signal(eid, target="a.reverify-append.test", title="RCE via deserialization")
+    result = file_finding(
+        engagement_id=eid, title="RCE via deserialization", finding_type=FindingType.VULNERABILITY,
+        observation_ids=[obs.id], claim_severity=ClaimSeverity.CRITICAL,
+        evidence_records=[EvidenceRecord(kind=EvidenceRecordKind.ATTESTATION, detail="operator confirmed")],
+    )
+    finding = result.finding
+    assert finding is not None
+    assert finding.confidence.value == "confirmed"
+
+    store = get_findings_store()
+    updated = store.append_evidence(finding.id, EvidenceRecord(
+        kind=EvidenceRecordKind.RECHECK_FAILED, source_tool="nuclei_scan", observation_id=obs.id,
+        detail="did not reproduce",
+    ))
+    assert updated is not None
+    assert updated.confidence.value == "likely"
+    kinds = {er.kind.value for er in updated.evidence_records}
+    # Past evidence is untouched, not replaced — both records coexist.
+    assert kinds == {"attestation", "recheck_failed"}
+
+
+def test_append_evidence_unknown_finding_returns_none():
+    store = get_findings_store()
+    assert store.append_evidence("does-not-exist-12", EvidenceRecord(kind=EvidenceRecordKind.RECHECK_FAILED)) is None
+
+
+def test_reverify_unknown_finding_reports_error():
+    result = asyncio.run(finding_reverification.reverify_finding("does-not-exist-12"))
+    assert "error" in result
+
+
+def test_reverify_finding_with_no_reverifiable_observation_reports_nothing_to_check():
+    """An ATTESTATION-only finding with an operator_record-sourced
+    observation has nothing mechanical to re-run — reports that plainly
+    instead of guessing or crashing."""
+    eid = _make_engagement("reverify-none.test")
+    obs = get_observation_store().record(Observation(
+        engagement_id=eid, type=ObservationType.RAW, target="a.reverify-none.test",
+        source_tool="operator_record", details={"title": "manual note"},
+    ))
+    result = file_finding(
+        engagement_id=eid, title="manual note", finding_type=FindingType.OBSERVATION,
+        observation_ids=[obs.id],
+        evidence_records=[EvidenceRecord(kind=EvidenceRecordKind.ATTESTATION, detail="I saw this")],
+    )
+    finding = result.finding
+    assert finding is not None
+
+    outcome = asyncio.run(finding_reverification.reverify_finding(finding.id))
+    assert outcome["checked"] == 0
+    assert "Nothing re-runnable" in outcome["note"]
+
+
+def test_reverify_finding_downgrades_when_signal_no_longer_reproduces():
+    """The tool re-runs (mocked — no real Kali call in a unit test) but the
+    observation store never sees the same signature again (nothing calls
+    record_many to bump last_seen_at) — exactly what "the target no longer
+    exhibits this" looks like. Confidence must move CONFIRMED -> LIKELY, and
+    a RECHECK_FAILED record must land."""
+    eid = _make_engagement("reverify-fail.test")
+    obs = _record_scanner_signal(eid, target="b.reverify-fail.test", title="SQL injection")
+    result = file_finding(
+        engagement_id=eid, title="SQL injection", finding_type=FindingType.VULNERABILITY,
+        observation_ids=[obs.id], claim_severity=ClaimSeverity.CRITICAL,
+        evidence_records=[EvidenceRecord(kind=EvidenceRecordKind.REPRODUCTION, detail="sqlmap dumped rows")],
+    )
+    finding = result.finding
+    assert finding is not None
+    assert finding.confidence.value == "confirmed"
+
+    with patch(
+        "osprey.services.tool_execution.execute_tool_request",
+        new=AsyncMock(return_value=object()),  # tool "ran" — its actual return value is unused by reverify_finding
+    ):
+        outcome = asyncio.run(finding_reverification.reverify_finding(finding.id))
+
+    assert outcome["checked"] == 1
+    assert outcome["failed"] == 1
+    assert outcome["reproduced"] == 0
+    assert outcome["confidence_before"] == "confirmed"
+    assert outcome["confidence_after"] == "likely"
+
+    refiled = get_findings_store().get(finding.id)
+    assert any(er.kind == EvidenceRecordKind.RECHECK_FAILED for er in refiled.evidence_records)
+    # The original REPRODUCTION record is still there — never deleted.
+    assert any(er.kind == EvidenceRecordKind.REPRODUCTION for er in refiled.evidence_records)
+
+
+def test_reverify_finding_stays_confirmed_when_signal_still_reproduces():
+    """The mocked tool call re-records the SAME observation via record_many
+    — observation_store bumps last_seen_at on a matching signature, which is
+    exactly the "still true right now" signal reverify_finding looks for."""
+    eid = _make_engagement("reverify-ok.test")
+    obs = _record_scanner_signal(eid, target="c.reverify-ok.test", title="XSS reflected")
+    result = file_finding(
+        engagement_id=eid, title="XSS reflected", finding_type=FindingType.VULNERABILITY,
+        observation_ids=[obs.id], claim_severity=ClaimSeverity.HIGH,
+        evidence_records=[EvidenceRecord(kind=EvidenceRecordKind.REPRODUCTION, detail="payload executed")],
+    )
+    finding = result.finding
+    assert finding is not None
+
+    async def _fake_execute(*_args, **_kwargs):
+        # Simulate the tool re-observing the exact same fact — the real path
+        # goes through the parser -> observation_store.record_many, which is
+        # what actually bumps last_seen_at on a signature match.
+        _record_scanner_signal(eid, target="c.reverify-ok.test", title="XSS reflected")
+        return object()
+
+    with patch("osprey.services.tool_execution.execute_tool_request", new=_fake_execute):
+        outcome = asyncio.run(finding_reverification.reverify_finding(finding.id))
+
+    assert outcome["checked"] == 1
+    assert outcome["reproduced"] == 1
+    assert outcome["failed"] == 0
+    assert outcome["confidence_after"] == "confirmed"
+
+    refiled = get_findings_store().get(finding.id)
+    assert not any(er.kind == EvidenceRecordKind.RECHECK_FAILED for er in refiled.evidence_records)
+
+
+def test_reverify_finding_treats_a_tool_exception_as_did_not_reproduce():
+    eid = _make_engagement("reverify-error.test")
+    obs = _record_scanner_signal(eid, target="d.reverify-error.test", title="open redirect")
+    result = file_finding(
+        engagement_id=eid, title="open redirect", finding_type=FindingType.VULNERABILITY,
+        observation_ids=[obs.id],
+        evidence_records=[EvidenceRecord(kind=EvidenceRecordKind.ATTESTATION, detail="confirmed manually")],
+    )
+    finding = result.finding
+    assert finding is not None
+
+    async def _boom(*_a, **_kw):
+        raise RuntimeError("tool crashed")
+
+    with patch("osprey.services.tool_execution.execute_tool_request", new=_boom):
+        outcome = asyncio.run(finding_reverification.reverify_finding(finding.id))
+
+    assert outcome["failed"] == 1
+    assert outcome["confidence_after"] == "likely"

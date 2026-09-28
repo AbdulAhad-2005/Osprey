@@ -75,6 +75,76 @@ def test_file_finding_endpoint_rejects_empty_observation_ids():
         assert resp.status_code == 422
 
 
+def test_file_finding_rejects_ungrounded_reproduction_claim():
+    eid = _make_engagement("ungrounded-repro.test")
+    obs = get_observation_store().record(Observation(
+        engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="ungrounded-repro.test",
+        source_tool="sqlmap_scan", details={"claimed_severity": "high"},
+    ))
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/v1/findings/file",
+            json={
+                "engagement_id": eid,
+                "title": "SQLi",
+                "finding_type": "vulnerability",
+                "observation_ids": [obs.id],
+                "evidence_records": [
+                    {"kind": "reproduction", "detail": "i ran sqlmap and it says vulnerable"}
+                ],
+            },
+        )
+        assert resp.status_code == 422
+        assert "reproduction" in resp.json()["detail"].lower()
+
+
+def test_file_finding_accepts_reproduction_claim_grounded_in_real_snippet():
+    eid = _make_engagement("grounded-repro.test")
+    real_output = "sqlmap: Parameter 'id' is vulnerable. Boolean-based blind SQL injection confirmed."
+    obs = get_observation_store().record(Observation(
+        engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="grounded-repro.test",
+        source_tool="sqlmap_scan", details={"claimed_severity": "high", "snippet": real_output},
+    ))
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/v1/findings/file",
+            json={
+                "engagement_id": eid,
+                "title": "SQLi",
+                "finding_type": "vulnerability",
+                "observation_ids": [obs.id],
+                "evidence_records": [
+                    {"kind": "reproduction", "detail": f"Reproduced: {real_output}"}
+                ],
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["finding"]["confidence"] == "confirmed"
+
+
+def test_file_finding_attestation_unaffected_by_grounding_check():
+    eid = _make_engagement("attestation-repro.test")
+    obs = get_observation_store().record(Observation(
+        engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="attestation-repro.test",
+        source_tool="nuclei_scan", details={},
+    ))
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/v1/findings/file",
+            json={
+                "engagement_id": eid,
+                "title": "Manually confirmed",
+                "finding_type": "vulnerability",
+                "observation_ids": [obs.id],
+                "evidence_records": [
+                    {"kind": "attestation", "detail": "I personally verified this by hand"}
+                ],
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["finding"]["confidence"] == "confirmed"
+
+
 def test_promote_endpoint_returns_findings_for_scanner_signals():
     eid = _make_engagement("promote-endpoint.test")
     get_observation_store().record(Observation(
@@ -144,3 +214,32 @@ def test_suppressed_promotions_audit_endpoint():
     assert resp.status_code == 200
     data = resp.json()
     assert data["total"] == 1
+
+
+def test_reverify_finding_endpoint_unknown_id_returns_404():
+    with TestClient(app) as client:
+        resp = client.post("/api/v1/findings/does-not-exist-99/reverify")
+    assert resp.status_code == 404
+
+
+def test_reverify_finding_endpoint_with_nothing_reverifiable():
+    eid = _make_engagement("reverify-endpoint.test")
+    obs = get_observation_store().record(Observation(
+        engagement_id=eid, type=ObservationType.RAW, target="reverify-endpoint.test",
+        source_tool="operator_record",
+    ))
+    with TestClient(app) as client:
+        file_resp = client.post(
+            "/api/v1/findings/file",
+            json={
+                "engagement_id": eid, "title": "manual note",
+                "finding_type": "observation", "observation_ids": [obs.id],
+                "evidence_records": [{"kind": "attestation", "detail": "noted"}],
+            },
+        )
+        finding_id = file_resp.json()["finding"]["id"]
+        resp = client.post(f"/api/v1/findings/{finding_id}/reverify")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["checked"] == 0
+    assert "Nothing re-runnable" in data["note"]

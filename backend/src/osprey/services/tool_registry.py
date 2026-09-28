@@ -542,6 +542,34 @@ WEB_TOOLS: list[ToolDefinition] = [
         "headers_json": _p("", "JSON object of headers to override/add"),
         "body_override": _p("", "Replace the request body"),
         **_COMMON_PARAMS}),
+    _t("canary_confirm", ToolCategory.WEBAPP, "python3", ToolSafetyLevel.ACTIVE,
+       "Deterministic reflected-payload confirmation: fetch a URL you've already injected a "
+       "unique token into, report whether that exact token reflects back in the response "
+       "(byte-for-byte, not a claim) — grounds a reflected-XSS/SSTI/template-injection "
+       "reproduction claim (plans/harness/12-deterministic-evidence-verification.md).",
+       ["confirm", "canary", "nonce", "xss", "ssti", "deterministic"],
+       {"url": _p("", "URL to fetch (already containing your injected canary)"),
+        "canary": _p("", "The exact token you injected (required)"),
+        "method": _p("GET", "HTTP method"),
+        "headers_json": _p("", "JSON object of request headers"),
+        "body": _p("", "Request body (non-GET/HEAD)"),
+        "timeout": _p("15", "Seconds before giving up"),
+        **_COMMON_PARAMS}),
+    _t("response_diff_confirm", ToolCategory.WEBAPP, "python3", ToolSafetyLevel.ACTIVE,
+       "Deterministic response-differential confirmation: fetch two requests (boolean-TRUE vs "
+       "boolean-FALSE blind-injection payload, authenticated vs unauthenticated) and report a "
+       "computed diff — status, length delta, real content diff — grounds a blind-SQLi/"
+       "authorization-bypass reproduction claim (plans/harness/12-deterministic-evidence-"
+       "verification.md).",
+       ["confirm", "diff", "blind-sqli", "authz", "deterministic"],
+       {"url_a": _p("", "First URL (e.g. boolean-TRUE / baseline)"),
+        "url_b": _p("", "Second URL (e.g. boolean-FALSE / tampered)"),
+        "method": _p("GET", "HTTP method for both"),
+        "headers_json": _p("", "JSON object of request headers, applied to both"),
+        "body_a": _p("", "Request body for url_a (non-GET/HEAD)"),
+        "body_b": _p("", "Request body for url_b (non-GET/HEAD)"),
+        "timeout": _p("15", "Seconds before giving up, per request"),
+        **_COMMON_PARAMS}),
     _t("graphql_cop_scan", ToolCategory.WEBAPP, "graphql-cop", ToolSafetyLevel.ACTIVE,
        "GraphQL security audit via graphql-cop: introspection exposure, field suggestions, "
        "query batching/aliasing DoS, GET-based mutations, CSRF, deep recursion.",
@@ -964,6 +992,60 @@ try:  # pragma: no cover - overlay only present in a private superset repo
         ALL_TOOL_DEFINITIONS = ALL_TOOL_DEFINITIONS + _EXTRA_TOOL_DEFINITIONS
 except ImportError:
     _tool_registry_private = None
+
+
+def _load_custom_tool_definitions() -> tuple[ToolDefinition, ...]:
+    """Operator-defined tools from config/custom_tools.yaml (+ its .local.yaml
+    overlay) — plans/harness/13-systematic-vuln-dispatch-and-extensibility.md
+    Step 2. This registers the CATALOG entry (name/category/params/safety) —
+    the same metadata ``_t(...)`` builds for every other tool. The execution
+    side is unchanged and not special-cased here: ``command_builder.py``
+    still resolves a tool by name to ``mcp-servers/<category>/tools/<name>
+    .py`` (``_load_build_command``), so an operator adding a real, runnable
+    tool also drops a ``build_command(**params)`` module at that exact path
+    — the same shape every built-in tool already has (see canary_confirm.py
+    for a minimal example). A YAML entry with no matching file still
+    registers (visible in the catalog, documented), it just fails at
+    execution time with the same "No build_command for X" error any other
+    misconfigured tool would. A bad/malformed YAML entry itself is skipped
+    with a logged warning, never crashes catalog startup for everyone else's
+    tools.
+    """
+    import logging
+
+    from osprey.services.config_loader import read_config_layered
+
+    logger = logging.getLogger(__name__)
+    data = read_config_layered("custom_tools.yaml")
+    entries = data.get("tools") or []
+    out: list[ToolDefinition] = []
+    for entry in entries:
+        if not isinstance(entry, dict) or entry.get("disabled"):
+            continue
+        try:
+            name = str(entry["id"]).strip()
+            category = ToolCategory(str(entry.get("category", "web")).strip().lower())
+            safety = ToolSafetyLevel(str(entry.get("safety_level", "active")).strip().lower())
+            executable = str(entry.get("executable") or "python3").strip()
+            description = str(entry.get("description") or "").strip()
+            if not name or not description:
+                raise ValueError("custom tool entries require 'id' and 'description'")
+            params = {
+                pname: ToolParameter(
+                    default=str(p.get("default", "")), description=str(p.get("description", ""))
+                )
+                for pname, p in (entry.get("params") or {}).items()
+            }
+            tags = list(entry.get("tags") or []) + ["custom"]
+            out.append(_t(name, category, executable, safety, description, tags, params))
+        except (KeyError, ValueError) as exc:
+            logger.warning("custom_tools.yaml: skipping malformed entry %r: %s", entry, exc)
+    return tuple(out)
+
+
+_CUSTOM_TOOL_DEFINITIONS = _load_custom_tool_definitions()
+if _CUSTOM_TOOL_DEFINITIONS:
+    ALL_TOOL_DEFINITIONS = ALL_TOOL_DEFINITIONS + _CUSTOM_TOOL_DEFINITIONS
 
 # Build lookup tables
 _TOOL_BY_NAME: dict[str, ToolDefinition] = {t.name: t for t in ALL_TOOL_DEFINITIONS}

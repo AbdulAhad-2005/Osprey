@@ -108,7 +108,9 @@ def memory_search(
         lines.append("\nAttempts matching query (advisory — re-run freely if useful):")
         for a in attempts[:12]:
             lines.append(
-                f"- {a['tool']} on {a['asset']} ok={a['success']} findings={a['findings_count']}"
+                # See platform_attempts' identical fix — this count is
+                # structural items extracted (Observations), not real Findings.
+                f"- {a['tool']} on {a['asset']} ok={a['success']} signals={a['findings_count']}"
             )
 
     return {
@@ -241,7 +243,13 @@ def attempts_for_asset(
     for r in rows:
         lines.append(
             f"- {r.tool_name} @ {r.asset} success={r.success} "
-            f"findings={r.findings_count}"
+            # findings_count is really "structural items extracted" (Observations,
+            # never Findings — Plan 02's split) — a real Finding only exists once
+            # promote_observations/platform_file_finding earns it from evidence.
+            # Labeling it "signals" here instead of "findings" is a real fix, not
+            # cosmetic: an operator/LLM comparing this against platform_findings'
+            # honest count (often 0 at this point) was reading a contradiction.
+            f"signals={r.findings_count}"
             + (f" notes={r.notes[:80]}" if r.notes else "")
         )
     if not rows:

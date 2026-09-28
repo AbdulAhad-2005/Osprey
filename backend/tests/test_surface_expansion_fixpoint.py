@@ -121,3 +121,32 @@ def test_vuln_dispatch_never_called_when_nothing_makes_it_worthwhile():
         mock_cand.return_value.list_for_engagement.return_value = []
         report = _run(run_to_completion(engagement_id="vuln-dispatch-parity-test", run_id="r1"))
         assert report.stopped_reason == "exhausted"
+
+
+def test_recon_pass_promotes_observations_into_findings():
+    """The gap a real operator transcript surfaced: run_to_completion built
+    up real Observations (subdomains, scanner signals) but NEVER called
+    promote_observations, so platform_findings honestly reported zero
+    forever no matter how much recon actually happened — an operator/LLM
+    would poll a completed job and see real assets in platform_priority /
+    platform_world_model but nothing in platform_findings, with no
+    documented reason why.
+
+    Proves the WIRING (run_to_completion calls promote_observations after a
+    recon pass and after vuln dispatch) by mocking promote_observations
+    itself and asserting the call — promote_observations' OWN correctness
+    (does it actually file a real, evidence-graded Finding from an
+    Observation) is already covered by test_finding_pipeline.py; this test's
+    job is only to prove the two are actually connected."""
+    with patch("osprey.services.surface_expansion.run_expansion_pass", new_callable=AsyncMock) as mock_pass, \
+         patch("osprey.services.findings_store.get_findings_store") as mock_store, \
+         patch("osprey.services.finding_pipeline.promote_observations") as mock_promote, \
+         patch("osprey.services.exploit_pipeline.scan_for_candidates", return_value=[]), \
+         patch("osprey.services.exploit_candidate_store.get_exploit_candidate_store") as mock_cand:
+        mock_pass.return_value = _delta(engagement_id="e-promote-wiring", exhausted=True)
+        mock_store.return_value.list.return_value = []
+        mock_cand.return_value.list_for_engagement.return_value = []
+        mock_promote.return_value = []
+        _run(run_to_completion(engagement_id="e-promote-wiring", run_id="r1"))
+
+    mock_promote.assert_called_once_with("e-promote-wiring", run_id="r1")

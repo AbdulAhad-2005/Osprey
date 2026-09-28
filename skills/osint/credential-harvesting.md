@@ -50,5 +50,5 @@ breach-DB creds are INFERRED (capped MEDIUM, tagged `verify_creds`). Sort by
 - These lookups are **passive** (no packets to the target), so they are safe to run
   early and broadly, including on sister/subdomains.
 - Never mask the values — the leaked credential is the finding. Show it.
-- A leaked **admin** credential, or one that still works, is crown-jewel material —
-  tag the host and prioritise it.
+- A leaked **admin** credential, or one that still works, is high-value material —
+  file it and prioritise the host (`platform_priority`).

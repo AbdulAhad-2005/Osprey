@@ -10,13 +10,14 @@ from datetime import datetime, timezone
 from typing import Any, Iterable
 
 import orjson
-from sqlalchemy import or_, select
+from sqlalchemy import case, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from osprey.db.session import SessionLocal
 from osprey.models.engagement import EngagementRow
 from osprey.models.finding import FindingOccurrenceRow, FindingRow
 from osprey.schemas.finding import (
+    EvidenceRecord,
     Finding,
     FindingConfidence,
     FindingType,
@@ -41,6 +42,15 @@ def _sev_rank(severity: str) -> int:
         return _SEV_ORDER.index(str(severity))
     except ValueError:
         return 0
+
+
+# SQL-side equivalents of _CONFIDENCE_RANK/_SEV_ORDER above, for ordering a
+# findings query by what actually matters before the DB-level LIMIT is
+# applied — see FindingsStore.list's own note on why this exists.
+_CONFIDENCE_ORDER_CASE = case(_CONFIDENCE_RANK, value=FindingRow.confidence, else_=0)
+_SEVERITY_ORDER_CASE = case(
+    {sev: rank for rank, sev in enumerate(_SEV_ORDER)}, value=FindingRow.claim_severity, else_=0,
+)
 
 
 # A host:port instance is the near-universal shape distinguishing otherwise-
@@ -498,9 +508,22 @@ class FindingsStore:
                             FindingRow.metadata_json.ilike(q_pat),
                         )
                     )
-                stmt = stmt.order_by(FindingRow.created_at.desc()).limit(limit)
+                # The gap a real operator transcript surfaced: pure
+                # created_at ordering put 118 confidence=hypothesis,
+                # sev=none sister-domain guesses ahead of 2
+                # confidence=confirmed subdomains, just because of when each
+                # was created — an operator/LLM scanning a truncated list
+                # (count=500, showing 120) never even reached the findings
+                # that actually mattered. Rank by what earns attention
+                # (confidence, then severity) BEFORE the LIMIT truncates
+                # anything, recency only as the final tiebreaker among
+                # equally-ranked items.
+                stmt = stmt.order_by(
+                    _CONFIDENCE_ORDER_CASE.desc(),
+                    _SEVERITY_ORDER_CASE.desc(),
+                    FindingRow.created_at.desc(),
+                ).limit(limit)
                 rows = list(db.scalars(stmt).all())
-                rows.reverse()
                 return [_row_to_finding(r) for r in rows]
             finally:
                 db.close()
@@ -579,6 +602,43 @@ class FindingsStore:
             try:
                 row = db.get(FindingRow, finding_id)
                 return _row_to_finding(row) if row is not None else None
+            finally:
+                db.close()
+
+    def append_evidence(self, finding_id: str, record: EvidenceRecord) -> Finding | None:
+        """Append one evidence record to an EXISTING finding by id and
+        recompute confidence from the full accumulated set — a direct
+        update, not the fingerprint-merge path ``add()`` uses.
+
+        Deliberately separate from ``_merge_occurrence``: that path takes
+        ``max(existing_confidence, new_confidence)`` — correct for
+        corroboration (confidence should only ratchet up as evidence piles
+        on), wrong here. A RECHECK_FAILED record (services.
+        finding_reverification) needs the FULL evidence set re-run through
+        confidence_for, which can legitimately move confidence down
+        (CONFIRMED → LIKELY) when the latest recheck couldn't reproduce it —
+        something the merge path structurally cannot do.
+        """
+        from osprey.services.confidence import confidence_for
+
+        with self._lock:
+            db = SessionLocal()
+            try:
+                row = db.get(FindingRow, finding_id)
+                if row is None:
+                    return None
+                records = _decode_list(row.evidence_records_json)
+                records.append(record.model_dump(mode="json"))
+                row.evidence_records_json = _clean_text(_encode_json(records))
+                parsed = [EvidenceRecord.model_validate(r) for r in records]
+                source_tools = [t for t in _decode_list(row.source_tools_json) if t]
+                row.confidence = confidence_for(parsed, source_tools=source_tools).value
+                db.commit()
+                db.refresh(row)
+                return _row_to_finding(row)
+            except Exception:
+                db.rollback()
+                raise
             finally:
                 db.close()
 

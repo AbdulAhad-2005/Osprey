@@ -12,7 +12,7 @@ Do not wait for a dedicated agent. Print structured lines so memory + graph upda
 
 ## Pattern
 
-1. Fetch the HTML shell or `main.*.js` / `app.*.js` for a crown-jewel host.
+1. Fetch the HTML shell or `main.*.js` / `app.*.js` for a top-priority host.
 2. Extract path-like strings (`/api`, `/rest`, `/v1`, `/graphql`, `/backend`).
 3. Optionally probe a shortlist and print status + body grade.
 

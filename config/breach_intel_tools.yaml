@@ -1,0 +1,31 @@
+# Domain-wide breach/passive-intel tools the mechanical recon pass
+# (surface_expansion.py::_expand_contacts, stage 6b) fires automatically —
+# but ONLY when the entry's own env_var is actually configured, so an
+# unkeyed engagement pays nothing. This is AGENTS.md's "when keyed" OSINT
+# guidance made mechanical instead of an LLM judgment call.
+#
+# Add your own entry to make the platform mechanically run YOUR keyed OSINT
+# tool on every engagement, same as the built-in ones — no Python edit.
+# Register the tool itself in config/custom_tools.yaml first if it isn't
+# already in the catalog. Personal additions go in
+# breach_intel_tools.local.yaml (git-ignored) via config_loader.
+# read_config_layered — add a new id, edit one by reusing its id, or
+# disable a built-in one with `disabled: true` under that same id.
+#
+# Fields: id (unique), env_var (only fires when this env var is non-empty),
+# tool (must resolve via get_tool_definition), param (which of the tool's
+# params receives the domain label).
+
+tools:
+  - id: shodan_search
+    env_var: SHODAN_API_KEY
+    tool: shodan_search
+    param: domain
+  - id: intelx_scan
+    env_var: INTELX_API_KEY
+    tool: intelx_scan
+    param: target
+  - id: resecurity_scan
+    env_var: RESECURITY_API_KEY
+    tool: resecurity_scan
+    param: target

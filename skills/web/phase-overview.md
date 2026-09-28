@@ -44,10 +44,13 @@ tool, a browser, or just write a `platform_script`**. Not a mandatory stage; fol
    SSRF/SSTI/XXE/deserialization/NoSQL/mass-assignment).
 - **CLNT** (Client-Side) — DOM XSS / postMessage / storage need a **browser** (`browser_flow`).
 - **BUSLOGIC** (Business Logic) — **browser + your reasoning**. → `business-logic` (browser skills).
+- **APIT** (API Testing / OWASP API Security Top 10) — BOLA, function-level authz, mass
+   assignment, resource consumption on `/api`/`/graphql` paths — `response_diff_confirm`/
+   `canary_confirm` give deterministic proof. → `api-testing`.
 
 ## Operate
 
-1. `platform_context()` — read inferred focus + gaps + crown jewels.
+1. `platform_context()` — read inferred focus + gaps + top priorities.
 2. Prioritise high-value apps (login, admin, API, upload, SSO, payment) from the attack-surface
    tree — don't test everything equally.
 3. Pick the cheapest sufficient method (script > tool > browser) for each check.

@@ -38,4 +38,4 @@ and Kali. Skills here sharpen judgment — they do not prescribe a fixed playboo
 - Silent tool spam / default shell-bypass of working catalog tools  
 - Inflated “complete reports” when finalize is BLOCKED  
 - Mixing engagements / out-of-scope targets  
-- Treating port-flood hosts as crown jewels without banners  
+- Treating port-flood hosts as high-priority without banners  

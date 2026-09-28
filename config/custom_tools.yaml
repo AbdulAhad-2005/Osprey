@@ -1,0 +1,34 @@
+# Operator-defined tools — plans/harness/13-systematic-vuln-dispatch-and-
+# extensibility.md Step 2. Add a tool here without editing tool_registry.py's
+# Python source. This file registers the CATALOG entry (name/category/params/
+# safety) only — you still need a real, runnable module at
+# mcp-servers/<category>/tools/<id>.py exporting build_command(**params), the
+# exact same shape every built-in tool has (mcp-servers/web/tools/
+# canary_confirm.py is a small, complete example to copy).
+#
+# Personal additions/overrides that shouldn't be committed to the shared repo
+# go in custom_tools.local.yaml (git-ignored) instead of editing this file —
+# read_config_layered() merges it on top: an entry with a new `id` is added,
+# an entry whose `id` matches one here replaces it, and a matching entry with
+# `disabled: true` removes it. See config_loader.py::read_config_layered.
+#
+# category: one of recon|osint|network|webapp|vuln|exploit|postex|report|
+#   cloud|creds|api|binary|forensics (ToolCategory in schemas/tools.py).
+# safety_level: passive|active|gated (ToolSafetyLevel) — gated tools are
+#   RoE-checked exactly like any built-in GATED tool, no special-casing.
+
+tools:
+  # Disabled by default — this is a template, not a real tool. Copy it, give
+  # it a real id/description, write the matching mcp-servers/.../tools/<id>.py
+  # file, then remove `disabled: true`.
+  - id: example_custom_tool
+    disabled: true
+    category: webapp
+    executable: python3
+    safety_level: active
+    description: "Template — replace with your own tool's description before enabling."
+    tags: [example]
+    params:
+      target:
+        default: ""
+        description: "Target URL or host"

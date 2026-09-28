@@ -89,6 +89,13 @@ services:
       - ./skills:/skills
       - ./mcp-servers:/mcp-servers
       - /var/run/docker.sock:/var/run/docker.sock
+      # Live-mounted (not just env_file/environment-baked): LLMSettings reads
+      # this path directly on every request (core/config.py's
+      # settings_customise_sources prefers it over the frozen-at-start
+      # env vars above), so editing the project .env takes effect on the
+      # next call — no container restart needed, matching the CLI (a plain
+      # process, no baked env) which already behaves this way.
+      - ./.env:/app/.env:ro
     ports:
       - "9000:9000"
     extra_hosts:

@@ -127,6 +127,11 @@ class PriorityContext:
     coverage_gap_node_ids: set[str] = field(default_factory=set)
     unexplained_obs_ids: set[str] = field(default_factory=set)
     conflicted_node_ids: set[str] = field(default_factory=set)
+    # plans/harness/14-pentester-intelligence.md: a node carrying an
+    # anomaly_detection-tagged observation (statistical peer deviation —
+    # timing/version drift), same "unexplained" umbrella as a world-model
+    # conflict but from a different, complementary source.
+    anomalous_node_ids: set[str] = field(default_factory=set)
     attempts_by_apex: Counter = field(default_factory=Counter)
 
 
@@ -175,6 +180,23 @@ def build_context(engagement_id: str) -> PriorityContext:
         cited.update(e.observation_ids)
     observations = get_observation_store().list_for_engagement(eid, limit=10_000)
     ctx.unexplained_obs_ids = {o.id for o in observations if o.id not in cited}
+
+    # Matched by normalized host label, NOT by AssetNode.observation_ids:
+    # SCANNER_SIGNAL observations (which is what anomaly_detection emits, same
+    # as nuclei/sqlmap/etc.) are never attached to graph nodes by
+    # engagement_graph._ingest_observation_one — it only handles typed
+    # asset-shaped observations (SUBDOMAIN/HOST/PORT/…) — so an observation-id
+    # intersection would always be empty here.
+    from osprey.services.target_utils import normalize_domain
+
+    anomaly_hosts = {
+        normalize_domain(o.target) for o in observations if "anomaly" in (o.tags or []) and o.target
+    }
+    anomaly_hosts.discard("")
+    if anomaly_hosts:
+        for n in nodes:
+            if normalize_domain(n.label) in anomaly_hosts:
+                ctx.anomalous_node_ids.add(n.id)
 
     for rec in get_tool_coverage_store().list_for_engagement(eid, limit=5000):
         ap = registrable_apex(rec.asset) or (rec.asset or "").strip().lower()
@@ -252,7 +274,11 @@ def score_asset(node: AssetNode, ctx: PriorityContext) -> PriorityScore:
     cfg = ctx.config
     degree = ctx.node_degree.get(node.id, 0)
     is_gap = node.id in ctx.coverage_gap_node_ids
-    has_conflict = node.id in ctx.conflicted_node_ids
+    # A world-model slot conflict (disagreeing data sources) and a peer
+    # statistical anomaly (plans/harness/14-pentester-intelligence.md) are two
+    # different sources feeding the SAME factor — both mean "this asset
+    # behaves in a way that isn't yet explained".
+    has_conflict = node.id in ctx.conflicted_node_ids or node.id in ctx.anomalous_node_ids
     decay = _decay(node.updated_at, node.created_at, 168.0, ctx.now)  # assets default to a 1-week half-life
     # Impact is WHAT the asset is (a credential/secret node matters more than a
     # port node) — the same observation_types impact-prior table score_observation

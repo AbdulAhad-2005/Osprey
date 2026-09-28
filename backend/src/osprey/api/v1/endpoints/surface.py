@@ -16,7 +16,13 @@ router = APIRouter()
 class ExpandRequest(BaseModel):
     engagement_id: str
     run_id: str = ""
-    max_passes: int = Field(default=5, ge=1, le=20)
+    # This endpoint is synchronous — it blocks the HTTP connection for the
+    # whole run, unlike the job-queued path (job_store's EXPANSION kind,
+    # what platform_expand/CLI --engine actually use, default max_passes=50,
+    # no hard ceiling). Kept lower here and still capped for that reason —
+    # a caller wanting genuinely exhaustive, long-running coverage should
+    # use the job-queued path instead of holding a connection open for hours.
+    max_passes: int = Field(default=5, ge=1, le=50)
 
 
 @router.post("/expand", response_model=ExpansionReport)

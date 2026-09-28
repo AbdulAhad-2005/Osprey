@@ -6,16 +6,46 @@ one context assembler and the one (already description-indexed, cross-phase)
 skills catalog. No second context builder here; this module only adds the
 handful of policy lines that are specific to being a local, cancellable,
 tool-calling loop rather than a remote chat client.
+
+Also loads AGENTS.md verbatim (``_load_agents_md``) — the same operator
+methodology an external harness (Claude Code, opencode) auto-loads when it
+drives Osprey. Before this, Osprey's OWN CLI loop was the one driver that
+never got that knowledge at all: it had a one-line phase objective, generic
+behavior rules, and world-model state, but nothing about HOW to pentest well.
+Loading the real file (not a hand-maintained summary that would drift from
+it) means every driver — external harness via auto-load, the CLI loop and
+every spawned CLI worker via this function — reads identical methodology
+from one source of truth.
 """
 
 from __future__ import annotations
 
+from functools import lru_cache
+from pathlib import Path
+
 from cli.agent import tools as platform_tools
+
+
+@lru_cache(maxsize=1)
+def _load_agents_md() -> str:
+    """AGENTS.md's content, read once per process. Missing file (e.g. the
+    CLI package installed standalone, without the repo) degrades to an empty
+    string rather than crashing the loop over an optional doc."""
+    path = Path(__file__).resolve().parents[2] / "AGENTS.md"
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
 
 _POLICY = """\
 You are Osprey's own CLI operator loop — an autonomous pentest assistant with
 direct tool access. You are not a chat client relaying to another agent; you
-call tools yourself, in this loop, right now.
+call tools yourself, in this loop, right now. The operator methodology below
+(AGENTS.md) is the same doc an external harness gets automatically; follow it
+exactly as written, including its own guidance to call `platform_expand`
+first for recon/vuln breadth work. What follows here is CLI-loop-specific,
+on top of that shared methodology — not a restatement of it.
 
 Spawn `spawn_subagents` ONLY for 2+ genuinely independent, parallelizable
 slices of work (sister domains, unrelated hosts, separate candidates). For a
@@ -95,6 +125,8 @@ async def build_system_prompt(
     # that is useful for refreshes inside one conversation, not for a fresh
     # Runner or spawned worker with no earlier copy.
     ctx = await platform_tools.call_tool("platform_context", context_args)
+    agents_md = _load_agents_md()
+    methodology = f"## Operator methodology (AGENTS.md)\n{agents_md}\n---\n" if agents_md else ""
     policy = _POLICY + (_TOOL_BUDGET_POLICY if tool_budget_active else "")
     # A prompt-defined agent/flow overlays its instructions on top of the base
     # policy — it ADDS to the harness's own guardrails (spawn/skill/finding rules
@@ -102,4 +134,4 @@ async def build_system_prompt(
     if agent_prompt.strip():
         policy += "\n\n## Active mode (operator-defined flow)\n" + agent_prompt.strip()
     last_action_block = f"\n---\n## LAST ACTION\n{last_action}" if last_action else ""
-    return f"{policy}\n---\n{ctx}{last_action_block}"
+    return f"{methodology}{policy}\n---\n{ctx}{last_action_block}"

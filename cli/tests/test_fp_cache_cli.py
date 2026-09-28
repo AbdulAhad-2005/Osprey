@@ -59,6 +59,39 @@ def test_finding_fp_404_prints_error(capsys):
     assert "No finding with id" in capsys.readouterr().out
 
 
+def test_finding_reverify_usage_with_no_id(capsys):
+    client = MagicMock()
+    handle_finding(["reverify"], client)
+    client.reverify_finding.assert_not_called()
+    assert "Usage" in capsys.readouterr().out
+
+
+def test_finding_reverify_nothing_rerunnable(capsys):
+    client = MagicMock()
+    client.reverify_finding.return_value = {"checked": 0, "note": "Nothing re-runnable — ..."}
+    handle_finding(["reverify", "f1"], client)
+    client.reverify_finding.assert_called_once_with("f1")
+    assert "Nothing re-runnable" in capsys.readouterr().out
+
+
+def test_finding_reverify_reports_confidence_change(capsys):
+    client = MagicMock()
+    client.reverify_finding.return_value = {
+        "checked": 1, "reproduced": 0, "failed": 1,
+        "confidence_before": "confirmed", "confidence_after": "likely",
+    }
+    handle_finding(["reverify", "f1"], client)
+    out = capsys.readouterr().out
+    assert "confirmed -> likely" in out
+
+
+def test_finding_reverify_404_prints_error(capsys):
+    client = MagicMock()
+    client.reverify_finding.side_effect = _http_error(404)
+    handle_finding(["reverify", "does-not-exist"], client)
+    assert "No finding with id" in capsys.readouterr().out
+
+
 def test_fp_list_empty(capsys):
     client = MagicMock()
     client.list_fp_patterns.return_value = {"patterns": [], "total": 0}

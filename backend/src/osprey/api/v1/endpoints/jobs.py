@@ -105,11 +105,14 @@ def job_result(job_id: str) -> JobResultResponse:
 async def poll_job(
     job_id: str,
     wait_seconds: float = Query(
-        default=0, ge=0, le=60,
+        default=0, ge=0, le=90,
         description=(
             "Long-poll: block server-side up to this many seconds for the job to finish "
             "or its progress text to change, instead of the caller firing repeated polls "
-            "in a tight loop. 0 = return immediately (default)."
+            "in a tight loop. 0 = return immediately (default). Capped at 90s, not higher, "
+            "because some MCP clients abort calls beyond that (see AGENTS.md's own "
+            "'keep single calls short' constraint) — still returns the moment progress "
+            "changes, so this is a ceiling, not a fixed wait."
         ),
     ),
 ) -> JobSummary:

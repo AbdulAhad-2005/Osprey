@@ -36,3 +36,28 @@ def get_phase_priority(phase: str, engagement_id: str = Query(...)) -> dict[str,
     score, reason = priority.phase_priority(engagement_id, phase, ctx=ctx)
     unlocked, gate_reason = priority.should_unlock_phase(engagement_id, phase, ctx=ctx)
     return {"phase": phase, "score": score, "reason": reason, "unlocked": unlocked, "gate_reason": gate_reason}
+
+
+@router.get("/anomalies")
+def get_anomalies(engagement_id: str = Query(...)) -> dict[str, Any]:
+    """plans/harness/14-pentester-intelligence.md — on-demand peer-anomaly
+    check ("what looks weird right now"). The same detector already runs
+    ambiently after every recon pass (investigation_director.py); this is
+    for a caller who wants a fresh read immediately rather than waiting for
+    the next pass."""
+    from osprey.services.anomaly_detection import detect_peer_anomalies
+
+    observations = detect_peer_anomalies(engagement_id)
+    return {
+        "engagement_id": engagement_id,
+        "count": len(observations),
+        "anomalies": [
+            {
+                "target": o.target,
+                "kind": o.details.get("kind"),
+                "title": o.details.get("title"),
+                "details": o.details,
+            }
+            for o in observations
+        ],
+    }

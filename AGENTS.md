@@ -8,21 +8,45 @@ what to do with them. Nothing here blocks you — it guides.
 ## Operator card (the quick version)
 
 1. **Bind first** — `platform_set_target('<fqdn-or-ip>')` before any scan. Keep the
-   returned `engagement_id`.
+   returned `engagement_id`. By default this REUSES an existing engagement on that
+   target — all its prior findings/observations come back with it. When the operator
+   says "start fresh" / "new engagement" / "clean slate" on a target you've worked
+   before, pass `force_new=True` — otherwise you silently inherit old data instead
+   of doing what was asked.
 2. **Pin every call** — pass `engagement_id=<that id>` on `platform_*` calls; one MCP
    process is shared across chats, so an unpinned call can hit the wrong engagement.
 3. **Read the conductor** — `platform_pipeline(action='start')` after bind, `action='status'`
    after new evidence. It's read-only; it tells you what's unlocked (recon → vuln → exploit).
-4. **Typed tools first** — `subfinder_scan`, `httpx_probe`, `naabu_port_scan`,
-   `nmap_service_scan`, … `platform_shell`/`platform_script` are for real catalog gaps.
-5. **Long work → jobs** — anything likely to exceed ~90s goes to `platform_job_start`
-   (then poll); don't block the chat on a slow scan.
+4. **`platform_expand` first for recon/vuln breadth** — Osprey's own built-in methodology
+   (subdomains/sisters → resolve → CDN/WAF-origin bypass → ports → services → vuln/web
+   dispatch → exploit candidates queued), hardened for edge cases a hand-run sequence
+   won't have (wildcard-domain guards, dead-host retry, confidence-gated origin
+   candidates, sister-domain trust tiers). Call it, then immediately start polling with
+   `platform_job_poll(wait_seconds=90)` **repeatedly, narrating each new line as it
+   arrives** — do not fire it and move on. Apply your own judgment on what it surfaces.
+   Typed tools (`subfinder_scan`,
+   `httpx_probe`, `naabu_port_scan`, `nmap_service_scan`, …) are for going deeper on
+   something specific, or a step you want to run differently than the mechanical pass
+   — not for re-deriving the whole sequence by hand. `platform_shell`/`platform_script`
+   are for real catalog gaps.
+5. **Long work → jobs, but watched, never dropped** — anything likely to exceed ~90s goes to
+   `platform_job_start`/`platform_expand` so a slow scan can't time out the call — that's a
+   server-side plumbing detail, not permission to go quiet. Immediately start polling
+   (`platform_job_poll(wait_seconds=90)`, repeated) and narrate every new `results_log` line
+   to the operator as it arrives. "Runs in the background" means it survives a slow tool
+   without blocking your call; it does not mean invisible — the operator sees every tool
+   being called and what it's doing, on the front, as it happens.
 6. **Go wide** — parallelize (your harness's subagents if it has them, else `platform_fanout_assets`
    / jobs). More sources when thin; every asset can still surface something.
 7. **Light chat** — one short line on empty/fail/cache-hit; full output lives in
    `platform_artifact`, not the chat.
 8. **Honesty** — CRITICAL/HIGH needs observed proof (body/banner), never a hostname or a
    scanner title. Don't invent CVEs or claim exploitability without evidence.
+   `platform_file_finding(evidence_kind='reproduction')` now checks this deterministically,
+   not just on trust — the `evidence_detail` you write must quote a real excerpt (20+ chars)
+   from the cited observation's actual recorded tool output, or it's rejected with a 422. Use
+   `canary_confirm`/`response_diff_confirm` to produce that output when you don't already have
+   a tool run to cite, or `evidence_kind='attestation'` if you're vouching without one.
 9. **Broken backend** — on a `tool_unavailable` flood, stop and tell the user the fix;
    don't silently run scanners outside Osprey.
 10. **Safety** — authorized targets only; exploit/destructive actions need explicit user OK.
@@ -73,16 +97,29 @@ Prefer parallelism, and prefer to watch it happen:
   But a *single slow tool call* (amass, full nmap, big dumps) belongs in `platform_job_start`
   so it runs in the background while you keep working. Watch the plan; background the waits.
 
-**When a domain lands** (reorder/skip when evidence already covers it):
+**When a domain lands** — call `platform_expand` first. It runs steps 1-8 below
+mechanically, to its own fixpoint, with real edge-case handling this list can't convey
+in prose. What follows is not a manual procedure to hand-execute in order — it's what
+`platform_expand` already covers (so you know what NOT to redo by hand) and where your
+own judgment belongs on top of what it surfaces. Reorder/skip when evidence already
+covers it, or when you're deliberately going deeper on one step than the mechanical
+pass did:
 
 1. **Widen** — sisters (`domain_hunter`) + subs (`subfinder`/`amass`/`crt_sh_query`), more
    than one source if thin.
-2. **Passive intel** — `shodan_search`/`shodan_host_info` when keyed (leads, then verify).
+2. **Passive intel** — `shodan_search`/`shodan_host_info` when keyed. `platform_expand`'s own
+   mechanical pass already fires the domain-wide check automatically once per apex when the key
+   is configured (`config/breach_intel_tools.yaml`) — call these yourself only for a fresh read
+   outside the pass timing, or a per-IP lookup beyond what the pass already did. Leads either
+   way, verify before trusting.
 3. **Credential/identity leaks** (when keyed) — `intelx_scan`/`resecurity_scan` harvest a
    domain's leaked emails and credentials → EMAIL/CREDENTIAL findings, each credential
-   auto-queued as a `credential_bruteforce` candidate. A breach-DB leak is a lead to verify;
-   a credential you scrape live off the target (or confirm working) outranks it. Never mask
-   the value — the leaked credential *is* the finding. Test reuse across services and siblings.
+   auto-queued as a `credential_bruteforce` candidate. Same as #2: the domain-wide check is
+   already mechanical in `platform_expand` when keyed — call directly for a specific
+   email/selector, not the apex domain you already got automatically. A breach-DB leak is a
+   lead to verify; a credential you scrape live off the target (or confirm working) outranks
+   it. Never mask the value — the leaked credential *is* the finding. Test reuse across
+   services and siblings.
 4. **Live** — `httpx_probe` / fanout / jobs in parallel as names appear.
 5. **Map** — resolve → IP groups → CDN/WAF vs origin; takeover check on dangling CNAMEs.
 6. **Ports & services** — discover ports, then **version every interesting open port**
@@ -101,8 +138,11 @@ Prefer parallelism, and prefer to watch it happen:
    is a guess — a shared IP still means different vhosts/paths/apps until you've checked.
 10. **Before calling it done**, if `platform_context`/`platform_pipeline` shows a large open
     count or an unlocked-but-untouched phase, don't explain it away in bulk — sample a few
-    individually first. Then check in: say the surface looks exhausted and ask whether to go
-    deeper, pivot, or stop.
+    individually first. Then run one `skills/shared/adversarial-review.md` pass — argue against
+    your own coverage, framed as auditing someone else's checklist-driven work, before you
+    finalize — and check `platform_anomalies` for any peer host behaving unexplainedly
+    differently. Then check in: say the surface looks exhausted and ask whether to go deeper,
+    pivot, or stop.
 
 ## Tools & memory — when each comes to mind
 
@@ -124,17 +164,34 @@ writeup hunting when searchsploit's offline DB is empty, general technique resea
 **Exploitation:** `searchsploit_lookup` `metasploit_run` `msfvenom_generate`
 `pwntools_exploit` (CVE/binary) · `hydra_attack` `hashcat_crack` `john_crack` (creds) ·
 `hashpump_attack` (hash ext) · `pacu_exploitation` (AWS) ·
-`responder_credential_harvest` (LLMNR/NBT-NS). Web injection → shell (cmd injection,
-SQLi, file upload, SSRF, SSTI, LFI, deserialization) has no dedicated tools — drive
-`sqlmap_scan`/`curl`/`ysoserial`/`PHPGGC`/`interactsh-client` yourself via
-`platform_shell`/`platform_script`; see `skills/exploit/shell-management.md` for the
-session pattern (nohup+log for listeners, tmux for interactive sessions).
+`responder_credential_harvest` (LLMNR/NBT-NS) · `proxy_start` `proxy_flows`
+`proxy_flow_detail` `proxy_replay` (intercept a session's traffic, then replay one
+flow tampered — the Burp/Caido-style capture+repeater workflow) ·
+`canary_confirm` `response_diff_confirm` (deterministic reproduction evidence —
+byte-for-byte "did this exact token reflect back" / "do these two responses really
+differ", not your own impression; cite one of these observations' `context`/`diff`
+verbatim in `platform_file_finding(evidence_kind='reproduction')` — see below, a
+paraphrase gets rejected). Web injection → shell (cmd injection, SQLi, file upload,
+SSRF, SSTI, LFI, deserialization) has no dedicated *exploitation* tools beyond
+those two confirmers — drive `sqlmap_scan`/`curl`/`ysoserial`/`PHPGGC`/
+`interactsh-client` yourself via `platform_shell`/`platform_script`; see
+`skills/exploit/shell-management.md` for the session pattern (nohup+log for
+listeners, tmux for interactive sessions).
 
-**Memory/planning — reach for these like any other tool:**
-- **Where are we?** → `platform_context` (phase status, priorities, jobs, delta, skills index).
+**Memory/planning — `platform_context` already answers most of this; read it
+before reaching for a separate tool that re-asks the same question:**
+- **Where are we? What next? What's already been tried?** → `platform_context`. Its
+  TOP PRIORITIES, TOOLS ALREADY RUN, and RECENT EVIDENCE sections already carry
+  this every time you call it — don't spend a second call re-deriving what you
+  already have in front of you. Only reach for the dedicated tool below when you
+  need something the packet's summary genuinely doesn't show:
+  - `platform_priority` — the FULL ranked list (context only shows the top 8), or
+    a specific `phase=` unlock check.
+  - `platform_attempts` — filtered to one `asset=`, with notes/success detail
+    context's summary drops.
+  - `platform_evidence_chain` — evidence for one SPECIFIC claim, not a recency list.
 - **Phase tactics** → `platform_skills` (pull a skill's full text by `path`).
-- **What next / I'm stuck** → `platform_priority` (multi-factor score over the world model) ·
-  `platform_playbook` (tool suggestions).
+- **Still stuck after reading context** → `platform_playbook` (tool suggestions).
 - **Persist a head-only conclusion** → `platform_think` (hypothesis) · `platform_graph_link[_many]`
   (a relationship you worked out) · `platform_record_findings` (bulk facts no tool emitted).
 - **Reusable technique for future targets** → `platform_propose_skill` (novel methodology only,

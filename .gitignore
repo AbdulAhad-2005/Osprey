@@ -51,6 +51,11 @@ skills/learned/
 skills/operator/
 # FP-cache — operator-local noise-pattern judgments, may embed engagement detail
 fp_cache/
+# Per-operator config overlays — plans/harness/13-systematic-vuln-dispatch-
+# and-extensibility.md Step 1 (config_loader.read_config_layered), never
+# shipped/synced.
+config/*.local.yaml
+config/*.local.json
 
 # Internal audit notes — documents live/unpatched security gaps; keep local
 # until fixed, never in shared history

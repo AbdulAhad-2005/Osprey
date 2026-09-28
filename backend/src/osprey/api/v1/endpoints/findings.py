@@ -233,6 +233,22 @@ def mark_false_positive_endpoint(
     return {"pattern": pattern.model_dump(mode="json"), "retracted_finding_id": finding_id}
 
 
+@router.post("/{finding_id}/reverify")
+async def reverify_finding_endpoint(
+    finding_id: str, run_id: str = Query(default=""),
+) -> dict[str, Any]:
+    """Re-run the tool(s) behind this finding's evidence and check whether
+    the signal still reproduces — see services.finding_reverification. Never
+    edits/deletes past evidence; appends a RECHECK_FAILED record for anything
+    that no longer reproduces, which confidence_for weighs by recency."""
+    from osprey.services.finding_reverification import reverify_finding
+
+    result = await reverify_finding(finding_id, run_id=run_id)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
 @router.get("/fp/patterns", response_model=FpPatternListResponse)
 def list_fp_patterns_endpoint() -> FpPatternListResponse:
     from osprey.services import fp_cache

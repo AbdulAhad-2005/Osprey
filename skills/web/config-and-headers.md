@@ -9,7 +9,7 @@ tags: [web, headers, cors]
 
 These checks are one HTTP request + logic — **write a `platform_script` (curl/python)** rather
 than reaching for a tool. Record what you find as observations with honest grades. Get the
-target list from `platform_context` (live URLs / crown jewels).
+target list from `platform_context` (live URLs / top priorities).
 
 ## Security response headers (WSTG-CONF-06 / CLNT)
 
