@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 DETAIL_MODES = ("compact", "preview", "verbose")
-_detail_mode = "preview"
 
 
 @dataclass
@@ -46,6 +45,7 @@ class ToolTranscript:
     def __init__(self) -> None:
         self._next_id = 1
         self._records: list[ToolRecord] = []
+        self.detail_mode = "preview"
 
     def start(self, data: dict[str, Any], *, source: str = "commander") -> ToolRecord:
         tool_call_id = str(data.get("tool_call_id") or "")
@@ -133,22 +133,12 @@ class ToolTranscript:
         self._records.clear()
         self._next_id = 1
 
+    def set_detail_mode(self, mode: str) -> str:
+        if mode not in DETAIL_MODES:
+            raise ValueError(f"detail mode must be one of {', '.join(DETAIL_MODES)}")
+        self.detail_mode = mode
+        return self.detail_mode
 
-def set_detail_mode(mode: str) -> str:
-    global _detail_mode
-    if mode not in DETAIL_MODES:
-        raise ValueError(f"detail mode must be one of {', '.join(DETAIL_MODES)}")
-    _detail_mode = mode
-    return _detail_mode
-
-
-def cycle_detail_mode() -> str:
-    idx = DETAIL_MODES.index(_detail_mode)
-    return set_detail_mode(DETAIL_MODES[(idx + 1) % len(DETAIL_MODES)])
-
-
-def get_detail_mode() -> str:
-    return _detail_mode
-
-
-tool_transcript = ToolTranscript()
+    def cycle_detail_mode(self) -> str:
+        idx = DETAIL_MODES.index(self.detail_mode)
+        return self.set_detail_mode(DETAIL_MODES[(idx + 1) % len(DETAIL_MODES)])

@@ -191,7 +191,7 @@ def _is_model_configured(settings: LLMSettings) -> bool:
 def llm_configured() -> bool:
     """Whether the backend has a usable LLM configured (LLM_API_KEY/LLM_MODEL
     in the backend's own .env) — checked before spawning anything that needs
-    it (PhaseAgent via platform_pipeline/platform_spawn_agent) so a missing or
+    it (PhaseAgent via platform_spawn_agent or explicit REST callers) so a missing or
     unrunnable key fails once, clearly, before wasting a job slot, instead of
     opaquely mid-run on the first real completion() call. This is the backend's
     OWN LLM — a separate concern from whatever LLM is driving the MCP session
@@ -233,7 +233,7 @@ def llm_not_configured_message() -> str:
         + " — the conductor's phase-readiness snapshot and ready-to-spawn phase briefs "
         "remain fully available: drive execution yourself (your own subagents calling "
         "platform_exec with the full tool catalog and phase skills), or fix the backend "
-        "LLM config to enable autonomous pipeline/spawn-agent operation."
+        "LLM config to enable explicit scoped-agent operation."
     )
 
 

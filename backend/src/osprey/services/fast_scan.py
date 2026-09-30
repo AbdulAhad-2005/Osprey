@@ -10,8 +10,8 @@ probes of proper timing and produces "tcpwrapped"/garbage OS guesses), a
 light 80/443 check on CDN-fronted IPs -> dangling-CNAME takeover check.
 Narrow and fast by design: no domain_hunter/sister-domain discovery, no
 crawling/fuzzing, no full vuln scanning — every step here is passive/direct
-against the target's own DNS, TLS, and IP surface. For the full BFS breadth
-engine (sisters, tech/CDN, vuln), use JobKind.EXPANSION (surface_expansion.py)
+against the target's own DNS, TLS, and IP surface. For the full investigation breadth
+engine (sisters, tech/CDN, vuln), use the investigation capability loop
 instead.
 """
 

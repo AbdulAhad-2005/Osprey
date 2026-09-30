@@ -36,7 +36,7 @@ from osprey.schemas.observation import Observation, ObservationType, observation
 from osprey.services import fp_cache, suppressed_promotion_store
 from osprey.services.confidence import confidence_for, evidence_summary_for
 from osprey.services.engagement_graph import get_engagement_graph
-from osprey.services.evidence_grounding import ground_reproduction_claim
+from osprey.services.evidence_grounding import ground_claim
 from osprey.services.findings_store import get_findings_store
 from osprey.services.observation_store import get_observation_store
 
@@ -137,19 +137,27 @@ def file_finding(
     source_tools = sorted(tool_set)
     records = list(evidence_records or [])
 
-    # Ground every REPRODUCTION claim against real, already-recorded tool
-    # output before it's allowed anywhere near confidence_for() — see
-    # evidence_grounding.py. Defaults a blank observation_id to the first
-    # resolved observation so this backstops callers that bypass the MCP
-    # layer's own default too, not just platform_file_finding's.
+    # Ground every REPRODUCTION or VERIFICATION claim against real,
+    # already-recorded tool output before it's allowed anywhere near
+    # confidence_for() — see evidence_grounding.py. Both kinds claim a
+    # machine-checkable artifact backs them (a PoC re-run, a direct
+    # config/permission read); ATTESTATION is deliberately excluded — it
+    # exists precisely for vouching WITHOUT one. Without this, evidence that
+    # only proves a narrower fact than the finding's actual claim (e.g. "this
+    # software version is present" attached to a finding titled "this CVE
+    # applies") rides straight to CONFIRMED on a fact it never established.
+    # Defaults a blank observation_id to the first resolved observation so
+    # this backstops callers that bypass the MCP layer's own default too,
+    # not just platform_file_finding's.
+    _GROUNDED_KINDS = {EvidenceRecordKind.REPRODUCTION, EvidenceRecordKind.VERIFICATION}
     by_id = {o.id: o for o in observations}
     for er in records:
-        if er.kind != EvidenceRecordKind.REPRODUCTION:
+        if er.kind not in _GROUNDED_KINDS:
             continue
         target_obs = by_id.get(er.observation_id) or observations[0]
-        grounded, reason = ground_reproduction_claim(er.detail, target_obs)
+        grounded, reason = ground_claim(er.detail, target_obs, kind=er.kind.value)
         if not grounded:
-            raise FileFindingError(f"evidence_kind='reproduction' rejected: {reason}")
+            raise FileFindingError(f"evidence_kind='{er.kind.value}' rejected: {reason}")
 
     confidence = confidence_for(records, source_tools=source_tools)
 

@@ -17,7 +17,7 @@ class ContextSnapshotRow(Base):
 
     __tablename__ = "context_snapshots"
 
-    engagement_id: Mapped[str] = mapped_column(String(12), primary_key=True)
+    engagement_id: Mapped[str] = mapped_column(String(32), primary_key=True)
     nodes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     findings: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     ports: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

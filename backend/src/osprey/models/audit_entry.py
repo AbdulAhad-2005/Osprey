@@ -18,7 +18,7 @@ class AuditEntryRow(Base):
     )
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True)
-    engagement_id: Mapped[str] = mapped_column(String(12), nullable=False, default="")
+    engagement_id: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     run_id: Mapped[str] = mapped_column(String(12), nullable=False, default="")
     tool_name: Mapped[str] = mapped_column(String(128), nullable=False)
     target: Mapped[str] = mapped_column(String(512), nullable=False, default="")

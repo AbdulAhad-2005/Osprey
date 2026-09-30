@@ -68,7 +68,7 @@ async def start_job(body: JobStartRequest) -> JobSummary:
         raise HTTPException(404, detail=f"Engagement not found: {body.engagement_id}")
     # Preflight: a whole engine run with no working execution backend produces
     # nothing but per-tool "(failed)" noise. Fail fast with one actionable error.
-    if body.kind in (JobKind.EXPANSION, JobKind.FAST_SCAN):
+    if body.kind == JobKind.FAST_SCAN:
         from osprey.services.mcp_client import get_mcp_client
 
         status = get_mcp_client().execution_status()

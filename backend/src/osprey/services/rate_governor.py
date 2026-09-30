@@ -13,10 +13,12 @@ wired in. Two jobs:
 
 2. Ban detector — after a call returns, its stdout is scanned for the
    fingerprints WAFs/rate-limiters actually emit (HTTP 429, Cloudflare
-   challenge, "Access denied", "Too Many Requests"…). On detection it records
-   one OBSERVATION finding (deduped per engagement+target) and marks the
-   target with a cooldown, so the governor spreads out — or skips — further
-   probes instead of hammering a now-annoyed edge.
+   challenge, "Access denied", "Too Many Requests"…). On detection it marks
+   the target with a cooldown, so the governor spreads out — or skips —
+   further probes instead of hammering a now-annoyed edge. This is a fact
+   about OUR execution against the target, not a claim about the target's
+   security posture, so it is never recorded as an Observation/Finding —
+   only as metadata on the calling tool's audit-log entry (tool_execution.py).
 
 State split by durability need. The sliding call window is in-process only: it
 is touched on the hottest path (every tool call) so a per-call DB round-trip

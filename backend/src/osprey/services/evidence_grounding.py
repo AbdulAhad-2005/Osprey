@@ -1,12 +1,30 @@
-"""Ground a claimed "reproduction" evidence_detail against real tool output —
-plans/harness/12-deterministic-evidence-verification.md Step 1.
+"""Ground a claimed REPRODUCTION or VERIFICATION evidence_detail against real
+tool output — plans/harness/12-deterministic-evidence-verification.md Step 1.
 
-``platform_file_finding``'s ``evidence_kind="reproduction"`` used to accept
-whatever free text a caller wrote, with no check it was grounded in anything
-real — the platform's highest-trust confidence tier (CONFIRMED,
-services/confidence.py) minted on nothing but an LLM's own say-so. This is
-the deterministic check: does the claimed detail actually contain text that
-shows up in real, already-recorded tool output for the cited observation?
+``platform_file_finding``'s ``evidence_kind="reproduction"``/``"verification"``
+used to accept whatever free text a caller wrote, with no check it was
+grounded in anything real — the platform's highest-trust confidence tier
+(CONFIRMED, services/confidence.py) minted on nothing but an LLM's own
+say-so. This is the deterministic check: does the claimed detail actually
+contain text that shows up in real, already-recorded tool output for the
+cited observation?
+
+Applies to both REPRODUCTION ("a controlled PoC reproduced it") and
+VERIFICATION ("a direct config/permission read confirmed it") — both kinds
+claim a machine-checkable artifact backs them, so both are checked the same
+way. ATTESTATION is deliberately exempt: it exists precisely for a human
+vouching WITHOUT a machine-checkable artifact (schemas/finding.py's
+EvidenceRecordKind docstring), so grounding it against recorded output would
+defeat its purpose, not close a gap.
+
+The bug this closes: a finding can cite real, correctly-observed evidence
+that only proves a narrower fact than the finding's actual title/claim (e.g.
+evidence proving "Varnish 6.0 is present" attached under evidence_kind=
+"verification" to a finding titled "CVE-X cache-poisoning bypass applies").
+Because only REPRODUCTION was ever checked, VERIFICATION claims rode straight
+to CONFIRMED on the strength of a fact they didn't actually establish. There
+is no separate "verification-specific" checker — same law, same function,
+for every evidence kind that claims to be machine-checkable.
 
 Matches where the field has converged (researched fresh, not re-derived):
 XBOW's stated differentiator is "LLMs do creative exploration, deterministic
@@ -70,18 +88,21 @@ def _shares_substring(claim: str, raw: str, min_len: int) -> bool:
     return False
 
 
-def ground_reproduction_claim(detail: str, observation: Observation) -> tuple[bool, str]:
+def ground_claim(detail: str, observation: Observation, *, kind: str = "reproduction") -> tuple[bool, str]:
     """(True, "") when ``detail`` contains a genuine excerpt of real,
     already-recorded tool output for ``observation`` — (False, reason)
     otherwise. Deliberately conservative: a false reject just asks the
     caller to quote something real or use evidence_kind='attestation'
-    instead; a false accept would mint CONFIRMED on nothing.
+    instead; a false accept would mint CONFIRMED on evidence that doesn't
+    actually entail the claim being filed. ``kind`` is only used to word the
+    rejection reason — the check itself is identical for every evidence kind
+    that claims a machine-checkable artifact (reproduction, verification).
     """
     claim = _normalize(detail)[:_MAX_CLAIM_LEN]
     if len(claim) < _MIN_MATCH_LEN:
         return False, (
             f"evidence_detail is too short/generic ({len(claim)} chars after normalizing) to "
-            f"ground a reproduction claim — quote at least {_MIN_MATCH_LEN} characters actually "
+            f"ground a {kind} claim — quote at least {_MIN_MATCH_LEN} characters actually "
             "seen in the tool's real output."
         )
 
@@ -89,7 +110,7 @@ def ground_reproduction_claim(detail: str, observation: Observation) -> tuple[bo
     if not raw_candidates:
         return False, (
             f"observation {observation.id} has no recorded raw tool output to ground a "
-            "reproduction claim against (no evidence_id/raw_excerpt, no details snippet) — use "
+            f"{kind} claim against (no evidence_id/raw_excerpt, no details snippet) — use "
             "evidence_kind='attestation' if you're vouching without a machine-checkable artifact."
         )
 
@@ -97,7 +118,7 @@ def ground_reproduction_claim(detail: str, observation: Observation) -> tuple[bo
         if _shares_substring(claim, raw, _MIN_MATCH_LEN):
             return True, ""
     return False, (
-        "evidence_detail doesn't contain any excerpt found in this observation's real recorded "
-        "output — quote the actual tool output that shows the reproduction, or use "
+        f"evidence_detail doesn't contain any excerpt found in this observation's real recorded "
+        f"output — quote the actual tool output that shows the {kind}, or use "
         "evidence_kind='attestation' if you're vouching without a machine-checkable artifact."
     )

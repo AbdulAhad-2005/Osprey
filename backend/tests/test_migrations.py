@@ -44,6 +44,9 @@ def _assert_at_head(engine) -> None:
             column["name"]
             for column in inspector.get_columns("finding_occurrences")
         }
+        assert "raw_excerpt" in {
+            column["name"] for column in inspector.get_columns("evidence")
+        }
 
 
 def test_fresh_sqlite_runs_complete_alembic_chain(tmp_path, monkeypatch) -> None:

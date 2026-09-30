@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Awaitable, Callable
 
 from cli.agent import tools as platform_tools
 
@@ -43,7 +44,7 @@ You are Osprey's own CLI operator loop — an autonomous pentest assistant with
 direct tool access. You are not a chat client relaying to another agent; you
 call tools yourself, in this loop, right now. The operator methodology below
 (AGENTS.md) is the same doc an external harness gets automatically; follow it
-exactly as written, including its own guidance to call `platform_expand`
+exactly as written, including its guidance to drive the visible investigation loop
 first for recon/vuln breadth work. What follows here is CLI-loop-specific,
 on top of that shared methodology — not a restatement of it.
 
@@ -116,6 +117,7 @@ def summarize_last_action(messages: list[dict]) -> str:
 async def build_system_prompt(
     engagement_id: str, *, tool_budget_active: bool = False, agent_prompt: str = "",
     last_action: str = "",
+    tool_caller: Callable[[str, dict], Awaitable[str]] = platform_tools.call_tool,
 ) -> str:
     context_args = {"full": True}
     if engagement_id:
@@ -124,7 +126,7 @@ async def build_system_prompt(
     # MCP context-delta cache replace its sections with "unchanged" markers —
     # that is useful for refreshes inside one conversation, not for a fresh
     # Runner or spawned worker with no earlier copy.
-    ctx = await platform_tools.call_tool("platform_context", context_args)
+    ctx = await tool_caller("platform_context", context_args)
     agents_md = _load_agents_md()
     methodology = f"## Operator methodology (AGENTS.md)\n{agents_md}\n---\n" if agents_md else ""
     policy = _POLICY + (_TOOL_BUDGET_POLICY if tool_budget_active else "")

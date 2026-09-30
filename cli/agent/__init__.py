@@ -1,10 +1,8 @@
 """Osprey CLI's own local agent runtime.
 
-This package makes the interactive CLI a real agent host — like Claude
-Code's own CLI — instead of a thin remote control over a backend-hosted
-LLM. The CLI supplies the brain (its own configured model/key, see
-``llm.py``); the backend supplies tools, memory, and the conductor signal
-through the exact same surface an external MCP harness (OpenCode, Claude
-Desktop) already uses (``tools.py`` imports ``platform-mcp/server.py``
-directly — one tool layer, not a second one).
+This package contains the ReAct algorithm used by Osprey's CLI harness.  The
+CLI supplies the brain (its configured model/key); the backend supplies
+capabilities and durable memory.  Lifecycle and session ownership live in
+``cli.harness``.  External MCP and the first-party CLI are adapters over the
+same platform capability gateway.
 """

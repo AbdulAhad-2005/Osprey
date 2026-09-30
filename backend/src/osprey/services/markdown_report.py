@@ -77,28 +77,17 @@ def _summary_section(tree, findings: list[Finding]) -> list[str]:
     return lines
 
 
-# Control-plane findings (rate limiting / bans the governor detected while
-# pacing OUR calls) are runtime signals, not tool outputs — they show up as a
-# one-line note, never as a row in the tools-executed table or a dump block.
-_INTERNAL_TOOLS = frozenset({"rate_governor"})
-
-
 def _tools_executed_section(findings: list[Finding]) -> list[str]:
     """What actually ran, and how much each one produced — answers "did
     anything even run" before the reader has to infer it from scattered
-    mentions further down. Internal control-plane tools (rate_governor) are
-    excluded — they pace our calls, they don't probe the target."""
-    counts = Counter(f.source_tool or "(unknown)" for f in findings if f.source_tool not in _INTERNAL_TOOLS)
+    mentions further down. Rate-limiting/ban signals never reach ``findings``
+    at all (they're execution telemetry recorded on the audit log, not a
+    claim about the target — see tool_execution.py), so no exclusion is
+    needed here."""
+    counts = Counter(f.source_tool or "(unknown)" for f in findings)
     lines = ["## Tools Executed", "| Tool | Findings/Outputs |", "|---|---|"]
     for tool, count in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])):
         lines.append(f"| {tool} | {count} |")
-    internal = [f for f in findings if f.source_tool in _INTERNAL_TOOLS]
-    if internal:
-        lines.append("")
-        lines.append(
-            "_Note: rate_governor flagged rate-limiting/blocking while pacing calls "
-            f"({len(internal)} signal(s)) — see Detailed Findings._"
-        )
     lines.append("")
     return lines
 
@@ -239,15 +228,11 @@ def _detailed_by_tool_section(findings: list[Finding]) -> list[str]:
     above; excluded here to avoid duplicating them. URL-history findings
     (gau/waybackurls/hakrawler rows) are collapse per target to a compact
     list — hundreds of same-shape URL rows are not a technical record, they
-    are noise that drowns the per-host signal. Internal control-plane tools
-    (rate_governor) are excluded from the dump too — their note in the tools
-    table is the whole story."""
+    are noise that drowns the per-host signal."""
     _URL_HISTORY_CAP_PER_TARGET = 40
     by_tool: dict[str, dict[str, list[Finding]]] = {}
     for f in findings:
         if f.finding_type == FindingType.VULNERABILITY:
-            continue
-        if (f.source_tool or "") in _INTERNAL_TOOLS:
             continue
         tool = f.source_tool or "(unknown tool)"
         tgt = f.target or "(engagement-wide)"

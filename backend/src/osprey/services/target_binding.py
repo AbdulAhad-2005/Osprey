@@ -20,7 +20,7 @@ from typing import Any
 
 from osprey.schemas.engagement import Engagement, EngagementCreateRequest
 from osprey.services.agent_common import extract_target, extract_target_from_history
-from osprey.services.engagement_store import get_engagement_store
+from osprey.services.engagement_store import ensure_target_graph_seed, get_engagement_store
 from osprey.services.target_analysis import analyze_target
 
 logger = logging.getLogger(__name__)
@@ -53,6 +53,7 @@ def resolve_engagement_for_target(target: str, *, force_new: bool = False) -> Bi
     if not force_new:
         existing = store.get_latest_by_target(resolved)
         if existing is not None:
+            ensure_target_graph_seed(existing)
             return BindResult(engagement=existing, created=False)
     engagement = store.create(
         EngagementCreateRequest(target=resolved, name=f"engagement-{resolved}")

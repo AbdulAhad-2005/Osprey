@@ -33,41 +33,18 @@ def test_ollama_model_is_forwarded_to_litellm(monkeypatch):
     assert svc.model == "ollama/qwen3:8b"
 
 
-def _stub_tool_execution(monkeypatch, surface_expansion) -> None:
-    from osprey.schemas.tools import ToolExecutionResponse
-
-    async def _execute(request, **_kwargs):
-        return ToolExecutionResponse(
-            tool_name=request.tool_name,
-            success=True,
-            command=f"stub:{request.tool_name}",
-            stdout="",
-            returncode=0,
-        )
-
-    monkeypatch.setattr(surface_expansion, "_execute_request", _execute)
-
-
-def test_engine_seeds_apex_for_subdomain_target(monkeypatch):
+def test_engine_seeds_apex_for_subdomain_target():
+    """Apex-seeding is done once, at engagement creation
+    (``engagement_store.py``'s ``registrable_apex`` + graph seed), not inside
+    any expansion pass — the deterministic investigation loop
+    (``investigation_capabilities.list_step``) requires this seed to already
+    exist before it can produce a single opportunity."""
     from osprey.schemas.engagement import EngagementCreateRequest
     from osprey.schemas.engagement_graph import AssetType
-    from osprey.services import surface_expansion as se
     from osprey.services.engagement_graph import get_engagement_graph
     from osprey.services.engagement_store import get_engagement_store
 
-    _stub_tool_execution(monkeypatch, se)
-    monkeypatch.setattr(se, "resolve_host_ip", lambda _host: "192.0.2.1")
-    monkeypatch.setattr(se, "_phase_enabled", lambda _phase: False)
-    monkeypatch.setattr(se, "_permutation_patterns", list)
-    monkeypatch.setattr(se, "_installed_steps", lambda _section: [])
-
     e = get_engagement_store().create(EngagementCreateRequest(target="www.example.com", name="apex-seed"))
-    asyncio.run(
-        asyncio.wait_for(
-            se.run_expansion_pass(engagement_id=e.id, run_id="r"),
-            timeout=10,
-        )
-    )
     g = get_engagement_graph()
     domains = {n.label for n in g.list_nodes(engagement_id=e.id, asset_type=AssetType.DOMAIN, limit=50)}
     subs = {n.label for n in g.list_nodes(engagement_id=e.id, asset_type=AssetType.SUBDOMAIN, limit=50)}
@@ -75,26 +52,13 @@ def test_engine_seeds_apex_for_subdomain_target(monkeypatch):
     assert "www.example.com" in subs, "original host must still be probed as a subdomain"
 
 
-def test_engine_apex_target_seeds_itself(monkeypatch):
+def test_engine_apex_target_seeds_itself():
     from osprey.schemas.engagement import EngagementCreateRequest
     from osprey.schemas.engagement_graph import AssetType
-    from osprey.services import surface_expansion as se
     from osprey.services.engagement_graph import get_engagement_graph
     from osprey.services.engagement_store import get_engagement_store
 
-    _stub_tool_execution(monkeypatch, se)
-    monkeypatch.setattr(se, "resolve_host_ip", lambda _host: "192.0.2.1")
-    monkeypatch.setattr(se, "_phase_enabled", lambda _phase: False)
-    monkeypatch.setattr(se, "_permutation_patterns", list)
-    monkeypatch.setattr(se, "_installed_steps", lambda _section: [])
-
     e = get_engagement_store().create(EngagementCreateRequest(target="example.org", name="apex-self"))
-    asyncio.run(
-        asyncio.wait_for(
-            se.run_expansion_pass(engagement_id=e.id, run_id="r"),
-            timeout=10,
-        )
-    )
     g = get_engagement_graph()
     domains = {n.label for n in g.list_nodes(engagement_id=e.id, asset_type=AssetType.DOMAIN, limit=50)}
     assert "example.org" in domains

@@ -1,4 +1,4 @@
-"""The CLI's tool layer — imports `platform-mcp/server.py` directly.
+"""The CLI adapter for Osprey's embedded capability gateway.
 
 This is the same tool surface an external MCP harness (OpenCode, Claude
 Desktop) already drives Osprey through. Reusing it here means the CLI's
@@ -7,16 +7,15 @@ context/skills/conductor-signal assembly, and — as a side effect — the
 "shared MCP subprocess across chats" bug documented in that module doesn't
 apply: one CLI process is one operator's own session by construction.
 
-`@mcp.tool()` (FastMCP) does not modify the decorated function — it just
-registers it and returns the original callable — so every tool Osprey has,
-static or dynamically-registered, is reachable through one path:
-`FastMCP._tool_manager.get_tool(name).fn`, called via `asyncio.to_thread`
-because these are synchronous, blocking-HTTP functions.
+FastMCP-private access is contained behind the platform adapter's public
+embedding API. Calls run via ``asyncio.to_thread`` because the embedded
+handlers perform synchronous backend HTTP requests.
 """
 
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import os
 import sys
 import uuid
@@ -24,6 +23,50 @@ from pathlib import Path
 from typing import Any
 
 _SERVER_MODULE: Any = None
+
+
+class EmbeddedToolGateway:
+    """Application-owned façade over the embedded MCP adapter.
+
+    FastMCP internals and module-global session state are contained behind the
+    platform adapter's public embedding API.  The CLI harness and Runner
+    depend on this small contract, never on adapter-private registries.
+    """
+
+    def __init__(self, api_base_url: str) -> None:
+        self.api_base_url = api_base_url.rstrip("/")
+        self.engagement_id = ""
+        self.target = ""
+        self._loaded = False
+
+    def activate(self) -> None:
+        load_server(self.api_base_url)
+        self._loaded = True
+        if self.engagement_id:
+            bind_session(engagement_id=self.engagement_id, target=self.target)
+
+    def configure(self, api_base_url: str) -> None:
+        self.api_base_url = api_base_url.rstrip("/")
+        if self._loaded:
+            reconfigure_server(self.api_base_url)
+            if self.engagement_id:
+                bind_session(engagement_id=self.engagement_id, target=self.target)
+
+    def bind(self, *, engagement_id: str, target: str = "") -> None:
+        self.engagement_id = engagement_id.strip()
+        self.target = target.strip()
+        if self._loaded:
+            bind_session(engagement_id=self.engagement_id, target=self.target)
+
+    def schemas(self, *, budget_tokens: int = 0) -> list[dict[str, Any]]:
+        if not self._loaded:
+            self.activate()
+        return get_tool_schemas(budget_tokens=budget_tokens)
+
+    async def call(self, name: str, arguments: dict[str, Any]) -> str:
+        if not self._loaded:
+            self.activate()
+        return await call_tool(name, arguments)
 
 
 def _platform_mcp_dir() -> Path:
@@ -34,8 +77,8 @@ def _platform_mcp_dir() -> Path:
 def load_server(api_base_url: str) -> Any:
     """Import platform-mcp/server.py once, pointed at the CLI's own backend URL.
 
-    `server.py` reads `PENTEST_API_BASE` at import time — set it (only if the
-    operator hasn't already exported one explicitly) before the first import
+    `server.py` reads `PENTEST_API_BASE` at import time — set it to the CLI's
+    selected backend before the first import
     so the CLI's tool calls land on the same backend the rest of the CLI is
     configured against, not always localhost.
 
@@ -57,10 +100,9 @@ def load_server(api_base_url: str) -> Any:
     """
     global _SERVER_MODULE
     if _SERVER_MODULE is not None:
-        # API_BASE is read by server.py at import time.  Keep the embedded MCP
-        # runtime aligned with APIClient after /reconnect instead of leaving
-        # agent tools pointed at the old backend.
-        _SERVER_MODULE.API_BASE = api_base_url.rstrip("/")
+        desired = api_base_url.rstrip("/")
+        if str(getattr(_SERVER_MODULE, "API_BASE", "")).rstrip("/") != desired:
+            _SERVER_MODULE.embedded_reconfigure(desired)
         return _SERVER_MODULE
 
     # The CLI's selected API URL is authoritative for its embedded gateway.
@@ -74,7 +116,15 @@ def load_server(api_base_url: str) -> Any:
     if mcp_dir not in sys.path:
         sys.path.insert(0, mcp_dir)
 
-    import server as _server  # noqa: PLC0415 — deliberate late import, see above
+    module_name = "_osprey_embedded_platform_mcp"
+    spec = importlib.util.spec_from_file_location(
+        module_name, _platform_mcp_dir() / "server.py"
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Could not load Osprey's embedded capability gateway")
+    _server = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = _server
+    spec.loader.exec_module(_server)
 
     _SERVER_MODULE = _server
     return _server
@@ -91,8 +141,7 @@ def reconfigure_server(api_base_url: str) -> None:
     server = _SERVER_MODULE
     if server is None:
         return
-    server.API_BASE = api_base_url.rstrip("/")
-    server._clear_session()
+    server.embedded_reconfigure(api_base_url)
 
 
 def bind_session(*, engagement_id: str, target: str = "") -> None:
@@ -106,21 +155,7 @@ def bind_session(*, engagement_id: str, target: str = "") -> None:
     server = _SERVER_MODULE
     if server is None:
         raise RuntimeError("load_server() must be called before bind_session()")
-    server._SESSION_ENGAGEMENT_ID = (engagement_id or "").strip()
-    server._SESSION_TARGET = (target or "").strip()
-    server._SESSION_SWITCH_NOTICE = ""
-    if server._SESSION_ENGAGEMENT_ID:
-        server._ENGAGEMENT_CACHE[server._SESSION_ENGAGEMENT_ID] = {
-            "target": server._SESSION_TARGET,
-            "kind": "domain",
-            "scope": "",
-        }
-        server._ENGAGEMENT_RUN_IDS[server._SESSION_ENGAGEMENT_ID] = server.SESSION_RUN_ID
-        server._ensure_run_registered(
-            server._SESSION_ENGAGEMENT_ID,
-            server.SESSION_RUN_ID,
-        )
-        server._persist_session()
+    server.embedded_bind_session(engagement_id=engagement_id, target=target)
 
 
 # The bootstrap set for budget-constrained providers (see get_tool_schemas'
@@ -138,6 +173,8 @@ _BOOTSTRAP_TOOL_NAMES = frozenset(
     {
         "platform_context",
         "platform_set_target",
+        "platform_investigation_step",
+        "platform_investigation_execute",
         "platform_shell",
         "platform_script",
         "platform_exec",
@@ -153,13 +190,13 @@ _BOOTSTRAP_TOOL_NAMES = frozenset(
 _CHARS_PER_TOKEN_ESTIMATE = 4
 
 
-def _schema_for(tool: Any) -> dict[str, Any]:
+def _schema_for(tool: dict[str, Any]) -> dict[str, Any]:
     return {
         "type": "function",
         "function": {
-            "name": tool.name,
-            "description": (tool.description or "")[:1024],
-            "parameters": tool.parameters or {"type": "object", "properties": {}},
+            "name": tool["name"],
+            "description": (tool.get("description") or "")[:1024],
+            "parameters": tool.get("parameters") or {"type": "object", "properties": {}},
         },
     }
 
@@ -187,7 +224,7 @@ def get_tool_schemas(*, budget_tokens: int = 0) -> list[dict[str, Any]]:
     if server is None:
         raise RuntimeError("load_server() must be called before get_tool_schemas()")
 
-    all_tools = list(server.mcp._tool_manager.list_tools())
+    all_tools = server.embedded_tool_specs()
     if budget_tokens <= 0:
         return [_schema_for(tool) for tool in all_tools]
 
@@ -205,8 +242,8 @@ def get_tool_schemas(*, budget_tokens: int = 0) -> list[dict[str, Any]]:
     # top of it.
     remaining_chars = int(budget_tokens * _CHARS_PER_TOKEN_ESTIMATE * 0.5)
 
-    bootstrap = [t for t in all_tools if t.name in _BOOTSTRAP_TOOL_NAMES]
-    rest = [t for t in all_tools if t.name not in _BOOTSTRAP_TOOL_NAMES]
+    bootstrap = [t for t in all_tools if t["name"] in _BOOTSTRAP_TOOL_NAMES]
+    rest = [t for t in all_tools if t["name"] not in _BOOTSTRAP_TOOL_NAMES]
 
     schemas: list[dict[str, Any]] = []
     for tool in bootstrap:
@@ -230,28 +267,11 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> str:
     if server is None:
         raise RuntimeError("load_server() must be called before call_tool()")
 
-    tool = server.mcp._tool_manager.get_tool(name)
-    if tool is None:
-        return f"ERROR: no such tool '{name}'."
-
-    # Drop any key the LLM hallucinated that isn't a real parameter, rather
-    # than letting a stray kwarg crash the call with a raw TypeError.
-    allowed = set((tool.parameters or {}).get("properties", {}).keys())
-    clean_args = {k: v for k, v in (arguments or {}).items() if k in allowed}
-
     try:
-        result = await asyncio.to_thread(tool.fn, **clean_args)
+        result = await asyncio.to_thread(server.embedded_invoke_tool, name, arguments or {})
+    except KeyError:
+        return f"ERROR: no such tool '{name}'."
     except Exception as exc:  # noqa: BLE001 — surface as a tool result, not a crash
         return f"ERROR executing {name}: {exc}"
 
     return result if isinstance(result, str) else str(result)
-
-
-def current_engagement_id() -> str:
-    server = _SERVER_MODULE
-    return getattr(server, "_SESSION_ENGAGEMENT_ID", "") if server else ""
-
-
-def current_target() -> str:
-    server = _SERVER_MODULE
-    return getattr(server, "_SESSION_TARGET", "") if server else ""

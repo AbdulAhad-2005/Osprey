@@ -19,7 +19,7 @@ class QuestionRow(Base):
     )
 
     id: Mapped[str] = mapped_column(String(12), primary_key=True)
-    engagement_id: Mapped[str] = mapped_column(String(12), nullable=False, default="")
+    engagement_id: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
     raised_by: Mapped[str] = mapped_column(String(32), nullable=False, default="llm")
@@ -45,7 +45,7 @@ class HypothesisRow(Base):
     )
 
     id: Mapped[str] = mapped_column(String(12), primary_key=True)
-    engagement_id: Mapped[str] = mapped_column(String(12), nullable=False, default="")
+    engagement_id: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     statement: Mapped[str] = mapped_column(Text, nullable=False, default="")
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
     supporting_observation_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")

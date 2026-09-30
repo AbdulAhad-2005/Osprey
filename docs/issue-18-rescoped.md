@@ -77,7 +77,7 @@ if phase == "vuln" and findings.has_any(type=["vulnerability", "credential", "se
 | Delete turn urgency | `phase_agent.py` | 665-669 | Remove `_TURN_URGENCY_BANDS` entirely |
 | Delete situational anchoring | `situational_context.py` | 147-155 | Remove "SENSIBLE NEXT MOVES" and "LIKELY NOT WORTH DOING NOW" sections |
 | Fix findings truncation | `phase_agent.py` | 739 | Remove `[:1400]` cap, use full findings |
-| Fix contradictory prompts | `phase_agent.py` | 209-251 | Remove duplicate identity definitions from `_COMMANDER_SYSTEM` and `_PHASE_SYSTEM` |
+| Fix contradictory prompts | `phase_agent.py` | 209-251 | Keep a single scoped-agent identity definition in `_PHASE_SYSTEM` |
 | Create role briefs | new `agent_roles.py` | — | 3 role definitions with briefs (goals), not scripts |
 
 **Agent role briefs (from `docs/pentest-flow-design.md`):**

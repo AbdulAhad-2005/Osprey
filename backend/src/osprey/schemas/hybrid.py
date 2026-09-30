@@ -34,6 +34,20 @@ class DispatchSuggestion(BaseModel):
     # `-path /wp-json/wp/v2/users`). Previously parsed in tech_dispatch.yaml but
     # dropped here — so neither the LLM hint nor the no-LLM engine ever saw them.
     additional_args: str = ""
+    # The specific asset this suggestion is about — a finding's ``target``
+    # (a resolvable hostname/label, not a literal graph node id), or "" for a
+    # genuinely engagement-wide rule with no single subject (e.g. a
+    # threshold like "subdomain count is still thin", or phases_complete).
+    # Empty means "resolve to the session/seed target," matching the
+    # pre-Plan-18 behavior exactly — this field is additive, not a breaking
+    # change to any existing rule that doesn't declare ``scope: per_match``.
+    subject_id: str = ""
+    # Dispatch params derived from the matched finding via the rule's
+    # ``params_from`` mapping (e.g. an email-enrichment rule mapping
+    # {"email": "title"} pulls the matched EMAIL finding's title into the
+    # tool's ``email`` param). Empty for rules with no such mapping — the
+    # caller falls back to the empty-params/seed-target path unchanged.
+    params: dict[str, str] = Field(default_factory=dict)
 
 
 class CommanderContext(BaseModel):

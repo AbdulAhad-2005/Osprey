@@ -1,6 +1,8 @@
 # Osprey
 
-Osprey is an autonomous AI penetration testing platform with a FastAPI backend, MCP gateway, and an interactive Python CLI operator interface.
+Osprey is a penetration-testing harness with an evidence-driven, non-LLM
+investigation loop, an optional LLM judgment layer, a FastAPI capability
+backend, an MCP gateway, and an interactive Python CLI.
 
 ## Architecture
 
@@ -197,7 +199,7 @@ osprey run --target example.com "show me the current attack surface"
 | `/findings`                   | Show findings for the active engagement           |
 | `/tool [id]`                  | List recent tool calls or expand one transcript   |
 | `/output [id]`                | Alias for `/tool`                                 |
-| `/chat [count]`               | Show the current Commander chat thread            |
+| `/chat [count]`               | Show this CLI session's model conversation        |
 | `/details [mode]`             | Set live output detail: `compact`, `preview`, or `verbose` |
 | `/status`                     | Backend / model / active engagement status        |
 | `/config` · `/config reload`  | Show config · force backend to re-read `.env`     |
@@ -206,16 +208,16 @@ osprey run --target example.com "show me the current attack surface"
 
 `/scan <target> [phase]` binds an engagement so `/findings` and prompts know the
 target. You can also just **type natural-language prompts** — these go to the
-**Commander**, a conversational brain that owns the conductor: it answers, runs one
-probe, or launches the full recon→vuln→exploit pipeline in the background and keeps
-chatting so you can steer it ("hit the sister domains harder", "status", "stop").
-During a run the CLI streams commander decisions, live tool start/finish, and
-per-phase reports.
+CLI harness. A full scan follows the same visible sense → decide → execute →
+evaluate → replan lifecycle with or without an LLM. The deterministic driver is
+the baseline intelligence; a configured model may reorder current bounded
+opportunities and add analysis, but cannot invent capability parameters. During
+a run the CLI streams decisions, individual tool progress, evidence, and replans.
 
-Set or switch your LLM provider/key either manually in .env or at runtime with
-`POST /api/v1/config/llm` `{"model": "...", "api_key": "...", "api_base": "..."}` —
-the Settings surface GUI uses. The chat thread is persisted server-side per
-engagement (`GET /api/v1/agent/conversation/{engagement_id}`), so the CLI and dashboard share one conversation.
+Configure the CLI's optional model with `LLM_MODEL`, `LLM_API_KEY`, and
+`LLM_API_BASE` in `.env`; `/model reload` refreshes it without moving the
+engagement. The CLI owns the conversation. Jobs, observations, findings, graph
+state, and investigation decisions remain durable in the backend engagement.
 
 ### Seeing which tools you have
 

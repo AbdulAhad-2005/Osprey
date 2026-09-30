@@ -14,7 +14,15 @@
 # here falls back to defaults while a section present here fully replaces it.
 
 sister_discovery:        # sister/associated root domains (per frontier domain)
-  - {tool: domain_hunter, param: domain}
+  # domain_hunter queries ~10 independent external signal sources (crt.sh,
+  # Wikidata SPARQL, ASN reverse-lookup, RDAP/WHOIS, certspotter, DNS,
+  # SPF/DMARC, reverse-NS) — one slow upstream is enough to blow past the
+  # 60s bucket every other tool in this section uses, and did: domain_hunter
+  # landed consistently at ~63-64s and got killed just before finishing,
+  # every run, not as occasional bad luck. A per-entry timeout overrides the
+  # section default (see investigation_capabilities.py's sister_discovery/
+  # domain_only opportunity loop).
+  - {tool: domain_hunter, param: domain, timeout: 100}
   - {tool: crt_sh_query, param: domain}
 
 domain_only:             # apex-only OSINT (same answer for every subdomain)
@@ -69,21 +77,21 @@ batch:
   domain: 25
   live_host: 15
 
-# Phase gates — which stages the engine auto-runs in its breadth passes. The
-# initial wave is recon-only by design (subdomains -> IPs -> ports/services/
-# versions -> emails/contacts); vulnerability analysis (nmap vuln/vulners,
-# wpscan) is a LATER phase driven deliberately, not a breadth-scan side effect:
-# it is slow, noisy, and needs the recon surface settled first. Flip to true
-# when you actually want the auto vuln-scan inside the engine pass.
-#
-# web_depth (well_known_probe/js_recon/feroxbuster/wayback on every live-web
-# host) is content discovery, not inventory — an "enumerate subs/IPs/ports"
-# ask should never trigger it. Off by default for the same reason vuln_scan
-# is: a deliberate later choice, not a breadth-pass side effect. Flip to true
-# when you actually want content discovery folded into every breadth pass.
+# Phase gates — which stages the deterministic engine's opportunity generator
+# (investigation_capabilities.list_step) includes. vuln_scan (the
+# comprehensive nmap vuln/vulners pass, SCAN_NETWORK_VULNERABILITIES) stays
+# off by default deliberately — it's slow/noisy and a real operator choice,
+# not something to default on without a benchmark. web_depth (well_known_probe/
+# js_recon/feroxbuster/wayback — PROBE_WEB_DEPTH) was off for a different
+# reason that no longer applies: the pre-Plan-17 engine ran it as one batched
+# call across every live host at once. PROBE_WEB_DEPTH (Plan 17) is atomic —
+# one opportunity per (tool, host) — and tech_dispatch.yaml's per-host vuln
+# scanners (Plan 18) already assume content discovery has run, so defaulting
+# it on is now the coherent choice, not a breadth-pass side effect to guard
+# against.
 phases:
   vuln_scan: false
-  web_depth: false
+  web_depth: true
 
 # Associated (sister) domains: DISCOVERED but never worked on while this is
 # false (the default). domain_hunter/crt still record them as assets, but the

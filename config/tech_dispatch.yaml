@@ -32,6 +32,7 @@ signals:
     match:
       finding_type: url
       min_count: 1
+      scope: per_match
     dispatch:
       task_id: content_discovery
       default_tool: feroxbuster_scan
@@ -44,6 +45,7 @@ signals:
     match:
       finding_type: url
       min_count: 1
+      scope: per_match
     dispatch:
       task_id: javascript_analysis
       default_tool: js_recon
@@ -56,6 +58,7 @@ signals:
     match:
       finding_type: url
       min_count: 1
+      scope: per_match
     dispatch:
       task_id: policy_file_discovery
       default_tool: well_known_probe
@@ -76,6 +79,7 @@ signals:
     match:
       finding_type: url
       min_count: 3
+      scope: per_match
     dispatch:
       task_id: parameter_discovery
       default_tool: arjun_scan
@@ -88,6 +92,7 @@ signals:
     match:
       metadata_key: technology
       metadata_contains: wordpress
+      scope: per_match
     dispatch:
       task_id: live_host_probing
       default_tool: httpx_probe
@@ -99,6 +104,7 @@ signals:
     match:
       metadata_key: port
       metadata_value: "445"
+      scope: per_match
     dispatch:
       task_id: smb_enumeration
       default_tool: enum4linux_scan
@@ -111,6 +117,7 @@ signals:
     match:
       metadata_key: port
       metadata_value: "139"
+      scope: per_match
     dispatch:
       task_id: smb_enumeration
       default_tool: enum4linux_scan
@@ -123,6 +130,7 @@ signals:
       finding_type: port
       min_count: 1
       missing_finding_type: service
+      scope: per_match
     dispatch:
       task_id: service_enumeration
       default_tool: nmap_service_scan
@@ -145,6 +153,7 @@ signals:
     match:
       metadata_key: waf
       metadata_contains: cloudflare
+      scope: per_match
     dispatch:
       task_id: cdn_origin_clues
       default_tool: cdn_origin_probe
@@ -157,6 +166,7 @@ signals:
     match:
       metadata_key: cdn_provider
       metadata_contains: cloud
+      scope: per_match
     dispatch:
       task_id: cdn_origin_clues
       default_tool: dnsx_resolve
@@ -170,6 +180,7 @@ signals:
       finding_type: host
       metadata_key: ip
       min_count: 1
+      scope: per_match
     dispatch:
       task_id: reverse_dns_lookup
       default_tool: dnsx_reverse
@@ -183,6 +194,7 @@ signals:
       finding_type: host
       metadata_key: ip
       min_count: 1
+      scope: per_match
     dispatch:
       task_id: asn_netblock_enumeration
       default_tool: asn_enum
@@ -196,6 +208,7 @@ signals:
     match:
       finding_type: technology
       min_count: 1
+      scope: per_match
     dispatch:
       task_id: vulnerability_scan
       default_tool: nuclei_scan
@@ -208,6 +221,7 @@ signals:
     match:
       metadata_key: technology
       metadata_contains: wordpress
+      scope: per_match
     dispatch:
       task_id: cms_vulnerability_scan
       default_tool: wpscan_analyze
@@ -220,6 +234,7 @@ signals:
     match:
       metadata_key: url
       metadata_contains: graphql
+      scope: per_match
     dispatch:
       task_id: graphql_security_scan
       default_tool: graphql_cop_scan
@@ -232,6 +247,7 @@ signals:
     match:
       metadata_key: technology
       metadata_contains: react
+      scope: per_match
     dispatch:
       task_id: spa_render_scrape
       default_tool: browser_scrape
@@ -244,6 +260,7 @@ signals:
     match:
       has_tag: tls
       min_count: 1
+      scope: per_match
     dispatch:
       task_id: tls_configuration_scan
       default_tool: sslyze_scan
@@ -256,6 +273,7 @@ signals:
     match:
       finding_type: technology
       min_count: 1
+      scope: per_match
     dispatch:
       task_id: web_server_scan
       default_tool: nikto_scan
@@ -268,6 +286,7 @@ signals:
     match:
       metadata_key: technology
       metadata_contains: php
+      scope: per_match
     dispatch:
       task_id: sql_injection_test
       default_tool: sqlmap_scan
@@ -280,6 +299,7 @@ signals:
     match:
       has_tag: injection_point_candidate
       min_count: 1
+      scope: per_match
     dispatch:
       task_id: sql_injection_test
       default_tool: sqlmap_scan
@@ -315,6 +335,7 @@ signals:
     match:
       metadata_key: technology
       metadata_contains: express
+      scope: per_match
     dispatch:
       task_id: live_host_probing
       default_tool: httpx_probe
@@ -326,6 +347,7 @@ signals:
     match:
       metadata_key: technology
       metadata_contains: apache
+      scope: per_match
     dispatch:
       task_id: content_discovery
       default_tool: platform_script
@@ -339,6 +361,7 @@ signals:
     match:
       metadata_key: technology
       metadata_contains: joomla
+      scope: per_match
     dispatch:
       task_id: live_host_probing
       default_tool: httpx_probe
@@ -350,6 +373,7 @@ signals:
     match:
       metadata_key: technology
       metadata_contains: drupal
+      scope: per_match
     dispatch:
       task_id: live_host_probing
       default_tool: httpx_probe
@@ -361,6 +385,7 @@ signals:
     match:
       metadata_key: technology
       metadata_contains: laravel
+      scope: per_match
     dispatch:
       task_id: live_host_probing
       default_tool: httpx_probe
@@ -372,6 +397,7 @@ signals:
     match:
       metadata_key: technology
       metadata_contains_any: [react, vue, angular, next, nuxt, svelte]
+      scope: per_match
     dispatch:
       task_id: javascript_analysis
       default_tool: js_recon
@@ -384,6 +410,7 @@ signals:
     match:
       metadata_key: technology
       metadata_contains: microsoft-iis
+      scope: per_match
     dispatch:
       task_id: live_host_probing
       default_tool: httpx_probe
@@ -395,6 +422,7 @@ signals:
     match:
       metadata_key: technology
       metadata_contains: cloudflare
+      scope: per_match
     dispatch:
       task_id: cdn_origin_clues
       default_tool: cdn_origin_probe
@@ -432,17 +460,20 @@ signals:
     match:
       finding_type: email
       min_count: 1
+      scope: per_match
     dispatch:
       task_id: email_account_discovery
       default_tool: holehe
       skill_file: osint/email-people-harvest.md
       reason: "Email discovered — enumerate account existence with holehe (no breach data)"
       priority: 7
+      params_from: {email: title}
 
   - id: osint_username_found
     match:
       finding_type: username
       min_count: 1
+      scope: per_match
     dispatch:
       task_id: username_enumeration
       default_tool: maigret
@@ -450,32 +481,38 @@ signals:
       skill_file: osint/username-pivot.md
       reason: "Username discovered — sweep social/web sites for matching accounts"
       priority: 6
+      params_from: {username: title}
 
   - id: osint_phone_found
     match:
       finding_type: phone
       min_count: 1
+      scope: per_match
     dispatch:
       task_id: phone_number_osint
       default_tool: phoneinfoga
       reason: "Phone number discovered — profile carrier/country/footprint"
       priority: 5
+      params_from: {phone: title}
 
   - id: osint_document_found
     match:
       finding_type: document
       min_count: 1
+      scope: per_match
     dispatch:
       task_id: document_metadata_discovery
       default_tool: exiftool_extract
       skill_file: osint/document-metadata.md
       reason: "Public document found — extract author/software/GPS metadata (feeds PERSON leads)"
       priority: 5
+      params_from: {file_path: target}
 
   - id: osint_social_account_found
     match:
       finding_type: social_account
       min_count: 1
+      scope: per_match
     dispatch:
       task_id: username_enumeration
       default_tool: maigret
@@ -483,3 +520,4 @@ signals:
       skill_file: osint/username-pivot.md
       reason: "Social account found — pivot its handle across other platforms"
       priority: 5
+      params_from: {username: title}

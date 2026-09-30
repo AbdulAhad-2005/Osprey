@@ -808,6 +808,32 @@ class MCPClient:
                     final_action = decision["recovery_action"]
                     break
 
+                rebuilt_command = decision.get("rebuilt_command") or command
+                # A retry after a TIMEOUT that doesn't actually change the
+                # command is guaranteed to time out again, identically — the
+                # exact same invocation against the exact same slow target.
+                # error_handler.py's per-tool flag-rewriting only covers a
+                # handful of tools (nmap/gobuster/nuclei/feroxbuster/ffuf);
+                # for everything else (e.g. dnsenum — the tool that
+                # originally surfaced this) the "reduced scope" adjustment is
+                # silently a no-op, so `should_retry=True` was burning a full
+                # extra `timeout` (or two, at max_attempts=3) for zero chance
+                # of a different outcome — the mechanism this investigation
+                # opportunity's timeout ceiling exists to bound. Same
+                # principle as tool_execution.py's auto-fallback guard: a
+                # same-invocation retry must change something to be worth
+                # attempting.
+                if timed_out and rebuilt_command == command:
+                    recovery_history.append(
+                        {
+                            "attempt": attempt,
+                            "error": error_message[:500],
+                            "recovery_action": "retry_skipped_identical_after_timeout",
+                            "error_type": decision.get("error_type"),
+                        }
+                    )
+                    final_action = "retry_skipped_identical_after_timeout"
+                    break
                 recovery_history.append(
                     {
                         "attempt": attempt,
@@ -819,7 +845,7 @@ class MCPClient:
                 backoff = float(decision.get("backoff_seconds") or 0.0)
                 if backoff > 0:
                     await asyncio.sleep(min(backoff, 60.0))
-                command = decision.get("rebuilt_command") or command
+                command = rebuilt_command
 
             # Exhausted retries (or the decision said stop) — return the last
             # real attempt's result, with the alternative-tool suggestion and

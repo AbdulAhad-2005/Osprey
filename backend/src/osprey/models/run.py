@@ -13,7 +13,7 @@ class RunRow(Base):
 
     id: Mapped[str] = mapped_column(String(12), primary_key=True)
     engagement_id: Mapped[str] = mapped_column(
-        String(12),
+        String(32),
         ForeignKey("engagements.id", ondelete="CASCADE"),
         nullable=False,
         index=True,

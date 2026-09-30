@@ -8,11 +8,11 @@ import httpx
 if TYPE_CHECKING:
     from cli.api.client import APIClient
 
-from cli.session import (
-    cycle_detail_mode,
-    get_detail_mode,
-    set_detail_mode,
-    tool_transcript,
+from cli.commands.scan_shared import (
+    _api_error_text,
+    _bind_engagement,
+    _run_engine_scan,
+    _run_investigation_events,
 )
 from cli.ui.display import (
     console,
@@ -42,11 +42,14 @@ def handle_help(args: list[str], client: "APIClient") -> None:
         ),
         "/models": "List supported LLM models",
         "/model [reload]": "Show active LLM model; `reload` re-reads .env model/key in place (keeps engagement)",
-        "/scan [target] [phase] [--mcp|--engine] [--include-low-confidence]": (
-            "Bind target + scan. --mcp = LLM-driven (default); "
-            "--engine = autonomous trigger-graph pipeline, no LLM. "
-            "--include-low-confidence (engine mode) also scans low-confidence origin "
-            "candidates the engine holds back by default."
+        "/scan [target] [--engine|--supervised] [--fresh]": (
+            "Bind target + run a full pentest. Default: the model drives every "
+            "tool itself (full LLM judgment/cost). --engine: deterministic, "
+            "no-LLM opportunity engine. --supervised: the deterministic engine "
+            "runs itself with the LLM checking in only at bounded checkpoints "
+            "-- zero tokens on the obvious mechanical work, full LLM judgment "
+            "when there's actually something worth deciding. --fresh: start a "
+            "brand-new engagement instead of reusing an existing one."
         ),
         "/fast-scan <target> [--engine]": (
             "Narrow, deterministic, no-LLM scan: whois -> subdomain enum (no sister "
@@ -82,9 +85,15 @@ def handle_help(args: list[str], client: "APIClient") -> None:
         ),
         "/tool [id]": "List recent tool calls, or open one full command/output transcript",
         "/output [id]": "Alias for /tool [id]",
-        "/chat": "Show the current engagement's Commander chat thread",
+        "/chat": "Show this CLI session's conversation",
         "/details [compact|preview|verbose]": "Cycle or set live tool output detail level",
+        "/pause": "Pause deterministic investigation scheduling; active job keeps running",
+        "/resume": "Reattach to a paused investigation and continue",
+        "/cancel [job_id]": "Cancel the active investigation/job while preserving evidence",
         "/status": "Show current session status (auto-refreshes config)",
+        "/jobs [status]": "List durable jobs for the active engagement",
+        "/job <id>": "Show current state and recent log lines for one job",
+        "/cancel <id>": "Cancel a job; evidence gathered so far remains saved",
         "/config": "Show config (auto-refreshes from .env)",
         "/config reload": "Force backend to re-read .env",
         "/reconnect": "Re-read .env and reconnect to changed API_BASE_URL",
@@ -138,7 +147,9 @@ def handle_model(args: list[str], client: "APIClient") -> None:
         from dotenv import load_dotenv
 
         load_dotenv(override=True)  # edited .env wins over the stale process env
-        client.agent_runner = None  # rebuilt lazily with fresh CLIModelConfig; engagement kept
+        from cli.harness import get_runtime
+
+        get_runtime(client).reload_model()
         model = (os.getenv("LLM_MODEL") or "").strip() or "NOT CONFIGURED"
         print_success(f"Reloaded driving model from .env: {model} (engagement kept).")
         return
@@ -192,24 +203,6 @@ def handle_engagements(args: list[str], client: "APIClient") -> None:
         print_info("Usage: /engage list | /engage new <target> | /engage set <engagement_id>")
 
 
-def _bind_engagement(client: "APIClient", data: dict) -> None:
-    """Store the active engagement from an engagement payload and report it."""
-    engagement_id = data.get("id") or data.get("engagement_id")
-    if not engagement_id:
-        print_error(f"Engagement response had no id: {data}")
-        return
-    client._set_active_engagement(
-        engagement_id,
-        target=str(data.get("target") or ""),
-    )
-    label = data.get("target") or engagement_id
-    reused = data.get("reused", False)
-    if reused:
-        print_info(f"Reusing existing engagement {engagement_id} for {label}")
-    else:
-        print_success(f"Engagement bound: {engagement_id} for {label}")
-
-
 def _take_flag(args: list[str], flag: str) -> tuple[str | None, list[str]]:
     """Extract `--flag value` from args, returning (value, remaining_args)."""
     if flag in args:
@@ -220,38 +213,9 @@ def _take_flag(args: list[str], flag: str) -> tuple[str | None, list[str]]:
     return None, args
 
 
-def _api_error_text(exc: Exception) -> str:
-    """Extract a readable message from backend HTTP errors (422 detail etc.)."""
-    if isinstance(exc, httpx.HTTPStatusError):
-        try:
-            detail = exc.response.json()
-        except (json.JSONDecodeError, ValueError):
-            return f"Request failed: {exc.response.status_code}"
-        if isinstance(detail, dict) and detail.get("detail"):
-            inner = detail["detail"]
-            if isinstance(inner, dict):
-                error = inner.get("error") or ""
-                analysis = inner.get("analysis") or {}
-                hints = analysis.get("candidates") or analysis.get("suggestions") or []
-                msg = f"Request failed: {error}"
-                if hints:
-                    msg += f" — did you mean: {', '.join(str(h) for h in hints[:5])}"
-                return msg
-            return f"Request failed: {inner}"
-        return f"Request failed: {exc.response.status_code}"
-    if isinstance(exc, httpx.RequestError):
-        return f"Could not reach the backend: {exc}"
-    return str(exc)
-
-
-_SCAN_PHASES = {"commander", "recon", "network", "vuln", "web", "exploit", "osint", "full"}
+_SCAN_PHASES = {"recon", "network", "vuln", "web", "exploit", "osint", "full"}
 
 _PHASE_PROMPTS = {
-    "commander": (
-        "You are the Commander for {target}. Decide the best course: answer, run a "
-        "single probe, or launch the full conductor pipeline in the background and "
-        "steer it. Bind {target} and get to work."
-    ),
     "full": (
         "Run a full penetration test on {target} via the conductor: recon is always "
         "the first/active phase; vuln and exploit unlock as real evidence accumulates. "
@@ -286,24 +250,44 @@ _PHASE_PROMPTS = {
 
 
 def handle_scan(args: list[str], client: "APIClient") -> None:
-    """Bind an engagement to the target and run either the LLM-driven agent
-    pipeline (mcp mode) or the autonomous trigger-graph engine (engine mode,
-    no LLM involved — Nessus-style: subdomains/sisters -> IPs -> CDN/origin
-    -> subnet pivot -> ports -> services -> OSINT, run to a fixpoint).
+    """Bind an engagement and run the harness investigation driver.
 
-    Usage: /scan [target] [recon|network|full] [--mcp|--engine]
-    Missing targets are asked for interactively; missing mode defaults to MCP.
+    Three real modes, not one flag bolted onto another:
+    - default: the model drives every typed tool itself (the free ReAct
+      loop) — full LLM judgment, full token cost, for when you want to watch
+      or steer every step.
+    - ``--engine``: the deterministic, no-LLM opportunity engine — zero LLM
+      tokens, the obvious mechanical pentest work (subdomains, DNS, ports,
+      services, tech-triggered vuln scanners) runs itself to fixpoint.
+    - ``--supervised``: the deterministic engine drives itself exactly like
+      ``--engine``, but an LLM checks in at bounded checkpoints (not every
+      step) with full, unrestricted tool access — it can investigate,
+      redirect, or do nothing, same judgment as driving directly, just
+      consulted only when there's actually something worth a decision.
+      This is the default division of labor for "save tokens on the obvious
+      steps, keep LLM judgment for what needs it."
+
+    Usage: /scan [target] [recon|network|full] [--mcp|--engine|--supervised] [--fresh]
+    Missing targets are asked for interactively; ``recon``/``network``/etc.
+    single-phase scans always use the free ReAct loop (--engine/--supervised
+    only apply to a full scan). ``--fresh`` starts a brand-new engagement
+    instead of silently reusing an existing one for this target — without
+    it, an existing engagement (and everything already known about the
+    target) is reused, same as always.
     """
     mode = ""
     if "--mcp" in args:
         mode = "mcp"
         args = [a for a in args if a != "--mcp"]
+    elif "--supervised" in args:
+        mode = "supervised"
+        args = [a for a in args if a != "--supervised"]
     elif "--engine" in args:
         mode = "engine"
         args = [a for a in args if a != "--engine"]
 
-    include_low_confidence = "--include-low-confidence" in args
-    args = [a for a in args if a != "--include-low-confidence"]
+    force_new = "--fresh" in args
+    args = [a for a in args if a != "--fresh"]
 
     phase = "full"
     if args and args[-1].lower() in _SCAN_PHASES:
@@ -317,29 +301,33 @@ def handle_scan(args: list[str], client: "APIClient") -> None:
             print_info("No target given — aborted.")
             return
 
-    if not mode:
-        mode = "mcp"
-
     try:
-        data = client.compile_engagement_for_target(target)
+        data = client.compile_engagement_for_target(target, force_new=force_new)
         _bind_engagement(client, data)
     except Exception as exc:
         print_error(_api_error_text(exc))
         return
 
-    if mode == "engine":
-        _run_engine_scan(client, target, include_low_confidence=include_low_confidence)
+    if mode in {"engine", "supervised"} and phase == "full":
+        _run_engine_scan(client, target, supervised=mode == "supervised")
         return
-
-    from cli.commands.prompt import handle_prompt
-
-    print_info(f"Scanning {target} (phase: {phase}) — the agent will report back when done.")
+    if mode in {"engine", "supervised"}:
+        print_info(f"--{mode} applies to a full scan only; running the targeted {phase} agent instead.")
+    # Default path: the model drives the typed recon/vuln/exploit tools
+    # directly — the same free ReAct loop the single-phase commands already
+    # use — guided by AGENTS.md's methodology and platform_priority/
+    # platform_context as advisory signals. This is NOT routed through the
+    # opportunity-picker: an LLM should reason tool-by-tool like it already
+    # does for vuln/exploit, never be reduced to choosing one opaque id per
+    # turn from a server menu.
+    label = "targeted" if phase != "full" else "full"
+    print_info(f"Running the {label} agent over the shared engagement evidence.")
     handle_prompt(_PHASE_PROMPTS[phase].format(target=target), client)
 
 
 def _poll_foreground_job(
     client: "APIClient",
-    job: dict,
+    events,
     *,
     label: str,
     spinner_text: str,
@@ -351,140 +339,38 @@ def _poll_foreground_job(
     transport failure does not imply that the server stopped the job, so retain
     and report its id rather than silently orphaning it.
     """
-    job_id = str(job.get("job_id") or "")
-    if not job_id:
-        print_error(f"{label} did not return a job id.")
-        return None
-
-    status = str(job.get("status") or "")
-    last_progress = ""
-    printed_results = 0
+    job_id = ""
     try:
         with console.status(f"[bold cyan]{spinner_text}[/]", spinner="dots") as spinner:
-            while status in ("queued", "running"):
-                try:
-                    job = client.poll_job(job_id, wait_seconds=3)
-                except Exception as exc:
-                    print_error(_api_error_text(exc))
-                    print_info(
-                        f"Lost contact while {label.lower()} job {job_id} was running; "
-                        "the server-side job may still be active. Reconnect and check its status."
+            for event in events:
+                job_id = str(event.data.get("job_id") or job_id)
+                if event.type == "job_started":
+                    print_info(f"{label} started (job {job_id}).")
+                elif event.type == "job_log":
+                    line = event.data.get("line", "")
+                    console.print(f"  [green]{line}[/]")
+                elif event.type == "job_progress":
+                    progress = str(event.data.get("progress") or "")
+                    spinner.update(f"[bold cyan]{progress}[/]")
+                elif event.type == "job_cancelled":
+                    print_error(
+                        f"Interrupted — {label.lower()} job cancelled. Findings gathered so far are saved."
                     )
                     return None
-                status = str(job.get("status") or "")
-                results_log = job.get("results_log") or []
-                for line in results_log[printed_results:]:
-                    console.print(f"  [green]{line}[/]")
-                printed_results = len(results_log)
-
-                progress = str(job.get("progress") or "")
-                if progress and progress != last_progress:
-                    spinner.update(f"[bold cyan]{progress}[/]")
-                    last_progress = progress
-    except KeyboardInterrupt:
-        try:
-            client.cancel_job(job_id)
-            print_error(
-                f"Interrupted — {label.lower()} job cancelled. Findings gathered so far are saved. "
-                "Review them with /findings, or /report to export what was found so far."
-            )
-        except Exception:
-            print_error(
-                f"Interrupted — but the cancel request failed; {label.lower()} job {job_id} "
-                "may still be running server-side. Findings gathered so far are saved "
-                "(/findings, /report)."
-            )
-        return None
-    return job
-
-
-def _run_engine_scan(
-    client: "APIClient", target: str, *, include_low_confidence: bool = False
-) -> bool:
-    """Engine mode: start the expansion job and poll to completion — a plain
-    REST call the CLI drives directly, no LLM in the loop. The same backend
-    endpoint a UI's "Scan" button or the MCP platform_expand tool would call —
-    one engine, this is just one of its doors. Runs to completion: the engine
-    stops when every stage has run to its fixpoint, and the operator (LLM or
-    human) decides afterward whether to go over the surface again."""
-    engagement_id = client.active_engagement_id
-    if not engagement_id:
-        print_error("No engagement bound.")
-        return False
-    # Preflight: catch a dead execution backend (e.g. the Kali tools container
-    # not started) up front, so the user gets one clear fix instead of watching
-    # every tool in every stage report "(failed)".
-    status = client.execution_status()
-    if not status.get("ready", True):
-        print_error(status.get("message", "Tool execution backend is not ready."))
-        return False
-    if status.get("message"):
-        print_info(status["message"])
-    try:
-        job = client.start_expansion_job(
-            engagement_id, max_passes=10, include_low_confidence=include_low_confidence,
-        )
+                elif event.type == "error":
+                    print_error(f"{label} failed: {event.data.get('message', 'unknown error')}")
+                    return None
+                elif event.type == "job_completed":
+                    return event.data
     except Exception as exc:
         print_error(_api_error_text(exc))
-        return False
+        if job_id:
+            print_info(
+                f"Lost contact while {label.lower()} job {job_id} was running; "
+                "the server-side job may still be active. Reconnect and check its status."
+            )
+    return None
 
-    job_id = job.get("job_id", "")
-    print_info(f"Engine started (job {job_id}) — running the full recon/network pipeline on {target}.")
-    print_info("Sister domains -> subdomains (tools + wordlist brute force) -> IPs -> CDN/origin "
-                "detection -> subnet pivot -> ports -> services -> vuln scan -> OSINT, to a fixpoint.")
-
-    polled = _poll_foreground_job(
-        client, job, label="Engine", spinner_text="Engine starting…"
-    )
-    if polled is None:
-        return False
-    job = polled
-    status = job.get("status", "")
-
-    if status == "failed":
-        print_error(f"Engine run failed: {job.get('error', 'unknown error')}")
-        return False
-
-    if status == "cancelled":
-        print_success("Engine stopped. Partial findings are saved.")
-        print_info("Review them with /findings, or /report to export what was found so far.")
-        return False
-
-    try:
-        result = client.job_result(job_id)
-    except Exception as exc:
-        print_error(_api_error_text(exc))
-        return False
-
-    report = (result.get("result") or {})
-    passes = report.get("passes") or []
-    print_success(f"Engine finished — {len(passes)} pass(es), "
-                  f"{'exhausted' if report.get('exhausted') else 'stopped at pass cap'}.")
-    for p in passes:
-        d = p.get("delta") or {}
-        titles = p.get("new_finding_titles") or []
-        sample = ", ".join(titles[:5]) + (f" (+{len(titles) - 5} more)" if len(titles) > 5 else "")
-        print_info(
-            f"  Pass {p.get('pass_number')}: +{d.get('new_nodes', 0)} assets, "
-            f"+{d.get('new_edges', 0)} edges" + (f" — {sample}" if sample else "")
-        )
-    cand_count = report.get("new_candidate_count") or 0
-    if cand_count:
-        print_info(f"  +{cand_count} exploit candidate(s) — see /findings or platform_exploit_queue.")
-
-    held_back = report.get("held_back_low_confidence") or []
-    if held_back:
-        console.print()
-        console.print("[bold yellow]Held back — low-confidence origin candidates, not scanned:[/]")
-        for item in held_back:
-            console.print(f"  [yellow]•[/] {item}")
-        console.print(
-            f"  [dim]Re-run with[/] [bold]/scan {target} --engine --include-low-confidence[/] "
-            "[dim]to scan these too.[/]"
-        )
-
-    print_info("Findings are already in memory — use /findings to review.")
-    return True
 
 
 def handle_fast_scan(args: list[str], client: "APIClient") -> None:
@@ -497,8 +383,8 @@ def handle_fast_scan(args: list[str], client: "APIClient") -> None:
     + CNAMEs -> classify CDN-edge vs origin IPs -> httpx live-probe -> nmap
     deep scan (service + OS detection, tuned min-rate, top ports) on origin
     IPs, a light 80/443 check on CDN-fronted IPs -> dangling-CNAME takeover
-    check. Narrower and faster than /scan --engine (the full BFS breadth
-    engine) — still passive/direct against the target's own DNS/TLS/IP
+    check. Narrower and faster than /scan (the full investigation loop) —
+    still passive/direct against the target's own DNS/TLS/IP
     surface, nothing else. `--engine` is accepted for consistency with
     /scan's flag but this command is inherently engine-only, no LLM mode
     exists for it.
@@ -521,8 +407,102 @@ def handle_fast_scan(args: list[str], client: "APIClient") -> None:
     _run_fast_scan(client, target)
 
 
+def handle_jobs(args: list[str], client: "APIClient") -> None:
+    """List durable jobs for the active engagement: /jobs [status]."""
+    from cli.harness import get_runtime
+
+    runtime = get_runtime(client)
+    if not runtime.active_engagement_id:
+        print_error("No engagement bound.")
+        return
+    status = args[0].lower() if args else ""
+    try:
+        jobs = runtime.list_jobs(status=status)
+    except Exception as exc:
+        print_error(_api_error_text(exc))
+        return
+    if not jobs:
+        print_info("No jobs for this engagement" + (f" with status={status}." if status else "."))
+        return
+    for job in jobs:
+        job_id = str(job.get("job_id") or "?")
+        kind = str(job.get("kind") or "job")
+        state = str(job.get("status") or "unknown")
+        progress = str(job.get("progress") or "").strip()
+        print_info(f"{job_id}  {kind}  {state}" + (f" — {progress}" if progress else ""))
+
+
+def handle_job(args: list[str], client: "APIClient") -> None:
+    """Show one job's current state: /job <job_id>."""
+    if not args:
+        print_info("Usage: /job <job_id>")
+        return
+    from cli.harness import get_runtime
+
+    try:
+        job = get_runtime(client).get_job(args[0])
+    except Exception as exc:
+        print_error(_api_error_text(exc))
+        return
+    print_info(
+        f"{job.get('job_id', args[0])}  {job.get('kind', 'job')}  "
+        f"{job.get('status', 'unknown')} — {job.get('progress', '')}"
+    )
+    for line in (job.get("results_log") or [])[-10:]:
+        console.print(f"  [green]{line}[/]")
+    if job.get("error"):
+        print_error(str(job["error"]))
+
+
+def handle_cancel(args: list[str], client: "APIClient") -> None:
+    """Cancel one job while preserving evidence gathered so far."""
+    from cli.harness import get_runtime
+
+    runtime = get_runtime(client)
+    try:
+        if args:
+            job = runtime.cancel_job(args[0])
+        else:
+            job = runtime.cancel_investigation()
+    except Exception as exc:
+        print_error(_api_error_text(exc))
+        return
+    if job:
+        print_success(
+            f"Cancelled job {job.get('job_id', args[0] if args else '')}. "
+            "Partial evidence remains saved."
+        )
+    else:
+        print_info("Investigation cancelled; there was no active capability job to stop.")
+
+
+def handle_pause(args: list[str], client: "APIClient") -> None:
+    from cli.harness import get_runtime
+
+    if get_runtime(client).pause_investigation():
+        print_success("Investigation paused. Active capability work is not cancelled.")
+    else:
+        print_info("No running investigation to pause.")
+
+
+def handle_resume(args: list[str], client: "APIClient") -> None:
+    from cli.harness import get_runtime
+
+    runtime = get_runtime(client)
+    try:
+        events = runtime.resume_investigation()
+    except Exception as exc:
+        print_error(str(exc))
+        return
+    source = "supervised" if runtime.session.investigation.driver == "supervised" else "engine"
+    _run_investigation_events(client, events, transcript=runtime.transcript, source=source)
+
+
 def _run_fast_scan(client: "APIClient", target: str) -> bool:
-    engagement_id = client.active_engagement_id
+    from cli.harness import get_runtime
+
+    runtime = get_runtime(client)
+    engagement_id = runtime.active_engagement_id
     if not engagement_id:
         print_error("No engagement bound.")
         return False
@@ -533,41 +513,19 @@ def _run_fast_scan(client: "APIClient", target: str) -> bool:
     if status.get("message"):
         print_info(status["message"])
 
-    try:
-        job = client.start_fast_scan_job(engagement_id, target)
-    except Exception as exc:
-        print_error(_api_error_text(exc))
-        return False
-
-    job_id = job.get("job_id", "")
-    print_info(f"Fast scan started (job {job_id}) on {target}.")
+    print_info(f"Fast scan starting on {target}.")
     print_info("whois -> subdomains -> TLS SANs -> resolve IPs/CNAMEs -> classify CDN vs origin -> "
                "httpx live-probe -> nmap (full on origin, light on CDN edges) -> takeover check.")
 
     polled = _poll_foreground_job(
-        client, job, label="Fast scan", spinner_text="Fast scan starting…"
+        client,
+        runtime.run_fast_scan(target),
+        label="Fast scan",
+        spinner_text="Fast scan starting…",
     )
     if polled is None:
         return False
-    job = polled
-    status_str = job.get("status", "")
-
-    if status_str == "failed":
-        print_error(f"Fast scan failed: {job.get('error', 'unknown error')}")
-        return False
-
-    if status_str == "cancelled":
-        print_success("Fast scan stopped. Partial findings are saved.")
-        print_info("Review them with /findings, or /report to export what was found so far.")
-        return False
-
-    try:
-        result = client.job_result(job_id)
-    except Exception as exc:
-        print_error(_api_error_text(exc))
-        return False
-
-    report = (result.get("result") or {})
+    report = ((polled.get("result") or {}).get("result") or {})
     subs = report.get("subdomains_found", 0)
     sans = report.get("sans_found", 0)
     ips = report.get("ips") or []
@@ -1420,6 +1378,9 @@ def _reload_backend_config(client: "APIClient") -> bool:
 
 
 def handle_status(args: list[str], client: "APIClient") -> None:
+    from cli.harness import get_runtime
+
+    runtime = get_runtime(client)
     # Auto-reload backend config first so status is always fresh
     _reload_backend_config(client)
 
@@ -1431,7 +1392,7 @@ def handle_status(args: list[str], client: "APIClient") -> None:
 
     print_info(f"Backend: {backend_status}")
     print_info(f"API URL:  {client.base_url}")
-    print_info(f"Details:  {get_detail_mode()}")
+    print_info(f"Details:  {runtime.transcript.detail_mode}")
 
     active = client.active_engagement_id
     if active:
@@ -1462,7 +1423,7 @@ def handle_status(args: list[str], client: "APIClient") -> None:
         print_info(f"Tools:         {data.get('tools_available', 0)} available")
     except Exception:
         pass
-    recent = tool_transcript.recent(1)
+    recent = runtime.transcript.recent(1)
     if recent:
         last = recent[-1]
         print_info(f"Last tool: #{last.id} {last.tool_name} ({last.status_text})")
@@ -1500,8 +1461,10 @@ def handle_config(args: list[str], client: "APIClient") -> None:
 
 
 def handle_reset(args: list[str], client: "APIClient") -> None:
-    client.reset_conversation()
-    tool_transcript.clear()
+    from cli.harness import get_runtime
+
+    runtime = get_runtime(client)
+    runtime.reset_conversation()
     print_success("Conversation cleared. Next prompt starts a fresh agent thread.")
 
 
@@ -1517,14 +1480,17 @@ def handle_exit(args: list[str], client: "APIClient") -> None:
 
 
 def handle_details(args: list[str], client: "APIClient") -> None:
+    from cli.harness import get_runtime
+
+    transcript = get_runtime(client).transcript
     if args:
         try:
-            mode = set_detail_mode(args[0].lower())
+            mode = transcript.set_detail_mode(args[0].lower())
         except ValueError as exc:
             print_error(str(exc))
             return
     else:
-        mode = cycle_detail_mode()
+        mode = transcript.cycle_detail_mode()
     print_success(f"Tool detail mode: {mode}")
 
 
@@ -1540,14 +1506,17 @@ def _read_artifact_text(client: "APIClient", engagement_id: str, path: str) -> s
 
 
 def handle_tool(args: list[str], client: "APIClient") -> None:
+    from cli.harness import get_runtime
+
+    transcript = get_runtime(client).transcript
     if not args:
-        print_tool_history()
+        print_tool_history(transcript)
         return
 
-    rec = tool_transcript.get(args[0])
+    rec = transcript.get(args[0])
     if rec is None:
         print_error(f"No tool call found for {args[0]}.")
-        print_tool_history()
+        print_tool_history(transcript)
         return
 
     engagement_id = client.active_engagement_id
@@ -1566,8 +1535,10 @@ def handle_chat(args: list[str], client: "APIClient") -> None:
     CLI's own Runner (cli/agent/loop.py) now — there is no separate
     server-side thread to fetch, so this reflects exactly what your next
     prompt will see as context, no more and no less."""
-    runner = getattr(client, "agent_runner", None)
-    if runner is None or not runner.messages:
+    from cli.harness import get_runtime
+
+    messages = get_runtime(client).conversation_messages()
+    if not messages:
         print_info("No conversation yet in this session. Send a prompt first.")
         return
     limit = 12
@@ -1577,7 +1548,7 @@ def handle_chat(args: list[str], client: "APIClient") -> None:
         except ValueError:
             print_error("Usage: /chat [message-count]")
             return
-    shown = [m for m in runner.messages if m.get("role") in ("user", "assistant") and m.get("content")]
+    shown = [m for m in messages if m.get("role") in ("user", "assistant") and m.get("content")]
     print_chat_history(shown, limit=limit)
 
 
@@ -1739,21 +1710,15 @@ def handle_profile(args: list[str], client: "APIClient") -> None:
         print_error(_api_error_text(exc))
 
 
-def _reset_agent_runner(client: "APIClient") -> None:
-    """Drop the cached Runner so the next prompt rebuilds it with the active
-    agent's system-prompt overlay, tool scope, and model — a mode switch starts
-    a fresh conversation so the mode fully applies."""
-    if getattr(client, "agent_runner", None) is not None:
-        client.agent_runner = None
-
-
 def handle_agent(args: list[str], client: "APIClient") -> None:
     """Prompt-defined flows/modes (no code): /agent (list) · /agent <name> (switch) ·
     /agent default (reset to full catalog). Define agents in .osprey/agents/<name>.md."""
     from cli.agent.flows import load_agents
+    from cli.harness import get_runtime
 
+    runtime = get_runtime(client)
     agents = load_agents()
-    active = getattr(client, "active_agent", None)
+    active = runtime.active_agent
     active_name = active.name if active is not None else "default"
 
     if not args or args[0].lower() == "list":
@@ -1772,8 +1737,7 @@ def handle_agent(args: list[str], client: "APIClient") -> None:
 
     name = args[0].strip().lower()
     if name in ("default", "none", "reset"):
-        client.active_agent = None
-        _reset_agent_runner(client)
+        runtime.set_agent(None)
         print_success("Switched to the default agent (full catalog). Fresh conversation.")
         return
 
@@ -1781,8 +1745,7 @@ def handle_agent(args: list[str], client: "APIClient") -> None:
     if agent is None:
         print_error(f"No agent '{name}'. Run /agent to list, or create .osprey/agents/{name}.md")
         return
-    client.active_agent = agent
-    _reset_agent_runner(client)
+    runtime.set_agent(agent)
     scope = ""
     if agent.allow_tools or agent.deny_tools:
         scope = f" — tools allow={agent.allow_tools or 'all'}, deny={agent.deny_tools or 'none'}"
@@ -1799,6 +1762,11 @@ SLASH_COMMANDS: dict[str, tuple[str, "callable"]] = {
     "/model": ("Show active model, or `/model reload` to re-read .env in place", handle_model),
     "/scan": ("Bind target + run full agent scan", handle_scan),
     "/fast-scan": ("Deterministic no-LLM scan: whois+subs+SANs+IPs+CDN-classify+httpx+nmap+takeover", handle_fast_scan),
+    "/jobs": ("List durable jobs for the active engagement", handle_jobs),
+    "/job": ("Show one job's current state and recent log", handle_job),
+    "/pause": ("Pause deterministic investigation scheduling", handle_pause),
+    "/resume": ("Resume a paused deterministic investigation", handle_resume),
+    "/cancel": ("Cancel the active investigation or a named job", handle_cancel),
     "/engage": ("Manage engagements", handle_engagements),
     "/findings": ("Show findings", handle_findings),
     "/finding": ("Act on one finding by id (fp <id> [reason] | reverify <id>)", handle_finding),
@@ -1819,7 +1787,7 @@ SLASH_COMMANDS: dict[str, tuple[str, "callable"]] = {
     "/report": ("Write a Markdown recon report to ./reports/", handle_report),
     "/tool": ("Show or expand tool-call output", handle_tool),
     "/output": ("Alias for /tool", handle_tool),
-    "/chat": ("Show Commander chat history", handle_chat),
+    "/chat": ("Show this CLI session's conversation", handle_chat),
     "/details": ("Set live tool detail level", handle_details),
     "/status": ("Session status", handle_status),
     "/skill": ("Review/approve LLM-proposed learned skills", handle_skill),

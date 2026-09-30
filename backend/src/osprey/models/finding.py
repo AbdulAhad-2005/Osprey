@@ -38,7 +38,7 @@ class FindingRow(Base):
     )
 
     id: Mapped[str] = mapped_column(String(12), primary_key=True)
-    engagement_id: Mapped[str] = mapped_column(String(12), nullable=False, default="", index=True)
+    engagement_id: Mapped[str] = mapped_column(String(32), nullable=False, default="", index=True)
     run_id: Mapped[str] = mapped_column(String(12), nullable=False, default="", index=True)
     phase: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     finding_type: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -94,7 +94,7 @@ class FindingOccurrenceRow(Base):
     finding_id: Mapped[str] = mapped_column(
         String(12), ForeignKey("findings.id", ondelete="CASCADE"), nullable=False
     )
-    engagement_id: Mapped[str] = mapped_column(String(12), nullable=False, default="")
+    engagement_id: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     run_id: Mapped[str] = mapped_column(String(12), nullable=False, default="")
     source_tool: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     phase: Mapped[str] = mapped_column(String(64), nullable=False, default="")
@@ -114,7 +114,7 @@ class AssetNodeRow(Base):
         Index("ix_asset_nodes_engagement_run", "engagement_id", "run_id"),
     )
 
-    engagement_id: Mapped[str] = mapped_column(String(12), primary_key=True, default="")
+    engagement_id: Mapped[str] = mapped_column(String(32), primary_key=True, default="")
     id: Mapped[str] = mapped_column(String(512), primary_key=True)  # asset_type:label
     asset_type: Mapped[str] = mapped_column(String(64), nullable=False)
     label: Mapped[str] = mapped_column(String(1024), nullable=False)
@@ -165,7 +165,7 @@ class AssetEdgeRow(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    engagement_id: Mapped[str] = mapped_column(String(12), nullable=False, default="")
+    engagement_id: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     source_id: Mapped[str] = mapped_column(String(512), nullable=False)
     target_id: Mapped[str] = mapped_column(String(512), nullable=False)
     relationship: Mapped[str] = mapped_column(String(64), nullable=False)

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 from typing import TYPE_CHECKING
@@ -11,9 +10,10 @@ if TYPE_CHECKING:
 from rich.markdown import Markdown
 from rich.markup import escape
 
-from cli.agent.context import build_system_prompt, summarize_last_action
-from cli.agent.llm import CLIModelConfig, LLMNotConfiguredError
-from cli.agent.loop import Runner, tool_result_failed
+from cli.agent.llm import LLMNotConfiguredError
+from cli.agent.loop import tool_result_failed
+from cli.commands.scan_shared import _api_error_text, _bind_engagement, _run_engine_scan
+from cli.harness import get_runtime
 from cli.ui.display import (
     console,
     print_error,
@@ -23,155 +23,102 @@ from cli.ui.display import (
 )
 
 
-def _get_runner(client: "APIClient") -> Runner | None:
-    """One Runner per CLI session, lazily created and cached on the client —
-    so a follow-up prompt keeps full conversation context, same as any real
-    agent CLI, instead of starting fresh every message."""
-    existing: Runner | None = getattr(client, "agent_runner", None)
-    if existing is not None:
-        return existing
-    try:
-        config = CLIModelConfig.from_env()
-    except LLMNotConfiguredError as exc:
-        print_error(str(exc))
-        return None
-    # Apply the active prompt-defined agent/flow, if any: its optional model
-    # override and its tool scope. Switching agents resets client.agent_runner
-    # (see /agent), so the next call here rebuilds with the new mode.
-    agent = getattr(client, "active_agent", None)
-    tool_filter = None
-    if agent is not None:
-        if agent.model:
-            from dataclasses import replace
-            config = replace(config, model=agent.model)
-        tool_filter = agent.tool_allowed
-    runner = Runner(
-        config=config,
-        api_base_url=client.base_url,
-        engagement_id=client.active_engagement_id or "",
-        target=client.active_target or "",
-        tool_filter=tool_filter,
-        agent_prompt=(agent.prompt if agent is not None else ""),
-    )
-    client.agent_runner = runner
-    return runner
-
-
-def _get_loop(client: "APIClient") -> asyncio.AbstractEventLoop:
-    """One event loop for the whole CLI session, not a fresh one per prompt.
-
-    litellm keeps process-wide async singletons (its LoggingWorker spawns a
-    background task bound to whichever loop is running when it's first
-    touched). A new loop per prompt orphans that task on the previous,
-    now-closed loop the moment a second prompt runs — surfacing as "Task was
-    destroyed but it is pending!" and, worse, a real asyncio.CancelledError
-    raised somewhere inside that broken state and mistaken for a genuine
-    Ctrl+C by this loop's own cancellation handling. One loop for the session
-    (closed only when the CLI itself exits) is the correct lifecycle for a
-    long-running interactive process — not a special case for litellm.
-    """
-    loop: asyncio.AbstractEventLoop | None = getattr(client, "agent_loop", None)
-    if loop is None or loop.is_closed():
-        loop = asyncio.new_event_loop()
-        client.agent_loop = loop
-    return loop
-
-
 def handle_prompt(prompt: str, client: "APIClient") -> bool:
     """Drive the CLI's own local agent loop and render its output live.
 
-    The `Runner` and its conversation history, and the event loop itself,
-    persist on `client` across prompts. Ctrl+C cancels the in-flight task
+    The `Runner`, its conversation history, and the event loop persist on the
+    CLI's `HarnessRuntime` across prompts. Ctrl+C cancels the in-flight task
     cleanly via a real `asyncio.CancelledError` — not by abandoning an HTTP
     stream and hoping something notices.
     """
     if not prompt.strip():
         return True
 
-    runner = _get_runner(client)
-    if runner is None:
-        return False
-
-    loop = _get_loop(client)
-    asyncio.set_event_loop(loop)
-    task = loop.create_task(_drive(prompt, client, runner))
+    runtime = get_runtime(client)
+    renderer = _PromptRenderer(runtime)
     try:
-        return bool(loop.run_until_complete(task))
-    except KeyboardInterrupt:
-        task.cancel()
-        try:
-            loop.run_until_complete(task)
-        except asyncio.CancelledError:
-            pass
-        return False
+        return runtime.drive_prompt(prompt, renderer.render)
+    except LLMNotConfiguredError as exc:
+        return _offer_no_llm_fallback(str(exc), prompt.strip(), client)
     except Exception as exc:  # noqa: BLE001 — final safety net: nothing that
         # can go wrong mid-turn (a bug in tool dispatch, an event-rendering
         # error, an LLM exception type friendly_llm_error doesn't recognize)
         # should ever take down the whole interactive session.
         print_error(f"Turn failed: {exc}")
         return False
-
-
-async def _drive(prompt: str, client: "APIClient", runner: Runner) -> bool:
-    # Rebuilt every turn, not just the first (plans/harness/07-context-packet.md
-    # Step 2) — the packet inside it is a fresh read of the world model each
-    # time, so state discovered mid-session (a new host, a hot priority item,
-    # an attack path advancing) is never stuck at turn-1's snapshot, and
-    # compaction can never lose it since it's re-injected fresh regardless of
-    # what conversation history survives. Cheap: it's bounded store queries,
-    # not re-derivation from scratch.
-    agent = getattr(client, "active_agent", None)
-    system_prompt = await build_system_prompt(
-        client.active_engagement_id or "",
-        tool_budget_active=runner.config.tool_schema_budget_tokens > 0,
-        agent_prompt=(agent.prompt if agent is not None else ""),
-        last_action=summarize_last_action(runner.messages),
-    )
-
-    # The one genuinely silent gap in a turn — the model call itself (seconds,
-    # sometimes 10+ with complete()'s own retry-with-backoff) had zero visible
-    # feedback before this: the loop yields "llm_call_start" right before each
-    # call and nothing else until it returns, so from here it either looked
-    # frozen or, worse, looked like the previous line was the final answer.
-    # Owned entirely here (not in cli/agent/loop.py) — that module stays
-    # UI-agnostic, this is the one place that already renders everything.
-    thinking = console.status("[dim]Thinking…[/]", spinner="dots")
-    spinner_on = False
-    succeeded = True
-    try:
-        async for event in runner.run(prompt, system_prompt=system_prompt):
-            if event.type == "llm_call_start":
-                if not spinner_on:
-                    thinking.start()
-                    spinner_on = True
-                thinking.update("[dim]Thinking…[/]")
-                continue
-            if event.type == "llm_still_waiting":
-                # A genuinely overloaded provider can take several minutes
-                # (complete()'s own retry-with-backoff) — without this, a static
-                # "Thinking…" spinner for that whole stretch is indistinguishable
-                # from a hung CLI. Update the same spinner in place with elapsed
-                # time so it's clear this is a slow provider, not a dead process.
-                elapsed = int(event.data.get("elapsed_seconds") or 0)
-                if spinner_on:
-                    thinking.update(f"[dim]Still waiting on the LLM provider… ({elapsed}s)[/]")
-                continue
-            if event.type == "error":
-                succeeded = False
-            elif event.type == "done" and str(event.data.get("content") or "").startswith(
-                "(stopped:"
-            ):
-                succeeded = False
-            if spinner_on:
-                thinking.stop()
-                spinner_on = False
-            _render(event)
-    except asyncio.CancelledError:
-        raise
     finally:
-        if spinner_on:
-            thinking.stop()
-    return succeeded
+        renderer.close()
+
+
+def _offer_no_llm_fallback(error_text: str, prompt: str, client: "APIClient") -> bool:
+    """No LLM configured means the free ReAct loop can't run at all — rather
+    than just error out, offer the one thing that still works without a
+    model: the deterministic opportunity engine (``/scan --engine``'s driver)
+    against ``prompt`` treated as a target. Declining leaves the original
+    error as the only output, unchanged from before this existed.
+    """
+    print_error(error_text)
+    try:
+        answer = input(
+            f'Run the no-LLM deterministic engine against "{prompt}" as a target instead? [y/N]: '
+        ).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return False
+    if answer not in ("y", "yes"):
+        return False
+
+    try:
+        fresh_answer = input(
+            "Start a fresh engagement, or continue an existing one for this target if any? [fresh/continue] (continue): "
+        ).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return False
+    force_new = fresh_answer in ("f", "fresh", "new")
+
+    try:
+        data = client.compile_engagement_for_target(prompt, force_new=force_new)
+        _bind_engagement(client, data)
+    except Exception as exc:  # noqa: BLE001 — this is a fallback path; report and stop, don't chain further errors
+        print_error(_api_error_text(exc))
+        return False
+
+    return _run_engine_scan(client, prompt)
+
+
+class _PromptRenderer:
+    def __init__(self, runtime) -> None:  # noqa: ANN001
+        self.runtime = runtime
+        self.thinking = console.status("[dim]Thinking…[/]", spinner="dots")
+        self.spinner_on = False
+
+    def render(self, event) -> None:  # noqa: ANN001
+        try:
+            if event.type == "llm_call_start":
+                if not self.spinner_on:
+                    self.thinking.start()
+                    self.spinner_on = True
+                self.thinking.update("[dim]Thinking…[/]")
+                return
+            if event.type == "llm_still_waiting":
+                elapsed = int(event.data.get("elapsed_seconds") or 0)
+                if self.spinner_on:
+                    self.thinking.update(
+                        f"[dim]Still waiting on the LLM provider… ({elapsed}s)[/]"
+                    )
+                return
+            if self.spinner_on:
+                self.thinking.stop()
+                self.spinner_on = False
+            _render(event, self.runtime.transcript)
+        finally:
+            if event.type in {"done", "error", "cancelled"} and self.spinner_on:
+                self.thinking.stop()
+                self.spinner_on = False
+
+    def close(self) -> None:
+        if self.spinner_on:
+            self.thinking.stop()
+            self.spinner_on = False
 
 
 _BOILERPLATE_LINE_RE = re.compile(r"^(#{1,6}\s|target:|engagement_id:|run_id:)", re.I)
@@ -203,7 +150,7 @@ def _preview_lines(result: str, *, limit: int) -> list[str]:
     return [ln for ln in lines if not _BOILERPLATE_LINE_RE.match(ln)][:limit]
 
 
-def _render(event) -> None:  # noqa: ANN001 — cli.agent.loop.Event, avoid import cycle noise
+def _render(event, transcript) -> None:  # noqa: ANN001 — event/transcript runtime types
     if event.type == "thinking":
         content = (event.data.get("content") or "").strip()
         if content:
@@ -217,7 +164,12 @@ def _render(event) -> None:  # noqa: ANN001 — cli.agent.loop.Event, avoid impo
             args = json.loads(event.data.get("arguments") or "{}")
         except (json.JSONDecodeError, ValueError):
             args = {}
-        print_tool_start_live(name, args, {"tool_call_id": event.data.get("tool_call_id", "")})
+        print_tool_start_live(
+            name,
+            args,
+            {"tool_call_id": event.data.get("tool_call_id", "")},
+            transcript=transcript,
+        )
     elif event.type == "tool_end":
         name = event.data.get("tool_name", "?")
         result = event.data.get("result", "") or ""
@@ -234,6 +186,7 @@ def _render(event) -> None:  # noqa: ANN001 — cli.agent.loop.Event, avoid impo
                 "display_preview": _preview_lines(result, limit=3),
                 "tool_call_id": event.data.get("tool_call_id", ""),
             },
+            transcript=transcript,
         )
     elif event.type == "assistant_text":
         pass  # rendered once via "done" below to avoid double-printing

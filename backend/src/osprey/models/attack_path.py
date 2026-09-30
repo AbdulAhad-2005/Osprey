@@ -18,7 +18,7 @@ class AttackPathRow(Base):
     )
 
     id: Mapped[str] = mapped_column(String(12), primary_key=True)
-    engagement_id: Mapped[str] = mapped_column(String(12), nullable=False, default="")
+    engagement_id: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     title: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     steps_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="hypothesized")

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from datetime import datetime, timezone
 from typing import Any
 
 import orjson
 from sqlalchemy import delete as sqlalchemy_delete
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from osprey.db.session import SessionLocal
@@ -39,6 +42,98 @@ from osprey.schemas.engagement import (
 )
 
 logger = logging.getLogger(__name__)
+
+_TARGET_SLUG_RE = re.compile(r"[^a-z0-9]+")
+_TRAILING_DIGITS_RE = re.compile(r"^(?P<slug>.+?)(?P<n>\d+)$")
+
+
+def _slugify_target(target: str) -> str:
+    """Turn a target into a short, memorable id stem: "geo.tv" -> "geo",
+    "www.samaa.tv" -> "samaa", "10.0.0.5" -> "10005". Never empty."""
+    t = (target or "").strip().lower()
+    t = re.sub(r"^[a-z][a-z0-9+.-]*://", "", t)  # scheme
+    t = t.split("/", 1)[0].split("?", 1)[0]  # path/query
+    t = t.split(":", 1)[0]  # port
+    labels = [p for p in t.split(".") if p]
+    if labels and labels[0] == "www" and len(labels) > 1:
+        labels = labels[1:]
+    label = labels[0] if labels else t
+    slug = _TARGET_SLUG_RE.sub("", label)
+    if not slug:
+        slug = _TARGET_SLUG_RE.sub("", t)
+    return (slug or "engagement")[:16]
+
+
+def _next_engagement_id(db: Session, slug: str) -> str:
+    """Next free "<slug><n>" against what's actually persisted, so numbering
+    survives a backend restart instead of starting back at 1 and colliding."""
+    rows = db.scalars(
+        select(EngagementRow.id).where(EngagementRow.id.like(f"{slug}%"))
+    ).all()
+    highest = 0
+    for existing_id in rows:
+        m = _TRAILING_DIGITS_RE.match(existing_id)
+        if m and m.group("slug") == slug:
+            highest = max(highest, int(m.group("n")))
+    return f"{slug}{highest + 1}"
+
+
+def ensure_target_graph_seed(engagement: Engagement) -> None:
+    """Give every bindable engagement a typed graph anchor at creation time.
+
+    Investigation planning consumes graph identities and must not rediscover or
+    reparse targets inside its control loop.  Classification remains in the
+    existing single target-analysis module; this lifecycle hook only records
+    its result.  Unsupported aggregate scopes stay unseeded and are reported
+    as blocked rather than being mislabeled as hosts.
+    """
+    try:
+        from osprey.schemas.engagement_graph import AssetType
+        from osprey.services.engagement_graph import get_engagement_graph
+        from osprey.services.target_analysis import classify_target
+        from osprey.services.target_utils import registrable_apex
+
+        spec = classify_target(engagement.target)
+        graph = get_engagement_graph()
+        if spec.kind in {"ip", "ipv6"}:
+            graph.ensure_node(
+                engagement_id=engagement.id,
+                asset_type=AssetType.IP,
+                label=spec.engagement_target or spec.host or engagement.target,
+                metadata={"role": "engagement_seed"},
+            )
+            return
+        if spec.kind not in {"domain", "url", "host_port"}:
+            return
+        host = spec.engagement_target or spec.host
+        normalized = classify_target(host)
+        if normalized.kind in {"ip", "ipv6"}:
+            graph.ensure_node(
+                engagement_id=engagement.id,
+                asset_type=AssetType.IP,
+                label=host,
+                metadata={"role": "engagement_seed"},
+            )
+            return
+        apex = registrable_apex(host)
+        graph.ensure_node(
+            engagement_id=engagement.id,
+            asset_type=AssetType.DOMAIN,
+            label=apex,
+            metadata={"role": "engagement_seed", "depth": 0},
+        )
+        if host.lower() != apex.lower():
+            graph.operator_link(
+                engagement_id=engagement.id,
+                source_type=AssetType.SUBDOMAIN,
+                source_label=host,
+                target_type=AssetType.DOMAIN,
+                target_label=apex,
+                relationship="subdomain_of",
+                source_tool="engagement_seed",
+            )
+    except Exception:
+        logger.exception("Could not seed engagement graph for %s", engagement.id)
 
 
 def _encode_roe(roe: RulesOfEngagement) -> str:
@@ -99,26 +194,42 @@ class EngagementStore:
             name=request.name or f"engagement-{request.target}",
             rules_of_engagement=request.rules_of_engagement or RulesOfEngagement(),
         )
-        row = EngagementRow(
-            id=engagement.id,
-            target=engagement.target,
-            name=engagement.name,
-            status=engagement.status,
-            rules_of_engagement_json=_encode_roe(engagement.rules_of_engagement),
-            findings_count=engagement.findings_count,
-            tools_executed=engagement.tools_executed,
-            created_at=engagement.created_at,
-            updated_at=engagement.updated_at,
-        )
+        slug = _slugify_target(request.target)
         with self._lock:
             db = self._session()
             try:
-                db.add(row)
-                db.commit()
-                db.refresh(row)
-                return _row_to_engagement(row)
+                # Human-readable id ("geo1", "geo2", ...) instead of an opaque
+                # uuid blob — retried a few times against a rare concurrent-
+                # create race on the same target (IntegrityError on the
+                # primary key), never against any other failure.
+                for _attempt in range(5):
+                    engagement.id = _next_engagement_id(db, slug)
+                    row = EngagementRow(
+                        id=engagement.id,
+                        target=engagement.target,
+                        name=engagement.name,
+                        status=engagement.status,
+                        rules_of_engagement_json=_encode_roe(engagement.rules_of_engagement),
+                        findings_count=engagement.findings_count,
+                        tools_executed=engagement.tools_executed,
+                        created_at=engagement.created_at,
+                        updated_at=engagement.updated_at,
+                    )
+                    db.add(row)
+                    try:
+                        db.commit()
+                    except IntegrityError:
+                        db.rollback()
+                        continue
+                    db.refresh(row)
+                    created = _row_to_engagement(row)
+                    break
+                else:
+                    raise RuntimeError(f"Could not allocate a unique engagement id for slug '{slug}'")
             finally:
                 db.close()
+        ensure_target_graph_seed(created)
+        return created
 
     def get(self, engagement_id: str) -> Engagement | None:
         with self._lock:

@@ -43,7 +43,6 @@ from osprey.services.llm_service import (
 )
 from osprey.services.skills_loader import (
     active_phase_skill_digest,
-    load_skills_for_agent,
 )
 from osprey.services.summary_agent import (
     COMPRESS_THRESHOLD,
@@ -67,12 +66,9 @@ _UNAVAILABLE = frozenset({"rustscan_fast_scan"})
 # agent that stumbles onto something outside its lane can still act on it);
 # what actually differs per phase is which skills/<phase>/ digest gets loaded
 # into the system prompt. Derived from AGENT_ROLES (the single source of
-# truth for "what phases exist") plus "commander" — the root agent isn't a
-# spawnable *role* (it's the one PhaseAgent every engagement always has), but
-# it is a valid *phase* for this same run() method. Two independently
-# hardcoded copies of this set already drifted out of sync once (found via
-# the active-directory spawn test) — don't reintroduce a second copy.
-_AGENT_PHASES = frozenset(AGENT_ROLES) | {"commander"}
+# truth for "what phases exist"). Keep backend agents explicit and scoped;
+# root-harness orchestration belongs to the CLI driver.
+_AGENT_PHASES = frozenset(AGENT_ROLES)
 
 
 def _max_parallel_tool_calls() -> int:
@@ -183,55 +179,6 @@ _PLATFORM_SHELL_TOOL_SCHEMA: dict[str, Any] = {
     },
 }
 
-# Commander-only control tool: the ONE standardized way a full engagement runs.
-# Deliberately synchronous — see commander_pipeline.py's module docstring for
-# why a background/detached version was tried and replaced.
-_COMMANDER_CONTROL_SCHEMAS: list[dict[str, Any]] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "run_pipeline",
-            "description": (
-                "Run the full standardized conductor pipeline (recon -> vuln -> exploit, "
-                "evidence-triggered, with loop-back) for the bound target, IN THIS TURN. "
-                "This call blocks and streams every step live until the engagement reaches "
-                "fixpoint or is interrupted — it is the ONE way to run a full pentest, "
-                "identical to how an external harness runs its own subagents through the "
-                "same conductor. Do not call other typed tools in the same turn as this "
-                "one; wait for it to return, then continue based on its result."
-            ),
-            "parameters": {"type": "object", "properties": {}},
-        },
-    },
-]
-
-_COMMANDER_SYSTEM = """You are the Commander of an autonomous pentest platform — an elite operator, \
-not a phase machine. A user talks to you in free form, exactly like a coding agent.
-
-WHAT YOU OWN:
-- The full tool catalog (any registered tool) for narrow, targeted work.
-- run_pipeline: the ONE standardized way to run a complete engagement.
-
-HOW YOU DECIDE each message:
-- Just answer  -> reply in plain text (a question, a plan, a summary).
-- One probe    -> call a single tool and interpret the result.
-- Full pentest -> call run_pipeline and let it run. It IS the standardized
-  recon->vuln->exploit sequence — the same one an external harness runs via its
-  own subagents through this same conductor. Watch it work, live, in this turn.
-  Do NOT also call typed recon/vuln/network tools yourself while it runs — that
-  duplicates its work. The user can interrupt at any time if it should stop.
-- Targeted parallel work -> spawn_agent for one explicit, narrow slice the user
-  asked for (a sister domain, one host) — never as your own invented substitute
-  for a full pentest.
-
-RULES:
-- The engagement/target is already bound for you when the user named one — never
-  demand a set_target ceremony. If no target is bound and the user hasn't named one,
-  ask once for a domain/IP/CIDR/URL.
-- Ground truth is the engagement graph + findings, not chat memory. Skills sharpen
-  judgment; evidence decides the next step.
-- Be honest about what is proven vs hypothesised. Stop and summarise when the goal is met."""
-
 _PHASE_SYSTEM = """You are a phase specialist in an autonomous pentest platform — not a script runner.
 
 HOW YOU THINK:
@@ -272,7 +219,6 @@ class PhaseAgent:
         conversation_history: list[dict[str, Any]] | None = None,
         max_turns: int | None = None,
         handoff: PhaseHandoff | None = None,
-        commander_note: str = "",
         on_event: AgentEventHandler | None = None,
     ) -> PhaseAgentResult:
         if phase not in _AGENT_PHASES:
@@ -318,9 +264,6 @@ class PhaseAgent:
             tools_schema.append(_READ_SKILL_TOOL_SCHEMA)
             tools_schema.append(_PLATFORM_SCRIPT_TOOL_SCHEMA)
             tools_schema.append(_PLATFORM_SHELL_TOOL_SCHEMA)
-            # The Commander additionally owns the conductor as a background job.
-            if phase == "commander":
-                tools_schema.extend(_COMMANDER_CONTROL_SCHEMAS)
         else:
             tools_schema = []
 
@@ -333,7 +276,6 @@ class PhaseAgent:
                 resolved_ip=resolved_ip,
                 assist_state=assist_state,
                 user_goal=prompt,
-                commander_note=commander_note,
                 turn=turn,
                 max_turns=turns,
             )
@@ -361,10 +303,7 @@ class PhaseAgent:
         if conversation_history:
             messages.extend(trim_history(conversation_history))
 
-        user_content = prompt
-        if commander_note:
-            user_content = f"{prompt}\n\nCOMMANDER NOTE:\n{commander_note}"
-        messages.append({"role": "user", "content": user_content})
+        messages.append({"role": "user", "content": prompt})
 
         async def emit(event: str, data: dict[str, Any]) -> None:
             if on_event:
@@ -537,23 +476,6 @@ class PhaseAgent:
                         "summary": summary,
                     }
 
-                # run_pipeline must never run alongside other tool calls in the same
-                # batched turn — that would let the model freelance other typed
-                # tools "at the same time" as the one call meant to cover the whole
-                # engagement, silently reproducing the exact duplicated-work problem
-                # this design exists to eliminate. Every originally-requested
-                # tool_call_id still gets a response (API contract); the extras just
-                # get told why they were skipped instead of running.
-                skipped_calls: list[dict[str, Any]] = []
-                if len(tool_calls) > 1:
-                    pipeline_call = next(
-                        (tc for tc in tool_calls if tc["function"]["name"].split(":")[-1].strip() == "run_pipeline"),
-                        None,
-                    )
-                    if pipeline_call is not None:
-                        skipped_calls = [tc for tc in tool_calls if tc is not pipeline_call]
-                        tool_calls = [pipeline_call]
-
                 if len(tool_calls) == 1:
                     results = [await _handle_tool_call(tool_calls[0])]
                 else:
@@ -564,16 +486,6 @@ class PhaseAgent:
                             return await _handle_tool_call(tc)
 
                     results = await asyncio.gather(*(_bounded(tc) for tc in tool_calls))
-
-                for tc in skipped_calls:
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc["id"],
-                        "content": (
-                            "SKIPPED: run_pipeline was called in the same turn — it already "
-                            "covers the full engagement. Wait for it to return, then continue."
-                        ),
-                    })
 
                 for res in results:
                     if res["summary"] is not None:
@@ -689,36 +601,23 @@ def _build_phase_system_prompt(
     resolved_ip: str | None,
     assist_state: AssistState | None,
     user_goal: str,
-    commander_note: str = "",
     turn: int = 0,
     max_turns: int = 0,
 ) -> str:
-    is_commander = phase == "commander"
-    base_system = _COMMANDER_SYSTEM if is_commander else _PHASE_SYSTEM
-    sections = [base_system]
-    if not is_commander:
-        sections.append(f"ACTIVE PHASE: {phase}")
+    sections = [_PHASE_SYSTEM, f"ACTIVE PHASE: {phase}"]
 
     urgency = _turn_urgency_note(turn, max_turns)
     if urgency:
         sections.append(urgency)
 
-    if is_commander:
-        skills = load_skills_for_agent("commander")
-        if skills:
-            sections.append(f"COMMANDER SKILLS:\n{skills}")
-    else:
-        skills = active_phase_skill_digest(phase)
-        if skills:
-            sections.append(f"PHASE SKILLS:\n{skills}")
+    skills = active_phase_skill_digest(phase)
+    if skills:
+        sections.append(f"PHASE SKILLS:\n{skills}")
 
     if session_target:
         sections.append(f"TARGET: {session_target}")
     if resolved_ip:
         sections.append(f"RESOLVED_IP: {resolved_ip}")
-
-    if commander_note:
-        sections.append(f"COMMANDER CONSTRAINTS:\n{commander_note}")
 
     findings = get_findings_store().structured_summary_for_agent(
         engagement_id=engagement_id,

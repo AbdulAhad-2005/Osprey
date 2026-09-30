@@ -8,12 +8,14 @@ This guide describes the platform as it works today: how pieces connect, how too
 
 ## 1. Big picture
 
-The platform is an **AI-assisted pentest lab**, not a fixed stage machine.
+The platform is an **evidence-driven pentest harness**, not a fixed checklist.
 
-- **You / OpenCode** = the operator brain (strategy, judgment, invention).
-- **Platform** = memory, Kali tools, evidence grades, finalize gate, advisory hints.
+- **CLI/external harness** = owns the investigation lifecycle and stop decision.
+- **Deterministic driver** = baseline pentesting intelligence over typed evidence.
+- **Optional model** = judgment, ambiguity handling, invention, and deeper analysis.
+- **Backend** = memory, Kali tools, evidence grades, bounded capabilities, and audit.
 - **HexStrike-style ideas we kept**: typed tool schemas, recovery hints, optional playbooks, caching.
-- **What we intentionally kept ours**: free LLM sequencing, engagement isolation, evidence grades, hard finalize.
+- **What we intentionally kept ours**: one shared protocol, engagement isolation, evidence grades, and auditable decisions.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐

@@ -215,6 +215,8 @@ class Runner:
         allow_spawn: bool = True,
         tool_filter: "Callable[[str], bool] | None" = None,
         agent_prompt: str = "",
+        tool_gateway: "platform_tools.EmbeddedToolGateway | None" = None,
+        worker_factory: "Callable[..., Runner] | None" = None,
     ) -> None:
         self.config = config
         self.messages: list[dict[str, Any]] = []
@@ -223,15 +225,13 @@ class Runner:
         # = full catalog. Applied to what the model SEES and enforced on dispatch,
         # and inherited by spawned workers so a mode is consistent end to end.
         self._tool_filter = tool_filter
-        platform_tools.load_server(api_base_url)
+        self._tool_gateway = tool_gateway or platform_tools.EmbeddedToolGateway(api_base_url)
+        self._worker_factory = worker_factory
         self._engagement_id = (engagement_id or "").strip()
         self._target = (target or "").strip()
         self._agent_prompt = agent_prompt
         if self._engagement_id:
-            platform_tools.bind_session(
-                engagement_id=self._engagement_id,
-                target=self._target,
-            )
+            self._tool_gateway.bind(engagement_id=self._engagement_id, target=self._target)
         self._api_base_url = api_base_url
         # Context management (budget resolved lazily on first use — needs the
         # model's real context window from litellm). The rolling checkpoint is
@@ -260,7 +260,7 @@ class Runner:
         return self._budget
 
     def _tool_schemas(self) -> list[dict[str, Any]]:
-        schemas = platform_tools.get_tool_schemas(
+        schemas = self._tool_gateway.schemas(
             budget_tokens=self.config.tool_schema_budget_tokens
         )
         if self._tool_filter is not None:
@@ -561,7 +561,7 @@ class Runner:
                 # so keep this constant in sync with that function by hand).
                 _CLI_HISTORY_CAP_CHARS = 3000
                 cap_history = self.config.tool_schema_budget_tokens > 0
-                engagement_id = self._engagement_id or platform_tools.current_engagement_id()
+                engagement_id = self._engagement_id or self._tool_gateway.engagement_id
                 for tc, (name, result, elapsed) in zip(tool_calls, results):
                     yield Event(
                         "tool_end",
@@ -595,9 +595,9 @@ class Runner:
 
             yield Event("done", {"content": "(stopped: reached the turn limit for this prompt)"})
         except asyncio.CancelledError:
-            findings_readback = await platform_tools.call_tool(
+            findings_readback = await self._tool_gateway.call(
                 "platform_findings",
-                {"engagement_id": self._engagement_id or platform_tools.current_engagement_id()},
+                {"engagement_id": self._engagement_id or self._tool_gateway.engagement_id},
             )
             yield Event("cancelled", {"findings": findings_readback})
             raise
@@ -614,7 +614,7 @@ class Runner:
                 f"BLOCKED (mode restriction): '{name}' is not available in the current mode. "
                 "Use a tool this mode allows, or switch mode with /agent."
             )
-        return await platform_tools.call_tool(name, args)
+        return await self._tool_gateway.call(name, args)
 
     async def _worker_system_prompt(self, brief: str, scope: str, *, engagement_id: str = "") -> str:
         """A spawned worker's system prompt — plans/harness/08-skill-system-
@@ -642,10 +642,11 @@ class Runner:
             engagement_id,
             tool_budget_active=self.config.tool_schema_budget_tokens > 0,
             agent_prompt=self._agent_prompt,
+            tool_caller=self._tool_gateway.call,
         )
         query = f"{brief} {scope}".strip()
         try:
-            skills_text = await platform_tools.call_tool(
+            skills_text = await self._tool_gateway.call(
                 "platform_skills", {"query": query, "limit": 5} if query else {}
             )
         except Exception:  # noqa: BLE001 — a skills-lookup failure must never block the worker
@@ -678,14 +679,17 @@ class Runner:
                 "spawn_subagents needs 2+ genuinely independent tasks — for one "
                 "line of work, just keep going in this turn instead."
             )
+        if self._worker_factory is None:
+            return "spawn_subagents is unavailable: no harness worker manager is attached."
 
-        engagement_id = self._engagement_id or platform_tools.current_engagement_id()
+        engagement_id = self._engagement_id or self._tool_gateway.engagement_id
 
         async def _one(worker_num: int, task: dict[str, Any]) -> str:
-            worker = Runner(
-                config=self.config, api_base_url=self._api_base_url,
-                engagement_id=engagement_id, target=self._target,
-                allow_spawn=False, tool_filter=self._tool_filter,
+            worker = self._worker_factory(
+                config=self.config,
+                engagement_id=engagement_id,
+                target=self._target,
+                tool_filter=self._tool_filter,
                 agent_prompt=self._agent_prompt,
             )
             scope = task.get("scope", "")

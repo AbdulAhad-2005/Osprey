@@ -88,9 +88,12 @@ New capability = data + registration, not driver forks.
 
 ---
 
-## 4. Opt-in internal surface (Executor B)
+## 4. Explicit scoped-agent surface
 
-The built-in Commander path (`services/phase_agent.py`, `services/commander_pipeline.py`, `services/orchestrator.py`, `POST /api/v1/agent/chat[/stream]`, SSE events) is **off by default** (`enable_builtin_agent=false`). It reuses the same execution kernel. Documented here only so it is not mistaken for the default contract; prefer the MCP + HTTP surfaces above.
+`services/phase_agent.py`, `/pipeline/spawn-agent`, and `platform_spawn_agent`
+provide opt-in, scoped LLM jobs. They reuse the execution kernel but do not own
+or autonomously drive the root engagement loop. Phase readiness remains a
+read-only signal for the CLI or another external harness.
 
 ---
 

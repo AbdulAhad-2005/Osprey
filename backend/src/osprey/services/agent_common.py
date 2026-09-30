@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 import uuid
@@ -122,15 +121,6 @@ async def execute_agent_tool(
             user_goal=user_goal,
         )
 
-    # Commander-only control tool: run the ONE standardized conductor pipeline for
-    # the bound engagement, synchronously, in this turn — every event (conductor-
-    # level and each spawned phase agent's own tool calls) streams live through
-    # `on_event`, the same channel this turn's own tool_start/tool_end already
-    # use. This consumes the same conductor state as an external harness's own
-    # subagents, so the two brains cannot diverge.
-    if tool_name == "run_pipeline":
-        return await _commander_run_pipeline(engagement_id or "", run_id, on_event)
-
     args_copy = dict(tool_args)
     additional_args = str(
         args_copy.pop("additional_args", "")
@@ -217,49 +207,6 @@ def _spawn_subagent(
         True,
         None,
     )
-
-
-async def _commander_run_pipeline(
-    engagement_id: str, run_id: str, on_event: AgentEventHandler | None
-) -> tuple[str, bool, ToolExecutionResponse | None]:
-    """Handle the Commander's `run_pipeline` control tool: run the conductor to
-    fixpoint synchronously, in this turn, forwarding every event live."""
-    if not engagement_id:
-        return (
-            "run_pipeline: no engagement bound yet — name a target first "
-            "(e.g. 'pentest example.com'), then I'll run the conductor.",
-            False,
-            None,
-        )
-    from osprey.services import commander_pipeline as cp
-
-    async def _forward(event: str, data: dict[str, Any]) -> None:
-        if on_event is not None:
-            result = on_event(event, data)
-            if result is not None:
-                await result
-
-    try:
-        result = await cp.run_pipeline_foreground(engagement_id, run_id, _forward)
-    except asyncio.CancelledError:
-        return "run_pipeline: interrupted — stopped and cleaned up active agents.", False, None
-
-    if result.get("status") == "error":
-        return f"run_pipeline: {result.get('error')}", False, None
-
-    summary = result.get("summary") or {}
-    signals = summary.get("signals", {}) if isinstance(summary, dict) else {}
-    spawned = summary.get("spawned_by_phase", {}) if isinstance(summary, dict) else {}
-    lines = [
-        "Pipeline complete — recon->vuln->exploit ran to fixpoint.",
-        f"Surface discovered: subdomains={signals.get('subdomains', 0)}, "
-        f"live_hosts={signals.get('live_hosts', 0)}, services={signals.get('services', 0)}, "
-        f"technologies={signals.get('technologies', 0)}, urls={signals.get('urls', 0)}, "
-        f"vulnerabilities={signals.get('vulnerabilities', 0)}, "
-        f"credentials={signals.get('credentials', 0) + signals.get('secrets', 0)}.",
-        f"Agents spawned by phase: {spawned or '{}'}.",
-    ]
-    return "\n".join(lines), True, None
 
 
 def _read_skill_tool(tool_args: dict[str, Any]) -> tuple[str, bool, ToolExecutionResponse | None]:

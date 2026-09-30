@@ -101,11 +101,15 @@ def test_reverify_finding_downgrades_when_signal_no_longer_reproduces():
     exhibits this" looks like. Confidence must move CONFIRMED -> LIKELY, and
     a RECHECK_FAILED record must land."""
     eid = _make_engagement("reverify-fail.test")
-    obs = _record_scanner_signal(eid, target="b.reverify-fail.test", title="SQL injection")
+    real_output = "sqlmap identified the following injection point: id=1 AND SLEEP(5) -- dumped 5 rows"
+    obs = get_observation_store().record(Observation(
+        engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="b.reverify-fail.test",
+        source_tool="sqlmap_scan", details={"title": "SQL injection", "claimed_severity": "critical", "snippet": real_output},
+    ))
     result = file_finding(
         engagement_id=eid, title="SQL injection", finding_type=FindingType.VULNERABILITY,
         observation_ids=[obs.id], claim_severity=ClaimSeverity.CRITICAL,
-        evidence_records=[EvidenceRecord(kind=EvidenceRecordKind.REPRODUCTION, detail="sqlmap dumped rows")],
+        evidence_records=[EvidenceRecord(kind=EvidenceRecordKind.REPRODUCTION, detail=real_output)],
     )
     finding = result.finding
     assert finding is not None
@@ -134,11 +138,15 @@ def test_reverify_finding_stays_confirmed_when_signal_still_reproduces():
     — observation_store bumps last_seen_at on a matching signature, which is
     exactly the "still true right now" signal reverify_finding looks for."""
     eid = _make_engagement("reverify-ok.test")
-    obs = _record_scanner_signal(eid, target="c.reverify-ok.test", title="XSS reflected")
+    real_output = "Reflected payload executed: <script>alert(document.domain)</script> rendered unescaped"
+    obs = get_observation_store().record(Observation(
+        engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="c.reverify-ok.test",
+        source_tool="nuclei_scan", details={"title": "XSS reflected", "claimed_severity": "high", "snippet": real_output},
+    ))
     result = file_finding(
         engagement_id=eid, title="XSS reflected", finding_type=FindingType.VULNERABILITY,
         observation_ids=[obs.id], claim_severity=ClaimSeverity.HIGH,
-        evidence_records=[EvidenceRecord(kind=EvidenceRecordKind.REPRODUCTION, detail="payload executed")],
+        evidence_records=[EvidenceRecord(kind=EvidenceRecordKind.REPRODUCTION, detail=real_output)],
     )
     finding = result.finding
     assert finding is not None
@@ -146,8 +154,14 @@ def test_reverify_finding_stays_confirmed_when_signal_still_reproduces():
     async def _fake_execute(*_args, **_kwargs):
         # Simulate the tool re-observing the exact same fact — the real path
         # goes through the parser -> observation_store.record_many, which is
-        # what actually bumps last_seen_at on a signature match.
-        _record_scanner_signal(eid, target="c.reverify-ok.test", title="XSS reflected")
+        # what actually bumps last_seen_at on a signature match. Must match
+        # the original observation's details exactly (signature = type +
+        # target + normalized-details, schemas/observation.py) or this reads
+        # as a DIFFERENT fact rather than a re-observation of the same one.
+        get_observation_store().record(Observation(
+            engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="c.reverify-ok.test",
+            source_tool="nuclei_scan", details={"title": "XSS reflected", "claimed_severity": "high", "snippet": real_output},
+        ))
         return object()
 
     with patch("osprey.services.tool_execution.execute_tool_request", new=_fake_execute):

@@ -19,7 +19,7 @@ class ConversationMessageRow(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     engagement_id: Mapped[str] = mapped_column(
-        String(12),
+        String(32),
         ForeignKey("engagements.id", ondelete="CASCADE"),
         nullable=False,
         index=True,

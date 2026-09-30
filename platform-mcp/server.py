@@ -542,65 +542,6 @@ def _format_clarification(analysis: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def _start_expansion_job(engagement_id: str, run_id: str, *, max_passes: int = 50) -> dict[str, Any]:
-    """POST /api/v1/jobs/start with kind=expansion — the InvestigationDirector
-    (plans/harness/09-dual-mode-planner.md) runs as a real background job
-    (job_store.py's existing TOOL/SHELL/SCRIPT dispatch mechanism, just one
-    more kind) instead of a blocking call. A single pass on a real domain can
-    take minutes; nothing that can run that long should ever be a synchronous
-    MCP tool call regardless of client-side timeout — that was the actual
-    bug, not the timeout value. Returns immediately with a job_id; progress
-    is polled via platform_job_poll, final report via platform_job_result.
-    Always does recon breadth, and vuln dispatch too once
-    priority.should_unlock_phase says there's real evidence to work with —
-    no boolean needed, the director decides from the same signal either way."""
-    return _post(
-        "/api/v1/jobs/start",
-        {
-            "kind": "expansion",
-            "engagement_id": engagement_id,
-            "run_id": run_id,
-            "max_passes": max_passes,
-            "label": f"expand(max_passes={max_passes})",
-        },
-        timeout=30,
-    )
-
-
-def _render_expansion_report(report: dict[str, Any]) -> str:
-    passes = report.get("passes") or []
-    if not passes:
-        return "Surface expansion: nothing to expand (empty frontier)."
-
-    lines = []
-    for p in passes:
-        d = p.get("delta") or {}
-        titles = p.get("new_finding_titles") or []
-        sample = ", ".join(titles[:8]) + (f" (+{len(titles) - 8} more)" if len(titles) > 8 else "")
-        lines.append(
-            f"Pass {p.get('pass_number')}: {d.get('frontier_processed', 0)} seed(s) -> "
-            f"+{d.get('new_nodes', 0)} assets, +{d.get('new_edges', 0)} edges"
-            + (f" — new: {sample}" if sample else "")
-        )
-
-    stopped = report.get("stopped_reason")
-    if stopped == "exhausted":
-        lines.append("Surface exhausted (2 consecutive passes with nothing new).")
-        next_step = "Safe to move on (network/port depth, or the next phase) — expansion found nothing further."
-    else:
-        lines.append(f"Stopped at pass cap ({len(passes)}) — surface may still be growing.")
-        next_step = "Call platform_expand again to continue expanding."
-
-    cand_count = report.get("new_candidate_count") or 0
-    if cand_count:
-        samples = "; ".join(report.get("new_candidate_samples") or [])
-        lines.append(f"Exploit queue: +{cand_count} new candidate(s) — {samples}")
-        next_step += " New exploit candidates surfaced — check platform_exploit_queue."
-
-    lines.append(f"Next: {next_step}")
-    return "\n".join(lines)
-
-
 def _analyze_or_bind(raw: str, *, force_new: bool = False) -> str:
     """Analyze first; bind only when status=ready."""
     analysis = _get(
@@ -627,13 +568,12 @@ def _analyze_or_bind(raw: str, *, force_new: bool = False) -> str:
             "engagement. Use platform_context for the NEW target only."
         )
     parts.append(
-        "Next: platform_pipeline(action='start') returns a ready-to-spawn recon "
-        "subagent brief — call it now (no backend key required; you supply the "
-        "brain via your own native subagent mechanism)."
+        "Next: call platform_investigation_step() to inspect ranked, evidence-backed "
+        "work. Execute one opportunity, watch its job, then re-read state and replan."
     )
     # No auto-fire: platform_set_target only binds. The connecting LLM (this
     # session) decides what runs next — call typed tools directly, or opt
-    # into platform_pipeline/platform_spawn_agent/platform_expand explicitly
+    # into platform_pipeline/platform_spawn_agent explicitly
     # when backend-autonomous help is actually wanted. A prior version of
     # this function auto-started platform_pipeline here, which meant a
     # server-side PhaseAgent tried to run through the BACKEND's own LLM
@@ -644,7 +584,7 @@ def _analyze_or_bind(raw: str, *, force_new: bool = False) -> str:
     # silently starting an independent agent that calls tools concurrently
     # with whatever this session is doing is the same "why is it running
     # feroxbuster nobody asked for" problem, just gated on an env var instead
-    # of always-on. platform_pipeline/platform_spawn_agent/platform_expand
+    # of always-on. platform_pipeline/platform_spawn_agent
     # remain fully available — nothing about their capability changed, only
     # whether the platform ever calls them without being asked.
     return "\n\n".join(parts)
@@ -677,72 +617,57 @@ def platform_set_target(target: str, force_new: bool = False, pick: str = "") ->
 
 
 @mcp.tool()
-def platform_expand(max_passes: int = 50, engagement_id: str = "") -> str:
-    """
-    Osprey's own built-in recon+vuln methodology — call this FIRST for
-    mechanical breadth work, not as a fallback or an alternate mode. Starts
-    the InvestigationDirector (plans/harness/09-dual-mode-planner.md) as a
-    background job: subdomains/sisters -> live-host probe -> ports -> tech/CDN
-    -> origin IPs, looping until nothing new turns up or max_passes is hit —
-    then, once priority.should_unlock_phase says there's real evidence to
-    work with, the deterministic tech_dispatch-matched vuln/web tools
-    (nuclei/wpscan/sslyze/sqlmap/…) to their own bounded fixpoint, then queues
-    exploit candidates. Never launches exploitation itself.
+def platform_investigation_step(engagement_id: str = "") -> str:
+    """Read the current harness state and ranked investigation opportunities.
 
-    max_passes=50 (the default) is a safety ceiling, not the real stop
-    condition — the loop already stops earlier, on its own, once a pass adds
-    nothing new. It's set this high because each pass is itself batch-capped
-    (~15 live hosts), so a low ceiling silently truncates coverage on any
-    real-sized target well before actual exhaustion. Raise it further for a
-    genuinely huge target; you rarely need to lower it.
-
-    This is where Osprey's hard-won edge-case handling actually lives —
-    wildcard-domain canary guards, authoritative-DNS retry before killing a
-    flaky host, confidence-gated CDN-origin candidates, sister-domain trust
-    tiers — none of which you can reliably reconstruct tool-by-tool from
-    memory. Let it do the mechanical breadth work; apply your own judgment
-    on TOP of what it surfaces (go deeper on a priority item, chase
-    something it can't decide, chain toward exploitation) rather than
-    re-deriving what it already does with less rigor. Runs as a background
-    job for real (a full domain can take minutes per pass — no MCP client
-    should hold a single call open that long) — but that is a plumbing
-    detail, not permission to go silent.
-
-    WATCH IT, DON'T WALK AWAY: immediately after this returns, call
-    platform_job_poll(job_id=<this job's id>, wait_seconds=90) and REPEAT
-    that call as soon as each one returns, narrating every new
-    `results_log` line to the operator as it arrives — that field already
-    accumulates every tool name, target, and outcome the pass produces; it
-    is the "everything being called, shown on front" you're looking for,
-    not something you have to reconstruct. Keep polling until status is
-    completed/failed. Do NOT treat "returns immediately with a job_id" as
-    "go do something else and check back later" — the job is backgrounded
-    on the SERVER so a slow scan can't time out your call, not backgrounded
-    from the operator's view. If you genuinely have other independent work
-    to interleave, that's fine — but keep this poll loop running alongside
-    it, don't drop it.
-
-    Not auto-started — nothing triggers this on platform_set_target or by
-    itself; you (or the CLI's --engine mode) must call it. Safe to call more
-    than once on the same engagement — re-check a target you've been working
-    manually for a while and it picks up whatever's new.
-
-    engagement_id: optional pin — see platform_exec.
+    This call is read-only. Choose deliberately from the returned typed graph
+    opportunities, then pass the opaque id and revision unchanged to
+    ``platform_investigation_execute``.
     """
     def _run() -> str:
         ctx = _resolve_engagement(engagement_id)
-        job = _start_expansion_job(ctx.engagement_id, ctx.run_id, max_passes=max_passes)
-        parts = [
-            "### OPERATOR MIRROR — SURFACE EXPANSION (background job)",
+        step = _get(
+            "/api/v1/investigation/step",
+            params={"engagement_id": ctx.engagement_id, "run_id": ctx.run_id},
+        )
+        return "\n\n".join([_session_header(ctx), _block("INVESTIGATION STATE", step)])
+
+    return _safe(_run)
+
+
+@mcp.tool()
+def platform_investigation_execute(
+    opportunity_id: str,
+    expected_revision: str,
+    rationale: str = "",
+    engagement_id: str = "",
+) -> str:
+    """Start one current investigation capability as a durable job.
+
+    Obtain the opaque opportunity id and revision from
+    ``platform_investigation_step``. Poll the returned job visibly; after it
+    finishes, read the step state again and replan from the resulting evidence.
+    """
+    def _run() -> str:
+        ctx = _resolve_engagement(engagement_id)
+        decision = _post(
+            "/api/v1/investigation/step",
+            {
+                "engagement_id": ctx.engagement_id,
+                "run_id": ctx.run_id,
+                "opportunity_id": opportunity_id,
+                "expected_revision": expected_revision,
+                "driver": "mcp_harness",
+                "rationale": rationale,
+            },
+            timeout=30,
+        )
+        return "\n\n".join([
             _session_header(ctx),
-            f"**job_id:** `{job.get('job_id')}` | **status:** {job.get('status')}",
-            job.get("hint") or "",
-            "",
-            f"Poll NOW and repeatedly — platform_job_poll(job_id='{job.get('job_id')}', "
-            "wait_seconds=90) — and narrate each new results_log line as it arrives. Keep "
-            "polling until it completes; this is not a fire-and-forget call.",
-        ]
-        return "\n\n".join(parts)
+            _block("INVESTIGATION DECISION", decision),
+            "Poll the returned job until terminal, then call "
+            "platform_investigation_step again to replan.",
+        ])
 
     return _safe(_run)
 
@@ -757,35 +682,32 @@ def scan_prompt(target: str = "", mode: str = "") -> str:
 
     mode=mcp (default): proceed as normal — platform_set_target, then whatever
     tools the situation calls for; the LLM drives every step as usual.
-    mode=engine: call platform_set_target, then platform_expand — the
-    autonomous trigger-graph pipeline runs to a fixpoint with no LLM
-    involvement in individual steps (sisters -> subdomains -> IPs -> CDN/origin
-    -> subnet pivot -> ports -> services -> vuln scan -> OSINT). Poll with
-    platform_job_poll(wait_seconds=20) and report back once
-    platform_job_result shows it's done — don't narrate every pass.
+    mode=engine: call platform_set_target, then repeatedly read
+    platform_investigation_step, choose one current opportunity from its
+    evidence factors, poll that bounded job, and re-read state until complete.
     """
     if not target.strip():
         return (
             "Ask the user for a target (domain or IP) before doing anything else. "
             "Then ask whether they want mode=mcp (LLM-driven, step by step — how this "
-            "platform normally works) or mode=engine (autonomous pipeline, no LLM per "
-            "step, reports back when the whole recon/network sweep is done)."
+            "platform normally works) or mode=engine (use the deterministic ranking "
+            "at every visible investigation step)."
         )
     chosen_mode = mode.strip().lower() or "mcp"
     if chosen_mode not in ("mcp", "engine"):
         chosen_mode = "mcp"
     if chosen_mode == "engine":
         return (
-            f"Call platform_set_target('{target.strip()}'), then platform_expand() "
-            "(defaults are fine unless the user asked for a different max_passes). "
-            "Poll with platform_job_poll(job_id=..., wait_seconds=20) until it's done, "
-            "then read platform_job_result and summarize what the engine found — don't "
-            "drive individual recon tools yourself, the engine already covers that ground."
+            f"Call platform_set_target('{target.strip()}'), then call "
+            "platform_investigation_step(). Select one current opportunity using its "
+            "priority factors, call platform_investigation_execute with its exact id/revision, "
+            "poll its job until terminal, and repeat from fresh state until complete."
         )
     return (
-        f"Call platform_set_target('{target.strip()}'), then proceed normally — "
-        "read what auto-expansion (if any) already surfaced, then drive the rest of "
-        "the engagement step by step as usual."
+        f"Call platform_set_target('{target.strip()}'), inspect "
+        "platform_investigation_step(), choose one evidence-backed opportunity, execute "
+        "and watch it, then replan. Add deliberate typed probes where your analysis "
+        "identifies a gap the offered capabilities do not cover."
     )
 
 
@@ -3007,7 +2929,7 @@ def platform_job_poll(job_id: str = "", engagement_id: str = "", wait_seconds: f
     Poll one job (job_id=…) or list all jobs for this engagement (empty job_id).
 
     Status: queued | running | completed | failed. RUNNING jobs carry a `progress`
-    field (the current step, overwritten each update — expansion passes, agent
+    field (the current step, overwritten each update — capability and agent
     tool calls) AND a `results_log` (persistent history — every completed step
     stays, nothing overwritten). For kind=agent (a backend-driven phase agent,
     e.g. from `platform_pipeline`'s auto-executor or `platform_spawn_agent`),
@@ -3019,7 +2941,7 @@ def platform_job_poll(job_id: str = "", engagement_id: str = "", wait_seconds: f
     this long for the job to finish or its progress to change, instead of you
     firing off repeated polls in a tight loop. Pass 90 (the max) when you're
     going to wait on a job anyway — for a genuinely multi-minute job (a full
-    platform_expand pass), that means ~2-3 poll calls instead of 8+; it still
+    investigation capability), that means ~2-3 poll calls instead of 8+; it still
     returns the instant progress changes, so a short job never actually waits
     the full 90s.
 
@@ -3056,8 +2978,7 @@ def platform_job_result(job_id: str, engagement_id: str = "") -> str:
     """
     Fetch full result of a background job (stdout/stderr/findings) when completed/failed.
 
-    After reading: short chat summary for that branch, then keep expanding.
-    Call platform_findings once when the expansion pass ends — not after every job.
+    After reading: give a short branch summary, then re-read investigation state.
     """
     jid = (job_id or "").strip()
     if not jid:
@@ -3085,10 +3006,8 @@ def platform_job_result(job_id: str, engagement_id: str = "") -> str:
         if titles:
             parts.append(_block(f"Findings from this branch ({len(titles)})", titles[:80]))
         if result:
-            if job.get("kind") == "expansion":
-                # ExpansionReport shape, not ToolExecutionResponse — the generic
-                # stdout formatter would print nonsense against these keys.
-                parts.append(_render_expansion_report(result))
+            if job.get("kind") == "investigation_step":
+                parts.append(_block("Investigation capability result", result))
             elif isinstance(result, dict):
                 parts.append(_format_exec_result(result, context=ctx))
             else:
@@ -3096,7 +3015,7 @@ def platform_job_result(job_id: str, engagement_id: str = "") -> str:
         else:
             parts.append("(no result payload yet — still running? call platform_job_poll)")
         parts.append(
-            "\nBranch done — short chat note, then continue other work (or finalize if last pass)."
+            "\nBranch done — short chat note, then re-read investigation state."
         )
         return "\n".join(parts)
 
@@ -3915,6 +3834,71 @@ try:
     _log(f"registered {_TYPED_PRIVATE_COUNT} typed private-overlay tools")
 except ImportError:
     pass
+
+
+# Public embedding API.  FastMCP is an adapter for Osprey's capabilities, not
+# the application API consumed by the first-party CLI.  Keep every private
+# FastMCP/session-global touch on this side of the boundary.
+def embedded_tool_specs() -> list[dict[str, Any]]:
+    return [
+        {
+            "name": tool.name,
+            "description": tool.description or "",
+            "parameters": tool.parameters or {"type": "object", "properties": {}},
+        }
+        for tool in mcp._tool_manager.list_tools()
+    ]
+
+
+def embedded_invoke_tool(name: str, arguments: dict[str, Any]) -> Any:
+    tool = mcp._tool_manager.get_tool(name)
+    if tool is None:
+        raise KeyError(name)
+    allowed = set((tool.parameters or {}).get("properties", {}).keys())
+    clean_args = {key: value for key, value in (arguments or {}).items() if key in allowed}
+    return tool.fn(**clean_args)
+
+
+def embedded_bind_session(*, engagement_id: str, target: str = "") -> None:
+    global _SESSION_ENGAGEMENT_ID, _SESSION_TARGET, _SESSION_SWITCH_NOTICE
+    global _SESSION_TARGET_KIND, _SESSION_SCOPE
+    _SESSION_ENGAGEMENT_ID = (engagement_id or "").strip()
+    _SESSION_TARGET = (target or "").strip()
+    # The CLI has an already-resolved engagement but does not own a target
+    # parser.  Keep the identity opaque instead of falsely labeling every IP,
+    # CIDR, URL, and host:port as a domain.
+    _SESSION_TARGET_KIND = "target"
+    _SESSION_SCOPE = ""
+    _SESSION_SWITCH_NOTICE = ""
+    if _SESSION_ENGAGEMENT_ID:
+        _ENGAGEMENT_CACHE[_SESSION_ENGAGEMENT_ID] = {
+            "target": _SESSION_TARGET,
+            "kind": _SESSION_TARGET_KIND,
+            "scope": "",
+        }
+        _ENGAGEMENT_RUN_IDS[_SESSION_ENGAGEMENT_ID] = SESSION_RUN_ID
+        _ensure_run_registered(_SESSION_ENGAGEMENT_ID, SESSION_RUN_ID)
+    _persist_session()
+
+
+def embedded_reconfigure(api_base_url: str) -> None:
+    global API_BASE, _HTTP_CLIENT
+    old_client = _HTTP_CLIENT
+    _HTTP_CLIENT = None
+    if old_client is not None:
+        try:
+            old_client.close()
+        except Exception:
+            pass
+    API_BASE = api_base_url.rstrip("/")
+    _clear_session()
+
+
+def embedded_session_context() -> dict[str, str]:
+    return {
+        "engagement_id": _SESSION_ENGAGEMENT_ID,
+        "target": _SESSION_TARGET,
+    }
 
 
 if __name__ == "__main__":

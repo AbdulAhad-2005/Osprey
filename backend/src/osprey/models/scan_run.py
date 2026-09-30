@@ -9,13 +9,13 @@ from osprey.db.base import Base
 
 
 class ScanRunRow(Base):
-    """Durable record of an engine (surface-expansion) scan run.
+    """Durable record of a background job.
 
     Background jobs themselves are process-local (an asyncio task that dies on
     restart), but the *history* of what was scanned, when, its status, live
     results log and final report should survive a backend restart so scan
     history is queryable (dashboard / audit) instead of vanishing with the
-    in-memory job store. One row per engine run, keyed by the job id.
+    in-memory job store. One row per job, keyed by the job id.
     """
 
     __tablename__ = "scan_runs"
@@ -25,9 +25,9 @@ class ScanRunRow(Base):
     )
 
     id: Mapped[str] = mapped_column(String(24), primary_key=True)  # job_id
-    engagement_id: Mapped[str] = mapped_column(String(12), nullable=False, default="")
+    engagement_id: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     run_id: Mapped[str] = mapped_column(String(12), nullable=False, default="")
-    kind: Mapped[str] = mapped_column(String(32), nullable=False, default="expansion")
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, default="tool")
     label: Mapped[str] = mapped_column(String(256), nullable=False, default="")
     target: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")

@@ -1,7 +1,8 @@
 # Documentation Index
 
-Docs for **Osprey** — an autonomous AI penetration-testing platform where an LLM is the
-brain and the platform is a lab + referee + shared notebook. The current build spans
+Docs for **Osprey** — a penetration-testing harness whose deterministic
+investigation loop is the baseline intelligence and whose optional LLM layer adds
+judgment and analysis. The backend is the lab + referee + shared notebook. The current build spans
 **recon, network/enum, web, vuln, exploit, and osint** phases (their MCP tools are
 registered and driven by the conductor).
 
@@ -19,7 +20,7 @@ Start here based on what you need:
 ## Documents
 
 - **[ARCHITECTURE.md](./ARCHITECTURE.md)** — *Everyone.* Concepts, the four roles
-  (lab/notebook/referee/brain), the one-conductor/two-executor model, the prompt→command
+  (harness/lab/notebook/referee/model), the shared investigation protocol, the prompt→command
   flow, and the design decisions behind them.
 - **[PLATFORM_GUIDE.md](./PLATFORM_GUIDE.md)** — *Operators.* How to run it, tool
   preference order, memory/graph/findings, evidence grades, the finalize gate, MCP tool

@@ -27,7 +27,7 @@ class ObservationRow(Base):
     )
 
     id: Mapped[str] = mapped_column(String(12), primary_key=True)
-    engagement_id: Mapped[str] = mapped_column(String(12), nullable=False, default="", index=True)
+    engagement_id: Mapped[str] = mapped_column(String(32), nullable=False, default="", index=True)
     run_id: Mapped[str] = mapped_column(String(12), nullable=False, default="")
     evidence_id: Mapped[str] = mapped_column(String(12), nullable=False, default="")
     type: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -64,7 +64,7 @@ class ObservationOccurrenceRow(Base):
     observation_id: Mapped[str] = mapped_column(
         String(12), ForeignKey("observations.id", ondelete="CASCADE"), nullable=False
     )
-    engagement_id: Mapped[str] = mapped_column(String(12), nullable=False, default="")
+    engagement_id: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     run_id: Mapped[str] = mapped_column(String(12), nullable=False, default="")
     evidence_id: Mapped[str] = mapped_column(String(12), nullable=False, default="")
     source_tool: Mapped[str] = mapped_column(String(128), nullable=False, default="")

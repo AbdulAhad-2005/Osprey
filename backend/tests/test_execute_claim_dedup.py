@@ -1,5 +1,5 @@
 """tool_execution's claim-wait dedup — the gap a real conversation surfaced:
-a background platform_expand pass and an LLM/subagent hand-running the same
+an investigation capability job and an LLM/subagent hand-running the same
 tool+asset used to just both execute for real (tool_coverage_store.try_claim
 was logged-and-ignored). Now the second caller waits a bounded window,
 re-checking both the claim (releases when the holder finishes) and the exec

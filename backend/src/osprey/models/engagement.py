@@ -11,7 +11,7 @@ from osprey.db.base import Base
 class EngagementRow(Base):
     __tablename__ = "engagements"
 
-    id: Mapped[str] = mapped_column(String(12), primary_key=True)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
     target: Mapped[str] = mapped_column(String(512), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(512), nullable=False, default="")
     status: Mapped[str] = mapped_column(String(64), nullable=False, default="created")

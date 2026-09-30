@@ -403,7 +403,7 @@ async def execute_tool_request(
 
     # Parallel-agent/background-job dedup: two branches hitting the same
     # tool+asset concurrently — a spawned subagent hand-running subfinder_scan
-    # while platform_expand's background pass is running the identical call
+    # while an investigation capability job is running the identical call
     # on the same engagement is the common real case — used to be logged and
     # left to happen anyway. Now: wait a bounded window for the in-flight
     # holder to finish, re-checking BOTH the claim (it releases the moment
@@ -461,6 +461,14 @@ async def execute_tool_request(
                     "rate governor: paced %s on %s for %.1fs (engagement %s)",
                     request.tool_name, target, wait_s, session.engagement_id,
                 )
+        from osprey.services import event_bus
+
+        event_bus.publish(
+            session.engagement_id,
+            "tool_start",
+            {"tool_name": request.tool_name, "target": target, "params": validation.normalized_params},
+            source="tool",
+        )
         scheduler = get_engagement_execution_scheduler()
         async with scheduler.tool_slot(session.engagement_id):
             response = await mcp.call_tool(
@@ -487,34 +495,18 @@ async def execute_tool_request(
 
     # Ban detector: when a WAF/rate-limiter fingerprint shows up in the tool's
     # output, cool the target down (further calls to it get paced/spread by the
-    # governor) and record ONE observation so the report explains why the
-    # surface went thin instead of looking like a lazy pass. Deduped per
-    # engagement+target by mark_ban's "already cooling down" return.
+    # governor). This describes OUR execution against the target, not a fact
+    # ABOUT the target's security posture, so it is never an Observation/
+    # Finding — those types are reserved for target-observed signals that
+    # promote_observations() and every downstream consumer treat as claims
+    # about the target. It's carried on the audit-log entry this call already
+    # writes below, which is the correct home for execution telemetry.
+    # Deduped per engagement+target by mark_ban's "already cooling down" return.
+    ban_signal = ""
     if not is_exempt(request.tool_name):
         ban_signal = scan_for_ban(response.stdout or "")
-        if ban_signal and mark_ban(session.engagement_id, target, ban_signal):
-            try:
-                from osprey.schemas.observation import Observation, ObservationType
-                from osprey.services.observation_store import get_observation_store
-
-                get_observation_store().record(
-                    Observation(
-                        engagement_id=session.engagement_id,
-                        run_id=request.run_id or "",
-                        type=ObservationType.SCANNER_SIGNAL,
-                        target=target,
-                        source_tool="rate_governor",
-                        details={
-                            "kind": "ban_signal",
-                            "ban_signal": ban_signal,
-                            "evidence": (response.stdout or "")[:400],
-                            "tool_that_triggered": request.tool_name,
-                        },
-                        tags=["rate_limited", "waf_blocked", "pacing"],
-                    )
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("Ban observation ingest failed: %s", exc)
+        if ban_signal:
+            mark_ban(session.engagement_id, target, ban_signal)
 
     # Honest status: a returncode-0 run whose body is help text or an upstream 5xx
     # page is a failure, not a success — downgrade before findings/coverage record
@@ -729,6 +721,7 @@ async def execute_tool_request(
                 "cache_hit": bool(response.cache_hit),
                 "timed_out": bool(response.timed_out),
                 "partial": bool(response.partial),
+                "ban_signal": ban_signal,
                 "artifacts": (
                     dict(response.hybrid.get("artifacts") or {})
                     if isinstance(response.hybrid, dict)
@@ -736,6 +729,27 @@ async def execute_tool_request(
                 ),
             },
         )
+    )
+
+    event_bus.publish(
+        session.engagement_id,
+        "tool_end",
+        {
+            "tool_name": request.tool_name,
+            "target": target,
+            "success": bool(response.success),
+            "timed_out": bool(response.timed_out),
+            "duration_seconds": response.duration_seconds,
+            "error": response.error or "",
+            "stdout": response.stdout or "",
+            "finding_titles": response.finding_titles or [],
+            "stdout_path": (
+                (response.hybrid.get("artifacts") or {}).get("stdout_path", "")
+                if isinstance(response.hybrid, dict)
+                else ""
+            ),
+        },
+        source="tool",
     )
 
     # Auto-execute the top fallback on a clean failure (never on a WAF/rate-limit/
@@ -819,6 +833,15 @@ async def _maybe_auto_fallback(
         run_id=request.run_id,
         use_recovery=True,
         use_cache=bool(request.use_cache),
+        # Carry the caller's budget forward — omitting this silently reverted
+        # every auto-fallback hop to ToolExecutionRequest's generic 900s
+        # default regardless of how tight the original opportunity's timeout
+        # was (e.g. investigation_capabilities.py's 60s domain-only ceiling),
+        # reproducing the exact "dnsenum ran for 40 minutes" bug one level
+        # deeper: the FIRST attempt correctly timed out fast, then its own
+        # same-tool retry (escalation_matrix.yaml's dnsenum adjust_params
+        # hop) silently got the full 900s instead of the same 60s ceiling.
+        timeout=request.timeout,
     )
     logger.info(
         "auto-fallback: %s failed (%s) → running %s (engagement %s, depth %d)",

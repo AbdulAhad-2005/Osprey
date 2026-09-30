@@ -12,10 +12,12 @@ class JobKind(StrEnum):
     TOOL = "tool"
     SHELL = "shell"
     SCRIPT = "script"
-    EXPANSION = "expansion"
+    # One bounded, typed investigation capability selected by an external
+    # harness from /investigation/step. Never a root autonomous loop.
+    INVESTIGATION_STEP = "investigation_step"
     # A scoped LLM sub-agent loop (recon/vuln/exploit/…) bound to the same
-    # engagement blackboard — the unit of the multi-agent phase pipeline. Spawned
-    # by the phase supervisor, by another agent (spawn_agent), or via MCP.
+    # engagement blackboard. Spawned only by explicit callers, another scoped
+    # agent (spawn_agent), or MCP.
     AGENT = "agent"
     # Deterministic, no-LLM, no-sister-domain-expansion pipeline: whois ->
     # direct subdomain enumeration -> resolve to IPs -> nmap deep scan
@@ -63,17 +65,21 @@ class JobStartRequest(BaseModel):
     reason: str = ""
     timeout: int = Field(default=300, ge=30, le=3600)
     record_findings: bool = True
-    # kind=expansion
-    max_passes: int = Field(default=5, ge=1, le=20)
-    include_low_confidence: bool = Field(
-        default=False,
-        description=(
-            "By default the engine holds back low-confidence origin-IP candidates "
-            "(cdn_origin_probe confidence < 0.6) instead of port/vuln-scanning a guess "
-            "that may belong to unrelated third-party infrastructure. Set true to scan "
-            "them anyway."
-        ),
-    )
+    # kind=investigation_step — opaque selection already validated by the API.
+    # Exactly one opportunity == exactly one tool call (tool/params/
+    # additional_args) OR one analytical store operation (tool left blank) —
+    # capability_input carries only the opportunity's evidence basis, used
+    # for the staleness re-check, never for execution.
+    opportunity_id: str = ""
+    capability: str = ""
+    subject_ids: list[str] = Field(default_factory=list)
+    capability_input: dict[str, Any] = Field(default_factory=dict)
+    tool: str = ""
+    params: dict[str, Any] = Field(default_factory=dict)
+    additional_args: str = ""
+    expected_revision: str = ""
+    driver: str = ""
+    rationale: str = ""
     # kind=agent — a scoped LLM sub-agent
     role: str = Field(default="recon", description="Agent role → phase tool catalog (see AGENT_ROLES)")
     task: str = Field(default="", description="Free-form goal for the sub-agent")
@@ -97,6 +103,9 @@ class JobSummary(BaseModel):
     role: str = ""
     depth: int = 0
     parent_job_id: str = ""
+    opportunity_id: str = ""
+    capability: str = ""
+    driver: str = ""
     created_at: float = 0.0
     started_at: float | None = None
     finished_at: float | None = None

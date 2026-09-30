@@ -8,32 +8,19 @@
 
 ## 1. The one-sentence idea
 
-**An external LLM (OpenCode) is the brain; the platform is a lab + referee + shared notebook.** You describe a target in plain English; the LLM chooses security tools from a governed catalog, runs them in Kali via MCP, reads the full output, adapts, writes typed findings into a durable engagement graph, and reports back — while YAML config and markdown skills *assist* it, not *script* it.
+**The CLI is the harness; deterministic evidence-driven investigation is its baseline intelligence, and an LLM is an optional judgment layer.** You describe a target; the harness repeatedly senses typed state, selects one bounded opportunity, executes it through Kali, evaluates the evidence, and replans. A model may reorder current opportunities, interpret ambiguity, and add deliberate probes, but it does not replace the lifecycle or create a second control plane.
 
 > **Motto:** We do not hardcode the engagement. We give the LLM trustworthy memory, safe execution primitives, transparent policy, and complete provenance so it can become an elite operator.
 
-### One Conductor, Two Executors
+### One Harness, Explicit Capabilities
 
-The brain is pluggable. The **conductor** (`phase_supervisor.py` + `sufficiency.py`) is LLM-free
-shared state — phase sequencing (recon first; vuln/exploit unlock on evidence thresholds),
-loop-back on new assets, the tool catalog, per-phase skills, and the shared blackboard
-(`findings_store` + `engagement_graph`). It decides *what/when*, never *how*, and never calls an
-LLM. Two interchangeable executors consume that one conductor:
-
-- **Executor A — an external harness** (OpenCode / Claude Code / any MCP client) using its own
-  LLM and subagents, reaching the conductor over the `osprey` MCP tools. No key needed
-  — the affordable default.
-- **Executor B — the built-in Commander** (`services/phase_agent.py` `phase="commander"`, entered
-  via `POST /api/v1/agent/chat[/stream]`). A self-hosted conversational brain running whatever
-  LiteLLM key the user configures (Claude / DeepSeek / GPT / Groq / **local Ollama**). It owns the
-  conductor as a background job: `launch_pipeline` runs recon→vuln→exploit fire-and-forget while
-  the Commander stays conversational, `check_readiness` reports progress, `spawn_agent` steers,
-  `stop_pipeline` halts. Target binding is **lazy and implicit** — naming a target in chat
-  get-or-creates its engagement; there is no `set_target` ceremony.
-
-Both executors read skills the same way (description-indexed, surfaced at the active phase, pulled
-on demand) and write to the same evidence graph, so they cannot diverge. New intelligence goes
-into the LLM-free conductor + skills, never into a per-executor service.
+The CLI/external harness owns the root operator loop. The backend provides an
+revisioned investigation state (`investigation_capabilities.py`), durable shared
+state (`findings_store` + `engagement_graph`), bounded execution capabilities,
+and explicit scoped-agent jobs. `GET /investigation/step` exposes ranked work;
+`POST /investigation/step` validates one opaque decision and starts its durable
+job. The backend never runs the root loop. A caller may spawn a bounded phase
+agent deliberately, but there is no second backend Commander harness.
 
 ---
 
@@ -41,8 +28,8 @@ into the LLM-free conductor + skills, never into a per-executor service.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  OpenCode (the Commander / brain)  +  AGENTS.md operator prompt   │
-│  Thinks, chooses tools, narrates, invents scripts, decides stop   │
+│  CLI / external harness + optional model judgment                 │
+│  Owns sense → decide → act → evaluate → replan and stop           │
 └───────────────────────────────┬──────────────────────────────────┘
                                 │ MCP (stdio)
                                 ▼
@@ -76,28 +63,30 @@ into the LLM-free conductor + skills, never into a per-executor service.
 | **Lab** | Tools, allowlisted shell, custom scripts, jobs, fanout, artifacts | `mcp-servers/`, `kali-tools/`, exec/shell/script services |
 | **Shared notebook** | Executions, findings, engagement graph, evidence, decisions | `findings_store`, `engagement_graph`, Postgres |
 | **Referee** | Scope/governance, scan budget, evidence law, report integrity | `governance`, `scan_budget`, `schemas/finding.py`, `finalize_*` |
-| **Brain (LLM)** | Which tool, what flags, relation meaning, confirmation, stopping | OpenCode + `AGENTS.md` + `skills/` |
+| **Investigation intelligence** | Evidence-ranked opportunities, prerequisites, coverage, replanning | CLI driver + `investigation_capabilities.py` |
+| **Judgment layer (optional LLM)** | Reorder current opportunities, interpret ambiguity, propose deeper probes | CLI model driver or external MCP harness |
 
-This split is the product's core bet: **config owns safety and defaults; cognition belongs to the LLM.** It was synthesized from analyzing Shannon (durable phases + validation rigor), the Shannon OpenCode plugin (LLM-as-orchestrator + Docker tools), Dark-Moon (reactive chaining + `additional_args` freedom + MCP gatekeeper), and HexStrike (broad Kali tool surface + command recipes) — keeping the best of each.
+This split is the product's core bet: **the harness remains competent without a model; a model improves judgment without owning a parallel workflow.** Config owns execution defaults, the typed graph owns state, the investigation protocol owns lifecycle, and every driver uses the same bounded capabilities.
 
 ---
 
-## 3. The two executor paths
+## 3. Harness and capability paths
 
-There are two ways an LLM can drive the platform. Both consume the same LLM-free
-conductor and funnel through the same execution kernel, so they cannot diverge.
+The CLI or another external harness drives the platform. Both model-backed and
+deterministic execution funnel through the same governed backend capabilities.
 
 | Path | Entry | Status |
 |------|-------|--------|
-| **① External MCP harness → platform-mcp → backend** | `platform-mcp/server.py` → `/api/v1/mcp/*` + `/api/v1/hybrid/*` | **Default.** The brain is external (OpenCode / Claude Desktop / any MCP client); no LLM key needed on the platform. |
-| **② Built-in Commander + CLI** | `POST /api/v1/agent/chat[/stream]` → `services/phase_agent.py` (`phase="commander"`) + `cli/` | **Opt-in.** Off by default (`enable_builtin_agent=false`); set it true to run a self-hosted conversational brain on your own LiteLLM key. |
+| **① CLI harness → embedded gateway → backend** | `cli/harness/` → `platform-mcp/server.py` embedding API → backend capabilities | **Primary product path.** One runtime owns session, drivers, workers, jobs, and events. |
+| **② External MCP harness → platform-mcp → backend** | `platform-mcp/server.py` → `/api/v1/mcp/*` + `/api/v1/hybrid/*` | External clients consume the same capabilities and read-only readiness signals. |
+| **③ Explicit scoped backend agent** | `/pipeline/spawn-agent` or `platform_spawn_agent` → `services/phase_agent.py` | Optional bounded capability for callers without native workers; never a root harness. |
 
 Both paths funnel through the **same execution kernel** (`services/tool_execution.py`), so
 governance, parsing, and memory behave identically regardless of driver.
 
 ---
 
-## 4. From prompt to tool command (path ①)
+## 4. From prompt to tool command
 
 Example: the LLM calls `httpx_probe(target="scanme.nmap.org")`.
 
@@ -137,7 +126,7 @@ The surface an external harness sees. ~50 tools in three families:
 - Every stateful call accepts an explicit `engagement_id`. The ambient binding remains a convenience for one interactive session, but an explicit pin resolves the real target and owns a stable per-engagement run ID, so concurrent chats cannot borrow whichever target was bound most recently. Crash/respawn persistence is used only when the host supplies a unique `PENTEST_RUN_ID`; unidentified clients never share a global fallback state file.
 
 ### 5.2 Execution kernel (`services/tool_execution.py`)
-One pipeline for every catalog tool (see §4). It is the single source of governance, validation, caching, target pacing, external-process admission, parsing, coverage, and audit — so "works in one path but breaks in another" cannot happen. `engagement_scheduler.py` supplies one queue per engagement at the actual MCP-call boundary; expansion, fanout, agents, direct calls, and background jobs cannot each create an independent concurrency pool and oversubscribe Kali. Waiting for a scheduler slot does not consume the tool's execution timeout.
+One pipeline for every catalog tool (see §4). It is the single source of governance, validation, caching, target pacing, external-process admission, parsing, coverage, and audit — so "works in one path but breaks in another" cannot happen. `engagement_scheduler.py` supplies one queue per engagement at the actual MCP-call boundary; investigation capabilities, fanout, agents, direct calls, and background jobs cannot each create an independent concurrency pool and oversubscribe Kali. Waiting for a scheduler slot does not consume the tool's execution timeout.
 
 ### 5.3 Command builder (`command_builder.py` + `mcp-servers/*/tools/*.py`)
 Per-tool `build_command()` functions harvested from HexStrike and hardened. The MCP tool module is the single source of truth for the actual CLI shape; the backend builder adds container-aware defaults (e.g. nmap falls back to `-sT -Pn --unprivileged` when raw sockets are unavailable).
@@ -165,7 +154,13 @@ Markdown skills (methodology) and YAML config (tool catalog, escalation matrix, 
 Tools run inside the `osprey-kali` container (NET_RAW/NET_ADMIN for SYN scans). The backend mounts the docker socket and `docker exec`s into Kali. Timed-out processes are killed and reaped so long scans can't leak process slots.
 
 ### 5.8 CLI harness (`cli/`)
-The CLI owns a persistent local `Runner` per selected engagement. Switching engagements or backend URLs invalidates the runner so conversation/system context cannot leak across targets. Fresh runners and spawned workers always request a full baseline context; later refreshes may use deltas. Markdown-defined agents and commands under `.osprey/` or `~/.osprey/` add prompt overlays and reusable flows without code changes. Tool filtering is opt-in and only narrows capability when the operator explicitly selects such an agent; the default retains the complete catalog.
+The CLI owns session binding, the transcript, jobs, workers, events, cancellation,
+and both investigation drivers. The deterministic driver selects from revisioned,
+evidence-ranked opportunities. The LLM driver can choose a different current
+opportunity but cannot invent asset identifiers or capability parameters; invalid
+or unavailable model output falls back to deterministic selection. Switching
+engagements or backend URLs invalidates model and investigation state so context
+cannot leak across targets.
 
 ---
 
@@ -173,13 +168,13 @@ The CLI owns a persistent local `Runner` per selected engagement. Switching enga
 
 | Decision | Our choice | Why |
 |----------|-----------|-----|
-| Orchestration | **LLM orchestrator** (OpenCode) | Adapts to prompt, failures, target shape — vs a rigid fixed pipeline |
+| Orchestration | **Harness-owned investigation protocol** | One lifecycle in LLM and no-LLM modes; every action is revisioned, visible, and bounded |
 | Tool interface | **Structured tool calls + `additional_args`** | Same flag freedom as bash for scanning; none of the shell-injection risk |
 | Skills/workflows | **Hints, not mandatory** | Assist like mature tools; don't force a YAML script |
 | Execution paths | **One kernel** | One place for governance/parse/audit; no path drift |
 | Runtime admission | **One per-engagement queue at the external-call boundary** | Bounds the combined load from every caller while preserving full tool access |
 | Runtime | **Docker Kali sidecar** | Reproducible tool versions, isolation, raw-socket capability |
-| Model | **LiteLLM-agnostic** (built-in Commander) / any MCP client (external harness) | Swap providers without rewriting the platform |
+| Model | **Optional selection/analysis overlay** | Improves judgment while deterministic execution remains complete and provider-independent |
 | Memory | **Durable typed graph + honest confidence** | The differentiator none of the reference tools fully have |
 | Database evolution | **Alembic for SQLite and PostgreSQL** | One tested upgrade path; no create-all schema drift |
 
@@ -207,7 +202,8 @@ The CLI owns a persistent local `Runner` per selected engagement. Switching enga
 
 | Term | Meaning |
 |------|---------|
-| **Commander** | The LLM (OpenCode) — plans, chooses tools, narrates, decides when to stop |
+| **Harness** | The CLI or external client that owns sense → decide → act → evaluate → replan |
+| **Model driver** | Optional judgment layer that chooses only from current typed opportunities |
 | **Engagement** | Durable per-root-domain bucket (isolated Postgres storage) |
 | **Run** | One MCP/OpenCode session under an engagement |
 | **Finding** | A typed fact parsed from tool output, with an honest confidence and severity |
@@ -220,4 +216,6 @@ The CLI owns a persistent local `Runner` per selected engagement. Switching enga
 
 ---
 
-*Reflects the two-executor build: an external MCP harness (Executor A) and the built-in Commander (Executor B), over one LLM-free conductor spanning recon/network/web/vuln/exploit/osint. For per-capability detail see [`CAPABILITY_REFERENCE.md`](./CAPABILITY_REFERENCE.md).*
+*Reflects the harness-owned execution model: one external/CLI driver over
+LLM-free readiness, deterministic capabilities, and optional scoped-agent jobs.
+For per-capability detail see [`CAPABILITY_REFERENCE.md`](./CAPABILITY_REFERENCE.md).*

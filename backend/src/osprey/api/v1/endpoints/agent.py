@@ -23,10 +23,10 @@ class AgentStatusResponse(BaseModel):
     network_tools: int = 0
     engine: str = "litellm"
     pipeline: str = "conductor"
-    orchestration: str = "phase_supervisor (deterministic) + phase-agents"
+    orchestration: str = "CLI driver + explicit scoped phase-agents"
 
 
-@router.get("/conversation/{engagement_id}", summary="Get the Commander thread for an engagement")
+@router.get("/conversation/{engagement_id}", summary="Get the saved conversation for an engagement")
 def get_conversation(engagement_id: str, limit: int = 100) -> dict[str, Any]:
     """Server-side conversation so CLI + dashboard share one thread."""
     from osprey.services.conversation_store import get_history
@@ -34,7 +34,7 @@ def get_conversation(engagement_id: str, limit: int = 100) -> dict[str, Any]:
     return {"engagement_id": engagement_id, "messages": get_history(engagement_id, limit=limit)}
 
 
-@router.delete("/conversation/{engagement_id}", summary="Clear the Commander thread")
+@router.delete("/conversation/{engagement_id}", summary="Clear the saved conversation")
 def clear_conversation(engagement_id: str) -> dict[str, Any]:
     from osprey.services.conversation_store import clear_history
 
@@ -44,8 +44,8 @@ def clear_conversation(engagement_id: str) -> dict[str, Any]:
 @router.get("/events/{engagement_id}", summary="Persistent live activity stream for an engagement")
 async def agent_events_stream(engagement_id: str) -> EventSourceResponse:
     """The one live stream for everything happening on this engagement — the
-    Commander's own foreground turns AND every background pipeline / spawned
-    phase agent's tool calls, correctly attributed via `source`. A client
+    foreground driver activity and every spawned phase agent's tool calls,
+    correctly attributed via `source`. A client
     opens this ONCE per engagement (not per message) and keeps it open for
     the whole session: "background" work becomes visible here the instant it
     happens, never only on request. Replays recent history first so a client
@@ -65,12 +65,10 @@ async def agent_events_stream(engagement_id: str) -> EventSourceResponse:
 
 @router.get("/pipeline-activity/{engagement_id}", summary="Phase readiness + active agent jobs")
 def pipeline_activity(engagement_id: str) -> dict[str, Any]:
-    """Snapshot for a page load / non-streaming check: conductor phase-readiness
-    signals plus any currently active `spawn_agent`-style jobs. A full pentest
-    now runs synchronously inside the turn that requested it (visible on that
-    turn's own stream) — there is no separate "background pipeline" to report
-    on here. This endpoint covers the genuinely-background case (spawn_agent)
-    and a live status snapshot without opening a stream.
+    """Snapshot for a page load / non-streaming check: phase-readiness signals
+    plus any currently active explicit scoped-agent jobs. The CLI or external
+    harness owns the root execution loop; this endpoint only reports backend
+    state without opening a stream.
     """
     from osprey.services.job_store import get_job_store
     from osprey.services.phase_supervisor import (

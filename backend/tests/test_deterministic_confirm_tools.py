@@ -84,7 +84,7 @@ def test_reproduction_claim_grounded_via_canary_confirm_observation():
     """End-to-end proof this closes the loop Step 1 opened: a real
     canary_confirm run produces evidence a reproduction claim can actually
     be grounded against, with no manual wiring."""
-    from osprey.services.evidence_grounding import ground_reproduction_claim
+    from osprey.services.evidence_grounding import ground_claim
 
     stdout = json.dumps({
         "canary": "osprey-canary-9f3a", "url": "https://x.test/search?q=osprey-canary-9f3a",
@@ -93,5 +93,5 @@ def test_reproduction_claim_grounded_via_canary_confirm_observation():
     })
     obs = parse_canary_confirm(stdout, engagement_id="e1", run_id="r1", target="x.test")[0]
     claim = "Reflected in a script context: <script>var q = 'osprey-canary-9f3a';</script>"
-    ok, reason = ground_reproduction_claim(claim, obs)
+    ok, reason = ground_claim(claim, obs)
     assert ok, reason

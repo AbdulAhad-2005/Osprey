@@ -1,4 +1,17 @@
-"""Tech dispatch — signal → task suggestions from graph + findings."""
+"""Tech dispatch — signal → task suggestions from graph + findings.
+
+Plan 18 Workstream B: a rule declaring ``scope: per_match`` yields one
+``DispatchSuggestion`` per finding that satisfied its match clause, each
+carrying that finding's ``target`` as ``subject_id`` (so the caller can
+attach the tool call to the actual host that matched, not the engagement
+seed) and, when the rule declares ``params_from``, the matched finding's
+field values mapped into dispatch params (e.g. an email-enrichment rule
+pulling the matched EMAIL finding's title into ``{"email": ...}``). A rule
+with no ``scope`` declared keeps its exact pre-Plan-18 behavior — one
+engagement-wide suggestion, empty subject_id/params, resolved by the caller
+to the session/seed target — this is purely additive, not a breaking change
+to any rule that hasn't been reviewed and annotated yet.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +19,7 @@ import logging
 from functools import lru_cache
 from typing import Any
 
-from osprey.schemas.finding import FindingType
+from osprey.schemas.finding import Finding, FindingType
 from osprey.schemas.hybrid import DispatchSuggestion
 from osprey.services.config_loader import read_config
 from osprey.services.engagement_graph import get_engagement_graph
@@ -37,24 +50,50 @@ def suggest_dispatch(
         if not dispatch:
             continue
 
-        if not _matches(match, findings, graph, engagement_id):
+        matched, per_match_findings = _matches(match, findings, graph, engagement_id)
+        if not matched:
             continue
 
-        suggestions.append(
-            DispatchSuggestion(
-                signal=str(rule.get("id", "")),
-                task_id=str(dispatch.get("task_id", "")),
-                default_tool=str(dispatch.get("default_tool", "")),
-                alternatives=list(dispatch.get("alternatives") or []),
-                skill_file=str(dispatch.get("skill_file", "")),
-                reason=str(dispatch.get("reason", "")),
-                priority=int(dispatch.get("priority", 0)),
-                additional_args=str(dispatch.get("additional_args", "")),
-            )
-        )
+        base = {
+            "signal": str(rule.get("id", "")),
+            "task_id": str(dispatch.get("task_id", "")),
+            "default_tool": str(dispatch.get("default_tool", "")),
+            "alternatives": list(dispatch.get("alternatives") or []),
+            "skill_file": str(dispatch.get("skill_file", "")),
+            "reason": str(dispatch.get("reason", "")),
+            "priority": int(dispatch.get("priority", 0)),
+            "additional_args": str(dispatch.get("additional_args", "")),
+        }
+
+        if match.get("scope") == "per_match" and per_match_findings:
+            params_from = dispatch.get("params_from") or {}
+            # Dedup by subject: several findings on the same host must not
+            # produce duplicate suggestions for that host.
+            seen_subjects: set[str] = set()
+            for f in per_match_findings:
+                subject = (f.target or "").strip()
+                if not subject or subject in seen_subjects:
+                    continue
+                seen_subjects.add(subject)
+                params = {
+                    str(param_key): str(_finding_field(f, field_name))
+                    for param_key, field_name in params_from.items()
+                    if _finding_field(f, field_name)
+                }
+                suggestions.append(DispatchSuggestion(**base, subject_id=subject, params=params))
+        else:
+            suggestions.append(DispatchSuggestion(**base))
 
     suggestions.sort(key=lambda s: s.priority, reverse=True)
     return suggestions
+
+
+def _finding_field(finding: Finding, field_name: str) -> str:
+    """Resolve a ``params_from`` source field: ``title``/``target`` are
+    top-level Finding attributes; anything else is looked up in metadata."""
+    if field_name in ("title", "target"):
+        return str(getattr(finding, field_name, "") or "")
+    return str(finding.metadata.get(field_name, "") or "")
 
 
 def _matches(
@@ -62,29 +101,40 @@ def _matches(
     findings: list,
     graph,
     engagement_id: str,
-) -> bool:
+) -> tuple[bool, list]:
+    """Returns (matched, per_match_findings). ``per_match_findings`` is only
+    populated for a rule whose match clause identifies specific findings
+    (finding_type/has_tag/metadata_key) — a purely aggregate/relational
+    clause (graph_query, has_live_hosts, phases_complete, or a finding_type
+    check used only as a count threshold) has no single subject and always
+    returns an empty list, exactly like the pre-Plan-18 boolean-only check.
+    """
+    per_match: list = []
+
     ftype = match.get("finding_type")
     if ftype:
         typed = [f for f in findings if f.finding_type.value == ftype]
         min_count = int(match.get("min_count", 1))
         max_count = match.get("max_count")
         if len(typed) < min_count:
-            return False
+            return False, []
         if max_count is not None and len(typed) > int(max_count):
-            return False
+            return False, []
+        per_match = typed
 
     missing = match.get("missing_finding_type")
     if missing:
         if any(f.finding_type.value == missing for f in findings):
-            return False
+            return False, []
 
     # Match on a finding tag (e.g. injection_point_candidate) with a min count.
     tag = match.get("has_tag")
     if tag:
         min_tagged = int(match.get("min_count", 1))
-        tagged = sum(1 for f in findings if tag in (f.tags or []))
-        if tagged < min_tagged:
-            return False
+        tagged = [f for f in findings if tag in (f.tags or [])]
+        if len(tagged) < min_tagged:
+            return False, []
+        per_match = tagged
 
     meta_key = match.get("metadata_key")
     if meta_key:
@@ -99,36 +149,36 @@ def _matches(
         # No contains/value/any → treat as an existence check (any finding whose
         # metadata carries a non-empty value for this key).
         existence_only = not meta_contains and not meta_value and not meta_contains_any
-        found = False
+        matched_meta: list = []
         for f in findings:
             val = str(f.metadata.get(meta_key, "")).lower()
             if existence_only:
                 if val:
-                    found = True
-                    break
+                    matched_meta.append(f)
                 continue
             if meta_contains and meta_contains in val:
-                found = True
-                break
-            if meta_contains_any and any(sub in val for sub in meta_contains_any):
-                found = True
-                break
-            if meta_value and val == meta_value.lower():
-                found = True
-                break
-        if not found:
-            return False
+                matched_meta.append(f)
+            elif meta_contains_any and any(sub in val for sub in meta_contains_any):
+                matched_meta.append(f)
+            elif meta_value and val == meta_value.lower():
+                matched_meta.append(f)
+        if not matched_meta:
+            return False, []
+        per_match = matched_meta
 
     if match.get("graph_query") == "siblings_same_ip":
         min_siblings = int(match.get("min_siblings", 2))
+        found_siblings = False
         for sub in graph.subdomains[:10]:
             sib = get_engagement_graph().siblings_same_ip(sub, engagement_id=engagement_id)
             if len(sib.siblings) >= min_siblings:
-                return True
-        return False
+                found_siblings = True
+                break
+        if not found_siblings:
+            return False, []
 
     if match.get("has_live_hosts") and not graph.live_hosts:
-        return False
+        return False, []
 
     phases_complete = match.get("phases_complete")
     if phases_complete:
@@ -139,6 +189,8 @@ def _matches(
         }
         for phase in phases_complete:
             if not task_signals.get(phase, False):
-                return False
+                return False, []
 
-    return True
+    if match.get("scope") != "per_match":
+        return True, []
+    return True, per_match

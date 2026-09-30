@@ -42,7 +42,7 @@ def get_phase_priority(phase: str, engagement_id: str = Query(...)) -> dict[str,
 def get_anomalies(engagement_id: str = Query(...)) -> dict[str, Any]:
     """plans/harness/14-pentester-intelligence.md — on-demand peer-anomaly
     check ("what looks weird right now"). The same detector already runs
-    ambiently after every recon pass (investigation_director.py); this is
+    through an explicit investigation capability; this is
     for a caller who wants a fresh read immediately rather than waiting for
     the next pass."""
     from osprey.services.anomaly_detection import detect_peer_anomalies

@@ -18,7 +18,7 @@ class SuppressedPromotionRow(Base):
     )
 
     id: Mapped[str] = mapped_column(String(12), primary_key=True)
-    engagement_id: Mapped[str] = mapped_column(String(12), nullable=False, default="")
+    engagement_id: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     observation_id: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     pattern_id: Mapped[str] = mapped_column(String(12), nullable=False, default="")
     title: Mapped[str] = mapped_column(String(1024), nullable=False, default="")

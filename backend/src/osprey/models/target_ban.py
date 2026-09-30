@@ -21,7 +21,7 @@ class TargetBanRow(Base):
 
     __tablename__ = "target_bans"
 
-    engagement_id: Mapped[str] = mapped_column(String(12), primary_key=True)
+    engagement_id: Mapped[str] = mapped_column(String(32), primary_key=True)
     target: Mapped[str] = mapped_column(String(512), primary_key=True)
     # Wall-clock (time.time()) epoch at which the cooldown expires.
     ban_until_epoch: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)

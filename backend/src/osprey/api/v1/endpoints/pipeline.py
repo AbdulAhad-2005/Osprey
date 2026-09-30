@@ -1,8 +1,7 @@
-"""Multi-agent phase-pipeline API.
+"""Read-only phase readiness plus explicit scoped-agent job API.
 
-Thin wrappers over the phase supervisor (concurrent, data-triggered recon/vuln/
-exploit agents) and one-shot sub-agent spawning. Agents coordinate through the
-shared engagement blackboard; these endpoints only start/observe/stop them.
+Phase status is derived from the shared engagement blackboard. The readiness
+endpoints never spawn agents; callers may separately start one scoped job.
 """
 
 from __future__ import annotations

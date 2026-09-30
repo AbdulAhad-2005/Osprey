@@ -17,20 +17,19 @@ what to do with them. Nothing here blocks you — it guides.
    process is shared across chats, so an unpinned call can hit the wrong engagement.
 3. **Read the conductor** — `platform_pipeline(action='start')` after bind, `action='status'`
    after new evidence. It's read-only; it tells you what's unlocked (recon → vuln → exploit).
-4. **`platform_expand` first for recon/vuln breadth** — Osprey's own built-in methodology
-   (subdomains/sisters → resolve → CDN/WAF-origin bypass → ports → services → vuln/web
-   dispatch → exploit candidates queued), hardened for edge cases a hand-run sequence
-   won't have (wildcard-domain guards, dead-host retry, confidence-gated origin
-   candidates, sister-domain trust tiers). Call it, then immediately start polling with
-   `platform_job_poll(wait_seconds=90)` **repeatedly, narrating each new line as it
-   arrives** — do not fire it and move on. Apply your own judgment on what it surfaces.
-   Typed tools (`subfinder_scan`,
-   `httpx_probe`, `naabu_port_scan`, `nmap_service_scan`, …) are for going deeper on
-   something specific, or a step you want to run differently than the mechanical pass
-   — not for re-deriving the whole sequence by hand. `platform_shell`/`platform_script`
-   are for real catalog gaps.
+4. **Drive typed tools directly — you are the pentesting intelligence, not a menu-picker.**
+   Call `subfinder_scan`/`amass_scan`/`httpx_probe`/`nmap_service_scan`/`nuclei_scan`/
+   `sqlmap_scan`/etc. yourself, one at a time, reading each result before deciding the
+   next, exactly like `Read`/`Grep`/`Edit`/`Bash` for code: there is no `solve_bug()`
+   tool, and there is no `run_pentest()` tool either. `platform_priority` and
+   `platform_context` are advisory (what's scored highest and why) — you decide what to
+   run. `platform_investigation_step`/`platform_investigation_execute` are the **no-LLM
+   deterministic baseline only** (used when no model is driving at all); routing your
+   own reasoning through them would collapse several real tool calls behind one opaque
+   id, hiding exactly the steps the operator needs to see. If you're about to call
+   `platform_investigation_step`, stop — call the typed tool you actually want instead.
 5. **Long work → jobs, but watched, never dropped** — anything likely to exceed ~90s goes to
-   `platform_job_start`/`platform_expand` so a slow scan can't time out the call — that's a
+   `platform_job_start` so a slow scan can't time out the call — that's a
    server-side plumbing detail, not permission to go quiet. Immediately start polling
    (`platform_job_poll(wait_seconds=90)`, repeated) and narrate every new `results_log` line
    to the operator as it arrives. "Runs in the background" means it survives a slow tool
@@ -73,8 +72,8 @@ shared blackboard — the same signal whether you drive directly or spawn subage
 own. You drive execution. When a phase unlocks, its response carries a ready-to-spawn
 **brief**; use that brief **verbatim** as the subagent's task rather than hand-writing your
 own — that keeps a pentest consistent whichever brain is driving. Backend-autonomous
-execution (no external harness) is a separate path reached only through Osprey's own
-CLI/GUI, never this MCP surface.
+root execution no longer exists; Osprey's CLI and external MCP clients drive the same
+bounded investigation protocol.
 
 This is information, not a gate. Write a summary whenever you judge the work done — the
 platform's job is to keep the signal accurate, not to force you to keep going.
@@ -97,26 +96,22 @@ Prefer parallelism, and prefer to watch it happen:
   But a *single slow tool call* (amass, full nmap, big dumps) belongs in `platform_job_start`
   so it runs in the background while you keep working. Watch the plan; background the waits.
 
-**When a domain lands** — call `platform_expand` first. It runs steps 1-8 below
-mechanically, to its own fixpoint, with real edge-case handling this list can't convey
-in prose. What follows is not a manual procedure to hand-execute in order — it's what
-`platform_expand` already covers (so you know what NOT to redo by hand) and where your
-own judgment belongs on top of what it surfaces. Reorder/skip when evidence already
-covers it, or when you're deliberately going deeper on one step than the mechanical
-pass did:
+**When a domain lands** — drive the steps below yourself, one typed-tool call at a time,
+using `platform_context`/`platform_priority` to see what's scored highest and why after
+each result. New evidence can reorder work, unlock vulnerability assessment, or reopen
+earlier discovery — that's your judgment call, not a server-side decision you fetch. Do
+not recreate this as a fixed checklist or fire-and-forget macro, and do not route it
+through `platform_investigation_step`/`execute` (see point 4) — that's the no-LLM
+baseline, not how you drive.
 
 1. **Widen** — sisters (`domain_hunter`) + subs (`subfinder`/`amass`/`crt_sh_query`), more
    than one source if thin.
-2. **Passive intel** — `shodan_search`/`shodan_host_info` when keyed. `platform_expand`'s own
-   mechanical pass already fires the domain-wide check automatically once per apex when the key
-   is configured (`config/breach_intel_tools.yaml`) — call these yourself only for a fresh read
-   outside the pass timing, or a per-IP lookup beyond what the pass already did. Leads either
-   way, verify before trusting.
+2. **Passive intel** — `shodan_search`/`shodan_host_info` when keyed. Treat passive results
+   as leads and let their ingested evidence alter the next opportunity; verify before trusting.
 3. **Credential/identity leaks** (when keyed) — `intelx_scan`/`resecurity_scan` harvest a
    domain's leaked emails and credentials → EMAIL/CREDENTIAL findings, each credential
-   auto-queued as a `credential_bruteforce` candidate. Same as #2: the domain-wide check is
-   already mechanical in `platform_expand` when keyed — call directly for a specific
-   email/selector, not the apex domain you already got automatically. A breach-DB leak is a
+   auto-queued as a `credential_bruteforce` candidate. Call them for a deliberate domain,
+   email, or selector when the evidence warrants it. A breach-DB leak is a
    lead to verify; a credential you scrape live off the target (or confirm working) outranks
    it. Never mask the value — the leaked credential *is* the finding. Test reuse across
    services and siblings.

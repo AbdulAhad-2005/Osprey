@@ -30,14 +30,6 @@ class APIClient:
         self.base_url = (base_url or os.getenv("API_BASE_URL", "http://localhost:9000")).rstrip("/")
         self._timeout = httpx.Timeout(3600.0, connect=30.0)
         self._client = httpx.Client(timeout=self._timeout, follow_redirects=True)
-        self._run_id: str | None = None
-        self._engagement_id: str | None = None
-        self._engagement_target: str | None = None
-        # The CLI's own local agent loop (cli/agent/loop.py) — lazily created
-        # and attached by cli/commands/prompt.py, lives here so it persists
-        # across prompts within one CLI session (follow-up questions keep
-        # full context) without APIClient needing to know its shape.
-        self.agent_runner: Any = None
 
     def _url(self, path: str) -> str:
         return f"{self.base_url}{path}"
@@ -73,18 +65,6 @@ class APIClient:
             resp = self._client.get(self._url("/api/v1/engagements"))
             resp.raise_for_status()
             return resp.json()
-        except httpx.HTTPStatusError:
-            return []
-
-    def get_conversation(self, engagement_id: str, *, limit: int = 30) -> list[dict[str, Any]]:
-        try:
-            resp = self._client.get(
-                self._url(f"/api/v1/agent/conversation/{engagement_id}"),
-                params={"limit": limit},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return data.get("messages") or []
         except httpx.HTTPStatusError:
             return []
 
@@ -211,34 +191,6 @@ class APIClient:
                 return self.create_engagement({"target": target})
             raise
 
-    def _set_active_engagement(
-        self, engagement_id: str | None, *, target: str | None = None
-    ) -> None:
-        """Select the engagement for this CLI session.
-
-        A Runner's system prompt and history are engagement-scoped.  Reusing it
-        after a target switch leaks the previous target's context into the new
-        one, so changing either identity invalidates the cached Runner.  The
-        event loop itself is process-scoped and remains reusable.
-        """
-        new_id = engagement_id or None
-        new_target = (target or "").strip() or None
-        changed = new_id != self._engagement_id
-        if new_target is not None and new_target != self._engagement_target:
-            changed = True
-        self._engagement_id = new_id
-        self._engagement_target = new_target
-        if changed:
-            self.agent_runner = None
-
-    @property
-    def active_engagement_id(self) -> str | None:
-        return self._engagement_id
-
-    @property
-    def active_target(self) -> str | None:
-        return self._engagement_target
-
     def get_engagement(self, engagement_id: str) -> dict[str, Any]:
         """Resolve an engagement id to its full payload before binding it."""
         resp = self._client.get(self._url(f"/api/v1/engagements/{engagement_id}"))
@@ -256,6 +208,50 @@ class APIClient:
             return resp.json()
         except httpx.HTTPError:
             return {"ready": True, "mode": "unknown", "message": ""}
+
+    def investigation_step(
+        self, engagement_id: str, *, run_id: str = ""
+    ) -> dict[str, Any]:
+        """Sense the next investigation state and its backend-ranked opportunities."""
+        params: dict[str, Any] = {"engagement_id": engagement_id}
+        if run_id:
+            params["run_id"] = run_id
+        resp = self._client.get(
+            self._url("/api/v1/investigation/step"), params=params
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def execute_investigation_step(
+        self,
+        *,
+        engagement_id: str,
+        opportunity_id: str,
+        expected_revision: str,
+        driver: str,
+        rationale: str,
+        run_id: str = "",
+    ) -> dict[str, Any]:
+        """Execute one opaque opportunity selected from ``investigation_step``.
+
+        Capability resolution and parameter validation stay on the backend.  The
+        CLI deliberately sends only the opportunity identity and decision
+        provenance, so it never grows target-, service-, or vulnerability-specific
+        dispatch logic.
+        """
+        resp = self._client.post(
+            self._url("/api/v1/investigation/step"),
+            json={
+                "engagement_id": engagement_id,
+                "run_id": run_id,
+                "opportunity_id": opportunity_id,
+                "expected_revision": expected_revision,
+                "driver": driver,
+                "rationale": rationale,
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()
 
     def list_learned_skills(self) -> dict[str, Any]:
         resp = self._client.get(self._url("/api/v1/capabilities/learned-skills"))
@@ -657,35 +653,12 @@ class APIClient:
         resp.raise_for_status()
         return resp.json()
 
-    def start_expansion_job(
-        self, engagement_id: str, *, run_id: str = "", max_passes: int = 5,
-        include_low_confidence: bool = False,
-    ) -> dict[str, Any]:
-        """Engine mode: run the no-LLM InvestigationDirector as a background
-        job (plans/harness/09-dual-mode-planner.md) — same job kind/endpoint
-        the MCP `platform_expand` tool and the auto-fire-on-bind path use;
-        the CLI is just another caller. Always does recon breadth AND, once
-        priority.should_unlock_phase says there's real evidence to work
-        with, vuln dispatch too — no caller-supplied boolean needed anymore;
-        the director decides from the same priority signal either way."""
-        resp = self._client.post(
-            self._url("/api/v1/jobs/start"),
-            json={
-                "kind": "expansion", "engagement_id": engagement_id,
-                "run_id": run_id, "max_passes": max_passes,
-                "include_low_confidence": include_low_confidence,
-                "label": f"expand(max_passes={max_passes})",
-            },
-        )
-        resp.raise_for_status()
-        return resp.json()
-
     def start_fast_scan_job(self, engagement_id: str, target: str, *, run_id: str = "") -> dict[str, Any]:
         """Deterministic, no-LLM, no-sister-domain pipeline: whois -> direct
         subdomain enumeration -> resolve to IPs -> nmap deep scan (service +
         OS detection, tuned min-rate, top ports) per unique IP. Narrower and
-        faster than the full BFS expansion engine (start_expansion_job) —
-        just the four things asked for, nothing else."""
+        It is an explicit operator utility, not the autonomous investigation
+        driver's decision path."""
         resp = self._client.post(
             self._url("/api/v1/jobs/start"),
             json={
@@ -694,6 +667,16 @@ class APIClient:
                 "label": f"fast-scan({target})",
             },
         )
+        resp.raise_for_status()
+        return resp.json()
+
+    def list_jobs(
+        self, engagement_id: str, *, status: str = "", limit: int = 50
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"engagement_id": engagement_id, "limit": limit}
+        if status:
+            params["status"] = status
+        resp = self._client.get(self._url("/api/v1/jobs"), params=params)
         resp.raise_for_status()
         return resp.json()
 
@@ -740,8 +723,8 @@ class APIClient:
     def stream_events(self, engagement_id: str) -> Iterator[tuple[str, dict[str, Any]]]:
         """The persistent live-activity stream for one engagement — opened
         ONCE and kept open for as long as the session cares about it, unlike
-        a per-message request. Shows every background pipeline / spawned
-        phase agent's tool calls as they happen (the CLI's own foreground
+        a per-message request. Shows every backend job / spawned phase
+        agent's tool calls as they happen (the CLI's own foreground
         loop, cli/agent/loop.py, renders its own turn directly and doesn't
         need this), tagged by `source` in each event's data — the
         fix for "background work is invisible": a harness has exactly one
@@ -764,45 +747,17 @@ class APIClient:
             # whether to reconnect; never raise into a background listener.
             return
 
-    def get_agent_status(self) -> dict[str, Any]:
-        try:
-            resp = self._client.get(self._url("/api/v1/agent/status"))
-            resp.raise_for_status()
-            return resp.json()
-        except httpx.HTTPStatusError:
-            return {}
-
-    def reset_conversation(self) -> None:
-        """Clear the CLI's own agent conversation. Actually resets now — the
-        old version only cleared a local mirror while the backend's own
-        conversation thread stayed intact, so a follow-up prompt silently
-        kept the "reset" history. There is no server-side thread anymore:
-        the CLI's Runner (cli/agent/loop.py) is the one place conversation
-        state lives, so clearing it here is a real, complete reset."""
-        if self.agent_runner is not None:
-            self.agent_runner.reset()
-        self._run_id = None
-
     def reconnect(self, base_url: str | None = None) -> None:
-        """Close the current client and reconnect to a (possibly different) backend URL."""
+        """Reopen this transport against a backend URL.
+
+        Harness/session invalidation is owned by ``HarnessRuntime``.
+        """
         self._client.close()
         if base_url:
             self.base_url = base_url.rstrip("/")
         else:
             self.base_url = os.getenv("API_BASE_URL", "http://localhost:9000").rstrip("/")
         self._client = httpx.Client(timeout=self._timeout, follow_redirects=True)
-        # A backend URL is part of an agent session's identity.  Drop both the
-        # cached conversation and engagement binding instead of letting a
-        # reconnect silently keep sending an old system prompt / engagement id
-        # to a potentially different backend.
-        self._set_active_engagement(None)
-        self.agent_runner = None
-        from cli.agent import tools as platform_tools
-
-        platform_tools.reconfigure_server(self.base_url)
 
     def close(self) -> None:
         self._client.close()
-        loop = getattr(self, "agent_loop", None)
-        if loop is not None and not loop.is_closed():
-            loop.close()

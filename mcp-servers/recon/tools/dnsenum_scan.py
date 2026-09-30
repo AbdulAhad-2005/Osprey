@@ -28,15 +28,29 @@ def build_command(**params: Any) -> str:
     wordlist = params.get("wordlist", "")
     additional_args = str(params.get("additional_args", "") or "").strip()
 
-    # dnsenum brute-forces its bundled ~1000-entry wordlist against the target,
-    # which routinely runs past the exec timeout on a real domain. Perl block-
-    # buffers stdout once it's a pipe (not a tty) rather than line-buffering —
-    # without stdbuf, a killed-on-timeout run can leave the OS pipe buffer
-    # empty even though dnsenum found records, so the platform's partial-
-    # output-on-timeout recovery (mcp_client.py's _drain_partial) has nothing
-    # to read. stdbuf forces line buffering so partial results are actually
-    # flushed into the pipe as they're found.
-    parts = ["stdbuf", "-oL", "-eL", "dnsenum", "--enum", domain]
+    # `--enum` is dnsenum's own shortcut for `--threads 5 -s 15 -w` (confirmed
+    # via `dnsenum --help`) — the `-w` it silently turns on performs a whois
+    # lookup on the target's C-class netrange and then REVERSE-DNS-SWEEPS THE
+    # WHOLE /24 (up to 256 PTR lookups), which is exactly what dnsenum's own
+    # help text warns about: "this can generate very large netranges and it
+    # will take lot of time". That sweep — not the ~1500-entry bundled
+    # wordlist brute force — is what turned a single-domain call into a
+    # 40+ minute hang. --noreverse disables it while keeping everything else
+    # --enum does (DNS records, zone-transfer attempts, wordlist brute force).
+    # --enum's default of 5 threads is also needlessly low for a tool that
+    # otherwise has no per-query concurrency of its own; --threads 20 lets the
+    # wordlist brute force actually make progress inside the opportunity's
+    # timeout instead of crawling through ~1500 candidates 5 at a time. An
+    # explicit additional_args (e.g. the escalation-matrix retry) is appended
+    # last, so it can still override either flag.
+    #
+    # Perl block-buffers stdout once it's a pipe (not a tty) rather than
+    # line-buffering — without stdbuf, a killed-on-timeout run can leave the
+    # OS pipe buffer empty even though dnsenum found records, so the
+    # platform's partial-output-on-timeout recovery (mcp_client.py's
+    # _drain_partial) has nothing to read. stdbuf forces line buffering so
+    # partial results are actually flushed into the pipe as they're found.
+    parts = ["stdbuf", "-oL", "-eL", "dnsenum", "--enum", domain, "--noreverse", "--threads", "20"]
     if dns_server:
         parts.extend(["--dnsserver", dns_server])
     if wordlist:

@@ -1,4 +1,4 @@
-"""Skills registry (frontmatter/description), implicit binding, and Commander wiring."""
+"""Skills registry, implicit target binding, and scoped-agent roles."""
 
 from __future__ import annotations
 
@@ -66,21 +66,9 @@ def test_implicit_binding_ambiguous_asks_clarification():
     assert result.clarification
 
 
-def test_commander_phase_registered():
-    from osprey.services.phase_agent import _AGENT_PHASES, _COMMANDER_CONTROL_SCHEMAS
+def test_phase_agents_only_expose_explicit_scoped_roles():
+    from osprey.schemas.jobs import AGENT_ROLES
+    from osprey.services.phase_agent import _AGENT_PHASES
 
-    assert "commander" in _AGENT_PHASES
-    names = [s["function"]["name"] for s in _COMMANDER_CONTROL_SCHEMAS]
-    assert names == ["run_pipeline"]
-
-
-def test_commander_pipeline_launch_requires_engagement():
-    import asyncio
-
-    from osprey.services import commander_pipeline as cp
-
-    async def _emit(_event, _data):
-        return None
-
-    out = asyncio.run(cp.run_pipeline_foreground("", "", _emit))
-    assert out["status"] == "error"
+    assert _AGENT_PHASES == frozenset(AGENT_ROLES)
+    assert "commander" not in _AGENT_PHASES

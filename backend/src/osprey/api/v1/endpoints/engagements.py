@@ -19,7 +19,7 @@ from osprey.services.engagement_lifecycle import (
     delete_engagement_safely,
     delete_target_engagements_safely,
 )
-from osprey.services.engagement_store import get_engagement_store
+from osprey.services.engagement_store import ensure_target_graph_seed, get_engagement_store
 from osprey.services.fanout import enumerate_pending_sisters
 from osprey.services.fanout_assets import (
     FanoutAssetsRequest,
@@ -111,6 +111,10 @@ def resolve_engagement(request: EngagementCreateRequest) -> EngagementResolveRes
             )
             created = True
 
+    # Reused pre-harness engagements may predate graph seeding. Binding is the
+    # lifecycle boundary that repairs that invariant; the read-only planner
+    # remains mutation-free.
+    ensure_target_graph_seed(engagement)
     base = _to_response(engagement)
     return EngagementResolveResponse(
         **base.model_dump(),

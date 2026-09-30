@@ -3,8 +3,6 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-import threading
-import time
 from contextlib import nullcontext
 
 from cli.branding import APP_NAME, CLI_COMMAND
@@ -33,6 +31,7 @@ try:
     from cli.api.client import APIClient
     from cli.commands.prompt import handle_prompt
     from cli.commands.slash import SLASH_COMMANDS, execute_command
+    from cli.harness import get_runtime
     from cli.ui.display import (
         print_background_event,
         print_banner,
@@ -73,42 +72,13 @@ def _bottom_toolbar(client: APIClient) -> HTML:
     )
 
 
-def _background_event_listener(client: APIClient, stop_event: threading.Event) -> None:
-    """Persistent tail of the engagement's one live activity stream — the fix
-    for background pipeline / spawned phase-agent work being invisible. Runs
-    for the whole interactive session, following whichever engagement is
-    currently active (switches when the user's own prompt binds a new one).
-    The CLI's own foreground loop (cli/agent/loop.py) renders its own turn
-    directly and never publishes onto this stream, so everything shown here
-    is genuinely background work. "Background" work becomes visible the
-    instant it happens, not only when asked about.
-    """
-    watched: str | None = None
-    while not stop_event.is_set():
-        eid = client.active_engagement_id
-        if not eid:
-            time.sleep(1)
-            continue
-        watched = eid
-        try:
-            for event_type, data in client.stream_events(eid):
-                if stop_event.is_set() or client.active_engagement_id != watched:
-                    break
-                print_background_event(data.get("source", ""), event_type, data)
-        except Exception:
-            pass
-        if stop_event.is_set():
-            break
-        time.sleep(2)
-
-
 def _prompt_loop(client: APIClient, session) -> None:
     """Read + dispatch loop. ``session`` is a prompt_toolkit session (TTY) or None (piped)."""
-    stop_event = threading.Event()
-    listener = threading.Thread(
-        target=_background_event_listener, args=(client, stop_event), daemon=True
+    client.start_event_stream(
+        lambda source, event_type, data: print_background_event(
+            source, event_type, data, transcript=client.transcript
+        )
     )
-    listener.start()
     try:
         # patch_stdout only exists to interleave the background listener
         # thread's output correctly with prompt_toolkit's own cursor/prompt-
@@ -129,7 +99,6 @@ def _prompt_loop(client: APIClient, session) -> None:
         with stdout_ctx:
             _prompt_loop_body(client, session)
     finally:
-        stop_event.set()
         client.close()
         print_info("Session ended.")
 
@@ -173,19 +142,21 @@ def _prompt_loop_body(client: APIClient, session) -> None:
             continue
 
 
-_SCAN_PHASES = ("commander", "recon", "network", "vuln", "web", "exploit", "osint", "full")
+_SCAN_PHASES = ("recon", "network", "vuln", "web", "exploit", "osint", "full")
 
 
 def _run_scan_noninteractive(args: argparse.Namespace) -> int:
-    """`python -m cli scan --target X [...]` — Executor B's scriptable/CI entry
-    point. Binds the target, then drives the conductor the same way the
-    interactive `/scan` command does (phase='full' -> the deterministic
-    phase_supervisor pipeline; see services/orchestrator.py) — never prompts."""
+    """Scriptable entry into the same CLI harness used by the interactive UI.
+
+    Full scans always use the harness-owned investigation loop. A specifically
+    requested narrow phase remains a model-backed targeted task; it is not a
+    second full-engagement control plane.
+    """
     from cli.commands.prompt import handle_prompt
     from cli.commands.slash import _PHASE_PROMPTS, _api_error_text, _bind_engagement
 
     api_url = os.getenv("API_BASE_URL", "http://localhost:9000")
-    client = APIClient(base_url=api_url)
+    client = get_runtime(APIClient(base_url=api_url))
     print_info(f"Connected to: {api_url}")
 
     try:
@@ -214,11 +185,11 @@ def _run_scan_noninteractive(args: argparse.Namespace) -> int:
         client.close()
         return 1
 
-    if args.engine:
+    if args.engine or args.phase == "full":
         from cli.commands.slash import _run_engine_scan
 
         succeeded = _run_engine_scan(
-            client, target, include_low_confidence=args.include_low_confidence
+            client, target, driver="deterministic" if args.engine else "llm"
         )
         client.close()
         return 0 if succeeded else 1
@@ -240,11 +211,11 @@ def _run_prompt_noninteractive(args: argparse.Namespace) -> int:
         return 2
 
     api_url = os.getenv("API_BASE_URL", "http://localhost:9000")
-    client = APIClient(base_url=api_url)
+    client = get_runtime(APIClient(base_url=api_url))
     if args.target:
         try:
             data = client.compile_engagement_for_target(args.target, force_new=args.force_new)
-            client._set_active_engagement(
+            client.bind_engagement(
                 data.get("id") or data.get("engagement_id"),
                 target=str(data.get("target") or args.target),
             )
@@ -281,7 +252,7 @@ def _run_benchmark_noninteractive(args: argparse.Namespace) -> int:
     """`osprey benchmark record|run|list|diff` — the CLI + CI entry point for
     plans/harness/01-replay-benchmark-harness.md. Never opens the REPL."""
     api_url = os.getenv("API_BASE_URL", "http://localhost:9000")
-    client = APIClient(base_url=api_url)
+    client = get_runtime(APIClient(base_url=api_url))
     from cli.commands.slash import _api_error_text
 
     try:
@@ -359,8 +330,10 @@ def main() -> None:
     scan_parser.add_argument("target_arg", nargs="?", help="Domain, IP, CIDR, or URL")
     scan_parser.add_argument("--target", help="Domain, IP, CIDR, or URL")
     scan_parser.add_argument("--phase", default="full", choices=_SCAN_PHASES)
-    scan_parser.add_argument("--engine", action="store_true", help="Autonomous trigger-graph engine, no LLM")
-    scan_parser.add_argument("--include-low-confidence", action="store_true")
+    scan_parser.add_argument(
+        "--engine", action="store_true",
+        help="Deterministic sense-decide-act investigation, no LLM",
+    )
     scan_parser.add_argument("--force-new", action="store_true", help="Force a new engagement instead of reusing")
 
     run_parser = subparsers.add_parser("run", help="Send one prompt without opening the REPL")
@@ -393,7 +366,7 @@ def main() -> None:
         sys.exit(_run_benchmark_noninteractive(args))
 
     api_url = os.getenv("API_BASE_URL", "http://localhost:9000")
-    client = APIClient(base_url=api_url)
+    client = get_runtime(APIClient(base_url=api_url))
 
     print_banner()
     print_info(f"Connected to: {api_url}")

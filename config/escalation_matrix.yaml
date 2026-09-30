@@ -17,11 +17,13 @@ techniques:
     thin_results_signals: [few_results, empty_stdout, count_lt_5]
     blocked_signals: [rate_limit, timeout, dns_error, tool_failure, incomplete_output]
     escalations:
-      - action: adjust_params
-        from_tool: dnsenum_scan
-        tool_name: dnsenum_scan
-        additional_args: "--enum --threads 5"
-        reason: "dnsenum needs --enum; prior run exited after banner only"
+      # No same-tool "adjust_params" retry for dnsenum_scan here on purpose:
+      # dnsenum_scan.py's build_command() already always passes --enum
+      # --noreverse --threads 20, so a same-tool retry with weaker flags
+      # (this used to set --threads 5, which is now a *downgrade* from the
+      # new default) just re-runs the identical slow invocation for a second
+      # timeout window. A genuinely different, fast tool is strictly better
+      # after a dnsenum timeout/failure — see the alternate_tool entries below.
       - action: alternate_tool
         from_tool: dnsenum_scan
         tool_name: subfinder_scan

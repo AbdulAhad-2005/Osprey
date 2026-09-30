@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import threading
 import time
-import uuid
 from datetime import datetime
 from typing import Any, Callable
 
@@ -57,8 +57,7 @@ class _JobRecord:
         "last_persisted_at",
     )
 
-    def __init__(self, req: JobStartRequest) -> None:
-        self.job_id = f"job_{uuid.uuid4().hex[:12]}"
+    def __init__(self, req: JobStartRequest, *, existing: dict[str, "_JobRecord"] | None = None) -> None:
         self.engagement_id = req.engagement_id
         self.run_id = req.run_id or ""
         self.kind = req.kind
@@ -69,19 +68,30 @@ class _JobRecord:
             self.tool_name = self.tool_name or "shell"
         elif req.kind == JobKind.SCRIPT:
             self.tool_name = self.tool_name or f"script:{req.language}"
-        elif req.kind == JobKind.EXPANSION:
-            self.tool_name = self.tool_name or "surface_expand"
+        elif req.kind == JobKind.INVESTIGATION_STEP:
+            # req.tool is the opportunity's real tool (Plan 18: every
+            # opportunity is exactly one real tool call) — show that, not a
+            # synthetic "investigation:<capability>" label that hides which
+            # tool is actually running. Only the three analytical kinds
+            # (no tool at all) fall back to the capability label.
+            self.tool_name = self.tool_name or req.tool or f"investigation:{req.capability}"
         elif req.kind == JobKind.AGENT:
             self.tool_name = self.tool_name or f"agent:{req.role}"
         elif req.kind == JobKind.FAST_SCAN:
             self.tool_name = self.tool_name or "fast_scan"
+        # Human-readable, tool-named id ("job_nmap_service_scan1") instead of an
+        # opaque uuid blob — an operator staring at platform_job_poll output (or
+        # the dashboard) should be able to tell what a job IS from its id alone.
+        # Numbered against siblings already in the store so repeat calls to the
+        # same tool don't collide (job_nmap_service_scan1, ...2, ...3).
+        self.job_id = _next_job_id(self.tool_name, existing or {})
         self.command_preview = _preview(req)
         self.request = req
         self.created_at = time.time()
         self.started_at: float | None = None
         self.finished_at: float | None = None
-        # ToolExecutionResponse for TOOL/SHELL/SCRIPT; ExpansionReport for EXPANSION —
-        # both are pydantic models with .model_dump(), which is all get_result() needs.
+        # Capability and tool responses are pydantic models with .model_dump(),
+        # which is all get_result() needs.
         self.result: ToolExecutionResponse | Any | None = None
         self.error = ""
         self.task: asyncio.Task[None] | None = None
@@ -110,13 +120,34 @@ def _serialize_result(result: Any) -> dict[str, Any] | None:
     return None
 
 
+_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _slugify_tool(tool_name: str) -> str:
+    slug = _SLUG_RE.sub("_", (tool_name or "job").strip().lower()).strip("_")
+    return slug or "job"
+
+
+def _next_job_id(tool_name: str, existing: dict[str, "_JobRecord"]) -> str:
+    """job_<tool><n> — numbered against whatever's already in the store so
+    repeat calls to the same tool get job_nmap_service_scan1, ...2, ...3
+    instead of colliding or falling back to a uuid."""
+    slug = _slugify_tool(tool_name)
+    prefix = f"job_{slug}"
+    taken = {rec.job_id for rec in existing.values()}
+    n = 1
+    while f"{prefix}{n}" in taken:
+        n += 1
+    return f"{prefix}{n}"
+
+
 def _default_label(req: JobStartRequest) -> str:
     if req.kind == JobKind.TOOL:
         return f"{req.tool_name}"
     if req.kind == JobKind.SHELL:
         return (req.command or "shell")[:60]
-    if req.kind == JobKind.EXPANSION:
-        return f"expand(max_passes={req.max_passes})"
+    if req.kind == JobKind.INVESTIGATION_STEP:
+        return f"investigation:{req.capability}"
     if req.kind == JobKind.AGENT:
         scope = f" [{req.scope}]" if req.scope else ""
         return f"agent:{req.role}{scope}"
@@ -130,8 +161,8 @@ def _preview(req: JobStartRequest) -> str:
         return f"{req.tool_name}({req.params})"[:200]
     if req.kind == JobKind.SHELL:
         return (req.command or "")[:200]
-    if req.kind == JobKind.EXPANSION:
-        return f"BFS surface expansion, up to {req.max_passes} passes"
+    if req.kind == JobKind.INVESTIGATION_STEP:
+        return f"{req.capability} on {len(req.subject_ids)} graph subject(s)"
     if req.kind == JobKind.AGENT:
         return f"{req.role} sub-agent: {(req.task or req.scope or 'run phase').strip()}"[:200]
     if req.kind == JobKind.FAST_SCAN:
@@ -192,6 +223,9 @@ def _durable_summary_from_row(row: dict[str, Any]) -> JobSummary:
         role=str(request.get("role") or ""),
         depth=int(request.get("depth") or 0),
         parent_job_id=str(request.get("parent_job_id") or ""),
+        opportunity_id=str(request.get("opportunity_id") or ""),
+        capability=str(request.get("capability") or ""),
+        driver=str(request.get("driver") or ""),
         created_at=_epoch(row.get("created_at")) or 0.0,
         started_at=started,
         finished_at=finished,
@@ -381,6 +415,43 @@ class JobStore:
             raise ValueError("code required for kind=script")
         if req.kind == JobKind.FAST_SCAN and not (req.target or "").strip():
             raise ValueError("target required for kind=fast_scan")
+        if req.kind == JobKind.INVESTIGATION_STEP:
+            from osprey.services.investigation_capabilities import (
+                diagnose_revision_mismatch,
+                list_step,
+            )
+
+            current = list_step(req.engagement_id, req.run_id)
+            if current.revision != req.expected_revision:
+                diff = diagnose_revision_mismatch(req.engagement_id, req.expected_revision, current.revision)
+                logger.warning(
+                    "stale investigation revision (job_store internal re-check) engagement=%s opportunity=%s: %s",
+                    req.engagement_id, req.opportunity_id, diff,
+                )
+                raise ValueError(f"stale investigation revision: {diff}")
+            opportunity = next(
+                (item for item in current.opportunities if item.id == req.opportunity_id),
+                None,
+            )
+            if opportunity is None:
+                diff = diagnose_revision_mismatch(req.engagement_id, req.expected_revision, current.revision)
+                logger.warning(
+                    "investigation opportunity not current engagement=%s opportunity=%s revision=%s: %s",
+                    req.engagement_id, req.opportunity_id, current.revision, diff,
+                )
+                raise ValueError(
+                    f"investigation opportunity is not current (revision unchanged: {diff})"
+                )
+            expected_subjects = [subject.asset_id for subject in opportunity.subjects]
+            if (
+                req.capability != opportunity.capability.value
+                or req.subject_ids != expected_subjects
+                or req.capability_input != opportunity.evidence
+                or req.tool != opportunity.tool
+                or req.params != opportunity.params
+                or req.additional_args != opportunity.additional_args
+            ):
+                raise ValueError("investigation capability payload does not match opportunity")
 
         from osprey.services.parallelism_config import (
             agent_spawn_budget,
@@ -423,17 +494,51 @@ class JobStore:
         else:
             cap = max_running_jobs()
 
-        record = _JobRecord(req)
         with self._lock:
             # Admission and insertion are one critical section.  API requests
             # can arrive on different threads, so separate running_count() calls
             # allowed two callers to observe the same free final slot and both
             # enter.  Count directly here to avoid re-entering the non-recursive
-            # lock and make the configured caps exact.
+            # lock and make the configured caps exact. Constructing the record
+            # under the same lock also makes its job_id numbering race-free
+            # against concurrent starts of the same tool.
+            record = _JobRecord(req, existing=self._jobs)
             engagement_jobs = [
                 job for job in self._jobs.values()
                 if job.engagement_id == req.engagement_id
             ]
+            if req.kind == JobKind.INVESTIGATION_STEP:
+                # Guard against a genuine in-flight duplicate (two concurrent
+                # callers admitting the SAME opportunity_id while it's still
+                # QUEUED/RUNNING) — never against a COMPLETED one. This used
+                # to also block COMPLETED, which made ANY opportunity whose
+                # tool call had ever failed permanently unrunnable for the
+                # rest of the job record's lifetime: list_step()/
+                # _successful_opportunity_ids() correctly keeps a FAILED
+                # opportunity's id eligible (only a successful completion
+                # excludes it), the driver would legitimately re-decide it,
+                # and THIS guard silently 409'd every single retry forever —
+                # observed live as an endless "Evidence changed; replanning"
+                # loop on whichever tool happened to fail first (dnsenum,
+                # gau_discovery, domain_hunter — never tool-specific). A
+                # genuinely-completed-and-SUCCESSFUL opportunity is already
+                # excluded before reaching here (it's simply absent from
+                # current.opportunities), so dropping COMPLETED from this
+                # check only restores the one thing it was silently
+                # breaking: retrying a failure.
+                duplicate = next(
+                    (
+                        job for job in engagement_jobs
+                        if job.kind == JobKind.INVESTIGATION_STEP
+                        and job.request.opportunity_id == req.opportunity_id
+                        and job.status in (JobStatus.QUEUED, JobStatus.RUNNING)
+                    ),
+                    None,
+                )
+                if duplicate is not None:
+                    raise ValueError(
+                        f"Investigation opportunity already scheduled: {req.opportunity_id}"
+                    )
             if req.kind == JobKind.AGENT:
                 agents = [job for job in engagement_jobs if job.kind == JobKind.AGENT]
                 if len(agents) >= budget:
@@ -482,15 +587,15 @@ class JobStore:
             record.kind,
             record.label,
         )
-        # Durable job history — every kind, not just EXPANSION (best-effort; never blocks).
+        # Durable job history for every kind (best-effort; never blocks).
         self._persist_job(record)
         return self._to_summary(record)
 
     def _persist_job(self, record: _JobRecord) -> None:
         """Mirror a job's lifecycle into the durable scan_runs table (any kind —
-        tool/shell/script/expansion/agent) so job state survives a restart or a
-        job-store prune (_MAX_JOBS_KEPT). Previously this only ran for
-        kind=expansion, so every AGENT job platform_pipeline/platform_spawn_agent
+        tool/shell/script/investigation/agent) so job state survives a restart or a
+        job-store prune (_MAX_JOBS_KEPT). Previously this only ran for one
+        legacy engine kind, so every AGENT job explicit callers/platform_spawn_agent
         create — and every TOOL/SHELL/SCRIPT job — vanished on restart with no
         trace; get()/get_result() fall back to this table (see _durable_summary)
         when the in-memory record is gone. Best-effort; never blocks the job."""
@@ -508,8 +613,8 @@ class JobStore:
                 label=record.label,
                 target=getattr(eng, "target", "") or "",
                 status=record.status.value,
-                max_passes=record.request.max_passes,
-                include_low_confidence=record.request.include_low_confidence,
+                max_passes=0,
+                include_low_confidence=False,
                 progress=record.progress,
                 request=record.request.model_dump(mode="json"),
                 command_preview=record.command_preview,
@@ -590,8 +695,7 @@ class JobStore:
                 elif req.kind == JobKind.AGENT:
                     # AgentResponse carries its own .success (e.g. max_turns_exceeded,
                     # an unhandled agent error) — reaching this line at all does NOT
-                    # mean the agent's task succeeded, unlike EXPANSION below where
-                    # per-step failures are already absorbed internally.
+                    # mean the agent's task succeeded.
                     agent_ok = bool(getattr(response, "success", True))
                     record.status = JobStatus.COMPLETED if agent_ok else JobStatus.FAILED
                     if not agent_ok:
@@ -600,10 +704,29 @@ class JobStore:
                             or getattr(response, "final_message", "")
                             or "agent failed"
                         )[:2000]
+                elif req.kind == JobKind.INVESTIGATION_STEP:
+                    # A capability's own tool call reporting success=False (a
+                    # crt.sh 502, a timed-out dnsenum, any ordinary recon
+                    # hiccup) is expected, routine engine output — NOT a
+                    # broken job. execute_capability() returning at all
+                    # (rather than raising) means the job itself did its
+                    # job: it ran the one authorized action and reported
+                    # back. Marking it JobStatus.FAILED made the CLI's
+                    # driver (_watch_job) treat one flaky external tool as
+                    # fatal and halt the ENTIRE deterministic investigation
+                    # — every subsequent opportunity silently abandoned over
+                    # something as mundane as an upstream 502. The tool's
+                    # own success/failure is already carried faithfully on
+                    # the CapabilityResult and rendered per-opportunity
+                    # (the red X card); only a real execution failure
+                    # (an exception, caught below) should ever fail the job.
+                    capability_ok = bool(getattr(response, "success", False))
+                    record.status = JobStatus.COMPLETED
+                    if not capability_ok:
+                        record.error = str(getattr(response, "stopped_reason", "capability failed"))[:2000]
                 else:
-                    # Multi-step kinds (EXPANSION): per-step failures are already
-                    # handled internally and never abort the loop — reaching here
-                    # at all means the loop completed, full stop.
+                    # Other bounded kinds report failure by raising or by returning
+                    # ToolExecutionResponse above.
                     record.status = JobStatus.COMPLETED
                 record.finished_at = time.time()
         except Exception as exc:  # noqa: BLE001
@@ -627,80 +750,30 @@ class JobStore:
         self, req: JobStartRequest, *, on_progress: Callable[[str], None] | None = None,
         job_id: str = "",
     ) -> ToolExecutionResponse | Any:
-        if req.kind == JobKind.EXPANSION:
-            from osprey.services import event_bus
-            from osprey.services.investigation_director import run_to_completion
-            from osprey.services.surface_expansion import _MIN_ORIGIN_CONFIDENCE
+        if req.kind == JobKind.INVESTIGATION_STEP:
+            from osprey.services.investigation_capabilities import execute_capability
 
-            _last_ephemeral_publish = 0.0
-
-            def _publish_progress(text: str) -> None:
-                # The EXPANSION engine (platform_expand — the primary recon/vuln
-                # engine) used to update only this job's own progress/results_log
-                # fields, pull-style (platform_job_poll). That made it invisible
-                # to anything watching the engagement's live event stream — the
-                # AGENT branch below has always published there, EXPANSION never
-                # did. Mirror that here so a caller subscribed to
-                # /api/v1/agent/events/{engagement_id} (e.g. the CLI's own
-                # background listener) sees background recon activity live, not
-                # just when it happens to poll. Distinct event names
-                # (expand_result/expand_status), not tool_start/tool_end — a
-                # RESULT:: line is an aggregate stage/pass summary, not one
-                # tool call, and forcing it through tool_transcript's
-                # single-call bookkeeping (duration/success/`/tool <id>`)
-                # would misrepresent it.
-                nonlocal _last_ephemeral_publish
-                if text.startswith("RESULT::"):
-                    event_bus.publish(
-                        req.engagement_id, "expand_result",
-                        {"message": text[len("RESULT::"):], "job_id": job_id},
-                        source="expand",
-                    )
-                else:
-                    # Ephemeral "what's running right now" ticks fire on every
-                    # dispatch start/finish within a stage — throttled so a
-                    # wide fanout doesn't flood the live stream with dozens of
-                    # near-duplicate lines a second; RESULT:: lines above are
-                    # already one-per-stage/pass and always publish immediately.
-                    now = time.monotonic()
-                    if now - _last_ephemeral_publish >= 1.0:
-                        _last_ephemeral_publish = now
-                        event_bus.publish(
-                            req.engagement_id, "expand_status",
-                            {"message": text, "job_id": job_id},
-                            source="expand",
-                        )
-                if on_progress is not None:
-                    on_progress(text)
-
-            # Lead the run with the execution backend in use, so it's always
-            # obvious from the results log whether tools ran in Kali (docker) or
-            # natively — the difference between real output and silent failures.
-            try:
-                from osprey.services.mcp_client import get_mcp_client
-
-                st = get_mcp_client().execution_status()
-                _publish_progress(f"RESULT::⚙ execution: {st.get('message', 'unknown')}")
-            except Exception:  # noqa: BLE001
-                logger.debug("could not report execution status", exc_info=True)
-
-            def _pass_cb(pass_report: Any) -> None:
-                d = pass_report.delta
-                # RESULT:: — same persistent-vs-ephemeral convention as the
-                # in-pass stage reports: a pass boundary is itself a result
-                # worth keeping visible, not something the next line should
-                # silently overwrite.
-                _publish_progress(
-                    f"RESULT::■ pass {pass_report.pass_number}/{req.max_passes} complete: "
-                    f"{d.frontier_processed} seed(s) -> +{d.new_nodes} assets, +{d.new_edges} edges"
-                    + (" — exhausted" if d.exhausted else "")
-                )
-
-            return await run_to_completion(
-                engagement_id=req.engagement_id, run_id=req.run_id or "",
-                max_passes=req.max_passes, on_pass=_pass_cb, on_progress=_publish_progress,
-                min_origin_confidence=0.0 if req.include_low_confidence else _MIN_ORIGIN_CONFIDENCE,
+            if on_progress is not None:
+                on_progress(f"investigation: running {req.tool or req.capability}")
+            result = await execute_capability(
+                engagement_id=req.engagement_id,
+                run_id=req.run_id or "",
+                opportunity_id=req.opportunity_id,
+                capability=req.capability,
+                subject_ids=list(req.subject_ids),
+                tool=req.tool,
+                params=dict(req.params),
+                additional_args=req.additional_args,
+                timeout=req.timeout,
+                capability_input=dict(req.capability_input),
+                on_progress=on_progress,
             )
+            if on_progress is not None:
+                on_progress(
+                    f"RESULT::investigation: {req.capability} "
+                    f"{'completed' if result.success else 'failed'}"
+                )
+            return result
         if req.kind == JobKind.AGENT:
             from osprey.services import event_bus
             from osprey.services.agent_runner import run_scoped_agent
@@ -708,7 +781,7 @@ class JobStore:
             async def _agent_progress(event: str, data: dict[str, Any]) -> None:
                 # The one place a spawned phase agent's own tool calls become
                 # visible: published onto the engagement's shared event bus so
-                # the Commander's persistent live stream shows them inline,
+                # the engagement's persistent live stream shows them inline,
                 # attributed by role/job_id — not just recorded into this
                 # job's own progress text (kept below for `platform_job_poll`'s
                 # existing pull-style MCP contract, unrelated to this fix).
@@ -718,15 +791,15 @@ class JobStore:
                 if on_progress is None:
                     return
                 # Ephemeral "what's happening right now" (overwritten each call) —
-                # same convention EXPANSION jobs use for in-progress status.
+                # Ephemeral progress is replaced by the next status update.
                 if event == "tool_start":
                     on_progress(f"{req.role}: running {data.get('tool_name', '?')}")
                     return
                 if event == "status":
                     on_progress(str(data.get("message", "")))
                     return
-                # Persistent turn-by-turn history — same RESULT:: convention
-                # EXPANSION uses for pass boundaries, so platform_job_poll shows a
+                # Persistent turn-by-turn history uses RESULT:: entries, so
+                # platform_job_poll shows a
                 # real activity log for backend-driven phase agents, not just the
                 # latest "started" line overwriting the previous one. This is what
                 # makes the auto-executor path genuinely watchable turn-by-turn
@@ -823,23 +896,14 @@ class JobStore:
                 # summary carries success + the agent's closing message (via
                 # get_result's model_dump), not a title list.
                 success = bool(getattr(j.result, "success", True))
+            elif j.kind == JobKind.INVESTIGATION_STEP:
+                success = bool(getattr(j.result, "success", False))
             else:
-                # ExpansionReport — flatten each pass's new_finding_titles.
-                titles = [t for p in getattr(j.result, "passes", []) for t in p.new_finding_titles][:40]
-                success = True
+                success = bool(getattr(j.result, "success", True))
 
         hint = ""
         if j.status == JobStatus.RUNNING:
-            if j.kind == JobKind.EXPANSION:
-                hint = (
-                    f"Still expanding — progress: {j.progress or 'starting…'}. "
-                    "Poll again after doing other work, or use platform_job_poll(wait_seconds=20) "
-                    "to block briefly instead of polling repeatedly."
-                )
-            else:
-                hint = "Still running — continue other work; poll later with platform_job_poll."
-        elif j.status == JobStatus.COMPLETED and j.kind == JobKind.EXPANSION:
-            hint = "Done — call platform_job_result for the full pass-by-pass expansion report."
+            hint = "Still running — continue other work; poll later with platform_job_poll."
         elif j.status == JobStatus.COMPLETED and j.kind == JobKind.AGENT:
             hint = (
                 "Sub-agent finished — its findings are in shared engagement memory. "
@@ -873,6 +937,9 @@ class JobStore:
             role=(j.request.role if j.kind == JobKind.AGENT else ""),
             depth=j.request.depth,
             parent_job_id=j.request.parent_job_id,
+            opportunity_id=(j.request.opportunity_id if j.kind == JobKind.INVESTIGATION_STEP else ""),
+            capability=(j.request.capability if j.kind == JobKind.INVESTIGATION_STEP else ""),
+            driver=(j.request.driver if j.kind == JobKind.INVESTIGATION_STEP else ""),
             created_at=j.created_at,
             started_at=j.started_at,
             finished_at=j.finished_at,

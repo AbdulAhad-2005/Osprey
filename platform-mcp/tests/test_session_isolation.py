@@ -30,6 +30,50 @@ def test_unidentified_clients_do_not_share_a_default_state_file(server) -> None:
     assert server._SESSION_STATE_FILE is None
 
 
+def test_embedded_reconfigure_replaces_the_pooled_http_client(server, monkeypatch) -> None:
+    closed: list[bool] = []
+
+    class _Client:
+        def close(self) -> None:
+            closed.append(True)
+
+    monkeypatch.setattr(server, "_HTTP_CLIENT", _Client())
+    monkeypatch.setattr(server, "_clear_session", lambda: None)
+
+    server.embedded_reconfigure("http://new-backend.test/")
+
+    assert closed == [True]
+    assert server._HTTP_CLIENT is None
+    assert server.API_BASE == "http://new-backend.test"
+
+
+def test_embedded_bind_keeps_target_identity_opaque(server, monkeypatch) -> None:
+    monkeypatch.setattr(server, "_ensure_run_registered", lambda *_args: None)
+    monkeypatch.setattr(server, "_persist_session", lambda: None)
+    server._ENGAGEMENT_CACHE.clear()
+
+    server.embedded_bind_session(engagement_id="eng-ip", target="192.0.2.1")
+
+    assert server._SESSION_TARGET_KIND == "target"
+    assert server._ENGAGEMENT_CACHE["eng-ip"] == {
+        "target": "192.0.2.1",
+        "kind": "target",
+        "scope": "",
+    }
+
+
+def test_public_embedding_specs_match_the_mcp_adapter(server) -> None:
+    public = {item["name"]: item for item in server.embedded_tool_specs()}
+    adapter = {tool.name: tool for tool in server.mcp._tool_manager.list_tools()}
+
+    assert public.keys() == adapter.keys()
+    for name, tool in adapter.items():
+        assert public[name]["description"] == (tool.description or "")
+        assert public[name]["parameters"] == (
+            tool.parameters or {"type": "object", "properties": {}}
+        )
+
+
 def test_pinned_context_resolves_real_target_and_owns_a_stable_run(server, monkeypatch) -> None:
     server._clear_session()
     server._ENGAGEMENT_CACHE.clear()
@@ -126,7 +170,8 @@ def test_finding_body_uses_the_resolved_context_not_ambient_globals(server, monk
 
 def test_every_engagement_scoped_platform_tool_accepts_a_pin(server) -> None:
     scoped = {
-        "platform_expand",
+        "platform_investigation_step",
+        "platform_investigation_execute",
         "platform_pipeline",
         "platform_spawn_agent",
         "platform_delete_engagement",

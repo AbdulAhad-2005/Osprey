@@ -21,7 +21,7 @@ class RecoveryObservationRow(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    engagement_id: Mapped[str] = mapped_column(String(12), nullable=False, default="")
+    engagement_id: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     run_id: Mapped[str] = mapped_column(String(12), nullable=False, default="")
     tool_name: Mapped[str] = mapped_column(String(128), nullable=False)
     asset: Mapped[str] = mapped_column(String(512), nullable=False, default="")

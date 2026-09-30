@@ -1,47 +1,10 @@
-"""Phase supervisor — the read-only status/brief layer + capability helpers
-for the multi-agent pipeline.
+"""Read-only phase readiness, status, and scoped-agent briefing helpers.
 
-plans/harness/09-dual-mode-planner.md Step 2 moved the actual DRIVING loop
-(``run_pipeline``) into ``services/investigation_director.py``'s
-``run_agent_driven_pipeline`` — "one director, one path," not two. Everything
-below stays here because it has TWO live consumers, not one: the director's
-loop (spawn decisions, agent jobs) AND ``platform_pipeline``'s read-only
-status report (an external harness/the CLI's own loop asks "what would
-happen" without triggering anything). Moving it would have meant either
-duplicating it or making the read-only report import the driving module,
-backwards from what it should depend on.
-
-Instead of ONE agent walking recon → vuln → exploit in a single serial loop, a
-mechanical conductor runs *concurrent* phase agents and starts each downstream
-phase the moment the shared blackboard has ENOUGH data for it — not when the
-upstream phase "finishes".
-
-Design (matches the operator's model):
-  * Recon agent starts immediately — the only phase auto-started. It has full
-    tool access and real judgment (multiple scan techniques, CDN/WAF-origin
-    bypass, noise interpretation), so it's the sole driver of initial breadth;
-    nothing else races it for the same ground. (The deterministic BFS engine —
-    surface_expansion.py, no LLM judgment — remains available standalone via
-    platform_expand for a genuinely LLM-free fast pass; it is deliberately NOT
-    auto-started alongside the recon agent, since both target the same
-    subdomains/IPs/ports/CDN-origin surface with the same tools and would just
-    race the shared tool-execution cache instead of complementing each other.)
-  * As soon as recon has produced attack surface worth a real pass
-    (priority.should_unlock_phase — a multi-factor priority score crossing a
-    threshold, plans/harness/06-prioritization-engine.md), a vuln agent
-    starts — recon keeps running.
-  * As soon as vuln has produced something exploitable, an exploit agent starts —
-    recon and vuln keep running.
-  * Feedback: if a later phase discovers a new host/subdomain while recon is idle,
-    recon is re-spawned for it.
-  * The conductor is deterministic and LLM-free; the agents it spawns are the
-    brains. They coordinate ONLY through the shared per-engagement stores — no
-    bespoke message bus. Each agent may itself spawn intra-phase sub-agents.
-
-The spawn/lifecycle DECISION is a pure function (``decide_actions``) so it is
-unit testable without an LLM; ``investigation_director.run_agent_driven_
-pipeline`` wraps it with the job store, findings deltas, and a hard time
-budget.
+``platform_pipeline`` and the REST pipeline endpoints report what evidence has
+unlocked; they do not drive an engagement or spawn agents. External harnesses
+may use the returned briefs to start explicit scoped-agent jobs. The pure
+decision helpers remain useful for evaluating readiness policy, but no backend
+root loop consumes them.
 """
 
 from __future__ import annotations
@@ -51,7 +14,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from osprey.schemas.jobs import JobKind, JobStartRequest, JobStatus
+from osprey.schemas.jobs import JobKind, JobStartRequest
 from osprey.services import priority, sufficiency
 from osprey.services.job_store import get_job_store
 
@@ -112,27 +75,22 @@ def decide_actions(
 
 _SUBAGENT_BRIEFS: dict[str, str] = {
     "recon": (
-        "Call platform_expand FIRST — Osprey's own built-in recon+vuln methodology, "
-        "not an alternate mode. It runs subdomain/sister discovery, resolves to IPs, "
-        "CDN/WAF-origin bypass (confidence-gated — never auto-scans a low-confidence "
-        "guess), ports, services/versions, and (once there's real evidence) vuln/web "
-        "dispatch — to its own fixpoint, in the background (poll with "
-        "platform_job_poll/platform_job_result; never block on it). This already carries "
-        "edge-case handling you cannot reconstruct from a one-line brief: wildcard-domain "
-        "canary guards, authoritative-DNS retry before killing a flaky host, sister-domain "
-        "trust tiers. Once it reports back, apply YOUR judgment on top: go deeper on "
+        "Drive platform_investigation_step -> platform_investigation_execute one bounded "
+        "decision at a time. Poll each job, read the new state, and replan; never hide the "
+        "engagement behind one opaque expansion call. The returned opportunities cover discovery, "
+        "resolution, liveness, CDN/origin and service profiling over typed graph assets. "
+        "Apply YOUR judgment on top: go deeper on "
         "anything platform_priority ranks high, chase something odd it can't decide, run "
         "additional tools (js_recon, katana, feroxbuster, more scan kinds) where the "
-        "mechanical pass under- or over-shot. Check platform_attempts first to avoid "
+        "bounded capability under- or over-shot. Check platform_attempts first to avoid "
         "re-running what's already tried. Pass engagement_id=<id> on every call "
         "(concurrent-chat protection). Return a concise final report: what was probed, what "
         "was found with evidence, what is noise and why."
     ),
     "vuln": (
-        "platform_expand already runs vuln/web dispatch (nuclei, wpscan, sslyze, "
-        "sqlmap-on-injection-candidates, tech-aware checks matching the detected stack) "
-        "as its second stage once recon has real evidence — call it if recon hasn't "
-        "already, or re-call it to pick up anything new. Layer your own judgment on top: "
+        "Use the shared investigation state: evidence-backed vulnerability opportunities "
+        "appear there once recon makes them worthwhile. Execute one bounded opportunity, "
+        "poll it, and replan. Layer your own judgment on top: "
         "confirm real issues with proof (body/banner), never a hostname or nuclei title "
         "alone; run additional/deeper checks the mechanical dispatch wouldn't pick (custom "
         "payloads, chained checks, business-logic probes). If you surface a new "
@@ -158,11 +116,8 @@ def subagent_brief(phase: str) -> str:
 
 
 def phase_readiness_snapshot(engagement_id: str, run_id: str = "") -> dict[str, Any]:
-    """Pure, LLM-free readiness read for the conductor — no job spawning, no
-    ``llm_configured()`` requirement. This is the one thing both executors
-    (an external harness driving its own subagents, or this module's own
-    auto-spawn loop) read to agree on phase state, so neither can drift into
-    a different definition of 'ready'. Each unlocked phase carries a ready-to-
+    """Pure, LLM-free readiness read for external drivers — no job spawning and
+    no ``llm_configured()`` requirement. Each unlocked phase carries a ready-to-
     spawn ``brief`` so using the harness pattern costs nothing beyond reading
     this response and calling your own subagent mechanism with it.
     """
@@ -319,13 +274,6 @@ def _spawn_agent_job(
 def _reopen_signal(finding_type: str) -> str:
     """Map a reopen finding-type to its sufficiency signal name."""
     return {"subdomain": "subdomains", "host": "live_hosts"}.get(finding_type, finding_type)
-
-
-def _expansion_running(engagement_id: str) -> bool:
-    for job in get_job_store().list_for_engagement(engagement_id, limit=50):
-        if job.kind == JobKind.EXPANSION and job.status in (JobStatus.QUEUED, JobStatus.RUNNING):
-            return True
-    return False
 
 
 def start_pipeline(engagement_id: str, run_id: str = "") -> dict[str, Any]:

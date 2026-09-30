@@ -1,8 +1,8 @@
-"""Durable persistence for engine scan runs.
+"""Durable persistence for background jobs and investigation decisions.
 
 The in-memory JobStore owns live execution (an asyncio task that cannot survive
 a restart anyway); this store persists the *history* — status, results log, and
-final report of each engine run — so scan history is queryable across restarts
+final result of each job — so history is queryable across restarts
 (dashboard / audit) instead of being lost when the job store prunes or the
 backend restarts. Persistence is best-effort: a DB failure here never breaks the
 scan itself.
@@ -50,7 +50,7 @@ class ScanRunStore:
         job_id: str,
         engagement_id: str,
         run_id: str = "",
-        kind: str = "expansion",
+        kind: str = "tool",
         label: str = "",
         target: str = "",
         status: str,
@@ -125,6 +125,34 @@ class ScanRunStore:
             finally:
                 db.close()
         return [self._to_dict(r) for r in rows]
+
+    def successful_investigation_opportunity_ids(self, engagement_id: str) -> set[str]:
+        """Complete durable coverage journal for the harness planner.
+
+        This deliberately has no display-oriented row limit: dropping an old
+        successful decision from the query would make the planner repeat it
+        after enough later actions or a backend restart.
+        """
+        with self._lock:
+            db = SessionLocal()
+            try:
+                rows = db.scalars(
+                    select(ScanRunRow).where(
+                        ScanRunRow.engagement_id == engagement_id,
+                        ScanRunRow.kind == "investigation_step",
+                        ScanRunRow.status == "completed",
+                    )
+                ).all()
+            finally:
+                db.close()
+        completed: set[str] = set()
+        for row in rows:
+            request = _loads(row.request_json, {})
+            result = _loads(row.result_json, {})
+            opportunity_id = request.get("opportunity_id") if isinstance(request, dict) else ""
+            if opportunity_id and (not isinstance(result, dict) or result.get("success") is not False):
+                completed.add(str(opportunity_id))
+        return completed
 
     def get(self, job_id: str) -> dict | None:
         with self._lock:

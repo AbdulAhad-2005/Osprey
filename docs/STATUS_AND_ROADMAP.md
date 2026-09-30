@@ -1,7 +1,7 @@
 # Status & Roadmap
 
 > **Purpose:** One place to see **what is built, what is in progress, and what is next.**
-> **Scope of current build:** recon, network/enum, web, vuln, exploit, and osint phases, driven by an external MCP harness (default) or the opt-in built-in Commander.
+> **Scope of current build:** recon, network/enum, web, vuln, exploit, and osint phases, driven by the CLI or another external MCP harness, with optional explicit scoped-agent jobs.
 
 ---
 
@@ -9,16 +9,17 @@
 
 | Layer | State |
 |-------|-------|
-| OpenCode-as-brain via `platform-mcp` (~50 MCP tools) | ✅ primary path, working |
+| External model harness via `platform-mcp` | ✅ uses the same revisioned investigation protocol |
 | Typed tools across recon / network / web / vuln / exploit / osint | ✅ wired + registered, driven by the conductor |
 | Execution kernel (exec / shell / script / install / jobs / fanout) | ✅ implemented |
 | Findings + engagement graph + evidence-grade severity clamp | ✅ implemented, durable in Postgres |
 | Finalize gate (blocks weak/CVE COMPLETE claims) | ✅ implemented |
 | Writable + searchable operator memory (graph, hypotheses, evidence chains) | ✅ implemented |
-| Built-in Commander (LiteLLM) + CLI | ⚠️ opt-in, off by default (`enable_builtin_agent=false`); external MCP harness is the default driver |
+| Unified CLI harness (LLM + deterministic drivers) | ✅ primary path; owns session, workers, jobs, events, and cancellation |
+| Explicit scoped backend agents (LiteLLM) | ✅ opt-in bounded jobs; not a root harness |
 | `mcp-servers/{cloud,binary,forensics,creds,api}` families | ⚠️ wrappers present, **not yet surfaced** as typed MCP tools / skills |
 | Governance / scope enforcement | ❌ permissive stub — approves everything |
-| Durable jobs + execution-attempt history | ❌ process-local; lost on backend restart |
+| Durable job and decision history | ✅ terminal/history data persisted; active processes do not survive restart |
 | Killchain engine · exploit phase · report automation | ❌ not built (vision only) |
 
 ---

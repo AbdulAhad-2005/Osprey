@@ -86,20 +86,82 @@ def test_file_finding_with_no_evidence_records_yields_hypothesis():
 
 
 def test_file_finding_with_reproduction_record_yields_confirmed():
+    real_output = "sqlmap identified the following injection point: id=1 AND SLEEP(5) -- dumped 5 rows"
     eid = _make_engagement("file-finding-confirmed.test")
     obs = get_observation_store().record(
         Observation(engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="file-finding-confirmed.test",
-                    source_tool="sqlmap_scan", details={"claimed_severity": "critical"}),
+                    source_tool="sqlmap_scan", details={"claimed_severity": "critical", "snippet": real_output}),
     )
     result = file_finding(
         engagement_id=eid, title="SQLi reproduced", finding_type=FindingType.VULNERABILITY,
         observation_ids=[obs.id],
-        evidence_records=[EvidenceRecord(kind=EvidenceRecordKind.REPRODUCTION, detail="dumped 5 rows")],
+        evidence_records=[EvidenceRecord(kind=EvidenceRecordKind.REPRODUCTION, detail=real_output)],
     )
     finding = result.finding
     assert finding is not None
     assert finding.confidence == FindingConfidence.CONFIRMED
     assert len(finding.evidence_records) == 1
+
+
+def test_file_finding_rejects_verification_record_that_does_not_ground_the_claim():
+    """A VERIFICATION record must actually entail the finding's claim, not
+    just any real recorded output — evidence proving a narrower fact (a
+    software version banner) must not confirm a broader one (a specific CVE
+    applying) just because the evidence_kind says 'verification'."""
+    eid = _make_engagement("file-finding-verify-narrow.test")
+    obs = get_observation_store().record(
+        Observation(engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="file-finding-verify-narrow.test",
+                    source_tool="httpx_probe", details={"snippet": "via: 1.1 varnish (Varnish/6.0)"}),
+    )
+    with pytest.raises(FileFindingError):
+        file_finding(
+            engagement_id=eid, title="Varnish cache-poisoning CVE applies",
+            finding_type=FindingType.VULNERABILITY, observation_ids=[obs.id],
+            evidence_records=[EvidenceRecord(
+                kind=EvidenceRecordKind.VERIFICATION,
+                detail="Confirmed CVE-2026-34475 cache poisoning is exploitable on this origin",
+            )],
+        )
+
+
+def test_file_finding_accepts_verification_record_grounded_in_real_output():
+    eid = _make_engagement("file-finding-verify-grounded.test")
+    real_output = "X-OWA-Version: 15.2.1748.39"
+    obs = get_observation_store().record(
+        Observation(engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="file-finding-verify-grounded.test",
+                    source_tool="httpx_probe", details={"snippet": real_output}),
+    )
+    result = file_finding(
+        engagement_id=eid, title="Exchange build 15.2.1748.39 disclosed",
+        finding_type=FindingType.TECHNOLOGY, observation_ids=[obs.id],
+        evidence_records=[EvidenceRecord(
+            kind=EvidenceRecordKind.VERIFICATION,
+            detail=f"Header observed: {real_output}",
+        )],
+    )
+    assert result.finding is not None
+    assert result.finding.confidence == FindingConfidence.CONFIRMED
+
+
+def test_file_finding_attestation_record_is_never_grounded():
+    """ATTESTATION is the deliberate escape hatch for vouching without a
+    machine-checkable artifact — it must reach confidence_for() untouched,
+    even when the observation has no raw output to check against at all."""
+    eid = _make_engagement("file-finding-attest.test")
+    obs = get_observation_store().record(
+        Observation(engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="file-finding-attest.test",
+                    source_tool="nmap_custom_scan", details={}),
+    )
+    result = file_finding(
+        engagement_id=eid, title="Operator attests to this finding",
+        finding_type=FindingType.SERVICE, observation_ids=[obs.id],
+        evidence_records=[EvidenceRecord(
+            kind=EvidenceRecordKind.ATTESTATION,
+            detail="I am attesting as operator: derived from prior artifacts, no raw excerpt recorded here",
+        )],
+    )
+    assert result.finding is not None
+    assert result.finding.confidence == FindingConfidence.CONFIRMED
 
 
 def test_file_finding_claiming_confirmed_with_no_evidence_still_yields_hypothesis():

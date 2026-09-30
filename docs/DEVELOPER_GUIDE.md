@@ -9,7 +9,7 @@
 
 ## 1. Big picture (one paragraph)
 
-OpenCode is the **Commander** (brain). It never talks to nmap/subfinder directly. It talks only to a small local MCP server (`platform-mcp`), which calls the FastAPI backend on port **9000**. The backend validates and governs the request, runs the tool inside the **Kali** container, parses stdout into **findings**, updates the **engagement graph**, then returns hybrid hints. The next turn OpenCode calls `platform_context` and sees coverage gaps, attack-surface tree, and skills — then picks the next tool. One **engagement** = one root domain (isolated Postgres storage). One **run** = one work session on that engagement.
+The CLI is the root harness. It reads revisioned opportunities from `/investigation/step`, chooses one through either its deterministic driver or optional model driver, starts one bounded job, watches it, and replans from new graph evidence. `platform-mcp` exposes the same protocol to external harnesses. The backend validates the decision, runs tools inside **Kali**, records observations/findings, and updates the **engagement graph**; it never owns a second root loop. One **engagement** is an isolated durable target workspace. One **run** is one work session on that engagement.
 
 ```
 User chat
@@ -167,7 +167,7 @@ Read in this order. Do **not** start randomly in `mcp-servers/` or Alembic.
 | 4 | `platform-mcp/server.py`                          | Exact MCP ↔ HTTP mapping   |
 | 5 | `docs/ARCHITECTURE.md`                            | How the pieces fit + why    |
 
-**Ask yourself:** Is the Commander loop clear? Where do skills over-promise vs what backend actually enforces?
+**Ask yourself:** Is the harness loop clear? Where do skills over-promise vs what backend actually enforces?
 
 ### Pass B — Session, engagement, isolation (1–2 hours)
 
@@ -240,8 +240,8 @@ Read in this order. Do **not** start randomly in `mcp-servers/` or Alembic.
 | 35 | `skills/recon/*`, `skills/network/*`           | Phase playbooks                                 |
 | 36 | `services/skills_loader.py`                      | How skills enter context                        |
 | 37 | `services/fanout.py`                             | Explicit sister fan-out                         |
-| 38 | `services/commander_pipeline.py`                | Background recon→vuln→exploit pipeline the Commander drives |
-| 39 | `api/v1/endpoints/agent.py` + `services/phase_agent.py` | Opt-in built-in Commander path (not the default MCP harness) |
+| 38 | `services/phase_supervisor.py`                  | Read-only phase readiness and ready-to-spawn briefs |
+| 39 | `api/v1/endpoints/pipeline.py` + `services/phase_agent.py` | Explicit scoped-agent jobs (not a backend root harness) |
 
 ---
 
@@ -249,10 +249,11 @@ Read in this order. Do **not** start randomly in `mcp-servers/` or Alembic.
 
 | Path                         | Entry                                                      | Used by                  |
 | ---------------------------- | ---------------------------------------------------------- | ------------------------ |
-| **OpenCode Commander** | `platform-mcp` → `/mcp/execute` + `/hybrid/context` | Primary interactive path |
-| **Backend agent chat** | `POST /api/v1/agent/chat` → orchestrator / LiteLLM      | Optional CLI/API agent   |
+| **CLI/external harness** | `platform-mcp` → `/mcp/execute` + `/hybrid/context` | Primary interactive path |
+| **Scoped backend agent** | `/pipeline/spawn-agent` or `platform_spawn_agent`  | Explicit bounded job     |
 
-When optimizing for OpenCode, focus on **platform-mcp + tool_execution + context builders**. The agent chat path can differ.
+The harness owns orchestration. Backend phase agents are explicit capabilities,
+and phase-readiness endpoints are read-only.
 
 ---
 
@@ -278,7 +279,7 @@ When optimizing for OpenCode, focus on **platform-mcp + tool_execution + context
 - Skills 8-stage order
 - Escalation / tech_dispatch suggestions
 
-**Optimization implication:** Improving parsers/graph/gaps improves Commander decisions without building a rigid state machine. Building a forced stage machine is a separate product decision.
+**Optimization implication:** Improving parsers, graph relations, opportunity rules, and evidence factors improves both deterministic and model-backed decisions without creating a second workflow.
 
 ---
 
@@ -375,7 +376,8 @@ If you only deep-dive ten files:
 | **Coverage gap**        | Soft “maybe incomplete” per asset            |
 | **Attack surface tree** | Human/LLM-readable hierarchy                   |
 | **Network surface**     | Per-IP ports/services readiness                |
-| **Commander**           | OpenCode deciding next tool from context       |
+| **Harness**             | CLI/external owner of the investigation lifecycle |
+| **Model driver**        | Optional selector over current opportunities      |
 
 ---
 
@@ -403,4 +405,4 @@ If you only deep-dive ten files:
 
 ---
 
-*This guide is the map. Optimization starts with Pass C + Pass D (execute + parse/graph) — that is where Commander quality is won or lost.*
+*This guide is the map. Optimization starts with the capability kernel plus parse/graph quality — that is where investigation quality is won or lost.*
