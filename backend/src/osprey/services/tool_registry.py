@@ -207,6 +207,20 @@ RECON_TOOLS: list[ToolDefinition] = [
         "timeout": _p("15", "Per-request timeout seconds"),
         **_COMMON_PARAMS},
        install_hint="Bundled: mcp-servers/recon/tools/_js_recon_cli.py (stdlib only)."),
+    _t("app_recon", ToolCategory.RECON, "python3", ToolSafetyLevel.ACTIVE,
+       "App recon — static attack-surface extraction from a mobile or desktop app package "
+       "(Android APK, iOS IPA, Electron .asar, Java .jar, or native binary). Mines backend "
+       "endpoints + hostnames, hardcoded secrets (API keys/tokens/JWTs/private keys), exposed "
+       "cloud storage, and platform metadata: Android permissions/components + cleartext config, "
+       "iOS URL schemes + App Transport Security posture. app_path= a file in the container, or "
+       "url= to download first.",
+       ["mobile", "apk", "ipa", "electron", "endpoints", "secrets", "cloud", "attack-surface"],
+       {"app_path": _p("", "App file already in the container (APK/IPA/.asar/.jar/binary)"),
+        "url": _p("", "URL to download the app from first"),
+        "type": _p("auto", "auto|apk|ipa|electron|jar|binary"),
+        "timeout": _p("120", "Download timeout seconds"),
+        **_COMMON_PARAMS},
+       install_hint="Bundled: mcp-servers/recon/tools/_app_recon_cli.py (stdlib only; aapt used if present)."),
     _t("email_security_probe", ToolCategory.RECON, "bash", ToolSafetyLevel.PASSIVE,
        "Email-security posture via DNS — SPF / DKIM / DMARC / MX. Flags missing anti-spoofing.",
        ["email", "spf", "dmarc", "dns", "passive"],

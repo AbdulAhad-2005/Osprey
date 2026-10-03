@@ -91,7 +91,13 @@
     "dnstwist",
     "metagoofil",
     "social-analyzer",
-    "exiftool"
+    "exiftool",
+    "apktool",
+    "aapt",
+    "aapt2",
+    "apkid",
+    "jadx",
+    "unzip"
   ],
   "parse_modes": {
     "raw": "Return stdout as-is (default)",

@@ -35,7 +35,8 @@ but every stage's work is required, not optional to skip):**
    SYN, rustscan, masscan variants) → version/scripts (`nmap_service_scan`) on everything open
 7. Dangling CNAME / takeover fingerprints on the host list (`subdomain_takeover_check`)
 8. Historical URL / crawl / `platform_script` for app depth on high-value hosts (httpx live,
-   gau/wayback, js_recon, katana)
+   gau/wayback, js_recon, katana); if the org ships a mobile/desktop app, `app_recon` on it
+   (APK/IPA/Electron/binary) — its hardcoded backend hosts are new recon seeds. See `app-analysis`.
 9. DNS / shared-infra pivots when the graph shows `co_hosts`
 10. Technology identification (`whatweb_scan` / `tech_stack_analyze`) on live hosts — informs
     targeted vuln research
