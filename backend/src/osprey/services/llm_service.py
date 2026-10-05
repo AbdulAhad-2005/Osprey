@@ -191,7 +191,8 @@ def _is_model_configured(settings: LLMSettings) -> bool:
 def llm_configured() -> bool:
     """Whether the backend has a usable LLM configured (LLM_API_KEY/LLM_MODEL
     in the backend's own .env) — checked before spawning anything that needs
-    it (PhaseAgent via platform_spawn_agent or explicit REST callers) so a missing or
+    it (a headless scoped agent via platform_spawn_agent, services/agent_runner.py,
+    or explicit REST callers) so a missing or
     unrunnable key fails once, clearly, before wasting a job slot, instead of
     opaquely mid-run on the first real completion() call. This is the backend's
     OWN LLM — a separate concern from whatever LLM is driving the MCP session

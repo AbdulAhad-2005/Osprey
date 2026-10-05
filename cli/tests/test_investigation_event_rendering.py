@@ -11,10 +11,62 @@ from __future__ import annotations
 from cli.commands.scan_shared import _run_investigation_events
 from cli.harness.drivers import JobEvent
 from cli.session import ToolTranscript
+from cli.ui.display import print_background_event
 
 
 class _FakeClient:
     pass
+
+
+def test_timed_out_tool_reads_as_warning_not_failure():
+    """A healthy slow tool that hit its budget is 'timed out (partial kept)',
+    rendered as a warning — never a bare red 'failed'. slow != broken."""
+    transcript = ToolTranscript()
+    events = [
+        JobEvent("decision", {"opportunity_id": "o1", "tool": "gau_discovery", "params": {"domain": "x.test"}}),
+        JobEvent("capability_completed", {
+            "opportunity_id": "o1",
+            "result": {"result": {"details": {"results": [
+                {"tool": "gau_discovery", "success": False, "timed_out": True, "partial": True,
+                 "finding_titles": ["url: https://x.test/a"]},
+            ]}}}},
+        ),
+        JobEvent("complete", {}),
+    ]
+    _run_investigation_events(_FakeClient(), iter(events), transcript=transcript, source="engine")
+    rec = transcript._records[-1]
+    assert rec.timed_out is True
+    assert rec.is_warning is True          # not a hard failure
+    assert "timed out" in rec.status_text and "partial" in rec.status_text
+
+
+def test_background_stream_skips_raw_tool_echo_no_double_render():
+    """Regression for the double-render: tool_execution publishes every call to
+    the event bus with source="tool" (for the dashboard). The CLI's background
+    renderer must NOT render those — the foreground (investigation / ReAct loop /
+    a spawned agent's own agent:<role> events) already renders the call. A
+    source="tool" echo must create no transcript record and print nothing, so a
+    call never appears twice (and never as a 0.0s 'output saved' twin with a
+    contradictory status)."""
+    transcript = ToolTranscript()
+    print_background_event(
+        "tool", "tool_start", {"tool_name": "gobuster_scan", "tool_call_id": "c1"},
+        transcript=transcript,
+    )
+    print_background_event(
+        "tool", "tool_end",
+        {"tool_name": "gobuster_scan", "tool_call_id": "c1", "success": True},
+        transcript=transcript,
+    )
+    # No transcript record was created by the echo — the foreground owns the record.
+    assert not transcript._records
+
+    # A genuinely-background source (a spawned agent) still renders.
+    print_background_event(
+        "agent:recon", "tool_start", {"tool_name": "subfinder_scan", "tool_call_id": "a1"},
+        transcript=transcript,
+    )
+    assert transcript._records
 
 
 def test_decision_and_completion_render_as_one_tool_call_card():
@@ -28,7 +80,7 @@ def test_decision_and_completion_render_as_one_tool_call_card():
         }),
         JobEvent("capability_started", {"job_id": "job-1", "opportunity_id": "opp-1", "capability": "discover_related_domains"}),
         JobEvent("capability_completed", {
-            "job_id": "job-1",
+            "job_id": "job-1", "opportunity_id": "opp-1",
             "result": {"result": {"details": {"results": [
                 {"tool": "crt_sh_query", "success": True, "finding_titles": ["sub.samaa.tv"], "error": ""}
             ]}}},
@@ -57,7 +109,7 @@ def test_failed_tool_call_is_recorded_as_failed():
             "tool": "dnsenum_scan", "params": {"domain": "samaa.tv"},
         }),
         JobEvent("capability_completed", {
-            "job_id": "job-2",
+            "job_id": "job-2", "opportunity_id": "opp-2",
             "result": {"result": {"details": {"results": [
                 {"tool": "dnsenum_scan", "success": False, "finding_titles": [], "error": "timed out"}
             ]}}},
@@ -72,8 +124,9 @@ def test_failed_tool_call_is_recorded_as_failed():
 
 
 def test_analytical_opportunity_with_no_tool_does_not_create_a_tool_card():
-    """promote_observations/detect_anomalies/etc. are real actions but not
-    Kali tool calls — they must not be rendered as a fake tool-call card."""
+    """detect_anomalies/refresh_exploit_candidates/etc. are real analytical
+    actions but not Kali tool calls — they must not be rendered as a fake
+    tool-call card."""
     transcript = ToolTranscript()
     events = [
         JobEvent("decision", {

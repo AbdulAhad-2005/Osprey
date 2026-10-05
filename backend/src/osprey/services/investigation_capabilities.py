@@ -73,8 +73,17 @@ _ASSET_BATCH = 15
 # kernel's own retry-on-timeout behavior). A short-running, apex-level OSINT
 # lookup and a full nmap sweep should never share one blanket budget.
 _DOMAIN_ONLY_TIMEOUT = 60  # sister/associated-domain + apex OSINT (whois, dnsenum, crt.sh, domain_hunter)
-_SUBDOMAIN_ENUM_TIMEOUT = 120  # passive wordlist tools (subfinder/amass/gau/wayback/tlsx)
-_DNS_BRUTE_TIMEOUT = 150  # active DNS brute force + permutation resolution
+# These are the tool KILL budgets. They are deliberately GENEROUS: a pentest
+# enumerator (amass/gau over 4 providers/gobuster-dns over a wordlist) is
+# legitimately minutes-long — slow is not broken, and killing a healthy tool at
+# ~2 min throws away real coverage and reports a false failure (observed: gau
+# killed at 120s, amass finishing right at the 120s edge). These are a safety
+# net against a genuinely-hung process, not a "slow = fail" deadline. The real
+# fix (plan 19 Part B) is the driver backgrounding a slow job and continuing,
+# so a long tool never blocks the engine and is never killed for being slow;
+# until then these budgets at least let the common slow tools complete.
+_SUBDOMAIN_ENUM_TIMEOUT = 420  # passive wordlist tools (subfinder/amass/gau/wayback/tlsx)
+_DNS_BRUTE_TIMEOUT = 420  # active DNS brute force + permutation resolution
 _DNS_RECORD_TIMEOUT = 45  # a single dnsx_resolve / email_security_probe call
 _LIVE_HOST_TIMEOUT = 120  # host_expansion battery (httpx/naabu/tech-stack/waf/cdn)
 _WEB_DEPTH_TIMEOUT = 240  # content discovery / JS recon / policy files
@@ -628,10 +637,18 @@ def list_step(engagement_id: str, run_id: str = "") -> InvestigationStep:
     from osprey.services.heuristic_engine import NON_AUTONOMOUS_CATEGORIES, _category_of
     from osprey.services.tech_dispatch import suggest_dispatch
 
+    # No phase-unlock gate here (plan 19: phases never gate mandatory work).
+    # suggest_dispatch is self-gating — a rule only fires when the mechanical
+    # facts it keys off actually exist (a TECHNOLOGY observation for nuclei, an
+    # injection-point tag for sqlmap, a live host in the graph, ...). Gating it
+    # behind a separate priority-score "vuln unlock" was exactly the judgment-
+    # on-mandatory-work anti-pattern that (together with dispatch reading the
+    # empty findings store) kept the deterministic floor from ever reaching
+    # vulnerability analysis. The NON_AUTONOMOUS_CATEGORIES filter below is the
+    # one gate that stays: it's the RoE/exploit safety boundary, not a phase gate.
     root_subject = domains[:1] or nodes[:1]
     label_to_node = {n.label: n for n in nodes}
-    unlocked, unlock_reason = priority.should_unlock_phase(eid, "vuln", ctx=priority_ctx)
-    if unlocked and root_subject:
+    if root_subject:
         for suggestion in suggest_dispatch(engagement_id=eid, run_id=run_id):
             if not suggestion.default_tool or _category_of(suggestion.default_tool) in NON_AUTONOMOUS_CATEGORIES:
                 continue
@@ -647,7 +664,7 @@ def list_step(engagement_id: str, run_id: str = "") -> InvestigationStep:
                 param="target" if not suggestion.params else "",
                 direct_params=dict(suggestion.params) if suggestion.params else None,
                 capability=CapabilityKind.ASSESS_VULNERABILITY,
-                reason=suggestion.reason or unlock_reason,
+                reason=suggestion.reason,
                 base=max(60, suggestion.priority), priority_ctx=priority_ctx,
                 additional_args=suggestion.additional_args,
                 evidence={"signal": suggestion.signal, "subject": suggestion.subject_id},
@@ -662,15 +679,20 @@ def list_step(engagement_id: str, run_id: str = "") -> InvestigationStep:
     # already does that) but never auto-swept — a /16+ sweep is an operator
     # call, not a mechanical one. One opportunity per unswept CIDR so an
     # operator sees and authorizes each subnet pivot individually.
-    from osprey.services.findings_store import get_findings_store as _get_findings_store
+    from osprey.schemas.observation import ObservationType as _OTAsn
+    from osprey.services.observation_store import get_observation_store as _get_obs_store
 
     already_swept_cidrs = {
         n.metadata.get("cidr")
         for n in nodes
         if n.asset_type == AssetType.IP and n.metadata.get("role") == "subnet_sibling"
     }
-    for finding in _get_findings_store().list(engagement_id=eid, tag="asn_prefix", limit=200):
-        cidr = str(finding.metadata.get("cidr") or "").strip()
+    # asn_enum records each announced BGP prefix as an ASN observation carrying
+    # details["cidr"] (parsers/recon_network.py) — read those, never findings:
+    # the no-LLM path creates no findings, so sourcing the sweep from
+    # findings_store meant it silently never ran (plan 19 / 19a).
+    for obs in _get_obs_store().list_by_type(eid, _OTAsn.ASN, limit=200):
+        cidr = str(obs.details.get("cidr") or "").strip()
         if not cidr or cidr in already_swept_cidrs:
             continue
         try:
@@ -689,17 +711,12 @@ def list_step(engagement_id: str, run_id: str = "") -> InvestigationStep:
         ))
 
     # --- Analytical capabilities — no tool, pure store operations. ---
-    from osprey.schemas.observation import ObservationType
-    from osprey.services.observation_store import get_observation_store
-
-    scanner_obs = get_observation_store().list_by_type(eid, ObservationType.SCANNER_SIGNAL, limit=5000)
-    if scanner_obs and root_subject:
-        opportunities.append(_analytical_opportunity(
-            CapabilityKind.PROMOTE_OBSERVATIONS, root_subject,
-            reason="Scanner observations are available for evidence-graded promotion.", priority=55,
-            evidence={"observation_ids": sorted(o.id for o in scanner_obs)},
-        ))
-
+    # NO auto-promotion of scanner signals to findings (plan 19): the
+    # deterministic floor must manufacture ZERO findings — a scanner match is a
+    # scanner_claim observation and stays one; only a brain, citing evidence,
+    # files a conclusion. The former PROMOTE_OBSERVATIONS capability (which ran
+    # promote_observations with no human in the loop) was the single most
+    # dangerous false-positive source and is removed from the engine here.
     if nodes:
         observation_basis = sorted({oid for node in nodes for oid in node.observation_ids})
         opportunities.append(_analytical_opportunity(
@@ -707,15 +724,13 @@ def list_step(engagement_id: str, run_id: str = "") -> InvestigationStep:
             reason="Refresh peer-difference signals after world-state changes.", priority=25,
             evidence={"observation_ids": observation_basis},
         ))
-        from osprey.services.findings_store import get_findings_store
-
-        finding_basis = sorted(
-            finding.id for finding in get_findings_store().list(engagement_id=eid, limit=5000)
-        )
+        # Candidates are re-sourced from observations (exploit_pipeline.
+        # scan_for_candidates), so the refresh re-runs when OBSERVATIONS change,
+        # not findings — the no-LLM path has no findings anyway (plan 19).
         opportunities.append(_analytical_opportunity(
             CapabilityKind.REFRESH_EXPLOIT_CANDIDATES, root_subject or nodes[:1],
             reason="Refresh the evidence-driven candidate queue without exploitation.", priority=20,
-            evidence={"finding_ids": finding_basis},
+            evidence={"observation_ids": observation_basis},
         ))
 
     done = _successful_opportunity_ids(eid) | _failed_opportunity_ids(eid)
@@ -776,15 +791,22 @@ async def _execute_tool(
         additional_args=additional_args, use_recovery=True, record_findings=True,
         timeout=timeout or 900,
     ))
+    # Surface timed_out/partial so the reading surface (CLI/dashboard) can tell a
+    # healthy-but-slow tool that hit its budget (timed_out, often with partial
+    # output kept) apart from a genuine failure. Without these, a slow tool
+    # (amass/nuclei/gau/full-nmap) reads as a bare "failed" with no reason — the
+    # exact confusion a kill-timeout causes. A timed_out run that still produced
+    # output is NOT a failure to the operator; it's partial coverage.
     return {
         "tool": tool_name, "success": bool(response.success),
+        "timed_out": bool(response.timed_out),
+        "partial": bool(getattr(response, "partial", False)),
         "finding_titles": list(response.finding_titles or []),
         "error": response.error or response.stderr or "",
     }
 
 
 _ANALYTICAL_KINDS = frozenset({
-    CapabilityKind.PROMOTE_OBSERVATIONS,
     CapabilityKind.DETECT_ANOMALIES,
     CapabilityKind.REFRESH_EXPLOIT_CANDIDATES,
     CapabilityKind.SWEEP_NETBLOCK,
@@ -826,14 +848,7 @@ async def execute_capability(
     results: list[dict[str, Any]] = []
 
     if kind in _ANALYTICAL_KINDS:
-        if kind == CapabilityKind.PROMOTE_OBSERVATIONS:
-            from osprey.services.finding_pipeline import promote_observations
-
-            promoted = promote_observations(engagement_id, run_id=run_id)
-            results.append({"promoted": len(promoted), "finding_titles": [f.title for f in promoted]})
-            if on_progress is not None:
-                on_progress(f"RESULT::investigation: promoted {len(promoted)} observation cluster(s)")
-        elif kind == CapabilityKind.DETECT_ANOMALIES:
+        if kind == CapabilityKind.DETECT_ANOMALIES:
             from osprey.services.anomaly_detection import detect_peer_anomalies
 
             found = detect_peer_anomalies(engagement_id)

@@ -4,8 +4,8 @@ plans/harness/01-replay-benchmark-harness.md Step 3.
 Since plans/harness/02-evidence-and-observation-layer.md +
 03-earned-finding-pipeline.md, the tool-execution path creates Observations,
 not Findings — ``findings`` on a fresh replay is legitimately empty (nothing
-promotes an observation to a finding yet outside ``platform_file_finding`` /
-``promote_observations``, neither of which a recorded tool call drives).
+creates a finding outside ``file_finding``, a brain's evidence-backed
+conclusion, which no recorded tool call drives).
 ``false_positive_rate`` / ``confirmed_without_proof_count`` /
 ``validated_finding_count`` are computed over findings and so read 0/None
 until Plan 03's promotion path runs — that is the fix working, not a gap.

@@ -36,7 +36,7 @@ def test_list_step_seeded_domain_yields_only_single_tool_opportunities():
 
     assert step.opportunities, "expected at least one opportunity for a fresh domain seed"
     for opp in step.opportunities:
-        if opp.capability.value in {"promote_observations", "detect_anomalies", "refresh_exploit_candidates"}:
+        if opp.capability.value in {"detect_anomalies", "refresh_exploit_candidates"}:
             continue  # analytical kinds legitimately carry no tool
         assert opp.tool, f"opportunity {opp.id} ({opp.capability}) has no tool — cannot be atomic"
         assert isinstance(opp.params, dict)
@@ -126,8 +126,6 @@ def test_small_netblock_yields_sweep_opportunity_and_execution_creates_ip_nodes(
     """Regression for a gap found auditing run_expansion_pass (Plan 18): a
     small asn_prefix CIDR must expand into individual subnet_sibling IP
     nodes so they flow into PROBE_LIVE_ASSETS like any other IP."""
-    from osprey.schemas.finding import EvidenceRecord, EvidenceRecordKind, FindingType
-    from osprey.services.finding_pipeline import file_finding
     from osprey.services.observation_store import get_observation_store
     from osprey.schemas.observation import Observation, ObservationType
 
@@ -135,15 +133,13 @@ def test_small_netblock_yields_sweep_opportunity_and_execution_creates_ip_nodes(
     get_engagement_graph().ensure_node(
         engagement_id=eid, asset_type=AssetType.DOMAIN, label="atomic-netblock-sweep.test",
     )
-    obs = get_observation_store().record(Observation(
-        engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="atomic-netblock-sweep.test",
-        source_tool="asn_enum", details={"snippet": "netblock 10.0.0.0/30 announced by ASN"},
+    # asn_enum records each announced prefix as an ASN observation with
+    # details['cidr'] — the sweep reads these directly since Phase 2 (no finding).
+    get_observation_store().record(Observation(
+        engagement_id=eid, type=ObservationType.ASN, target="atomic-netblock-sweep.test",
+        source_tool="asn_enum", tags=["netblock", "asn", "asn_prefix"],
+        details={"cidr": "10.0.0.0/30", "asn": "AS65000", "role": "netblock"},
     ))
-    file_finding(
-        engagement_id=eid, title="Small owned netblock 10.0.0.0/30", finding_type=FindingType.OBSERVATION,
-        observation_ids=[obs.id], tags=["asn_prefix"], metadata={"cidr": "10.0.0.0/30"},
-        evidence_records=[EvidenceRecord(kind=EvidenceRecordKind.ATTESTATION, detail="netblock 10.0.0.0/30 announced by ASN")],
-    )
 
     step = investigation_capabilities.list_step(eid)
     sweep_opps = [o for o in step.opportunities if o.capability.value == "sweep_netblock"]
@@ -173,8 +169,6 @@ def test_large_netblock_never_auto_swept():
     """A /16+ CIDR must never auto-sweep — a mechanical-DoS-risk guard the
     old run_expansion_pass enforced via _MAX_AUTO_SWEEP_ADDRESSES; ported to
     the atomic model's SWEEP_NETBLOCK opportunity generation."""
-    from osprey.schemas.finding import EvidenceRecord, EvidenceRecordKind, FindingType
-    from osprey.services.finding_pipeline import file_finding
     from osprey.services.observation_store import get_observation_store
     from osprey.schemas.observation import Observation, ObservationType
 
@@ -182,15 +176,13 @@ def test_large_netblock_never_auto_swept():
     get_engagement_graph().ensure_node(
         engagement_id=eid, asset_type=AssetType.DOMAIN, label="atomic-netblock-too-large.test",
     )
-    obs = get_observation_store().record(Observation(
-        engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="atomic-netblock-too-large.test",
-        source_tool="asn_enum", details={"snippet": "netblock 10.0.0.0/16 announced by ASN"},
+    # asn_enum records the prefix as an ASN observation (details.cidr); the sweep
+    # reads observations since Phase 2 — a /16 must be recorded but never swept.
+    get_observation_store().record(Observation(
+        engagement_id=eid, type=ObservationType.ASN, target="atomic-netblock-too-large.test",
+        source_tool="asn_enum", tags=["netblock", "asn", "asn_prefix"],
+        details={"cidr": "10.0.0.0/16", "asn": "AS65000", "role": "netblock"},
     ))
-    file_finding(
-        engagement_id=eid, title="Large netblock 10.0.0.0/16", finding_type=FindingType.OBSERVATION,
-        observation_ids=[obs.id], tags=["asn_prefix"], metadata={"cidr": "10.0.0.0/16"},
-        evidence_records=[EvidenceRecord(kind=EvidenceRecordKind.ATTESTATION, detail="netblock 10.0.0.0/16 announced by ASN")],
-    )
 
     step = investigation_capabilities.list_step(eid)
     sweep_opps = [o for o in step.opportunities if o.capability.value == "sweep_netblock"]
@@ -227,10 +219,6 @@ def test_tech_dispatch_targets_each_matched_host_not_only_the_seed():
     run_dispatch_step's params={} -> extract_target -> seed fallback). Two
     distinct WordPress hosts must now yield two wpscan_analyze opportunities
     targeting the two real hosts, never the same seed-only dispatch twice."""
-    from unittest.mock import patch
-
-    from osprey.schemas.finding import FindingType
-    from osprey.services.finding_pipeline import file_finding
     from osprey.services.observation_store import get_observation_store
     from osprey.schemas.observation import Observation, ObservationType
 
@@ -240,26 +228,19 @@ def test_tech_dispatch_targets_each_matched_host_not_only_the_seed():
     )
 
     for host in ("blog.atomic-per-host-dispatch.test", "shop.atomic-per-host-dispatch.test"):
-        # A TECHNOLOGY finding only exists after a host has already been
-        # resolved/probed into the graph (httpx_probe/tech_stack_analyze) —
-        # seed that realistic prior state, not just the finding in isolation.
+        # A TECHNOLOGY observation only exists after a host has been resolved/
+        # probed into the graph (httpx_probe/whatweb/tech_stack_analyze) — seed
+        # that realistic prior state. Since Phase 2, dispatch keys off this
+        # observation directly, no finding needed.
         get_engagement_graph().ensure_node(
             engagement_id=eid, asset_type=AssetType.SUBDOMAIN, label=host,
         )
-        obs = get_observation_store().record(Observation(
-            engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target=host,
-            source_tool="whatweb_scan", details={"snippet": f"WordPress detected on {host}"},
+        get_observation_store().record(Observation(
+            engagement_id=eid, type=ObservationType.TECHNOLOGY, target=host,
+            source_tool="whatweb_scan", details={"technology": "WordPress 6.4"},
         ))
-        file_finding(
-            engagement_id=eid, title=f"WordPress on {host}", finding_type=FindingType.TECHNOLOGY,
-            observation_ids=[obs.id], target=host, metadata={"technology": "WordPress 6.4"},
-        )
 
-    with patch(
-        "osprey.services.priority.should_unlock_phase",
-        return_value=(True, "test-forced-unlock"),
-    ):
-        step = investigation_capabilities.list_step(eid)
+    step = investigation_capabilities.list_step(eid)
 
     wpscan_opps = [o for o in step.opportunities if o.tool == "wpscan_analyze"]
     targeted_hosts = {o.params.get("target") for o in wpscan_opps}
@@ -272,10 +253,6 @@ def test_osint_enrichment_dispatch_uses_matched_value_not_a_hostname():
     """A holehe/phoneinfoga-style OSINT enrichment rule needs the matched
     finding's actual value (an email string) as its dispatch param — not a
     'target' hostname, and not the engagement seed either."""
-    from unittest.mock import patch
-
-    from osprey.schemas.finding import FindingType
-    from osprey.services.finding_pipeline import file_finding
     from osprey.services.observation_store import get_observation_store
     from osprey.schemas.observation import Observation, ObservationType
 
@@ -283,20 +260,15 @@ def test_osint_enrichment_dispatch_uses_matched_value_not_a_hostname():
     get_engagement_graph().ensure_node(
         engagement_id=eid, asset_type=AssetType.DOMAIN, label="atomic-osint-enrich.test",
     )
-    obs = get_observation_store().record(Observation(
-        engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="atomic-osint-enrich.test",
-        source_tool="theharvester", details={"snippet": "found contact.person@atomic-osint-enrich.test"},
+    # An EMAIL observation carrying the address as its title — the osint_email_found
+    # rule (params_from: {email: title}) pulls that value into the holehe param.
+    get_observation_store().record(Observation(
+        engagement_id=eid, type=ObservationType.EMAIL, target="atomic-osint-enrich.test",
+        source_tool="theharvester",
+        details={"title": "contact.person@atomic-osint-enrich.test"},
     ))
-    file_finding(
-        engagement_id=eid, title="contact.person@atomic-osint-enrich.test", finding_type=FindingType.EMAIL,
-        observation_ids=[obs.id], target="atomic-osint-enrich.test",
-    )
 
-    with patch(
-        "osprey.services.priority.should_unlock_phase",
-        return_value=(True, "test-forced-unlock"),
-    ):
-        step = investigation_capabilities.list_step(eid)
+    step = investigation_capabilities.list_step(eid)
 
     holehe_opps = [o for o in step.opportunities if o.tool == "holehe"]
     assert holehe_opps, "expected a holehe opportunity for the discovered email"

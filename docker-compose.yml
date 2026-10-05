@@ -62,7 +62,11 @@ services:
 
   backend:
     build:
-      context: ./backend
+      # Repo root, not ./backend: the image also needs cli/ and platform-mcp/
+      # (services/agent_runner.py runs a headless instance of the CLI's own
+      # agent loop for every backend-spawned scoped agent — see backend/Dockerfile).
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: osprey-backend
     env_file:
       - .env
@@ -88,6 +92,11 @@ services:
       - ./config:/config
       - ./skills:/skills
       - ./mcp-servers:/mcp-servers
+      # Live-mounted for the same reason as ./backend:/app above — an edit to
+      # the CLI's agent loop or the embedded MCP gateway takes effect on the
+      # container's next request, no rebuild needed.
+      - ./cli:/app/cli
+      - ./platform-mcp:/app/platform-mcp
       - /var/run/docker.sock:/var/run/docker.sock
       # Live-mounted (not just env_file/environment-baked): LLMSettings reads
       # this path directly on every request (core/config.py's

@@ -9,8 +9,8 @@ or the finding pipeline in Plans 02-04 is measurable in seconds without
 touching a single live tool. Since Plan 02, this reads back Observations
 (the tool-execution path no longer creates Findings — see
 plans/harness/02-evidence-and-observation-layer.md); ``findings`` stays on
-``ReplayResult`` for Plan 03, when ``promote_observations``/
-``platform_file_finding`` start writing there again.
+``ReplayResult`` because a brain can still file a conclusion via
+``file_finding``, though no recorded tool call drives one during replay.
 """
 
 from __future__ import annotations

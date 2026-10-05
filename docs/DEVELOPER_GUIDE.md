@@ -241,7 +241,7 @@ Read in this order. Do **not** start randomly in `mcp-servers/` or Alembic.
 | 36 | `services/skills_loader.py`                      | How skills enter context                        |
 | 37 | `services/fanout.py`                             | Explicit sister fan-out                         |
 | 38 | `services/phase_supervisor.py`                  | Read-only phase readiness and ready-to-spawn briefs |
-| 39 | `api/v1/endpoints/pipeline.py` + `services/phase_agent.py` | Explicit scoped-agent jobs (not a backend root harness) |
+| 39 | `api/v1/endpoints/pipeline.py` + `services/agent_runner.py` (headless `cli.agent.loop.Runner`) | Explicit scoped-agent jobs (not a backend root harness) |
 
 ---
 

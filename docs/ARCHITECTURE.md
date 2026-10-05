@@ -79,7 +79,7 @@ deterministic execution funnel through the same governed backend capabilities.
 |------|-------|--------|
 | **① CLI harness → embedded gateway → backend** | `cli/harness/` → `platform-mcp/server.py` embedding API → backend capabilities | **Primary product path.** One runtime owns session, drivers, workers, jobs, and events. |
 | **② External MCP harness → platform-mcp → backend** | `platform-mcp/server.py` → `/api/v1/mcp/*` + `/api/v1/hybrid/*` | External clients consume the same capabilities and read-only readiness signals. |
-| **③ Explicit scoped backend agent** | `/pipeline/spawn-agent` or `platform_spawn_agent` → `services/phase_agent.py` | Optional bounded capability for callers without native workers; never a root harness. |
+| **③ Explicit scoped backend agent** | `/pipeline/spawn-agent` or `platform_spawn_agent` → `services/agent_runner.py` (a headless `cli.agent.loop.Runner` — the same loop as ①, no terminal) | Optional bounded capability for callers without native workers; never a root harness. |
 
 Both paths funnel through the **same execution kernel** (`services/tool_execution.py`), so
 governance, parsing, and memory behave identically regardless of driver.

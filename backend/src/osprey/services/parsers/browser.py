@@ -160,8 +160,8 @@ def parse_browser_flow(stdout, *, engagement_id="", run_id="", target=""):
     ok = sum(1 for s in steps if s.get("ok"))
     failed = [s for s in steps if not s.get("ok")]
 
-    # Flow trace — the earned-finding pipeline (LLM/human via file_finding, or
-    # promote_observations) interprets this against intended business logic.
+    # Flow trace — a brain (LLM/human) via file_finding interprets this against
+    # intended business logic before any conclusion is drawn.
     out.append(Observation(
         engagement_id=engagement_id, run_id=run_id,
         type=ObservationType.SCANNER_SIGNAL,

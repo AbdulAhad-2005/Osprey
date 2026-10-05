@@ -446,11 +446,8 @@ class EngagementGraph:
                 if d.get("is_cloudflare"):
                     host_meta["is_cloudflare"] = True
                     host_meta["waf"] = str(d.get("waf") or "cloudflare")
-                host_node = self._upsert_node(
-                    db,
-                    AssetNode(id=_node_id(AssetType.HOST, host), asset_type=AssetType.HOST, label=host,
-                              engagement_id=eid, run_id=rid, source_tool=tool, metadata=host_meta),
-                    observation_id=oid,
+                host_node = self._host_node(
+                    db, host, eid=eid, rid=rid, tool=tool, metadata=host_meta, observation_id=oid,
                 )
                 self._add_edge(
                     db, AssetEdge(source_id=_node_id(AssetType.URL, label), target_id=host_node.id,
@@ -471,14 +468,9 @@ class EngagementGraph:
                 observation_id=oid,
             )
             if host:
-                self._upsert_node(
-                    db,
-                    AssetNode(id=_node_id(AssetType.HOST, host), asset_type=AssetType.HOST, label=host,
-                              engagement_id=eid, run_id=rid, source_tool=tool),
-                    observation_id=oid,
-                )
+                host_node = self._host_node(db, host, eid=eid, rid=rid, tool=tool, observation_id=oid)
                 self._add_edge(
-                    db, AssetEdge(source_id=_node_id(AssetType.HOST, host),
+                    db, AssetEdge(source_id=host_node.id,
                                   target_id=_node_id(AssetType.PORT, port_label),
                                   relationship="has_port", engagement_id=eid),
                     observation_id=oid,
@@ -499,12 +491,7 @@ class EngagementGraph:
             )
             if host and port:
                 port_label = f"{host}:{port}"
-                self._upsert_node(
-                    db,
-                    AssetNode(id=_node_id(AssetType.HOST, host), asset_type=AssetType.HOST, label=host,
-                              engagement_id=eid, run_id=rid, source_tool=tool),
-                    observation_id=oid,
-                )
+                host_node = self._host_node(db, host, eid=eid, rid=rid, tool=tool, observation_id=oid)
                 # Step 2a: two tools reporting a different `service` name for
                 # the SAME host:port is a real conflict — keep both, mark
                 # disputed, never silently overwrite.
@@ -518,7 +505,7 @@ class EngagementGraph:
                     conflict_value=service_name,
                 )
                 self._add_edge(
-                    db, AssetEdge(source_id=_node_id(AssetType.HOST, host), target_id=port_node.id,
+                    db, AssetEdge(source_id=host_node.id, target_id=port_node.id,
                                   relationship="has_port", engagement_id=eid),
                     observation_id=oid,
                 )
@@ -546,12 +533,7 @@ class EngagementGraph:
                 elif candidate and " " not in candidate and "." in candidate:
                     host = candidate
             if host:
-                host_node = self._upsert_node(
-                    db,
-                    AssetNode(id=_node_id(AssetType.HOST, host), asset_type=AssetType.HOST, label=host,
-                              engagement_id=eid, run_id=rid, source_tool=tool),
-                    observation_id=oid,
-                )
+                host_node = self._host_node(db, host, eid=eid, rid=rid, tool=tool, observation_id=oid)
                 self._add_edge(
                     db, AssetEdge(source_id=host_node.id, target_id=tech_node.id,
                                   relationship="runs_tech", engagement_id=eid),
@@ -565,12 +547,7 @@ class EngagementGraph:
             meta = dict(d)
             if self._is_sister_observation(obs):
                 meta.setdefault("role", "sister_domain")
-            host_node = self._upsert_node(
-                db,
-                AssetNode(id=_node_id(AssetType.HOST, label), asset_type=AssetType.HOST, label=label,
-                          engagement_id=eid, run_id=rid, source_tool=tool, metadata=meta),
-                observation_id=oid,
-            )
+            host_node = self._host_node(db, label, eid=eid, rid=rid, tool=tool, metadata=meta, observation_id=oid)
             seed = (obs.target or "").strip().lower()
             if seed and self._is_sister_observation(obs) and seed != label:
                 seed_node = self._resolve_or_seed_domain(db, seed=seed, eid=eid, rid=rid, observation_id=oid)
@@ -589,11 +566,8 @@ class EngagementGraph:
             # IP. cdn_origin_probe tags its candidates role=="origin_candidate"
             # with obs.target set to the CDN-fronted host it probed.
             if meta.get("role") == "origin_candidate" and seed and seed != label:
-                fronted_node = self._upsert_node(
-                    db,
-                    AssetNode(id=_node_id(AssetType.HOST, seed), asset_type=AssetType.HOST, label=seed,
-                              engagement_id=eid, run_id=rid, source_tool=tool, metadata={"behind_cdn": True}),
-                    observation_id=oid,
+                fronted_node = self._host_node(
+                    db, seed, eid=eid, rid=rid, tool=tool, metadata={"behind_cdn": True}, observation_id=oid,
                 )
                 self._add_edge(
                     db, AssetEdge(source_id=fronted_node.id, target_id=host_node.id,
@@ -755,6 +729,38 @@ class EngagementGraph:
             if db.get(AssetNodeRow, (eid, _node_id(atype, label))):
                 return atype
         return AssetType.DOMAIN if label.count(".") <= 1 else AssetType.SUBDOMAIN
+
+    def _host_node(
+        self, db, label: str, *, eid: str, rid: str, tool: str,
+        metadata: dict[str, Any] | None = None, observation_id: str = "",
+    ) -> AssetNode:
+        """Create or reuse the ONE canonical node for a bare hostname string.
+
+        Every observation that only knows a hostname — a URL's host part, a
+        PORT/SERVICE/TECHNOLOGY observation's hostname field, a HOST-type
+        observation, a CDN-origin "fronted" host — must create its host node
+        through here, never by constructing ``AssetType.HOST`` directly. A
+        hostname already tracked as a SUBDOMAIN or DOMAIN (the overwhelmingly
+        common case: a real host is almost always learned by subdomain
+        enumeration BEFORE httpx/naabu/nmap ever observe it) must reuse that
+        SAME node — otherwise the opportunity generator sees two separate
+        assets for one real host (``subdomain:live.geo.tv`` AND
+        ``host:live.geo.tv``) and runs the entire recon/host-expansion battery
+        on each independently. This was a real, confirmed bug (plan 19): six
+        call sites in this file each hardcoded a fresh ``AssetType.HOST`` node,
+        silently forking a duplicate identity for every subdomain that was ever
+        also touched by a URL/port/service/tech observation — i.e. almost all
+        of them. ``_existing_or_guess_host_type`` already implements "reuse
+        what exists, else infer domain vs subdomain from depth"; this is just
+        every hostname-only call site finally going through it consistently.
+        """
+        atype = self._existing_or_guess_host_type(db, label, eid)
+        return self._upsert_node(
+            db,
+            AssetNode(id=_node_id(atype, label), asset_type=atype, label=label,
+                      engagement_id=eid, run_id=rid, source_tool=tool, metadata=metadata or {}),
+            observation_id=observation_id,
+        )
 
     def siblings_same_ip(self, host_or_subdomain: str, *, engagement_id: str = "") -> SiblingHostResponse:
         eid = engagement_id or ""

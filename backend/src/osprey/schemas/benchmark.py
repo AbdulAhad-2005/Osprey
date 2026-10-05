@@ -107,6 +107,29 @@ class ReplayResult(BaseModel):
     replayed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class FlowTrace(BaseModel):
+    """What the REAL decision loop offered and executed over a corpus — the
+    ruler for "did the deterministic floor reach vuln analysis" (plan 19 Phase 1).
+    Unlike ReplayResult (ingestion output), this records ENGINE DECISIONS:
+    ``offered`` is every capability ``list_step`` surfaced ("tool@asset"),
+    ``executed`` the ordered subset the driver actually ran."""
+
+    fixture_name: str
+    scratch_engagement_id: str
+    seed_target: str = ""
+    offered: list[str] = Field(default_factory=list)
+    executed: list[str] = Field(default_factory=list)
+    steps: int = 0
+    reached_fixpoint: bool = False
+    traced_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def offered_tools(self) -> set[str]:
+        return {entry.split("@", 1)[0] for entry in self.offered}
+
+    def executed_tools(self) -> set[str]:
+        return {entry.split("@", 1)[0] for entry in self.executed}
+
+
 class Scorecard(BaseModel):
     """The benchmark's output — one run's numbers, each metric labeled so a
     diff never silently compares LLM noise against a deterministic run."""

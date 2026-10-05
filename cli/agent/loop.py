@@ -1,12 +1,13 @@
 """The CLI's own ReAct loop — this is what makes the CLI a real agent host
 instead of a remote control.
 
-Shape mirrors the backend's proven `phase_agent.py` loop (build messages,
-call the model, run any tool calls — concurrently, bounded — append results,
-repeat until the model stops asking for tools) but is a new, small,
-CLI-owned implementation: it only needs `tools.py` (HTTP-only, works
-against a local or remote backend) and `llm.py` (a plain third-party
-library), never the backend's own DB/job-store-coupled internals.
+This is the ONE reasoning loop in Osprey: build messages, call the model, run
+any tool calls — concurrently, bounded — append results, repeat until the model
+stops asking for tools. The CLI drives it directly, and the backend runs a
+headless instance of this same `Runner` for every scoped sub-agent job
+(services/agent_runner.py) — there is no separate backend-native agent loop.
+It needs only `tools.py` (HTTP-only, works against a local or remote backend)
+and `llm.py` (a plain third-party library), never a DB/job-store-coupled path.
 
 One `Runner` instance lives for the whole CLI session, so a follow-up
 prompt sees the full prior conversation — exactly like Claude Code's own
@@ -217,10 +218,15 @@ class Runner:
         agent_prompt: str = "",
         tool_gateway: "platform_tools.EmbeddedToolGateway | None" = None,
         worker_factory: "Callable[..., Runner] | None" = None,
+        max_turns: int | None = None,
     ) -> None:
         self.config = config
         self.messages: list[dict[str, Any]] = []
         self._allow_spawn = allow_spawn
+        # Per-instance turn cap (e.g. a job's requested max_turns). None/0 keeps
+        # the module default — every existing caller (interactive CLI, workers)
+        # is unaffected since none of them pass this.
+        self._max_turns = max_turns or _MAX_TURNS
         # Optional active-mode tool scope (from a prompt-defined agent/flow). None
         # = full catalog. Applied to what the model SEES and enforced on dispatch,
         # and inherited by spawned workers so a mode is consistent end to end.
@@ -387,7 +393,7 @@ class Runner:
         tool_schemas = self._tool_schemas()
 
         try:
-            for _turn in range(_MAX_TURNS):
+            for _turn in range(self._max_turns):
                 # History grows every turn as tool results accumulate and rides
                 # in every request alongside the tool schema list. Keep it under
                 # the model's real context window before each call — summarizing

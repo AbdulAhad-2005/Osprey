@@ -498,8 +498,8 @@ async def execute_tool_request(
     # governor). This describes OUR execution against the target, not a fact
     # ABOUT the target's security posture, so it is never an Observation/
     # Finding — those types are reserved for target-observed signals that
-    # promote_observations() and every downstream consumer treat as claims
-    # about the target. It's carried on the audit-log entry this call already
+    # every downstream consumer treats as claims about the target. It's
+    # carried on the audit-log entry this call already
     # writes below, which is the correct home for execution telemetry.
     # Deduped per engagement+target by mark_ban's "already cooling down" return.
     ban_signal = ""

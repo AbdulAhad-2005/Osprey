@@ -1,17 +1,20 @@
 """The earned-finding pipeline — plans/harness/03-earned-finding-pipeline.md.
 
-A ``Finding`` comes into existence exactly two ways, both obeying the one
-law (``confidence = f(evidence)``, computed by ``services.confidence.
+A ``Finding`` comes into existence exactly ONE way (plan 19 Phase 6), obeying
+the one law (``confidence = f(evidence)``, computed by ``services.confidence.
 confidence_for``, never asserted by a caller):
 
-- ``file_finding`` — explicit filing (Strix model). An LLM/agent/human calls
-  this *after* gathering evidence. The signature has no ``confidence``
-  parameter at all — there is nothing for a caller to assert.
-- ``promote_observations`` — deterministic promotion (Pentest-Swarm model),
-  the no-LLM route. Clusters SCANNER_SIGNAL observations, reads whatever
-  corroboration already exists (distinct source_tools that independently
-  reported the same observation), and lets ``confidence_for`` compute
-  confidence from that. Destructive PoC is never auto-run here.
+- ``file_finding`` — explicit filing by a brain (an LLM/agent/human) *after*
+  gathering evidence. The signature has no ``confidence`` parameter at all —
+  there is nothing for a caller to assert.
+
+The former ``promote_observations`` ("Pentest-Swarm" deterministic promotion)
+was deleted: it minted a VULNERABILITY finding from every SCANNER_SIGNAL
+observation on a corroboration COUNT alone, the "truth from counts"
+anti-pattern. A scanner match now stays a scanner_claim observation; a human/
+LLM turns it into a conclusion via ``file_finding`` with real evidence, and the
+report surfaces unverified claims in a dedicated section (report_generator /
+markdown_report) without minting findings.
 
 CI lint gate (Step 7, scripts/lint_no_type_branching.py) forbids
 ``finding_type ==`` / ``switch(type)`` in this module — nothing here may
@@ -30,9 +33,10 @@ from osprey.schemas.finding import (
     EvidenceRecordKind,
     Finding,
     FindingType,
+    is_conclusion_type,
 )
 from osprey.schemas.fp_cache import FpPattern
-from osprey.schemas.observation import Observation, ObservationType, observation_signature
+from osprey.schemas.observation import Observation, observation_signature
 from osprey.services import fp_cache, suppressed_promotion_store
 from osprey.services.confidence import confidence_for, evidence_summary_for
 from osprey.services.engagement_graph import get_engagement_graph
@@ -91,6 +95,23 @@ def file_finding(
     Step 2) — the attempt is recorded in the suppressed-promotion audit
     trail, never silently gone.
     """
+    # A finding is a brain's evidence-backed CONCLUSION, never a structural
+    # fact (plan 19 Phase 7). A subdomain/host/url/port/service/technology/
+    # osint-entity/raw observation belongs in the observation store + asset
+    # graph — it is a fact, not a judgment. Rejecting it here (the one
+    # admission path) is what makes "only a brain writes a conclusion, never a
+    # structural fact" structural instead of a convention. (is_conclusion_type
+    # lives in schemas/finding.py, not this module, so the no-type-branching
+    # confidence gate — scripts/lint_no_type_branching.py — is untouched: this
+    # is admission scope, not confidence scope.)
+    if not is_conclusion_type(finding_type):
+        raise FileFindingError(
+            f"{getattr(finding_type, 'value', finding_type)!r} is a structural/observed fact, "
+            "not a conclusion — record it as an Observation (it already auto-ingests), never a "
+            "finding. A finding is only ever a brain's evidence-backed security judgment "
+            "(vulnerability / access / credential / secret)."
+        )
+
     ids = [oid for oid in (observation_ids or []) if oid and oid.strip()]
     if not ids:
         raise FileFindingError(
@@ -187,74 +208,15 @@ def file_finding(
     return FileFindingResult(finding=stored)
 
 
-# Observation types this deterministic pass considers — a scanner/tool
-# signal is exactly the "may be a vuln, not yet judged" bucket Plan 02's
-# parsers produce (nuclei template match, nmap NSE vulners/vulns.lua hit,
-# a subdomain-takeover check, a Shodan CVE tag, …). Widening promotion to
-# other observation types (credentials, DNSSEC/SPF posture, …) is a later,
-# separately-scoped pass — not silently expanding this list is deliberate.
-_PROMOTABLE_TYPES = frozenset({ObservationType.SCANNER_SIGNAL})
-
-
-def promote_observations(engagement_id: str, *, run_id: str = "") -> list[Finding]:
-    """The no-LLM route: for every SCANNER_SIGNAL observation in the
-    engagement, attach whatever corroboration already exists (distinct
-    source_tools that independently reported the same observation) and file
-    a finding via the exact same evidence law as ``file_finding``. Nothing
-    here invokes a destructive PoC capability — a finding reaches CONFIRMED
-    through this path only if two+ tools corroborated it; a single-source
-    signal still becomes a finding, honestly graded HYPOTHESIS, rather than
-    getting dropped or inflated.
-    """
-    eid = (engagement_id or "").strip()
-    if not eid:
-        return []
-    obs_store = get_observation_store()
-    promoted: list[Finding] = []
-
-    for otype in _PROMOTABLE_TYPES:
-        for obs in obs_store.list_by_type(eid, otype):
-            tools = obs_store.distinct_source_tools(obs.id)
-            records: list[EvidenceRecord] = []
-            if len(tools) >= 2:
-                records.append(
-                    EvidenceRecord(
-                        kind=EvidenceRecordKind.CORROBORATION,
-                        source_tool=tools[1],
-                        observation_id=obs.id,
-                        detail=f"Independently reported by {len(tools)} tools: {', '.join(tools)}",
-                    )
-                )
-            title = str(obs.details.get("title") or obs.details.get("claim") or obs.target or obs.type.value)
-            severity_raw = str(obs.details.get("claimed_severity") or "none")
-            try:
-                severity = ClaimSeverity(severity_raw)
-            except ValueError:
-                severity = ClaimSeverity.NONE
-            try:
-                result = file_finding(
-                    engagement_id=eid,
-                    run_id=run_id,
-                    title=title,
-                    finding_type=FindingType.VULNERABILITY,
-                    observation_ids=[obs.id],
-                    claim_severity=severity,
-                    description=str(obs.details.get("description") or ""),
-                    evidence_records=records,
-                    target=obs.target,
-                    tags=list(obs.tags or []) + ["promoted"],
-                    metadata={"promoted_from_observation": obs.id, **{
-                        k: v for k, v in obs.details.items() if k in ("cve", "template_id", "signature")
-                    }},
-                )
-            except FileFindingError as exc:
-                logger.debug("promote_observations skipped %s: %s", obs.id, exc)
-                continue
-            # result.finding is None when an FP-cache pattern suppressed it —
-            # already recorded in the suppressed-promotion audit trail.
-            if result.finding is not None:
-                promoted.append(result.finding)
-    return promoted
+# promote_observations() was deleted here (plan 19 Phase 6). It was the
+# "Pentest-Swarm" deterministic launderer: it turned every SCANNER_SIGNAL
+# observation into a VULNERABILITY finding, reaching CONFIRMED on nothing but a
+# corroboration COUNT (two tools agreeing) — the "truth from counts" anti-pattern
+# the whole plan exists to kill. A scanner match is a scanner_claim observation
+# and stays one; only a brain, via file_finding() citing real evidence, turns it
+# into a conclusion. Scanner claims are surfaced to the human honestly through the
+# report's dedicated "Scanner Claims (UNVERIFIED)" section (report_generator /
+# markdown_report), not by minting findings.
 
 
 class MarkFalsePositiveError(ValueError):

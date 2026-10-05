@@ -10,7 +10,7 @@ citing this observation pass evidence_grounding.py's check by quoting a real
 
 A positive result (the canary reflected; the two responses differ) becomes a
 SCANNER_SIGNAL — "may be a vuln, not yet judged", same bucket every other
-scanner-signal tool feeds into confidence_for()/promote_observations(). A
+scanner-signal tool feeds into — a claim a brain judges via file_finding. A
 clean negative (no reflection; identical responses) is still recorded as RAW
 — a negative result run through this deterministic check is itself useful
 evidence (a claim that WOULD have shown up here and didn't), never silently

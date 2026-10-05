@@ -278,238 +278,232 @@ class InvestigationDriver:
         state.revision = step.revision
         return step
 
-    def _watch_job(self, job_id: str, *, wait_seconds: int):
+    # Mirrors config/parallelism.yaml::max_running_jobs (backend default 4) —
+    # the backend caps concurrent INVESTIGATION_STEP jobs there, so the driver
+    # launches at most this many at once and a launch is never rejected for the
+    # cap. A fat-fingered backend value only ever LOWERS the real ceiling (the
+    # backend enforces its own), never raises it.
+    _MAX_CONCURRENT = 4
+
+    def _reap_active(self, active: dict, wait_seconds: int):
+        """One non-blocking (wait_seconds=0) pass over in-flight jobs: stream any
+        new log lines, and for any job that has FINISHED yield its terminal
+        event and drop it from ``active``. A still-running job simply stays in
+        ``active`` across iterations — running in the background while other work
+        proceeds — and is NEVER cancelled for being slow (plan 19 Part B: slow is
+        not broken). A ``wait_seconds > 0`` blocks briefly on each polled job so
+        the caller can wait for progress instead of busy-spinning."""
         state = self.runtime.session.investigation
-        printed_results = 0
-        last_progress = ""
-        job = {"job_id": job_id, "status": "running"}
-        while str(job.get("status") or "") in {"queued", "running"}:
-            if state.status == "paused":
-                yield JobEvent("paused", {"job_id": job_id})
-                return
-            if state.status == "cancelled":
-                yield JobEvent("cancelled", {"job_id": job_id})
-                return
+        for job_id in list(active):
+            info = active[job_id]
             job = self.runtime.client.poll_job(job_id, wait_seconds=wait_seconds)
             results = job.get("results_log") or []
-            for line in results[printed_results:]:
+            printed = int(info.get("printed_results", 0))
+            for line in results[printed:]:
                 yield JobEvent("capability_log", {"job_id": job_id, "line": line})
-            printed_results = len(results)
-            progress = str(job.get("progress") or "")
-            if progress and progress != last_progress:
-                last_progress = progress
-                yield JobEvent(
-                    "capability_progress", {"job_id": job_id, "progress": progress}
-                )
-
-        status = str(job.get("status") or "")
-        state.active_job_id = ""
-        state.active_opportunity_id = ""
-        if status == "failed":
-            state.status = "blocked"
-            yield JobEvent(
-                "error",
-                {"job_id": job_id, "message": str(job.get("error") or "unknown error")},
-            )
-        elif status == "cancelled":
-            state.status = "cancelled"
-            yield JobEvent("cancelled", {"job_id": job_id})
-        else:
-            result = self.runtime.client.job_result(job_id)
-            yield JobEvent(
-                "capability_completed", {"job_id": job_id, "job": job, "result": result}
-            )
+            info["printed_results"] = len(results)
+            status = str(job.get("status") or "")
+            if status in {"queued", "running"}:
+                continue
+            active.pop(job_id, None)
+            state.active_job_id = next(iter(active), "")
+            if status == "cancelled":
+                state.status = "cancelled"
+                yield JobEvent("cancelled", {"job_id": job_id})
+                return
+            if status == "failed":
+                # A failed JOB (distinct from a tool timeout — those return as a
+                # completed capability whose result marks the tool timed_out):
+                # surface it as a capability_completed carrying the failure, so
+                # the renderer shows one tool card, not a separate error line.
+                yield JobEvent("capability_completed", {
+                    "job_id": job_id, "opportunity_id": info.get("opportunity_id", ""),
+                    "result": {"result": {"details": {"results": [{
+                        "tool": info.get("tool", ""), "success": False,
+                        "error": str(job.get("error") or "job failed"),
+                    }]}}},
+                })
+            else:
+                result = self.runtime.client.job_result(job_id)
+                yield JobEvent("capability_completed", {
+                    "job_id": job_id, "opportunity_id": info.get("opportunity_id", ""),
+                    "job": job, "result": result,
+                })
 
     def drive(self, *, wait_seconds: int = 3):
+        """Background-and-continue scheduler (plan 19 Part B).
+
+        Instead of running one tool to completion before starting the next, this
+        launches up to ``_MAX_CONCURRENT`` opportunities at once and REAPS them
+        as they finish. A slow tool runs in the background while other
+        independent work proceeds, and is never killed for being slow — the tool
+        budget is now just a generous safety ceiling. This is how a real
+        operator (and Claude Code) works: fan out, keep moving, collect results
+        as they land. Each loop: reap finished jobs → re-sense → launch up to the
+        cap → (if nothing new to launch but jobs are in flight) block briefly on
+        one so we don't busy-spin, then loop. Reaching a fixpoint — no in-flight
+        jobs and no launchable opportunity — ends the run.
+        """
         state = self.runtime.session.investigation
         state.status = "running"
+        active: dict[str, dict] = {}
         stale_opportunity_id = ""
         stale_count = 0
         try:
             while True:
                 if state.status == "paused":
-                    yield JobEvent("paused", {"job_id": state.active_job_id})
+                    yield JobEvent("paused", {"job_id": next(iter(active), "")})
                     return
                 if state.status == "cancelled":
-                    yield JobEvent("cancelled", {"job_id": state.active_job_id})
+                    yield JobEvent("cancelled", {"job_id": next(iter(active), "")})
                     return
 
+                # 1. Reap finished jobs without blocking.
+                yield from self._reap_active(active, 0)
+                if state.status == "cancelled":
+                    yield JobEvent("cancelled", {"job_id": next(iter(active), "")})
+                    return
+
+                # 2. Sense fresh state, adopting any server-side job we aren't
+                #    tracking yet (e.g. /resume reattaching a job left running).
                 step = self._sense()
-                yield JobEvent(
-                    "state",
-                    {
-                        "revision": step.revision,
-                        "status": step.status,
-                        "state_summary": step.state_summary,
-                    },
-                )
-                yield JobEvent(
-                    "opportunities",
-                    {
-                        "revision": step.revision,
-                        "opportunities": [item.raw for item in step.opportunities],
-                    },
-                )
+                for aj in step.active_jobs:
+                    jid = str(aj.get("job_id") or "")
+                    if jid and jid not in active and str(aj.get("status") or "") in {"queued", "running"}:
+                        rtool = str(aj.get("tool_name") or "")
+                        rtool = "" if rtool.startswith("investigation:") else rtool
+                        # Key an adopted job by its own id (it has no decision in
+                        # this session), so its completion matches back to this
+                        # start card.
+                        active[jid] = {"opportunity_id": jid, "tool": rtool, "printed_results": 0}
+                        state.active_job_id = jid
+                        yield JobEvent("capability_started", {
+                            "job_id": jid, "opportunity_id": jid, "resumed": True, "tool": rtool,
+                        })
+                yield JobEvent("state", {
+                    "revision": step.revision, "status": step.status,
+                    "state_summary": step.state_summary,
+                })
+                yield JobEvent("opportunities", {
+                    "revision": step.revision,
+                    "opportunities": [item.raw for item in step.opportunities],
+                })
 
-                if step.status.lower() in self.terminal_statuses:
-                    state.status = "complete"
-                    yield JobEvent(
-                        "complete",
-                        {"revision": step.revision, "state_summary": step.state_summary},
-                    )
-                    return
+                active_opp_ids = {i["opportunity_id"] for i in active.values() if i.get("opportunity_id")}
+                launchable = [o for o in step.opportunities if o.id and o.id not in active_opp_ids]
 
-                active = next(
-                    (
-                        item
-                        for item in step.active_jobs
-                        if str(item.get("status") or "") in {"queued", "running"}
-                    ),
-                    None,
-                )
-                if active is not None:
-                    job_id = str(active.get("job_id") or "")
-                    if not job_id:
-                        yield JobEvent("error", {"message": "Active job has no job id."})
+                # 3. Fixpoint: nothing running and nothing to launch.
+                if not active and not launchable:
+                    if step.status.lower() in self.terminal_statuses:
+                        state.status = "complete"
+                        yield JobEvent("complete", {
+                            "revision": step.revision, "state_summary": step.state_summary,
+                        })
                         return
-                    state.active_job_id = job_id
-                    resumed_tool = str(active.get("tool_name") or "")
-                    yield JobEvent(
-                        "capability_started",
-                        {
-                            "job_id": job_id, "resumed": True,
-                            "tool": "" if resumed_tool.startswith("investigation:") else resumed_tool,
-                        },
-                    )
-                    yield from self._watch_job(job_id, wait_seconds=wait_seconds)
-                    if state.status in {"paused", "cancelled", "blocked"}:
-                        return
-                    continue
-
-                decision = self.decide(step)
-                if decision is None:
                     event_type = "waiting" if step.status.lower() == "waiting" else "blocked"
                     state.status = event_type
-                    yield JobEvent(
-                        event_type,
-                        {"revision": step.revision, "state_summary": step.state_summary},
-                    )
+                    yield JobEvent(event_type, {
+                        "revision": step.revision, "state_summary": step.state_summary,
+                    })
                     return
 
-                opportunity = next(
-                    item for item in step.opportunities if item.id == decision.opportunity_id
-                )
-                state.active_opportunity_id = opportunity.id
-                yield JobEvent(
-                    "decision",
-                    {
-                        "revision": step.revision,
-                        "opportunity_id": opportunity.id,
-                        "capability": opportunity.capability,
-                        "label": opportunity.label,
-                        "priority": opportunity.priority,
-                        "rationale": decision.rationale,
-                        "driver": decision.driver,
-                        # The opportunity's own tool/params (Plan 18: every
-                        # opportunity is exactly one real tool call) — lets
-                        # the CLI render this as an actual tool-call card
-                        # instead of a generic capability label.
-                        "tool": str(opportunity.raw.get("tool") or ""),
-                        "params": dict(opportunity.raw.get("params") or {}),
-                    },
-                )
-                try:
-                    response = self.runtime.client.execute_investigation_step(
-                        engagement_id=step.engagement_id,
-                        run_id=step.run_id,
-                        opportunity_id=decision.opportunity_id,
-                        expected_revision=decision.expected_revision,
-                        driver=decision.driver,
-                        rationale=decision.rationale,
+                # 4. Launch up to the concurrency cap. Re-sense after each launch
+                #    so the next one uses a fresh revision (active_jobs changed) —
+                #    this is what keeps concurrent launches from 409-ing each
+                #    other under the backend's optimistic-concurrency check.
+                launched_any = False
+                while len(active) < self._MAX_CONCURRENT and launchable:
+                    selected = max(launchable, key=lambda item: item.priority)
+                    rationale = selected.rationale or (
+                        f"highest backend-ranked opportunity (priority {selected.priority:g})"
                     )
-                except Exception as exc:
-                    response_obj = getattr(exc, "response", None)
-                    if getattr(response_obj, "status_code", None) == 409:
-                        state.active_opportunity_id = ""
-                        if opportunity.id == stale_opportunity_id:
-                            stale_count += 1
-                        else:
-                            stale_opportunity_id = opportunity.id
-                            stale_count = 1
-                        # Backend diagnostic: which part of engagement state
-                        # (nodes/opportunities/active_jobs) actually moved
-                        # between sense and act — surfaced so a persistent
-                        # conflict is reportable with real evidence instead
-                        # of just "it happened again."
-                        diff = ""
-                        try:
-                            detail = (response_obj.json() or {}).get("detail")
-                            if isinstance(detail, dict):
-                                diff = str(detail.get("diff") or "")
-                            elif isinstance(detail, str):
-                                diff = detail
-                        except Exception:  # noqa: BLE001
-                            pass
-                        if stale_count > _MAX_CONSECUTIVE_STALE:
-                            state.status = "blocked"
-                            yield JobEvent(
-                                "error",
-                                {
-                                    "message": (
-                                        f"{opportunity.label or opportunity.id} kept losing the "
-                                        f"replan race {stale_count} times in a row — stopping "
-                                        "instead of retrying forever. Use /resume to try again "
-                                        "(the engine will re-sense fresh state), or report this "
-                                        "if it recurs."
-                                        + (f" Last diff: {diff}" if diff else "")
-                                    ),
-                                },
-                            )
-                            return
-                        yield JobEvent(
-                            "state_stale",
-                            {
+                    tool = str(selected.raw.get("tool") or "")
+                    params = dict(selected.raw.get("params") or {})
+                    state.active_opportunity_id = selected.id
+                    yield JobEvent("decision", {
+                        "revision": step.revision, "opportunity_id": selected.id,
+                        "capability": selected.capability, "label": selected.label,
+                        "priority": selected.priority, "rationale": rationale,
+                        "driver": self.name, "tool": tool, "params": params,
+                    })
+                    try:
+                        response = self.runtime.client.execute_investigation_step(
+                            engagement_id=step.engagement_id, run_id=step.run_id,
+                            opportunity_id=selected.id, expected_revision=step.revision,
+                            driver=self.name, rationale=rationale,
+                        )
+                    except Exception as exc:
+                        response_obj = getattr(exc, "response", None)
+                        sc = getattr(response_obj, "status_code", None)
+                        if sc == 429:
+                            # Backend concurrency/budget cap reached — stop
+                            # launching this pass, let in-flight jobs drain.
+                            break
+                        if sc == 409:
+                            state.active_opportunity_id = ""
+                            if selected.id == stale_opportunity_id:
+                                stale_count += 1
+                            else:
+                                stale_opportunity_id = selected.id
+                                stale_count = 1
+                            diff = ""
+                            try:
+                                detail = (response_obj.json() or {}).get("detail")
+                                diff = str(detail.get("diff") or "") if isinstance(detail, dict) else str(detail or "")
+                            except Exception:  # noqa: BLE001
+                                pass
+                            if stale_count > _MAX_CONSECUTIVE_STALE:
+                                state.status = "blocked"
+                                yield JobEvent("error", {"message": (
+                                    f"{selected.label or selected.id} kept losing the replan race "
+                                    f"{stale_count} times in a row — stopping instead of retrying "
+                                    "forever. Use /resume to try again."
+                                    + (f" Last diff: {diff}" if diff else "")
+                                )})
+                                return
+                            yield JobEvent("state_stale", {
                                 "revision": step.revision,
                                 "message": "Evidence changed before scheduling; replanning.",
-                            },
-                        )
-                        # Bounded, increasing backoff — a real conflict clears in one
-                        # or two retries; this only meaningfully slows the (already
-                        # capped) worst case instead of hammering the backend at
-                        # full speed while it's happening.
-                        time.sleep(min(0.25 * stale_count, 2.0))
-                        continue
-                    raise
-                stale_opportunity_id = ""
-                stale_count = 0
-                job = response.get("job") or {}
-                job_id = str(job.get("job_id") or response.get("job_id") or "")
-                if not job_id:
-                    yield JobEvent(
-                        "error",
-                        {
+                            })
+                            time.sleep(min(0.25 * stale_count, 2.0))
+                            break  # re-sense on the next outer iteration
+                        raise
+                    stale_opportunity_id = ""
+                    stale_count = 0
+                    job = response.get("job") or {}
+                    job_id = str(job.get("job_id") or response.get("job_id") or "")
+                    if not job_id:
+                        yield JobEvent("error", {
                             "message": "Selected capability did not return a durable job id.",
                             "decision": response.get("decision") or {},
-                        },
-                    )
-                    return
-                state.active_job_id = job_id
-                yield JobEvent(
-                    "capability_started",
-                    {
-                        "job_id": job_id,
-                        "opportunity_id": opportunity.id,
-                        "capability": opportunity.capability,
-                        "tool": str(opportunity.raw.get("tool") or ""),
-                        "params": dict(opportunity.raw.get("params") or {}),
-                    },
-                )
-                yield from self._watch_job(job_id, wait_seconds=wait_seconds)
-                if state.status in {"paused", "cancelled", "blocked"}:
-                    return
+                        })
+                        return
+                    active[job_id] = {"opportunity_id": selected.id, "tool": tool, "printed_results": 0}
+                    state.active_job_id = job_id
+                    yield JobEvent("capability_started", {
+                        "job_id": job_id, "opportunity_id": selected.id,
+                        "capability": selected.capability, "tool": tool, "params": params,
+                    })
+                    launched_any = True
+                    step = self._sense()
+                    active_opp_ids = {i["opportunity_id"] for i in active.values() if i.get("opportunity_id")}
+                    launchable = [o for o in step.opportunities if o.id and o.id not in active_opp_ids]
+
+                # 5. If we couldn't launch anything but work is in flight, wait
+                #    briefly on one job (don't busy-spin); then loop → reap.
+                if active and not launched_any:
+                    oldest = next(iter(active))
+                    try:
+                        self.runtime.client.poll_job(oldest, wait_seconds=wait_seconds)
+                    except Exception:  # noqa: BLE001 — reaped/handled next iteration
+                        pass
+                elif not active and not launched_any:
+                    # launchable existed but every launch 409'd/429'd — small
+                    # pause before re-sensing, so we don't tight-loop.
+                    time.sleep(0.2)
         except KeyboardInterrupt:
             state.status = "paused"
-            yield JobEvent("paused", {"job_id": state.active_job_id})
+            yield JobEvent("paused", {"job_id": next(iter(active), "")})
 
 
 class DeterministicInvestigationDriver(InvestigationDriver):

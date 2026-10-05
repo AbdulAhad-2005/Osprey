@@ -26,10 +26,13 @@ class JobKind(StrEnum):
 
 
 # Roles a spawned agent can take. Every phase agent gets the full tool catalog
-# (get_tools_for_llm_phase does not filter by phase) — a role's real effect is
-# which skills/<role>/ directory gets eagerly loaded into its system prompt
-# (see phase_agent._build_phase_system_prompt / skills_loader). "custom" runs
-# with a free-form task and no phase-specific skill digest.
+# and the full shared system-prompt assembly (services/agent_runner.py runs a
+# headless cli.agent.loop.Runner, same as the interactive CLI) — a role's real
+# effect is a one-line framing injected via that prompt's operator-defined-mode
+# overlay, plus which skills rank highest for its task/scope
+# (cli.agent.loop.Runner._worker_system_prompt's platform_skills query, reused
+# by agent_runner.run_scoped_agent). "custom" runs with a free-form task and no
+# role framing.
 AGENT_ROLES = (
     "recon", "network", "vuln", "web", "exploit", "osint", "custom",
     "privesc", "credential-access", "lateral-movement", "persistence",

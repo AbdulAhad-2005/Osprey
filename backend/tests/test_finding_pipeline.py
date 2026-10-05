@@ -17,7 +17,6 @@ from osprey.services.finding_pipeline import (
     MarkFalsePositiveError,
     file_finding,
     mark_false_positive,
-    promote_observations,
 )
 from osprey.services.observation_store import get_observation_store
 
@@ -133,7 +132,7 @@ def test_file_finding_accepts_verification_record_grounded_in_real_output():
     )
     result = file_finding(
         engagement_id=eid, title="Exchange build 15.2.1748.39 disclosed",
-        finding_type=FindingType.TECHNOLOGY, observation_ids=[obs.id],
+        finding_type=FindingType.VULNERABILITY, observation_ids=[obs.id],
         evidence_records=[EvidenceRecord(
             kind=EvidenceRecordKind.VERIFICATION,
             detail=f"Header observed: {real_output}",
@@ -154,7 +153,7 @@ def test_file_finding_attestation_record_is_never_grounded():
     )
     result = file_finding(
         engagement_id=eid, title="Operator attests to this finding",
-        finding_type=FindingType.SERVICE, observation_ids=[obs.id],
+        finding_type=FindingType.VULNERABILITY, observation_ids=[obs.id],
         evidence_records=[EvidenceRecord(
             kind=EvidenceRecordKind.ATTESTATION,
             detail="I am attesting as operator: derived from prior artifacts, no raw excerpt recorded here",
@@ -181,54 +180,51 @@ def test_file_finding_claiming_confirmed_with_no_evidence_still_yields_hypothesi
     assert result.finding.confidence == FindingConfidence.HYPOTHESIS
 
 
-def test_promote_observations_promotes_single_source_scanner_signal_as_hypothesis():
-    eid = _make_engagement("promote-single.test")
-    get_observation_store().record(
-        Observation(engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="promote-single.test",
-                    source_tool="nuclei_scan", details={"title": "CVE-2099-0001 match", "claimed_severity": "high"}),
+# --------------------------------------------------------------------------
+# Structural-fact rejection — plan 19 Phase 7 (a finding is a CONCLUSION only)
+# --------------------------------------------------------------------------
+
+@_pytest.mark.parametrize(
+    "structural_type",
+    [
+        FindingType.SUBDOMAIN, FindingType.HOST, FindingType.URL, FindingType.PORT,
+        FindingType.SERVICE, FindingType.TECHNOLOGY, FindingType.OBSERVATION,
+        FindingType.DNS_RECORD, FindingType.EMAIL, FindingType.ORGANIZATION,
+        FindingType.HTTP_RESPONSE,
+    ],
+)
+def test_file_finding_rejects_structural_fact_types(structural_type):
+    """A structural/observed fact is never a finding — file_finding rejects it
+    at the one admission path, so the invariant is structural, not a convention.
+    The fact belongs in the observation store."""
+    eid = _make_engagement("file-finding-structural.test")
+    obs = get_observation_store().record(
+        Observation(engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="file-finding-structural.test",
+                    source_tool="httpx_probe"),
     )
-    findings = promote_observations(eid)
-    assert len(findings) == 1
-    assert findings[0].confidence == FindingConfidence.HYPOTHESIS
-    assert findings[0].claim_severity.value == "high"
+    with _pytest.raises(FileFindingError):
+        file_finding(
+            engagement_id=eid, title="should be an observation",
+            finding_type=structural_type, observation_ids=[obs.id],
+        )
 
 
-def test_promote_observations_promotes_corroborated_signal_as_likely():
-    eid = _make_engagement("promote-corroborated.test")
-    store = get_observation_store()
-    # Two independent tools reporting the exact same fact → merges into one
-    # canonical observation with 2 distinct occurrence source_tools.
-    store.record(Observation(
-        engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="promote-corroborated.test",
-        source_tool="nuclei_scan", details={"title": "CVE-2099-0002 match", "claimed_severity": "high"},
-    ))
-    store.record(Observation(
-        engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="promote-corroborated.test",
-        source_tool="jaeles_vulnerability_scan", details={"title": "CVE-2099-0002 match", "claimed_severity": "high"},
-    ))
-    findings = promote_observations(eid)
-    assert len(findings) == 1
-    assert findings[0].confidence == FindingConfidence.LIKELY
-    assert set(findings[0].source_tools) == {"nuclei_scan", "jaeles_vulnerability_scan"}
-
-
-def test_promote_observations_never_promotes_non_scanner_signal_types():
-    """Widening promotion to other observation types (credentials, DNS
-    posture, …) is explicitly out of scope for this pass — a PORT
-    observation must never silently become a finding here."""
-    eid = _make_engagement("promote-scoped.test")
-    get_observation_store().record(
-        Observation(engagement_id=eid, type=ObservationType.PORT, target="promote-scoped.test",
-                    source_tool="nmap_service_scan", details={"port": "443"}),
+@_pytest.mark.parametrize(
+    "conclusion_type",
+    [FindingType.VULNERABILITY, FindingType.ACCESS, FindingType.CREDENTIAL, FindingType.SECRET],
+)
+def test_file_finding_accepts_conclusion_types(conclusion_type):
+    """The four brain-authored conclusion types remain fileable."""
+    eid = _make_engagement("file-finding-conclusion.test")
+    obs = get_observation_store().record(
+        Observation(engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="file-finding-conclusion.test",
+                    source_tool="nuclei_scan"),
     )
-    findings = promote_observations(eid)
-    assert findings == []
-
-
-def test_promote_observations_empty_engagement_returns_empty():
-    eid = _make_engagement("promote-empty.test")
-    assert promote_observations(eid) == []
-    assert promote_observations("") == []
+    result = file_finding(
+        engagement_id=eid, title=f"a {conclusion_type.value} conclusion",
+        finding_type=conclusion_type, observation_ids=[obs.id],
+    )
+    assert result.finding is not None
 
 
 # --------------------------------------------------------------------------
@@ -252,23 +248,6 @@ def test_file_finding_suppressed_by_matching_fp_pattern():
     audit = suppressed_promotion_store.list_for_engagement(eid)
     assert len(audit) == 1
     assert audit[0].reason == "always noise"
-
-
-def test_promote_observations_suppresses_matching_pattern_but_keeps_others():
-    eid = _make_engagement("fp-suppress-promote.test")
-    fp_cache.add_pattern(title_contains="CVE-2099-9999")
-    store = get_observation_store()
-    store.record(Observation(
-        engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="fp-suppress-promote.test",
-        source_tool="nuclei_scan", details={"title": "CVE-2099-9999 match"},
-    ))
-    store.record(Observation(
-        engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="fp-suppress-promote.test",
-        source_tool="nikto_scan", details={"title": "CVE-2099-0000 match"},
-    ))
-    findings = promote_observations(eid)
-    assert len(findings) == 1
-    assert "CVE-2099-0000" in findings[0].title
 
 
 def test_mark_false_positive_retracts_finding_and_prevents_recurrence():

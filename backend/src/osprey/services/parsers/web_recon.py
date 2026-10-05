@@ -222,14 +222,38 @@ def _dir_text_fallback(stdout, source_tool, engagement_id, run_id, target):
 _ARJUN_FOUND_RE = re.compile(r"(?i)parameters?\s+found\s*[:>-]*\s*(.+)$")
 
 
+def _ensure_param_in_url(url: str, param: str) -> str:
+    """A discovered parameter name is only a real, testable injection point if
+    it actually appears in a request. Passive mining (extract_parameters_from_
+    urls, reading gau/wayback/katana archives) already hands this a URL whose
+    query string contains ``param``. Active discovery (arjun/x8) only reports
+    the NAME against the bare endpoint it probed — plan 19 found this is
+    exactly why sqlmap ran against a parameterless root URL and reported
+    nothing. Synthesize a minimal test value here so every INJECTION_POINT
+    observation carries one directly-testable URL regardless of which tool
+    found it, instead of leaving that synthesis to a YAML dispatch rule."""
+    if not url:
+        return url
+    try:
+        parsed = urlparse(url)
+        qs = parse_qs(parsed.query)
+    except ValueError:
+        return url
+    if param in qs:
+        return url
+    separator = "&" if parsed.query else "?"
+    return f"{url}{separator}{param}=1"
+
+
 def _param_observation(param, url, *, source_tool, engagement_id, run_id, target):
+    test_url = _ensure_param_in_url(url, param)
     return Observation(
         engagement_id=engagement_id,
         run_id=run_id,
         type=ObservationType.INJECTION_POINT,
-        target=url or target,
+        target=test_url or target,
         source_tool=source_tool,
-        details={"parameter": param, "url": url, "hostname": _host_of(url)},
+        details={"parameter": param, "url": test_url, "hostname": _host_of(url)},
         tags=["parameter", "injection_point_candidate", source_tool],
     )
 

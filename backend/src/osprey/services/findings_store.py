@@ -209,13 +209,10 @@ def _clean_text(val: Any) -> str:
 def _finding_to_row(finding: Finding, *, fingerprint: str, now: datetime) -> FindingRow:
     # NOTE: the store persists whatever confidence the Finding it's given
     # already carries — it does not itself enforce "confidence = f(evidence)".
-    # That enforcement belongs to the finding's CREATOR: platform_file_finding
-    # and promote_observations (plans/harness/03-earned-finding-pipeline.md
-    # Steps 3/5) call services.confidence.confidence_for themselves before
-    # constructing the Finding they hand to this store. Forcing recomputation
-    # here would also silently downgrade every finding built by call sites
-    # not yet migrated onto the evidence model (Step 6/7 tracks those) —
-    # this store stays a dumb persistence layer until that migration is done.
+    # That enforcement belongs to the finding's CREATOR: file_finding
+    # (platform_file_finding), the one and only writer, calls
+    # services.confidence.confidence_for itself before constructing the Finding
+    # it hands to this store. This store stays a dumb persistence layer.
     created = finding.created_at or now
     return FindingRow(
         id=finding.id,

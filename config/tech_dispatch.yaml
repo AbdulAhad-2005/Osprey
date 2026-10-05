@@ -282,19 +282,15 @@ signals:
       reason: "Live web server fingerprinted — nikto for dangerous files / missing headers / dated software (pairs with nuclei templates)"
       priority: 4
 
-  - id: php_stack_injection_focus
-    match:
-      metadata_key: technology
-      metadata_contains: php
-      scope: per_match
-    dispatch:
-      task_id: sql_injection_test
-      default_tool: sqlmap_scan
-      alternatives: [nuclei_scan]
-      skill_file: vuln/injection-testing.md
-      reason: "PHP stack — prioritise SQLi/LFI testing on its parameters (classic injection surface)"
-      priority: 3
-
+  # php_stack_injection_focus was removed here (plan 19): it dispatched
+  # sqlmap_scan at the bare host the moment PHP was detected, with no
+  # parameter at all — PHP-ness alone never implies an injectable request.
+  # sqlmap on a bare root URL finds nothing and reports nothing: the exact,
+  # confirmed cause of "sqlmap gives empty output" an operator run hit.
+  # SQL injection testing is mandatory coverage, but ONLY against a real
+  # eligible request — injection_point_candidates below is the one correct
+  # trigger (a tech fingerprint can still raise priority once a real
+  # parameter exists; it must never substitute for one).
   - id: injection_point_candidates
     match:
       has_tag: injection_point_candidate
@@ -305,8 +301,19 @@ signals:
       default_tool: sqlmap_scan
       alternatives: [dalfox_xss_scan]
       skill_file: vuln/injection-testing.md
-      reason: "Hidden parameters found in recon — test them for SQLi/XSS (scope permitting)"
+      reason: "Real parameterized request found in recon — test it for SQLi/XSS (scope permitting)"
       priority: 4
+      # The matched INJECTION_POINT observation's own details.url — a real,
+      # directly-testable URL (web_recon.py's _param_observation guarantees
+      # the discovered parameter actually appears in it, synthesizing a
+      # value when the source was active discovery rather than an archived
+      # URL) — never the generic subject-label fallback (which was the bare
+      # host, with no parameter: the bug this fixes). Conservative baseline
+      # profile (level/risk 1) per the standard "never dump on first pass"
+      # SQLMap methodology; escalation is a human/LLM judgment call, not
+      # automatic.
+      params_from: {url: url}
+      additional_args: "--level=1 --risk=1"
 
   - id: recon_complete_handoff
     match:

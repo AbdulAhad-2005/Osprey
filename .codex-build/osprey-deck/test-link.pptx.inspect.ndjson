@@ -1,0 +1,8 @@
+{"kind":"deck","id":"pr/hixwgx","name":"Deck"}
+{"kind":"layout","layoutId":"b9361641-e927-489c-b236-75b9a72a8381","name":"Master","type":"master"}
+{"kind":"layout","layoutId":"7358caae-b498-4bfc-b992-265a3bbc7c5d","name":"Title Slide","type":"title"}
+{"kind":"slide","id":"sl/coi8by","slide":1,"title":"Go to slide 2","textShapes":1}
+{"kind":"textbox","id":"sh/83e9872l","slide":1,"text":"Go to slide 2","textPreview":"Go to slide 2","textChars":13,"textLines":1,"bbox":[100,100,300,80]}
+{"kind":"notes","id":"nt/coi8by","slide":1,"text":""}
+{"kind":"slide","id":"sl/bws9yl","slide":2,"title":"Slide 2","textShapes":0}
+{"kind":"notes","id":"nt/bws9yl","slide":2,"text":""}

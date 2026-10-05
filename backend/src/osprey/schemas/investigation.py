@@ -14,8 +14,8 @@ class CapabilityKind(StrEnum):
     """A category label for grouping/priority display only — never a unit of
     execution. Exactly one opportunity always maps to exactly one real
     action: either one typed-tool invocation (``opportunity.tool`` is set)
-    or one pure-store analytical operation (PROMOTE_OBSERVATIONS/
-    DETECT_ANOMALIES/REFRESH_EXPLOIT_CANDIDATES, which touch no Kali tool at
+    or one pure-store analytical operation (DETECT_ANOMALIES/
+    REFRESH_EXPLOIT_CANDIDATES, which touch no Kali tool at
     all). A capability that used to fan out several different tools inside
     one execution (the old ENUMERATE_SUBDOMAINS/PROFILE_HOST_SERVICES) is
     gone — each of those tools is now its own opportunity with its own kind,
@@ -34,7 +34,6 @@ class CapabilityKind(StrEnum):
     SCAN_NETWORK_VULNERABILITIES = "scan_network_vulnerabilities"
     SWEEP_NETBLOCK = "sweep_netblock"
     ASSESS_VULNERABILITY = "assess_vulnerability"
-    PROMOTE_OBSERVATIONS = "promote_observations"
     DETECT_ANOMALIES = "detect_anomalies"
     REFRESH_EXPLOIT_CANDIDATES = "refresh_exploit_candidates"
 
@@ -65,8 +64,8 @@ class InvestigationOpportunity(BaseModel):
     subjects: list[OpportunitySubject] = Field(default_factory=list)
     evidence: dict[str, Any] = Field(default_factory=dict)
     # The exact single tool invocation this opportunity represents. Empty for
-    # the analytical kinds (PROMOTE_OBSERVATIONS/DETECT_ANOMALIES/
-    # REFRESH_EXPLOIT_CANDIDATES), which touch no Kali tool. When set,
+    # the analytical kinds (DETECT_ANOMALIES/REFRESH_EXPLOIT_CANDIDATES),
+    # which touch no Kali tool. When set,
     # executing this opportunity means calling this tool with these params
     # exactly once — never a batch, never several tools behind one id.
     tool: str = ""

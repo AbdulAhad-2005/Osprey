@@ -1875,7 +1875,7 @@ def _parse_url_list(
             tags=["url_history"],
         )
 
-    return cap_with_accounting(
+    out = cap_with_accounting(
         urls,
         max_items=max_findings,
         render=_render,
@@ -1885,6 +1885,18 @@ def _parse_url_list(
         run_id=run_id,
         target=target,
     )
+    # Attack-surface handoff (plan 19): these archived URLs are the dominant
+    # real-world source of already-parameterized requests (gau/waybackurls
+    # routinely surface thousands, e.g. "article.php?id=5") — mine them the
+    # same way parse_katana already does for its own crawl, or the mandatory
+    # SQLi coverage this feeds (tech_dispatch's injection_point_candidates
+    # rule) never fires for gau/waybackurls/hakrawler at all, only katana.
+    from osprey.services.parsers.web_recon import extract_parameters_from_urls
+
+    out.extend(extract_parameters_from_urls(
+        urls, source_tool=source_tool, engagement_id=engagement_id, run_id=run_id, target=target,
+    ))
+    return out
 
 
 def parse_gau(stdout: str, *, engagement_id: str = "", run_id: str = "", target: str = "") -> list[Observation]:

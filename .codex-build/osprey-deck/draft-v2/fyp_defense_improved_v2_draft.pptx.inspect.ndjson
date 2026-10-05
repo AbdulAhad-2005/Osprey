@@ -1,0 +1,433 @@
+{"kind":"deck","id":"pr/e260c5","name":"Deck"}
+{"kind":"layout","layoutId":"/ppt/slideMasters/slideMaster1.xml","name":"","type":"master","placeholders":[{"name":"title","type":"title","textPreview":"Click to edit Master title style"},{"name":"body","type":"body","textPreview":"Click to edit Master text styles | Second level | Third level | Fourth level | Fifth level"},{"name":"dateTime","type":"dateTime","textPreview":"10/1/2026"},{"name":"footer","type":"footer"},{"name":"slideNumber","type":"slideNumber","textPreview":"‹#›"}]}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout1.xml","name":"Title Slide","type":"title","placeholders":[{"name":"title","type":"title","textPreview":"Click to edit Master title style"},{"name":"subtitle","type":"subtitle","textPreview":"Click to edit Master subtitle style"},{"name":"dateTime","type":"dateTime","textPreview":"10/1/2026"},{"name":"footer","type":"footer"},{"name":"slideNumber","type":"slideNumber","textPreview":"‹#›"}]}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout2.xml","name":"Title and Content","type":"obj","placeholders":[{"name":"title","type":"title","textPreview":"Click to edit Master title style"},{"name":"content placeholder 2","textPreview":"Click to edit Master text styles | Second level | Third level | Fourth level | Fifth level"},{"name":"dateTime","type":"dateTime","textPreview":"10/1/2026"},{"name":"footer","type":"footer"},{"name":"slideNumber","type":"slideNumber","textPreview":"‹#›"}]}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout3.xml","name":"Section Header","type":"secHead","placeholders":[{"name":"title","type":"title","textPreview":"Click to edit Master title style"},{"name":"body","type":"body","textPreview":"Click to edit Master text styles"},{"name":"dateTime","type":"dateTime","textPreview":"10/1/2026"},{"name":"footer","type":"footer"},{"name":"slideNumber","type":"slideNumber","textPreview":"‹#›"}]}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout4.xml","name":"Two Content","type":"twoObj","placeholders":[{"name":"title","type":"title","textPreview":"Click to edit Master title style"},{"name":"content placeholder 2","textPreview":"Click to edit Master text styles | Second level | Third level | Fourth level | Fifth level"},{"name":"content placeholder 3","textPreview":"Click to edit Master text styles | Second level | Third level | Fourth level | Fifth level"},{"name":"dateTime","type":"dateTime","textPreview":"10/1/2026"},{"name":"footer","type":"footer"},{"name":"slideNumber","type":"slideNumber","textPreview":"‹#›"}]}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout5.xml","name":"Comparison","type":"twoTxTwoObj","placeholders":[{"name":"title","type":"title","textPreview":"Click to edit Master title style"},{"name":"body","type":"body","textPreview":"Click to edit Master text styles"},{"name":"content placeholder 3","textPreview":"Click to edit Master text styles | Second level | Third level | Fourth level | Fifth level"},{"name":"body","type":"body","textPreview":"Click to edit Master text styles"},{"name":"content placeholder 5","textPreview":"Click to edit Master text styles | Second level | Third level | Fourth level | Fifth level"},{"name":"dateTime","type":"dateTime","textPreview":"10/1/2026"},{"name":"footer","type":"footer"},{"name":"slideNumber","type":"slideNumber","textPreview":"‹#›"}]}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout6.xml","name":"Title Only","type":"titleOnly","placeholders":[{"name":"title","type":"title","textPreview":"Click to edit Master title style"},{"name":"dateTime","type":"dateTime","textPreview":"10/1/2026"},{"name":"footer","type":"footer"},{"name":"slideNumber","type":"slideNumber","textPreview":"‹#›"}]}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout7.xml","name":"Blank","type":"blank","placeholders":[{"name":"dateTime","type":"dateTime","textPreview":"10/1/2026"},{"name":"footer","type":"footer"},{"name":"slideNumber","type":"slideNumber","textPreview":"‹#›"}]}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout8.xml","name":"Content with Caption","type":"objTx","placeholders":[{"name":"title","type":"title","textPreview":"Click to edit Master title style"},{"name":"content placeholder 2","textPreview":"Click to edit Master text styles | Second level | Third level | Fourth level | Fifth level"},{"name":"body","type":"body","textPreview":"Click to edit Master text styles"},{"name":"dateTime","type":"dateTime","textPreview":"10/1/2026"},{"name":"footer","type":"footer"},{"name":"slideNumber","type":"slideNumber","textPreview":"‹#›"}]}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout9.xml","name":"Picture with Caption","type":"picTx","placeholders":[{"name":"title","type":"title","textPreview":"Click to edit Master title style"},{"name":"picture","type":"picture"},{"name":"body","type":"body","textPreview":"Click to edit Master text styles"},{"name":"dateTime","type":"dateTime","textPreview":"10/1/2026"},{"name":"footer","type":"footer"},{"name":"slideNumber","type":"slideNumber","textPreview":"‹#›"}]}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout10.xml","name":"Title and Vertical Text","type":"vertTx","placeholders":[{"name":"title","type":"title","textPreview":"Click to edit Master title style"},{"name":"body","type":"body","textPreview":"Click to edit Master text styles | Second level | Third level | Fourth level | Fifth level"},{"name":"dateTime","type":"dateTime","textPreview":"10/1/2026"},{"name":"footer","type":"footer"},{"name":"slideNumber","type":"slideNumber","textPreview":"‹#›"}]}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout11.xml","name":"Vertical Title and Text","type":"vertTitleAndTx","placeholders":[{"name":"title","type":"title","textPreview":"Click to edit Master title style"},{"name":"body","type":"body","textPreview":"Click to edit Master text styles | Second level | Third level | Fourth level | Fifth level"},{"name":"dateTime","type":"dateTime","textPreview":"10/1/2026"},{"name":"footer","type":"footer"},{"name":"slideNumber","type":"slideNumber","textPreview":"‹#›"}]}
+{"kind":"slide","id":"sl/y90nupkv","slide":1,"title":"FYP PROPOSAL DEFENSE · WORKING TITLE","textShapes":14}
+{"kind":"textbox","id":"sh/i1w3yp8f","slide":1,"text":"FYP PROPOSAL DEFENSE · WORKING TITLE","textPreview":"FYP PROPOSAL DEFENSE · WORKING TITLE","textChars":36,"textLines":1,"bbox":[92,74,430,46]}
+{"kind":"textbox","id":"sh/547294r6","slide":1,"text":"Autonomous Web Security\nAssessment Framework","textPreview":"Autonomous Web Security | Assessment Framework","textChars":44,"textLines":2,"bbox":[92,158,920,198]}
+{"kind":"textbox","id":"sh/k3yl0zql","slide":1,"text":"A proposed dual-mode pentesting harness for broad, evidence-driven testing","textPreview":"A proposed dual-mode pentesting harness for broad, evidence-driven testing","textChars":74,"textLines":1,"bbox":[96,386,870,84]}
+{"kind":"shape","id":"sh/7qp4be9c","slide":1,"bbox":[96,500,820,0]}
+{"kind":"textbox","id":"sh/65g3298r","slide":1,"text":"Muhammad Usman Hamed  ·  Abdul Ahad  ·  Obaid Ishtiaq Satti","textPreview":"Muhammad Usman Hamed  ·  Abdul Ahad  ·  Obaid Ishtiaq Satti","textChars":59,"textLines":1,"bbox":[96,534,910,44]}
+{"kind":"textbox","id":"sh/ts7md4r2","slide":1,"text":"Advisor: Dr. Madiha Khalid    Co-Advisor: Dr. Mehdi Hussain","textPreview":"Advisor: Dr. Madiha Khalid    Co-Advisor: Dr. Mehdi Hussain","textChars":59,"textLines":1,"bbox":[96,592,910,40]}
+{"kind":"textbox","id":"sh/sryl4zqx","slide":1,"text":"School of Electrical Engineering and Computer Science · NUST","textPreview":"School of Electrical Engineering and Computer Science · NUST","textChars":60,"textLines":1,"bbox":[96,648,910,38]}
+{"kind":"shape","id":"sh/fu94fe98","slide":1,"bbox":[1080,120,740,770]}
+{"kind":"textbox","id":"sh/utg3698n","slide":1,"text":"AUTHORIZED TARGET","textPreview":"AUTHORIZED TARGET","textChars":17,"textLines":1,"bbox":[1290,164,320,36]}
+{"kind":"textbox","id":"sh/wn6dc7eh","slide":1,"text":"domain / IP / scope","textPreview":"domain / IP / scope","textChars":19,"textLines":1,"bbox":[1280,214,340,54]}
+{"kind":"shape","id":"sh/hofulsf2","slide":1,"bbox":[1430,294,44,42]}
+{"kind":"shape","id":"sh/ul4vaxgb","slide":1,"bbox":[1210,364,480,190]}
+{"kind":"textbox","id":"sh/vmdcj2xw","slide":1,"text":"UNIFIED HARNESS","textPreview":"UNIFIED HARNESS","textChars":15,"textLines":1,"bbox":[1250,398,400,46]}
+{"kind":"textbox","id":"sh/4r6dg7et","slide":1,"text":"Deterministic methodology\n+ optional AI reasoning","textPreview":"Deterministic methodology | + optional AI reasoning","textChars":49,"textLines":2,"bbox":[1260,458,380,70]}
+{"kind":"shape","id":"sh/5sfepcfe","slide":1,"bbox":[1430,584,44,42]}
+{"kind":"textbox","id":"sh/ipovexwn","slide":1,"text":"Attack-surface map","textPreview":"Attack-surface map","textChars":18,"textLines":1,"bbox":[1128,678,210,62]}
+{"kind":"textbox","id":"sh/3qxwn2x8","slide":1,"text":"Verified evidence","textPreview":"Verified evidence","textChars":17,"textLines":1,"bbox":[1345,678,210,62]}
+{"kind":"textbox","id":"sh/sfqdkrep","slide":1,"text":"Structured report","textPreview":"Structured report","textChars":17,"textLines":1,"bbox":[1562,678,210,62]}
+{"kind":"textbox","id":"sh/dgzetcfa","slide":1,"text":"Proposed system — not a completed product","textPreview":"Proposed system — not a completed product","textChars":41,"textLines":1,"bbox":[1190,810,520,36]}
+{"kind":"notes","id":"nt/y90nupkv","slide":1,"text":"Open by framing this as a proposal. The project name is still under consideration, so the deck uses a descriptive working title rather than treating Osprey as final branding."}
+{"kind":"slide","id":"sl/hwbqtkby","slide":2,"title":"01 / WHY THIS MATTERS","textShapes":17}
+{"kind":"textbox","id":"sh/mxgjm5s7","slide":2,"text":"01 / WHY THIS MATTERS","textPreview":"01 / WHY THIS MATTERS","textChars":21,"textLines":1,"bbox":[92,46,600,30]}
+{"kind":"textbox","id":"sh/9072xkry","slide":2,"text":"Web security protects the entire exposed application surface","textPreview":"Web security protects the entire exposed application surface","textChars":60,"textLines":1,"bbox":[92,88,1710,86]}
+{"kind":"shape","id":"sh/ozy1ofad","slide":2,"bbox":[92,188,1736,0]}
+{"kind":"textbox","id":"sh/b29kza94","slide":2,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[1760,1000,68,28]}
+{"kind":"shape","id":"sh/a10jqpsj","slide":2,"bbox":[92,230,700,308]}
+{"kind":"textbox","id":"sh/x4r21kru","slide":2,"text":"WEB SECURITY","textPreview":"WEB SECURITY","textChars":12,"textLines":1,"bbox":[132,272,300,38]}
+{"kind":"textbox","id":"sh/w3i1sfa9","slide":2,"text":"Find, validate and reduce weaknesses before attackers exploit them.","textPreview":"Find, validate and reduce weaknesses before attackers exploit them.","textChars":67,"textLines":1,"bbox":[132,330,610,112]}
+{"kind":"textbox","id":"sh/r65knqtk","slide":2,"text":"The surface includes domains, services, applications, APIs, identities, third-party components and the data connecting them.","textPreview":"The surface includes domains, services, applications, APIs, identities, third-party components and the data connecting them.","textChars":124,"textLines":1,"bbox":[132,458,610,64]}
+{"kind":"textbox","id":"sh/q5wjelsz","slide":2,"text":"CASE STUDY · EQUIFAX, 2017","textPreview":"CASE STUDY · EQUIFAX, 2017","textChars":26,"textLines":1,"bbox":[860,240,760,38]}
+{"kind":"textbox","id":"sh/ove9o7yd","slide":2,"text":"A known web vulnerability became a large-scale breach","textPreview":"A known web vulnerability became a large-scale breach","textChars":53,"textLines":1,"bbox":[860,292,860,62]}
+{"kind":"shape","id":"sh/9wnqhczy","slide":2,"bbox":[860,378,280,216]}
+{"kind":"shape","id":"sh/mtwrmxg7","slide":2,"bbox":[860,378,9,216]}
+{"kind":"textbox","id":"sh/nu58f2hs","slide":2,"text":"Known flaw","textPreview":"Known flaw","textChars":10,"textLines":1,"bbox":[888,400,228,44]}
+{"kind":"textbox","id":"sh/wjy9sry9","slide":2,"text":"A critical Apache Struts vulnerability had a patch available.","textPreview":"A critical Apache Struts vulnerability had a patch available.","textChars":61,"textLines":1,"bbox":[888,456,228,120]}
+{"kind":"shape","id":"sh/xk7qlczu","slide":2,"bbox":[1164,378,280,216]}
+{"kind":"shape","id":"sh/ahwrqhgj","slide":2,"bbox":[1164,378,9,216]}
+{"kind":"textbox","id":"sh/bip8jmho","slide":2,"text":"Coverage failure","textPreview":"Coverage failure","textChars":16,"textLines":1,"bbox":[1192,400,228,44]}
+{"kind":"textbox","id":"sh/cnupgny5","slide":2,"text":"The public dispute portal remained unpatched and verification did not catch it.","textPreview":"The public dispute portal remained unpatched and verification did not catch it.","textChars":79,"textLines":1,"bbox":[1192,456,228,120]}
+{"kind":"shape","id":"sh/do3q9szq","slide":2,"bbox":[1468,378,280,216]}
+{"kind":"shape","id":"sh/t8byxkn2","slide":2,"bbox":[1468,378,9,216]}
+{"kind":"textbox","id":"sh/s72xofmh","slide":2,"text":"Impact","textPreview":"Impact","textChars":6,"textLines":1,"bbox":[1496,400,228,44]}
+{"kind":"textbox","id":"sh/76twva5c","slide":2,"text":"Personal information of about 147 million people was exposed.","textPreview":"Personal information of about 147 million people was exposed.","textChars":61,"textLines":1,"bbox":[1496,456,228,120]}
+{"kind":"shape","id":"sh/65kfmpor","slide":2,"bbox":[92,654,1656,206]}
+{"kind":"textbox","id":"sh/hcvy14ne","slide":2,"text":"The lesson","textPreview":"The lesson","textChars":10,"textLines":1,"bbox":[128,688,250,38]}
+{"kind":"textbox","id":"sh/gbmxszmt","slide":2,"text":"A single missed internet-facing asset can defeat security across a very large organisation. Effective testing must discover the full surface, verify coverage, and preserve evidence across every step.","textPreview":"A single missed internet-facing asset can defeat security across a very large organisation. Effective testing must discover the full surf...","textChars":199,"textLines":1,"bbox":[128,742,1550,92]}
+{"kind":"textbox","id":"sh/fadgzu58","slide":2,"text":"Sources: U.S. House Oversight Committee report (2018); U.S. Federal Trade Commission (2019).","textPreview":"Sources: U.S. House Oversight Committee report (2018); U.S. Federal Trade Commission (2019).","textChars":92,"textLines":1,"bbox":[96,918,1460,28]}
+{"kind":"notes","id":"nt/hwbqtkby","slide":2,"text":"Explain that the Equifax breach was not caused by a lack of security tools. The organization had a patching process, but a complex legacy environment and failed verification left an internet-facing portal exposed. Official sources: https://oversight.house.gov/report/committee-releases-report-revealing-new-information-on-equifax-data-breach/ and https://www.ftc.gov/news-events/news/press-releases/2019/07/equifax-pay-575-million-part-settlement-ftc-cfpb-states-related-2017-data-breach"}
+{"kind":"slide","id":"sl/ofy9wn61","slide":3,"title":"02 / CURRENT PRACTICE","textShapes":10}
+{"kind":"textbox","id":"sh/by1svqlc","slide":3,"text":"02 / CURRENT PRACTICE","textPreview":"02 / CURRENT PRACTICE","textChars":21,"textLines":1,"bbox":[92,46,600,30]}
+{"kind":"textbox","id":"sh/cza94vmx","slide":3,"text":"Existing tools and technologies","textPreview":"Existing tools and technologies","textChars":31,"textLines":1,"bbox":[92,88,1710,86]}
+{"kind":"shape","id":"sh/d0jax03i","slide":3,"bbox":[92,188,1736,0]}
+{"kind":"textbox","id":"sh/298ryl4v","slide":3,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[1760,1000,68,28]}
+{"kind":"textbox","id":"sh/3ah8rqlg","slide":3,"text":"Typical pentesting workflow","textPreview":"Typical pentesting workflow","textChars":27,"textLines":1,"bbox":[92,220,520,34]}
+{"kind":"textbox","id":"sh/obq90bml","slide":3,"text":"Discover","textPreview":"Discover","textChars":8,"textLines":1,"bbox":[92,270,290,54]}
+{"kind":"shape","id":"sh/pcjqtg36","slide":3,"bbox":[392,286,34,22]}
+{"kind":"textbox","id":"sh/m5cra54z","slide":3,"text":"Resolve and probe","textPreview":"Resolve and probe","textChars":17,"textLines":1,"bbox":[426,270,290,54]}
+{"kind":"shape","id":"sh/n6ls3alk","slide":3,"bbox":[726,286,34,22]}
+{"kind":"textbox","id":"sh/n2l4fq98","slide":3,"text":"Map services","textPreview":"Map services","textChars":12,"textLines":1,"bbox":[760,270,290,54]}
+{"kind":"shape","id":"sh/m1c3mlsn","slide":3,"bbox":[1060,286,34,22]}
+{"kind":"textbox","id":"sh/943mhgre","slide":3,"text":"Test applications","textPreview":"Test applications","textChars":17,"textLines":1,"bbox":[1094,270,290,54]}
+{"kind":"shape","id":"sh/83ulovat","slide":3,"bbox":[1394,286,34,22]}
+{"kind":"textbox","id":"sh/v6l4jq94","slide":3,"text":"Validate and report","textPreview":"Validate and report","textChars":19,"textLines":1,"bbox":[1428,270,290,54]}
+{"kind":"textbox","id":"sh/x8nml0ra","slide":3,"text":"Source: FYP defense report, literature review and comparison table, pp. 5–10.","textPreview":"Source: FYP defense report, literature review and comparison table, pp. 5–10.","textChars":77,"textLines":1,"bbox":[96,900,1380,28]}
+{"kind":"table","id":"tb/1kruxsbi","slide":3,"name":"","rows":4,"cols":4,"preview":"Category | Examples | Strength | Limitation","bbox":[92,370,1656,472]}
+{"kind":"notes","id":"nt/ofy9wn61","slide":3,"text":"The workflow at the top shows the steps a tester normally performs. The table compares conventional tools, AI pentesting agents and AI security frameworks. Conventional tools are mature but fragmented. AI systems add reasoning, yet many depend on external models and do not provide broad, continuous reconnaissance or persistent cross-stage correlation."}
+{"kind":"slide","id":"sl/jyx0ra1s","slide":4,"title":"03 / THE GAP","textShapes":15}
+{"kind":"textbox","id":"sh/e9sj2tsv","slide":4,"text":"03 / THE GAP","textPreview":"03 / THE GAP","textChars":12,"textLines":1,"bbox":[92,46,600,30]}
+{"kind":"textbox","id":"sh/1cj2d8b6","slide":4,"text":"The operational security gap is orchestration at scale","textPreview":"The operational security gap is orchestration at scale","textChars":54,"textLines":1,"bbox":[92,88,1710,86]}
+{"kind":"shape","id":"sh/0ba143al","slide":4,"bbox":[92,188,1736,0]}
+{"kind":"textbox","id":"sh/rm1k7yt4","slide":4,"text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[1760,1000,68,28]}
+{"kind":"textbox","id":"sh/ql8jytsj","slide":4,"text":"Practical limitations prevent current tools from covering large infrastructures as one connected assessment.","textPreview":"Practical limitations prevent current tools from covering large infrastructures as one connected assessment.","textChars":108,"textLines":1,"bbox":[92,216,1580,44]}
+{"kind":"shape","id":"sh/doj29oba","slide":4,"bbox":[92,292,512,360]}
+{"kind":"shape","id":"sh/sna103ap","slide":4,"bbox":[92,292,9,360]}
+{"kind":"textbox","id":"sh/3ihk3et8","slide":4,"text":"1 · Fragmented workflow","textPreview":"1 · Fragmented workflow","textChars":23,"textLines":1,"bbox":[120,314,460,44]}
+{"kind":"textbox","id":"sh/ih8ju9sn","slide":4,"text":"Specialized tools emit isolated outputs.\n\nHumans repeatedly copy, filter, correlate and decide what to run next.\n\nAssets, services, endpoints and evidence are easily disconnected.","textPreview":"Specialized tools emit isolated outputs. |  | Humans repeatedly copy, filter, correlate and decide what to run next. |  | Assets, service...","textChars":179,"textLines":5,"bbox":[120,370,460,264]}
+{"kind":"shape","id":"sh/kbm987y5","slide":4,"bbox":[630,292,512,360]}
+{"kind":"shape","id":"sh/5cva1cfq","slide":4,"bbox":[630,292,9,360]}
+{"kind":"textbox","id":"sh/i94r6xgz","slide":4,"text":"2 · Reconnaissance scale","textPreview":"2 · Reconnaissance scale","textChars":24,"textLines":1,"bbox":[658,314,460,44]}
+{"kind":"textbox","id":"sh/jadsz2xk","slide":4,"text":"Real infrastructures are wider than bounded CTF tasks.\n\nEach new domain, host, port or endpoint creates more work.\n\nMany AI systems are not optimized for continuous, broad reconnaissance coverage.","textPreview":"Real infrastructures are wider than bounded CTF tasks. |  | Each new domain, host, port or endpoint creates more work. |  | Many AI syste...","textChars":196,"textLines":5,"bbox":[658,370,460,264]}
+{"kind":"shape","id":"sh/w72947yt","slide":4,"bbox":[1168,292,580,360]}
+{"kind":"shape","id":"sh/x8vaxsfe","slide":4,"bbox":[1168,292,9,360]}
+{"kind":"textbox","id":"sh/a5kr2xg3","slide":4,"text":"3 · External LLM dependency","textPreview":"3 · External LLM dependency","textChars":27,"textLines":1,"bbox":[1196,314,528,44]}
+{"kind":"textbox","id":"sh/v6tsv2xo","slide":4,"text":"API cost, rate limits, connectivity and model behavior can interrupt assessments.\n\nKnown pentesting steps do not require expensive reasoning every time.\n\nWhen the model stops, the core workflow should not stop.","textPreview":"API cost, rate limits, connectivity and model behavior can interrupt assessments. |  | Known pentesting steps do not require expensive re...","textChars":210,"textLines":5,"bbox":[1196,370,528,264]}
+{"kind":"shape","id":"sh/g36tgryd","slide":4,"bbox":[92,700,1656,154]}
+{"kind":"textbox","id":"sh/h4fa9wfy","slide":4,"text":"Trust and control must span the entire workflow","textPreview":"Trust and control must span the entire workflow","textChars":47,"textLines":1,"bbox":[126,730,700,38]}
+{"kind":"textbox","id":"sh/p0batw72","slide":4,"text":"Scope enforcement","textPreview":"Scope enforcement","textChars":17,"textLines":1,"bbox":[132,792,300,32]}
+{"kind":"textbox","id":"sh/oz29krqh","slide":4,"text":"Evidence-based findings","textPreview":"Evidence-based findings","textChars":23,"textLines":1,"bbox":[530,792,360,32]}
+{"kind":"textbox","id":"sh/3ytsrmpw","slide":4,"text":"Human approval before impactful actions","textPreview":"Human approval before impactful actions","textChars":39,"textLines":1,"bbox":[982,792,660,32]}
+{"kind":"textbox","id":"sh/2xkrih8b","slide":4,"text":"Source: FYP defense report, pp. 10–12.","textPreview":"Source: FYP defense report, pp. 10–12.","textChars":38,"textLines":1,"bbox":[96,918,1000,28]}
+{"kind":"notes","id":"nt/jyx0ra1s","slide":4,"text":"Use the phrase operational security gap. The central argument is not that the industry lacks scanners; it lacks a dependable harness that can coordinate them over a changing, wide attack surface while keeping evidence and scope intact. Emphasize that LLMs are valuable but should not be mandatory for routine methodology."}
+{"kind":"slide","id":"sl/i107q5of","slide":5,"title":"04 / PROJECT OBJECTIVES","textShapes":11}
+{"kind":"textbox","id":"sh/qd0bahob","slide":5,"text":"04 / PROJECT OBJECTIVES","textPreview":"04 / PROJECT OBJECTIVES","textChars":23,"textLines":1,"bbox":[92,46,600,30]}
+{"kind":"textbox","id":"sh/dgbulwnm","slide":5,"text":"Objectives","textPreview":"Objectives","textChars":10,"textLines":1,"bbox":[92,88,1710,86]}
+{"kind":"shape","id":"sh/cf2tcr61","slide":5,"bbox":[92,188,1736,0]}
+{"kind":"textbox","id":"sh/z2tcnm5s","slide":5,"text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[1760,1000,68,28]}
+{"kind":"shape","id":"sh/yhkbe1o7","slide":5,"bbox":[92,266,512,450]}
+{"kind":"shape","id":"sh/l4bupwny","slide":5,"bbox":[92,266,9,450]}
+{"kind":"textbox","id":"sh/032tgr6d","slide":5,"text":"1 · Integrated security assessment","textPreview":"1 · Integrated security assessment","textChars":34,"textLines":1,"bbox":[120,288,460,44]}
+{"kind":"textbox","id":"sh/n6dcr65o","slide":5,"text":"Develop one unified harness covering reconnaissance, progressive attack-surface discovery, scanning, vulnerability identification, business-logic analysis, correlation and reporting.","textPreview":"Develop one unified harness covering reconnaissance, progressive attack-surface discovery, scanning, vulnerability identification, busine...","textChars":182,"textLines":1,"bbox":[120,344,460,354]}
+{"kind":"shape","id":"sh/m5kbi1oj","slide":5,"bbox":[630,266,512,450]}
+{"kind":"shape","id":"sh/w32dkbuh","slide":5,"bbox":[630,266,9,450]}
+{"kind":"textbox","id":"sh/x4vedgvm","slide":5,"text":"2 · Dual-mode orchestration","textPreview":"2 · Dual-mode orchestration","textChars":27,"textLines":1,"bbox":[658,288,460,44]}
+{"kind":"textbox","id":"sh/ahkvi1cb","slide":5,"text":"Use LLM reasoning when available while maintaining a deterministic rule-based mode with no mandatory LLM dependency.","textPreview":"Use LLM reasoning when available while maintaining a deterministic rule-based mode with no mandatory LLM dependency.","textChars":116,"textLines":1,"bbox":[658,344,460,354]}
+{"kind":"shape","id":"sh/v2twb6dw","slide":5,"bbox":[1168,266,580,450]}
+{"kind":"shape","id":"sh/k7mxovud","slide":5,"bbox":[1168,266,9,450]}
+{"kind":"textbox","id":"sh/58vehgvy","slide":5,"text":"3 · Safe and controlled testing","textPreview":"3 · Safe and controlled testing","textChars":31,"textLines":1,"bbox":[1196,288,528,44]}
+{"kind":"textbox","id":"sh/i54fmlc7","slide":5,"text":"Enforce the authorized scope, validate findings with evidence and require human approval before potentially impactful actions.","textPreview":"Enforce the authorized scope, validate findings with evidence and require human approval before potentially impactful actions.","textChars":126,"textLines":1,"bbox":[1196,344,528,354]}
+{"kind":"shape","id":"sh/j6dwfqds","slide":5,"bbox":[92,770,1656,108]}
+{"kind":"textbox","id":"sh/sb6xsvu9","slide":5,"text":"The proposed framework combines one unified harness, reliable non-LLM operation and controlled AI assistance.","textPreview":"The proposed framework combines one unified harness, reliable non-LLM operation and controlled AI assistance.","textChars":109,"textLines":1,"bbox":[132,800,1576,52]}
+{"kind":"textbox","id":"sh/tcfel0vu","slide":5,"text":"Source: FYP defense report, Objectives, p. 14.","textPreview":"Source: FYP defense report, Objectives, p. 14.","textChars":46,"textLines":1,"bbox":[96,918,1000,28]}
+{"kind":"notes","id":"nt/i107q5of","slide":5,"text":"State the three formal objectives at a high level. The first objective creates one unified assessment harness. The second keeps the system functional without an external LLM. The third covers scope, evidence and human approval."}
+{"kind":"slide","id":"sl/x8f69ofe","slide":6,"title":"05 / PROPOSED SOLUTION","textShapes":33}
+{"kind":"textbox","id":"sh/lkrqp4ra","slide":6,"text":"05 / PROPOSED SOLUTION","textPreview":"05 / PROPOSED SOLUTION","textChars":22,"textLines":1,"bbox":[92,46,600,30]}
+{"kind":"textbox","id":"sh/yhg7epsj","slide":6,"text":"Proposed unified assessment harness","textPreview":"Proposed unified assessment harness","textChars":35,"textLines":1,"bbox":[92,88,1710,86]}
+{"kind":"shape","id":"sh/zi98nu94","slide":6,"bbox":[92,188,1736,0]}
+{"kind":"textbox","id":"sh/87ipkzal","slide":6,"text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[1760,1000,68,28]}
+{"kind":"textbox","id":"sh/98rqt4r6","slide":6,"text":"AUTHORIZED SCOPE","textPreview":"AUTHORIZED SCOPE","textChars":16,"textLines":1,"bbox":[92,244,250,58]}
+{"kind":"shape","id":"sh/ml07i9sv","slide":6,"bbox":[360,259,54,28]}
+{"kind":"textbox","id":"sh/7m98ru9g","slide":6,"text":"UNIFIED HARNESS","textPreview":"UNIFIED HARNESS","textChars":15,"textLines":1,"bbox":[430,244,250,58]}
+{"kind":"shape","id":"sh/oryp8fah","slide":6,"bbox":[698,259,54,28]}
+{"kind":"textbox","id":"sh/pc76hkr2","slide":6,"text":"SHARED EVIDENCE","textPreview":"SHARED EVIDENCE","textChars":15,"textLines":1,"bbox":[768,244,280,58]}
+{"kind":"shape","id":"sh/h4bupgn6","slide":6,"bbox":[1066,259,54,28]}
+{"kind":"textbox","id":"sh/w32twb6l","slide":6,"text":"SECURITY TOOLS","textPreview":"SECURITY TOOLS","textChars":14,"textLines":1,"bbox":[1136,244,250,58]}
+{"kind":"shape","id":"sh/v2tcn650","slide":6,"bbox":[1404,259,54,28]}
+{"kind":"textbox","id":"sh/u1kbu1ov","slide":6,"text":"REPORT","textPreview":"REPORT","textChars":6,"textLines":1,"bbox":[1474,244,274,58]}
+{"kind":"shape","id":"sh/5svutgni","slide":6,"bbox":[92,352,800,430]}
+{"kind":"textbox","id":"sh/47mt0b6x","slide":6,"text":"ALWAYS ON","textPreview":"ALWAYS ON","textChars":9,"textLines":1,"bbox":[126,382,220,30]}
+{"kind":"textbox","id":"sh/j6dcr65c","slide":6,"text":"Deterministic methodology engine","textPreview":"Deterministic methodology engine","textChars":32,"textLines":1,"bbox":[126,428,700,54]}
+{"kind":"textbox","id":"sh/i54bylor","slide":6,"text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[130,510,38,34]}
+{"kind":"textbox","id":"sh/twfux0ne","slide":6,"text":"Widen domains and subdomains","textPreview":"Widen domains and subdomains","textChars":28,"textLines":1,"bbox":[186,508,630,38]}
+{"kind":"textbox","id":"sh/svmt4v6t","slide":6,"text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[130,559,38,34]}
+{"kind":"textbox","id":"sh/cbe5g3ih","slide":6,"text":"Resolve, probe and map services","textPreview":"Resolve, probe and map services","textChars":31,"textLines":1,"bbox":[186,557,630,38]}
+{"kind":"textbox","id":"sh/dcnm98zm","slide":6,"text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[130,608,38,34]}
+{"kind":"textbox","id":"sh/qpwnet0b","slide":6,"text":"Crawl, enumerate and run baseline scanners","textPreview":"Crawl, enumerate and run baseline scanners","textChars":42,"textLines":1,"bbox":[186,606,630,38]}
+{"kind":"textbox","id":"sh/bq547yhw","slide":6,"text":"4","textPreview":"4","textChars":1,"textLines":1,"bbox":[130,657,38,34]}
+{"kind":"textbox","id":"sh/0fy5k3id","slide":6,"text":"Track coverage and react to new evidence","textPreview":"Track coverage and react to new evidence","textChars":40,"textLines":1,"bbox":[186,655,630,38]}
+{"kind":"textbox","id":"sh/lg76d8zy","slide":6,"text":"5","textPreview":"5","textChars":1,"textLines":1,"bbox":[130,706,38,34]}
+{"kind":"textbox","id":"sh/ydgnit07","slide":6,"text":"Require proof before a finding is verified","textPreview":"Require proof before a finding is verified","textChars":42,"textLines":1,"bbox":[186,704,630,38]}
+{"kind":"shape","id":"sh/zep4byhs","slide":6,"bbox":[928,352,820,430]}
+{"kind":"textbox","id":"sh/gju58ji9","slide":6,"text":"OPTIONAL","textPreview":"OPTIONAL","textChars":8,"textLines":1,"bbox":[962,382,220,30]}
+{"kind":"textbox","id":"sh/1k3mhozu","slide":6,"text":"AI-assisted operator reasoning","textPreview":"AI-assisted operator reasoning","textChars":30,"textLines":1,"bbox":[962,428,710,54]}
+{"kind":"textbox","id":"sh/jet8nm1c","slide":6,"text":"+","textPreview":"+","textChars":1,"textLines":1,"bbox":[966,510,38,34]}
+{"kind":"textbox","id":"sh/idk7ehkr","slide":6,"text":"Interpret ambiguous or conflicting signals","textPreview":"Interpret ambiguous or conflicting signals","textChars":42,"textLines":1,"bbox":[1022,508,650,38]}
+{"kind":"textbox","id":"sh/50bqpcj2","slide":6,"text":"+","textPreview":"+","textChars":1,"textLines":1,"bbox":[966,559,38,34]}
+{"kind":"textbox","id":"sh/4f2pgr2h","slide":6,"text":"Correlate distant assets and observations","textPreview":"Correlate distant assets and observations","textChars":41,"textLines":1,"bbox":[1022,557,650,38]}
+{"kind":"textbox","id":"sh/va98j210","slide":6,"text":"+","textPreview":"+","textChars":1,"textLines":1,"bbox":[966,608,38,34]}
+{"kind":"textbox","id":"sh/u907axkf","slide":6,"text":"Choose deeper tests and creative pivots","textPreview":"Choose deeper tests and creative pivots","textChars":39,"textLines":1,"bbox":[1022,606,650,38]}
+{"kind":"textbox","id":"sh/hcrqlcj6","slide":6,"text":"+","textPreview":"+","textChars":1,"textLines":1,"bbox":[966,657,38,34]}
+{"kind":"textbox","id":"sh/wbipc72l","slide":6,"text":"Analyze business logic and application behavior","textPreview":"Analyze business logic and application behavior","textChars":47,"textLines":1,"bbox":[1022,655,650,38]}
+{"kind":"textbox","id":"sh/7698f214","slide":6,"text":"+","textPreview":"+","textChars":1,"textLines":1,"bbox":[966,706,38,34]}
+{"kind":"textbox","id":"sh/m5076xkj","slide":6,"text":"Explain evidence and support the human operator","textPreview":"Explain evidence and support the human operator","textChars":47,"textLines":1,"bbox":[1022,704,650,38]}
+{"kind":"shape","id":"sh/2dkbalg3","slide":6,"bbox":[92,826,1656,86]}
+{"kind":"textbox","id":"sh/netcjqxo","slide":6,"text":"Repeatable methodology will operate without an LLM. AI assistance will support cases that require contextual analysis.","textPreview":"Repeatable methodology will operate without an LLM. AI assistance will support cases that require contextual analysis.","textChars":118,"textLines":1,"bbox":[128,850,1580,42]}
+{"kind":"notes","id":"nt/x8f69ofe","slide":6,"text":"This is the proposed solution. One unified harness connects authorized scope, security tools, evidence and reporting. The deterministic engine performs the repeatable methodology. AI assistance adds contextual reasoning when needed. Both modes use the same evidence."}
+{"kind":"slide","id":"sl/gnmp4jqx","slide":7,"title":"06 / METHODOLOGY","textShapes":17}
+{"kind":"textbox","id":"sh/batcbq94","slide":7,"text":"06 / METHODOLOGY","textPreview":"06 / METHODOLOGY","textChars":16,"textLines":1,"bbox":[92,46,600,30]}
+{"kind":"textbox","id":"sh/cb2tkvap","slide":7,"text":"Proposed assessment methodology","textPreview":"Proposed assessment methodology","textChars":31,"textLines":1,"bbox":[92,88,1710,86]}
+{"kind":"shape","id":"sh/dcbud0ra","slide":7,"bbox":[92,188,1736,0]}
+{"kind":"textbox","id":"sh/ydkbm5sv","slide":7,"text":"07","textPreview":"07","textChars":2,"textLines":1,"bbox":[1760,1000,68,28]}
+{"kind":"shape","id":"sh/zedcfa9g","slide":7,"bbox":[92,282,388,350]}
+{"kind":"textbox","id":"sh/kzmdova1","slide":7,"text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[116,308,48,44]}
+{"kind":"textbox","id":"sh/l0vuh0rm","slide":7,"text":"Reconnaissance","textPreview":"Reconnaissance","textChars":14,"textLines":1,"bbox":[118,382,336,70]}
+{"kind":"textbox","id":"sh/eh0ba1sr","slide":7,"text":"Discover domains, hosts, services, technologies and application resources.","textPreview":"Discover domains, hosts, services, technologies and application resources.","textChars":74,"textLines":1,"bbox":[126,474,320,112]}
+{"kind":"shape","id":"sh/fi9c369c","slide":7,"bbox":[482,438,22,28]}
+{"kind":"shape","id":"sh/baxkjqlk","slide":7,"bbox":[506,282,388,350]}
+{"kind":"textbox","id":"sh/a9ojq5kz","slide":7,"text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[530,308,48,44]}
+{"kind":"textbox","id":"sh/xcz2l03q","slide":7,"text":"Vulnerability assessment","textPreview":"Vulnerability assessment","textChars":24,"textLines":1,"bbox":[532,382,336,70]}
+{"kind":"textbox","id":"sh/cbq1sv25","slide":7,"text":"Run established network and web checks against the discovered surface.","textPreview":"Run established network and web checks against the discovered surface.","textChars":70,"textLines":1,"bbox":[540,474,320,112]}
+{"kind":"shape","id":"sh/n6x0fqlo","slide":7,"bbox":[896,438,22,28]}
+{"kind":"shape","id":"sh/25ojml43","slide":7,"bbox":[920,282,388,350]}
+{"kind":"textbox","id":"sh/p8fih03e","slide":7,"text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[944,308,48,44]}
+{"kind":"textbox","id":"sh/o761ov2t","slide":7,"text":"Evidence validation","textPreview":"Evidence validation","textChars":19,"textLines":1,"bbox":[946,382,336,70]}
+{"kind":"textbox","id":"sh/f2d0b6lc","slide":7,"text":"Separate scanner leads from findings supported by reproducible evidence.","textPreview":"Separate scanner leads from findings supported by reproducible evidence.","textChars":72,"textLines":1,"bbox":[954,474,320,112]}
+{"kind":"shape","id":"sh/eh4jil4r","slide":7,"bbox":[1310,438,22,28]}
+{"kind":"shape","id":"sh/id4ju1oz","slide":7,"bbox":[1334,282,388,350]}
+{"kind":"textbox","id":"sh/jedkn654","slide":7,"text":"4","textPreview":"4","textChars":1,"textLines":1,"bbox":[1358,308,48,44]}
+{"kind":"textbox","id":"sh/4fm1wb6p","slide":7,"text":"Reporting","textPreview":"Reporting","textChars":9,"textLines":1,"bbox":[1360,382,336,70]}
+{"kind":"textbox","id":"sh/50v2pgna","slide":7,"text":"Connect each finding to the affected asset, evidence and recommended action.","textPreview":"Connect each finding to the affected asset, evidence and recommended action.","textChars":76,"textLines":1,"bbox":[1368,474,320,112]}
+{"kind":"shape","id":"sh/q143ylov","slide":7,"bbox":[92,686,1656,176]}
+{"kind":"textbox","id":"sh/r2dkrq5g","slide":7,"text":"Methodology control","textPreview":"Methodology control","textChars":19,"textLines":1,"bbox":[128,720,360,38]}
+{"kind":"textbox","id":"sh/s3ml0v61","slide":7,"text":"A deterministic engine will execute the repeatable methodology. AI assistance will add contextual reasoning when needed. Human approval will remain mandatory before impactful actions.","textPreview":"A deterministic engine will execute the repeatable methodology. AI assistance will add contextual reasoning when needed. Human approval w...","textChars":183,"textLines":1,"bbox":[128,774,1540,64]}
+{"kind":"notes","id":"nt/gnmp4jqx","slide":7,"text":"This slide presents the methodology at the level expected in a proposal defense. Reconnaissance builds the surface. Vulnerability assessment tests it. Validation prevents scanner output from becoming an unsupported finding. Reporting preserves the evidence chain. The unified harness coordinates all four phases."}
+{"kind":"slide","id":"sl/fu1gfa1s","slide":8,"title":"07 / NON-LLM INTELLIGENCE","textShapes":35}
+{"kind":"textbox","id":"sh/elkf2pg7","slide":8,"text":"07 / NON-LLM INTELLIGENCE","textPreview":"07 / NON-LLM INTELLIGENCE","textChars":25,"textLines":1,"bbox":[92,46,600,30]}
+{"kind":"textbox","id":"sh/18byd4zy","slide":8,"text":"Evidence-responsive deterministic testing workflow","textPreview":"Evidence-responsive deterministic testing workflow","textChars":50,"textLines":1,"bbox":[92,88,1710,86]}
+{"kind":"shape","id":"sh/g72x4zyd","slide":8,"bbox":[92,188,1736,0]}
+{"kind":"textbox","id":"sh/ri9g7uhw","slide":8,"text":"08","textPreview":"08","textChars":2,"textLines":1,"bbox":[1760,1000,68,28]}
+{"kind":"textbox","id":"sh/6h0fypgb","slide":8,"text":"Evidence-responsive methodology loop","textPreview":"Evidence-responsive methodology loop","textChars":36,"textLines":1,"bbox":[92,220,740,38]}
+{"kind":"shape","id":"sh/tkby9kzm","slide":8,"bbox":[92,286,220,212]}
+{"kind":"textbox","id":"sh/sjix0zy1","slide":8,"text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[110,304,44,40]}
+{"kind":"textbox","id":"sh/je9g3ahk","slide":8,"text":"Widen","textPreview":"Widen","textChars":5,"textLines":1,"bbox":[112,366,180,38]}
+{"kind":"textbox","id":"sh/id0fu50z","slide":8,"text":"sisters · subdomains · OSINT","textPreview":"sisters · subdomains · OSINT","textChars":28,"textLines":1,"bbox":[112,416,180,62]}
+{"kind":"shape","id":"sh/o7ydoret","slide":8,"bbox":[312,379,18,22]}
+{"kind":"shape","id":"sh/98rehwve","slide":8,"bbox":[330,286,220,212]}
+{"kind":"textbox","id":"sh/m5gvmhwn","slide":8,"text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[348,304,44,40]}
+{"kind":"textbox","id":"sh/n6pwfmd8","slide":8,"text":"Verify","textPreview":"Verify","textChars":6,"textLines":1,"bbox":[350,366,180,38]}
+{"kind":"textbox","id":"sh/0jydkreh","slide":8,"text":"DNS · HTTP · TLS · live assets","textPreview":"DNS · HTTP · TLS · live assets","textChars":30,"textLines":1,"bbox":[350,416,180,62]}
+{"kind":"shape","id":"sh/1k7edwv2","slide":8,"bbox":[550,379,18,22]}
+{"kind":"shape","id":"sh/ehgvihwr","slide":8,"bbox":[568,286,220,212]}
+{"kind":"textbox","id":"sh/zipwbmdc","slide":8,"text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[586,304,44,40]}
+{"kind":"textbox","id":"sh/kfixwbe1","slide":8,"text":"Map","textPreview":"Map","textChars":3,"textLines":1,"bbox":[588,366,180,38]}
+{"kind":"textbox","id":"sh/lgbepgvm","slide":8,"text":"IPs · CDN/origin · ports","textPreview":"IPs · CDN/origin · ports","textChars":24,"textLines":1,"bbox":[588,416,180,62]}
+{"kind":"shape","id":"sh/tw7e9gnq","slide":8,"bbox":[788,379,18,22]}
+{"kind":"shape","id":"sh/svydgb65","slide":8,"bbox":[806,286,220,212]}
+{"kind":"textbox","id":"sh/7u5w765k","slide":8,"text":"4","textPreview":"4","textChars":1,"textLines":1,"bbox":[824,304,44,40]}
+{"kind":"textbox","id":"sh/6twve1oz","slide":8,"text":"Profile","textPreview":"Profile","textChars":7,"textLines":1,"bbox":[826,366,180,38]}
+{"kind":"textbox","id":"sh/5sne5wne","slide":8,"text":"services · versions · tech","textPreview":"services · versions · tech","textChars":26,"textLines":1,"bbox":[826,416,180,62]}
+{"kind":"shape","id":"sh/kredcr6t","slide":8,"bbox":[1026,379,18,22]}
+{"kind":"shape","id":"sh/jq5w365o","slide":8,"bbox":[1044,286,220,212]}
+{"kind":"textbox","id":"sh/i5wva1o3","slide":8,"text":"5","textPreview":"5","textChars":1,"textLines":1,"bbox":[1062,304,44,40]}
+{"kind":"textbox","id":"sh/x4ne1wni","slide":8,"text":"Discover","textPreview":"Discover","textChars":8,"textLines":1,"bbox":[1064,366,180,38]}
+{"kind":"textbox","id":"sh/w3ed8r6x","slide":8,"text":"paths · endpoints · parameters","textPreview":"paths · endpoints · parameters","textChars":30,"textLines":1,"bbox":[1064,416,180,62]}
+{"kind":"shape","id":"sh/m9sb2x4v","slide":8,"bbox":[1264,379,18,22]}
+{"kind":"shape","id":"sh/na1sb2lg","slide":8,"bbox":[1282,286,220,212]}
+{"kind":"textbox","id":"sh/8bat47ml","slide":8,"text":"6","textPreview":"6","textChars":1,"textLines":1,"bbox":[1300,304,44,40]}
+{"kind":"textbox","id":"sh/9w3uds36","slide":8,"text":"Scan","textPreview":"Scan","textChars":4,"textLines":1,"bbox":[1302,366,180,38]}
+{"kind":"textbox","id":"sh/y5sbed4j","slide":8,"text":"Nuclei · SQLmap · specialist checks","textPreview":"Nuclei · SQLmap · specialist checks","textChars":35,"textLines":1,"bbox":[1302,416,180,62]}
+{"kind":"shape","id":"sh/z61s7il4","slide":8,"bbox":[1502,379,18,22]}
+{"kind":"shape","id":"sh/07atgnmp","slide":8,"bbox":[1520,286,220,212]}
+{"kind":"textbox","id":"sh/l8ja9s3a","slide":8,"text":"7","textPreview":"7","textChars":1,"textLines":1,"bbox":[1538,304,44,40]}
+{"kind":"textbox","id":"sh/q18bad4n","slide":8,"text":"Confirm","textPreview":"Confirm","textChars":7,"textLines":1,"bbox":[1540,366,180,38]}
+{"kind":"textbox","id":"sh/b2hs3il8","slide":8,"text":"reproduce · cite evidence · report","textPreview":"reproduce · cite evidence · report","textChars":34,"textLines":1,"bbox":[1540,416,180,62]}
+{"kind":"shape","id":"sh/3u18fepo","slide":8,"bbox":[92,544,1656,90]}
+{"kind":"textbox","id":"sh/2ts769o3","slide":8,"text":"A new host, service, endpoint, credential or vulnerability re-opens only the relevant earlier work—without restarting the engagement.","textPreview":"A new host, service, endpoint, credential or vulnerability re-opens only the relevant earlier work—without restarting the engagement.","textChars":133,"textLines":1,"bbox":[126,570,1580,42]}
+{"kind":"textbox","id":"sh/pwjqho7u","slide":8,"text":"What makes this intelligent without an LLM","textPreview":"What makes this intelligent without an LLM","textChars":42,"textLines":1,"bbox":[92,692,820,38]}
+{"kind":"shape","id":"sh/4vap8j69","slide":8,"bbox":[92,748,388,174]}
+{"kind":"shape","id":"sh/fq1obeps","slide":8,"bbox":[92,748,9,174]}
+{"kind":"textbox","id":"sh/up872987","slide":8,"text":"Evidence unlocks work","textPreview":"Evidence unlocks work","textChars":21,"textLines":1,"bbox":[120,770,336,44]}
+{"kind":"textbox","id":"sh/hsjqd47y","slide":8,"text":"A real live host or service creates new test opportunities.","textPreview":"A real live host or service creates new test opportunities.","textChars":59,"textLines":1,"bbox":[120,826,336,78]}
+{"kind":"shape","id":"sh/grap4zqd","slide":8,"bbox":[506,748,388,174]}
+{"kind":"shape","id":"sh/72ho7upg","slide":8,"bbox":[506,748,9,174]}
+{"kind":"textbox","id":"sh/6187yp8b","slide":8,"text":"Coverage is per asset","textPreview":"Coverage is per asset","textChars":21,"textLines":1,"bbox":[534,770,336,44]}
+{"kind":"textbox","id":"sh/cvmdsb2h","slide":8,"text":"Each host and application is tracked individually, even on shared infrastructure.","textPreview":"Each host and application is tracked individually, even on shared infrastructure.","textChars":81,"textLines":1,"bbox":[534,826,336,78]}
+{"kind":"shape","id":"sh/xwvelwj2","slide":8,"bbox":[920,748,388,174]}
+{"kind":"shape","id":"sh/at4vq1kr","slide":8,"bbox":[920,748,9,174]}
+{"kind":"textbox","id":"sh/budwj61c","slide":8,"text":"Priority follows signals","textPreview":"Priority follows signals","textChars":24,"textLines":1,"bbox":[948,770,336,44]}
+{"kind":"textbox","id":"sh/kjmdwbit","slide":8,"text":"Observed technologies, exposure and proof reorder the queue.","textPreview":"Observed technologies, exposure and proof reorder the queue.","textChars":60,"textLines":1,"bbox":[948,826,336,78]}
+{"kind":"shape","id":"sh/lkvepgje","slide":8,"bbox":[1334,748,388,174]}
+{"kind":"shape","id":"sh/yx4vu10n","slide":8,"bbox":[1334,748,9,174]}
+{"kind":"textbox","id":"sh/zidwn618","slide":8,"text":"Methodology is configurable","textPreview":"Methodology is configurable","textChars":27,"textLines":1,"bbox":[1362,770,336,44]}
+{"kind":"textbox","id":"sh/0n2dkr2p","slide":8,"text":"Teams can change policy and coverage without rewriting the engine.","textPreview":"Teams can change policy and coverage without rewriting the engine.","textChars":66,"textLines":1,"bbox":[1362,826,336,78]}
+{"kind":"notes","id":"nt/fu1gfa1s","slide":8,"text":"This is not a single expansion tool and not a rigid checklist. The engine evaluates opportunities from current evidence, selects the next standard action, and loops when new facts change the surface. Nuclei, SQLmap and other baseline scanners remain part of the methodology; AI is not required to remember to run them."}
+{"kind":"slide","id":"sl/udsvah03","slide":9,"title":"08 / TRUSTWORTHY MEMORY","textShapes":28}
+{"kind":"textbox","id":"sh/eponml43","slide":9,"text":"08 / TRUSTWORTHY MEMORY","textPreview":"08 / TRUSTWORTHY MEMORY","textChars":23,"textLines":1,"bbox":[92,46,600,30]}
+{"kind":"textbox","id":"sh/1cfmhgne","slide":9,"text":"One evidence model will prevent false positives and lost context","textPreview":"One evidence model will prevent false positives and lost context","textChars":64,"textLines":1,"bbox":[92,88,1710,86]}
+{"kind":"shape","id":"sh/0b65obm9","slide":9,"bbox":[92,188,1736,0]}
+{"kind":"textbox","id":"sh/nex4jq5k","slide":9,"text":"09","textPreview":"09","textChars":2,"textLines":1,"bbox":[1760,1000,68,28]}
+{"kind":"shape","id":"sh/mdonql4z","slide":9,"bbox":[92,260,236,150]}
+{"kind":"textbox","id":"sh/9gzml0nq","slide":9,"text":"Target","textPreview":"Target","textChars":6,"textLines":1,"bbox":[110,292,200,38]}
+{"kind":"textbox","id":"sh/ofq5svm5","slide":9,"text":"authorized scope","textPreview":"authorized scope","textChars":16,"textLines":1,"bbox":[110,342,200,42]}
+{"kind":"shape","id":"sh/bih4na5w","slide":9,"bbox":[332,322,35,25]}
+{"kind":"shape","id":"sh/ah8nu54b","slide":9,"bbox":[371,260,236,150]}
+{"kind":"textbox","id":"sh/oza1gfyh","slide":9,"text":"Asset","textPreview":"Asset","textChars":5,"textLines":1,"bbox":[389,292,200,38]}
+{"kind":"textbox","id":"sh/p0ji9kf2","slide":9,"text":"domain · IP · service","textPreview":"domain · IP · service","textChars":21,"textLines":1,"bbox":[389,342,200,42]}
+{"kind":"shape","id":"sh/2xsjepgb","slide":9,"bbox":[611,322,35,25]}
+{"kind":"shape","id":"sh/3y107axw","slide":9,"bbox":[650,260,236,150]}
+{"kind":"textbox","id":"sh/cnu1kzyd","slide":9,"text":"Observation","textPreview":"Observation","textChars":11,"textLines":1,"bbox":[668,292,200,38]}
+{"kind":"textbox","id":"sh/do3id4fy","slide":9,"text":"recorded tool output","textPreview":"recorded tool output","textChars":20,"textLines":1,"bbox":[668,342,200,42]}
+{"kind":"shape","id":"sh/qlcjipgn","slide":9,"bbox":[890,322,35,25]}
+{"kind":"shape","id":"sh/bml0buxs","slide":9,"bbox":[929,260,236,150]}
+{"kind":"textbox","id":"sh/0ru1ozyp","slide":9,"text":"Candidate","textPreview":"Candidate","textChars":9,"textLines":1,"bbox":[947,292,200,38]}
+{"kind":"textbox","id":"sh/lsn2h4fa","slide":9,"text":"lead requiring proof","textPreview":"lead requiring proof","textChars":20,"textLines":1,"bbox":[947,342,200,42]}
+{"kind":"shape","id":"sh/98ji147e","slide":9,"bbox":[1169,322,35,25]}
+{"kind":"shape","id":"sh/87a18zqt","slide":9,"bbox":[1208,260,236,150]}
+{"kind":"textbox","id":"sh/76h0zup8","slide":9,"text":"Verified finding","textPreview":"Verified finding","textChars":16,"textLines":1,"bbox":[1226,292,200,38]}
+{"kind":"textbox","id":"sh/ml8j6p8n","slide":9,"text":"claim + cited evidence","textPreview":"claim + cited evidence","textChars":22,"textLines":1,"bbox":[1226,342,200,42]}
+{"kind":"shape","id":"sh/hcji5o7a","slide":9,"bbox":[1448,322,35,25]}
+{"kind":"shape","id":"sh/wba1cjqp","slide":9,"bbox":[1487,260,236,150]}
+{"kind":"textbox","id":"sh/va103ep4","slide":9,"text":"Report","textPreview":"Report","textChars":6,"textLines":1,"bbox":[1505,292,200,38]}
+{"kind":"textbox","id":"sh/u9sja98z","slide":9,"text":"human-reviewable result","textPreview":"human-reviewable result","textChars":23,"textLines":1,"bbox":[1505,342,200,42]}
+{"kind":"textbox","id":"sh/xgzitk76","slide":9,"text":"Storage rules","textPreview":"Storage rules","textChars":13,"textLines":1,"bbox":[92,472,500,38]}
+{"kind":"shape","id":"sh/cf6h0fql","slide":9,"bbox":[92,530,522,166]}
+{"kind":"shape","id":"sh/2l4faloj","slide":9,"bbox":[92,530,9,166]}
+{"kind":"textbox","id":"sh/nmdg3q54","slide":9,"text":"Raw evidence remains intact","textPreview":"Raw evidence remains intact","textChars":27,"textLines":1,"bbox":[120,552,470,44]}
+{"kind":"textbox","id":"sh/onmxcv69","slide":9,"text":"Artifacts preserve what the tool actually returned.","textPreview":"Artifacts preserve what the tool actually returned.","textChars":51,"textLines":1,"bbox":[120,608,470,70]}
+{"kind":"shape","id":"sh/pofy50nu","slide":9,"bbox":[644,530,522,166]}
+{"kind":"shape","id":"sh/apofe5of","slide":9,"bbox":[644,530,9,166]}
+{"kind":"textbox","id":"sh/bqxg7q50","slide":9,"text":"Observations are not vulnerabilities","textPreview":"Observations are not vulnerabilities","textChars":36,"textLines":1,"bbox":[672,552,470,44]}
+{"kind":"textbox","id":"sh/cr6xgv6l","slide":9,"text":"A banner, port or scanner title cannot silently become a confirmed finding.","textPreview":"A banner, port or scanner title cannot silently become a confirmed finding.","textChars":75,"textLines":1,"bbox":[672,608,470,70]}
+{"kind":"shape","id":"sh/xcfy90n6","slide":9,"bbox":[1196,530,522,166]}
+{"kind":"shape","id":"sh/qtkf21ob","slide":9,"bbox":[1196,530,9,166]}
+{"kind":"textbox","id":"sh/rutwv65w","slide":9,"text":"Hypotheses stay separate","textPreview":"Hypotheses stay separate","textChars":24,"textLines":1,"bbox":[1224,552,470,44]}
+{"kind":"textbox","id":"sh/7y14jyd8","slide":9,"text":"AI interpretations and candidate leads remain provisional until verified.","textPreview":"AI interpretations and candidate leads remain provisional until verified.","textChars":73,"textLines":1,"bbox":[1224,608,470,70]}
+{"kind":"shape","id":"sh/mdsnatcn","slide":9,"bbox":[92,726,522,166]}
+{"kind":"shape","id":"sh/903ml8be","slide":9,"bbox":[92,726,9,166]}
+{"kind":"textbox","id":"sh/8zu5c3ut","slide":9,"text":"Findings cite exact proof","textPreview":"Findings cite exact proof","textChars":25,"textLines":1,"bbox":[120,748,470,44]}
+{"kind":"textbox","id":"sh/v2l4nitk","slide":9,"text":"Every high-impact claim points back to recorded, reproducible evidence.","textPreview":"Every high-impact claim points back to recorded, reproducible evidence.","textChars":71,"textLines":1,"bbox":[120,804,470,70]}
+{"kind":"shape","id":"sh/u1cnedcz","slide":9,"bbox":[644,726,522,166]}
+{"kind":"shape","id":"sh/h43mp8ba","slide":9,"bbox":[644,726,9,166]}
+{"kind":"textbox","id":"sh/w3u5g3u5","slide":9,"text":"Coverage is not severity","textPreview":"Coverage is not severity","textChars":24,"textLines":1,"bbox":[672,748,470,44]}
+{"kind":"textbox","id":"sh/j6l4ritg","slide":9,"text":"What has been tested is tracked separately from how dangerous a finding is.","textPreview":"What has been tested is tracked separately from how dangerous a finding is.","textChars":75,"textLines":1,"bbox":[672,804,470,70]}
+{"kind":"shape","id":"sh/i5cnidcv","slide":9,"bbox":[1196,726,522,166]}
+{"kind":"shape","id":"sh/0bel8na9","slide":9,"bbox":[1196,726,9,166]}
+{"kind":"textbox","id":"sh/1wnm1sru","slide":9,"text":"One shared graph","textPreview":"One shared graph","textChars":16,"textLines":1,"bbox":[1224,748,470,44]}
+{"kind":"textbox","id":"sh/e9w36ds3","slide":9,"text":"CLI, deterministic engine and AI operate on the same connected state.","textPreview":"CLI, deterministic engine and AI operate on the same connected state.","textChars":69,"textLines":1,"bbox":[1224,804,470,70]}
+{"kind":"notes","id":"nt/udsvah03","slide":9,"text":"Use this slide to explain why the platform will not rely on promotion calculations or a mixed bucket of findings. Memory will reflect an evidence lifecycle: raw tool facts first, hypotheses and candidates separately, then verified findings only when proof exists. This reduces false positives without adding another complex scoring layer."}
+{"kind":"slide","id":"sl/m90b6t0r","slide":10,"title":"09 / DELIVERY PLAN","textShapes":27}
+{"kind":"textbox","id":"sh/q9sn69kb","slide":10,"text":"09 / DELIVERY PLAN","textPreview":"09 / DELIVERY PLAN","textChars":18,"textLines":1,"bbox":[92,46,600,30]}
+{"kind":"textbox","id":"sh/xc3mho32","slide":10,"text":"Planned timeline and milestones","textPreview":"Planned timeline and milestones","textChars":31,"textLines":1,"bbox":[92,88,1710,86]}
+{"kind":"shape","id":"sh/cbu58j2h","slide":10,"bbox":[92,188,1736,0]}
+{"kind":"textbox","id":"sh/zelojyl8","slide":10,"text":"10","textPreview":"10","textChars":2,"textLines":1,"bbox":[1760,1000,68,28]}
+{"kind":"textbox","id":"sh/ydcnatkn","slide":10,"text":"September 2026 → April 2027","textPreview":"September 2026 → April 2027","textChars":27,"textLines":1,"bbox":[92,216,720,42]}
+{"kind":"shape","id":"sh/l036l83y","slide":10,"bbox":[158,438,1510,0]}
+{"kind":"shape","id":"sh/kzu5c32t","slide":10,"bbox":[92,322,174,220]}
+{"kind":"textbox","id":"sh/725onyl4","slide":10,"text":"SEP","textPreview":"SEP","textChars":3,"textLines":1,"bbox":[122,346,114,48]}
+{"kind":"textbox","id":"sh/m1cnetkj","slide":10,"text":"Planning &\narchitecture","textPreview":"Planning & | architecture","textChars":23,"textLines":2,"bbox":[102,426,154,82]}
+{"kind":"shape","id":"sh/s7yt4b21","slide":10,"bbox":[299,322,174,220]}
+{"kind":"textbox","id":"sh/d87uxg3m","slide":10,"text":"OCT","textPreview":"OCT","textChars":3,"textLines":1,"bbox":[329,346,114,48]}
+{"kind":"textbox","id":"sh/q5gb21kb","slide":10,"text":"Reconnaissance","textPreview":"Reconnaissance","textChars":14,"textLines":1,"bbox":[309,426,154,82]}
+{"kind":"shape","id":"sh/r6pcv6lw","slide":10,"bbox":[506,322,174,220]}
+{"kind":"textbox","id":"sh/0bit8b2d","slide":10,"text":"NOV","textPreview":"NOV","textChars":3,"textLines":1,"bbox":[536,346,114,48]}
+{"kind":"textbox","id":"sh/1cru1g3y","slide":10,"text":"Network & web\nassessment","textPreview":"Network & web | assessment","textChars":24,"textLines":2,"bbox":[516,426,154,82]}
+{"kind":"shape","id":"sh/e9gb61k7","slide":10,"bbox":[713,322,174,220]}
+{"kind":"textbox","id":"sh/fapcz6ls","slide":10,"text":"DEC","textPreview":"DEC","textChars":3,"textLines":1,"bbox":[743,346,114,48]}
+{"kind":"textbox","id":"sh/ozitcv29","slide":10,"text":"Integration &\ncorrelation","textPreview":"Integration & | correlation","textChars":25,"textLines":2,"bbox":[723,426,154,82]}
+{"kind":"shape","id":"sh/p0ru503u","slide":10,"bbox":[920,322,174,220]}
+{"kind":"textbox","id":"sh/xwnupgvy","slide":10,"text":"JAN","textPreview":"JAN","textChars":3,"textLines":1,"bbox":[950,346,114,48]}
+{"kind":"textbox","id":"sh/wvetgbud","slide":10,"text":"Business logic\n& safety","textPreview":"Business logic | & safety","textChars":23,"textLines":2,"bbox":[930,426,154,82]}
+{"kind":"shape","id":"sh/bu5cnqd8","slide":10,"bbox":[1127,322,174,220]}
+{"kind":"textbox","id":"sh/atwbelcn","slide":10,"text":"FEB","textPreview":"FEB","textChars":3,"textLines":1,"bbox":[1157,346,114,48]}
+{"kind":"textbox","id":"sh/lk7ut0va","slide":10,"text":"Dual-mode\norchestration","textPreview":"Dual-mode | orchestration","textChars":23,"textLines":2,"bbox":[1137,426,154,82]}
+{"kind":"shape","id":"sh/kjytkvup","slide":10,"bbox":[1334,322,174,220]}
+{"kind":"textbox","id":"sh/jypcrqd4","slide":10,"text":"MAR","textPreview":"MAR","textChars":3,"textLines":1,"bbox":[1364,346,114,48]}
+{"kind":"textbox","id":"sh/yxgbilcj","slide":10,"text":"Testing &\nrefinement","textPreview":"Testing & | refinement","textChars":20,"textLines":2,"bbox":[1344,426,154,82]}
+{"kind":"shape","id":"sh/1o3ahwvq","slide":10,"bbox":[1541,322,174,220]}
+{"kind":"textbox","id":"sh/0nut8rul","slide":10,"text":"APR","textPreview":"APR","textChars":3,"textLines":1,"bbox":[1571,346,114,48]}
+{"kind":"textbox","id":"sh/q9srixs3","slide":10,"text":"Evaluation &\ndefense","textPreview":"Evaluation & | defense","textChars":20,"textLines":2,"bbox":[1551,426,154,82]}
+{"kind":"shape","id":"sh/ru18r2to","slide":10,"bbox":[92,616,1656,236]}
+{"kind":"textbox","id":"sh/cva9k7a9","slide":10,"text":"Evaluation focus","textPreview":"Evaluation focus","textChars":16,"textLines":1,"bbox":[128,650,340,38]}
+{"kind":"shape","id":"sh/dwjqtcbu","slide":10,"bbox":[128,706,470,112]}
+{"kind":"shape","id":"sh/exsrmhsf","slide":10,"bbox":[128,706,9,112]}
+{"kind":"textbox","id":"sh/zyl8vmt0","slide":10,"text":"Coverage","textPreview":"Coverage","textChars":8,"textLines":1,"bbox":[156,728,418,44]}
+{"kind":"textbox","id":"sh/0zu9ora5","slide":10,"text":"Attack-surface discovery and vulnerability coverage.","textPreview":"Attack-surface discovery and vulnerability coverage.","textChars":52,"textLines":1,"bbox":[156,784,418,16]}
+{"kind":"shape","id":"sh/103qxcbq","slide":10,"bbox":[624,706,470,112]}
+{"kind":"shape","id":"sh/u187adsv","slide":10,"bbox":[624,706,9,112]}
+{"kind":"textbox","id":"sh/f2h8jitg","slide":10,"text":"Reliability","textPreview":"Reliability","textChars":11,"textLines":1,"bbox":[652,728,418,44]}
+{"kind":"textbox","id":"sh/bmpgrah8","slide":10,"text":"Comparable operation with and without an LLM.","textPreview":"Comparable operation with and without an LLM.","textChars":45,"textLines":1,"bbox":[652,784,418,16]}
+{"kind":"shape","id":"sh/algfy50n","slide":10,"bbox":[1120,706,590,112]}
+{"kind":"shape","id":"sh/xo7ytkzy","slide":10,"bbox":[1120,706,9,112]}
+{"kind":"textbox","id":"sh/wnyx0fit","slide":10,"text":"Safety and efficiency","textPreview":"Safety and efficiency","textChars":21,"textLines":1,"bbox":[1148,728,538,44]}
+{"kind":"textbox","id":"sh/jq9gvuh4","slide":10,"text":"Zero scope violations and measurable time improvement.","textPreview":"Zero scope violations and measurable time improvement.","textChars":54,"textLines":1,"bbox":[1148,784,538,16]}
+{"kind":"notes","id":"nt/m90b6t0r","slide":10,"text":"Present this as the planned schedule. The final evaluation will compare coverage, reliability across both modes, safety controls and time efficiency against manual baselines."}
+{"kind":"slide","id":"sl/jetc3ut0","slide":11,"title":"10 / TEAM","textShapes":16}
+{"kind":"textbox","id":"sh/a90z21on","slide":11,"text":"10 / TEAM","textPreview":"10 / TEAM","textChars":9,"textLines":1,"bbox":[92,46,600,30]}
+{"kind":"textbox","id":"sh/xcryxg7y","slide":11,"text":"Team responsibilities and shared ownership","textPreview":"Team responsibilities and shared ownership","textChars":42,"textLines":1,"bbox":[92,88,1710,86]}
+{"kind":"shape","id":"sh/wbih4b6d","slide":11,"bbox":[92,188,1736,0]}
+{"kind":"textbox","id":"sh/n69grmpw","slide":11,"text":"11","textPreview":"11","textChars":2,"textLines":1,"bbox":[1760,1000,68,28]}
+{"kind":"shape","id":"sh/250zy18b","slide":11,"bbox":[92,266,512,348]}
+{"kind":"shape","id":"sh/98rytw72","slide":11,"bbox":[92,266,9,348]}
+{"kind":"textbox","id":"sh/o7ih0r6h","slide":11,"text":"Abdul Ahad","textPreview":"Abdul Ahad","textChars":10,"textLines":1,"bbox":[120,288,460,44]}
+{"kind":"textbox","id":"sh/72t03qp0","slide":11,"text":"Primary responsibility\n\nSystem architecture\nAI orchestration\nMethodology integration","textPreview":"Primary responsibility |  | System architecture | AI orchestration | Methodology integration","textChars":84,"textLines":5,"bbox":[120,344,460,252]}
+{"kind":"shape","id":"sh/61kzalof","slide":11,"bbox":[630,266,512,348]}
+{"kind":"shape","id":"sh/ofqtgnyt","slide":11,"bbox":[630,266,9,348]}
+{"kind":"textbox","id":"sh/9gza9sze","slide":11,"text":"Muhammad Usman Hamed","textPreview":"Muhammad Usman Hamed","textChars":20,"textLines":1,"bbox":[658,288,460,44]}
+{"kind":"textbox","id":"sh/mdobedg3","slide":11,"text":"Primary responsibility\n\nReconnaissance\nSecurity assessment\nTool evaluation","textPreview":"Primary responsibility |  | Reconnaissance | Security assessment | Tool evaluation","textChars":74,"textLines":5,"bbox":[658,344,460,252]}
+{"kind":"shape","id":"sh/nehs7iho","slide":11,"bbox":[1168,266,580,348]}
+{"kind":"shape","id":"sh/0b6tc3yx","slide":11,"bbox":[1168,266,9,348]}
+{"kind":"textbox","id":"sh/1cfa58zi","slide":11,"text":"Obaid Ishtiaq Satti","textPreview":"Obaid Ishtiaq Satti","textChars":19,"textLines":1,"bbox":[1196,288,528,44]}
+{"kind":"textbox","id":"sh/epobatgr","slide":11,"text":"Primary responsibility\n\nPlatform and interface\nReporting\nDeployment support","textPreview":"Primary responsibility |  | Platform and interface | Reporting | Deployment support","textChars":75,"textLines":5,"bbox":[1196,344,528,252]}
+{"kind":"shape","id":"sh/zaxs3yhc","slide":11,"bbox":[92,668,1656,190]}
+{"kind":"textbox","id":"sh/cn6t83y1","slide":11,"text":"Shared across the team","textPreview":"Shared across the team","textChars":22,"textLines":1,"bbox":[128,704,420,42]}
+{"kind":"textbox","id":"sh/dofa18z6","slide":11,"text":"Integration","textPreview":"Integration","textChars":11,"textLines":1,"bbox":[128,770,440,44]}
+{"kind":"textbox","id":"sh/tsnip0ny","slide":11,"text":"Testing","textPreview":"Testing","textChars":7,"textLines":1,"bbox":[628,770,440,44]}
+{"kind":"textbox","id":"sh/87ehgv6d","slide":11,"text":"Validation","textPreview":"Validation","textChars":10,"textLines":1,"bbox":[1128,770,440,44]}
+{"kind":"textbox","id":"sh/7650nq5s","slide":11,"text":"Debugging","textPreview":"Debugging","textChars":9,"textLines":1,"bbox":[128,830,440,44]}
+{"kind":"textbox","id":"sh/65wzelo7","slide":11,"text":"Performance evaluation","textPreview":"Performance evaluation","textChars":22,"textLines":1,"bbox":[628,830,440,44]}
+{"kind":"textbox","id":"sh/l43ilgn2","slide":11,"text":"Documentation","textPreview":"Documentation","textChars":13,"textLines":1,"bbox":[1128,830,440,44]}
+{"kind":"notes","id":"nt/jetc3ut0","slide":11,"text":"Clarify that the primary areas identify ownership, not silos. Integration, testing, validation, debugging, evaluation and documentation remain shared responsibilities."}
+{"kind":"slide","id":"sl/8f2psfyx","slide":12,"title":"11 / IMPACT","textShapes":18}
+{"kind":"textbox","id":"sh/edk3ed4j","slide":12,"text":"11 / IMPACT","textPreview":"11 / IMPACT","textChars":11,"textLines":1,"bbox":[92,46,600,30]}
+{"kind":"textbox","id":"sh/1gbm9s3a","slide":12,"text":"Who will use the proposed system?","textPreview":"Who will use the proposed system?","textChars":33,"textLines":1,"bbox":[92,88,1710,86]}
+{"kind":"shape","id":"sh/0f2lgnmp","slide":12,"bbox":[92,188,1736,0]}
+{"kind":"textbox","id":"sh/ra943il8","slide":12,"text":"12","textPreview":"12","textChars":2,"textLines":1,"bbox":[1760,1000,68,28]}
+{"kind":"shape","id":"sh/q903ad4n","slide":12,"bbox":[92,260,388,286]}
+{"kind":"shape","id":"sh/dcbm583y","slide":12,"bbox":[92,260,9,286]}
+{"kind":"textbox","id":"sh/sb2lcnmd","slide":12,"text":"Penetration testing firms","textPreview":"Penetration testing firms","textChars":25,"textLines":1,"bbox":[120,282,336,44]}
+{"kind":"textbox","id":"sh/b6d4f2lc","slide":12,"text":"Repeatable external assessments across wide client surfaces.","textPreview":"Repeatable external assessments across wide client surfaces.","textChars":60,"textLines":1,"bbox":[120,338,336,190]}
+{"kind":"shape","id":"sh/a543mx4r","slide":12,"bbox":[506,260,388,286]}
+{"kind":"shape","id":"sh/wvupgz6t","slide":12,"bbox":[506,260,9,286]}
+{"kind":"textbox","id":"sh/xw3q94ne","slide":12,"text":"Internal security teams","textPreview":"Internal security teams","textChars":23,"textLines":1,"bbox":[534,282,336,44]}
+{"kind":"textbox","id":"sh/atc7epon","slide":12,"text":"Continuous visibility and evidence across changing infrastructure.","textPreview":"Continuous visibility and evidence across changing infrastructure.","textChars":66,"textLines":1,"bbox":[534,338,336,190]}
+{"kind":"shape","id":"sh/bulo7u58","slide":12,"bbox":[920,260,388,286]}
+{"kind":"shape","id":"sh/orapcf6h","slide":12,"bbox":[920,260,9,286]}
+{"kind":"textbox","id":"sh/9sj65kn2","slide":12,"text":"Managed security providers","textPreview":"Managed security providers","textChars":26,"textLines":1,"bbox":[948,282,336,44]}
+{"kind":"textbox","id":"sh/mps7a5or","slide":12,"text":"Standardized multi-engagement execution and reporting.","textPreview":"Standardized multi-engagement execution and reporting.","textChars":54,"textLines":1,"bbox":[948,338,336,190]}
+{"kind":"shape","id":"sh/nq1o3a5w","slide":12,"bbox":[1334,260,388,286]}
+{"kind":"shape","id":"sh/0nap8f6l","slide":12,"bbox":[1334,260,9,286]}
+{"kind":"textbox","id":"sh/1oj61kn6","slide":12,"text":"DevSecOps teams","textPreview":"DevSecOps teams","textChars":15,"textLines":1,"bbox":[1362,282,336,44]}
+{"kind":"textbox","id":"sh/hkbm5wzu","slide":12,"text":"Security assessment integrated into engineering workflows.","textPreview":"Security assessment integrated into engineering workflows.","textChars":58,"textLines":1,"bbox":[1362,338,336,190]}
+{"kind":"textbox","id":"sh/gj25cry9","slide":12,"text":"UN Sustainable Development Goal alignment","textPreview":"UN Sustainable Development Goal alignment","textChars":41,"textLines":1,"bbox":[92,614,900,40]}
+{"kind":"shape","id":"sh/fit436ho","slide":12,"bbox":[92,682,512,178]}
+{"kind":"shape","id":"sh/uh0na1g3","slide":12,"bbox":[92,682,9,178]}
+{"kind":"textbox","id":"sh/tgrm1wzy","slide":12,"text":"SDG 9","textPreview":"SDG 9","textChars":5,"textLines":1,"bbox":[120,704,460,44]}
+{"kind":"textbox","id":"sh/sfi58ryd","slide":12,"text":"Industry, innovation and resilient infrastructure.","textPreview":"Industry, innovation and resilient infrastructure.","textChars":50,"textLines":1,"bbox":[120,760,460,82]}
+{"kind":"shape","id":"sh/7u94zmhs","slide":12,"bbox":[630,682,512,178]}
+{"kind":"shape","id":"sh/6t0n6hg7","slide":12,"bbox":[630,682,9,178]}
+{"kind":"textbox","id":"sh/dcv6dgz2","slide":12,"text":"SDG 16","textPreview":"SDG 16","textChars":6,"textLines":1,"bbox":[658,704,460,44]}
+{"kind":"textbox","id":"sh/cbm5kbyh","slide":12,"text":"Stronger institutions through improved cyber resilience.","textPreview":"Stronger institutions through improved cyber resilience.","textChars":56,"textLines":1,"bbox":[658,760,460,82]}
+{"kind":"shape","id":"sh/alwbitsn","slide":12,"bbox":[1168,682,580,178]}
+{"kind":"shape","id":"sh/bm5sryt8","slide":12,"bbox":[1168,682,9,178]}
+{"kind":"textbox","id":"sh/wnetkjat","slide":12,"text":"SDG 17","textPreview":"SDG 17","textChars":6,"textLines":1,"bbox":[1196,704,528,44]}
+{"kind":"textbox","id":"sh/xonutobe","slide":12,"text":"Partnerships through interoperable, open security tooling.","textPreview":"Partnerships through interoperable, open security tooling.","textChars":58,"textLines":1,"bbox":[1196,760,528,82]}
+{"kind":"notes","id":"nt/8f2psfyx","slide":12,"text":"The primary users are professional security teams. The SDG mapping is supportive context: resilient infrastructure, stronger institutions and interoperable partnerships."}
+{"kind":"slide","id":"sl/hgzapcr6","slide":13,"title":"FYP PROPOSAL DEFENSE","textShapes":11}
+{"kind":"textbox","id":"sh/dsr6t8bu","slide":13,"text":"FYP PROPOSAL DEFENSE","textPreview":"FYP PROPOSAL DEFENSE","textChars":20,"textLines":1,"bbox":[92,76,286,46]}
+{"kind":"textbox","id":"sh/q50nydsj","slide":13,"text":"Thank you","textPreview":"Thank you","textChars":9,"textLines":1,"bbox":[92,188,900,120]}
+{"kind":"textbox","id":"sh/bq9orito","slide":13,"text":"Questions and discussion","textPreview":"Questions and discussion","textChars":24,"textLines":1,"bbox":[96,328,900,56]}
+{"kind":"shape","id":"sh/o3i5w3ad","slide":13,"bbox":[96,416,820,0]}
+{"kind":"textbox","id":"sh/p4r6p8by","slide":13,"text":"Proposed autonomous web security assessment framework","textPreview":"Proposed autonomous web security assessment framework","textChars":53,"textLines":1,"bbox":[96,454,920,44]}
+{"kind":"textbox","id":"sh/21gnuts7","slide":13,"text":"Working title · proposed architecture · planned evaluation","textPreview":"Working title · proposed architecture · planned evaluation","textChars":58,"textLines":1,"bbox":[96,516,920,38]}
+{"kind":"shape","id":"sh/32ponyts","slide":13,"bbox":[1100,142,650,690]}
+{"kind":"textbox","id":"sh/gzy5s3a1","slide":13,"text":"DISCUSSION","textPreview":"DISCUSSION","textChars":10,"textLines":1,"bbox":[1160,202,530,36]}
+{"kind":"textbox","id":"sh/1076lobm","slide":13,"text":"How can a pentesting harness remain useful when AI is unavailable?","textPreview":"How can a pentesting harness remain useful when AI is unavailable?","textChars":66,"textLines":1,"bbox":[1170,280,510,160]}
+{"kind":"textbox","id":"sh/hcfy9k3u","slide":13,"text":"Methodology","textPreview":"Methodology","textChars":11,"textLines":1,"bbox":[1180,514,220,58]}
+{"kind":"textbox","id":"sh/gb6x0zm9","slide":13,"text":"Evidence","textPreview":"Evidence","textChars":8,"textLines":1,"bbox":[1450,514,220,58]}
+{"kind":"textbox","id":"sh/vaxg7ulo","slide":13,"text":"Human control","textPreview":"Human control","textChars":13,"textLines":1,"bbox":[1180,608,490,58]}
+{"kind":"textbox","id":"sh/u9ofyp43","slide":13,"text":"Muhammad Usman Hamed · Abdul Ahad · Obaid Ishtiaq Satti","textPreview":"Muhammad Usman Hamed · Abdul Ahad · Obaid Ishtiaq Satti","textChars":55,"textLines":1,"bbox":[1148,752,554,34]}
+{"kind":"notes","id":"nt/hgzapcr6","slide":13,"text":"Invite questions. If asked whether the system already exists, clarify that this defense presents the proposed architecture and planned implementation; the project name is still a working title."}

@@ -24,7 +24,7 @@ def test_investigation_step_tool_name_is_the_real_tool_when_present():
 
 
 def test_investigation_step_tool_name_falls_back_for_analytical_kinds():
-    """promote_observations/detect_anomalies/etc. carry no tool at all —
+    """detect_anomalies/refresh_exploit_candidates/etc. carry no tool at all —
     the synthetic label is the only meaningful name available for those."""
     req = JobStartRequest(
         kind=JobKind.INVESTIGATION_STEP, engagement_id="e1",

@@ -314,9 +314,11 @@ class APIClient:
         return resp.json()
 
     # --- Earned-finding pipeline (plans/harness/03-earned-finding-pipeline.md) ---
-    # The only two ways a Finding comes into existence — same REST endpoints
-    # platform_file_finding / platform_promote_observations call, so the CLI
-    # and any MCP harness produce identical results against the same engagement.
+    # file_finding is the ONLY way a Finding comes into existence — a brain
+    # (human/LLM) citing evidence. Same REST endpoint platform_file_finding
+    # calls, so the CLI and any MCP harness produce identical results. (The
+    # no-LLM "promote_observations" launderer was deleted in plan 19 Phase 6:
+    # a scanner match stays a scanner_claim observation, never an auto-finding.)
     def file_finding(
         self, *, engagement_id: str, title: str, finding_type: str, observation_ids: list[str],
         claim_severity: str = "none", description: str = "", evidence_records: list[dict[str, Any]] | None = None,
@@ -330,13 +332,6 @@ class APIClient:
                 "description": description, "evidence_records": evidence_records or [],
                 "run_id": run_id, "target": target, "tags": tags or [],
             },
-        )
-        resp.raise_for_status()
-        return resp.json()
-
-    def promote_observations(self, engagement_id: str, *, run_id: str = "") -> dict[str, Any]:
-        resp = self._client.post(
-            self._url("/api/v1/findings/promote"), params={"engagement_id": engagement_id, "run_id": run_id},
         )
         resp.raise_for_status()
         return resp.json()

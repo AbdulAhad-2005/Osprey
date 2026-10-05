@@ -23,7 +23,7 @@ def _client() -> MCPClient:
 
 
 async def _fake_exec_once(command, timeout, *, run_as_root=False):
-    return "ok stdout", "", 0, False
+    return "ok stdout", "", 0, False, 0.1
 
 
 def test_prebuilt_command_skips_rebuild():

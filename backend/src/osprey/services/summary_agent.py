@@ -61,8 +61,8 @@ async def extract_observations_for_execution(
     """Record evidence, then extract structural Observations — registry
     parsers + freeform script/shell extraction. No ``Finding`` is created
     here (plans/harness/02-evidence-and-observation-layer.md); a Finding is
-    earned later from these observations by ``promote_observations`` /
-    ``platform_file_finding`` (Plan 03).
+    earned later from these observations only by ``platform_file_finding`` —
+    a brain citing evidence (Plan 03 / plan 19 Phase 6-7).
 
     ``allow_llm_fallback=False`` disables the LLM structural-extraction call
     inside ``parse_tool_output`` for this call only — used by the benchmark

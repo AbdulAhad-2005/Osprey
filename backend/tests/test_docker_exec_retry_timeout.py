@@ -22,7 +22,7 @@ from osprey.services.tool_registry import get_tool_definition
 def test_identical_command_after_timeout_is_not_retried():
     client = mcp_client.MCPClient()
     tool_def = get_tool_definition("dnsenum_scan")
-    exec_mock = AsyncMock(return_value=("", "", None, True))  # always times out
+    exec_mock = AsyncMock(return_value=("", "", None, True, 60.0))  # always times out
     decision = {
         "error_type": "timeout",
         "recovery_action": "retry_with_reduced_scope",
@@ -54,8 +54,8 @@ def test_a_genuinely_different_rebuilt_command_still_retries():
     client = mcp_client.MCPClient()
     tool_def = get_tool_definition("gobuster_scan")
     exec_mock = AsyncMock(side_effect=[
-        ("", "", None, True),  # first attempt times out
-        ("ok output", "", 0, False),  # retry with the adjusted command succeeds
+        ("", "", None, True, 60.0),  # first attempt times out
+        ("ok output", "", 0, False, 1.5),  # retry with the adjusted command succeeds
     ])
     decisions = [
         {

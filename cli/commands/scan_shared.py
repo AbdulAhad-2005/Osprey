@@ -125,9 +125,11 @@ def _run_investigation_events(
         transcript = get_runtime(client).transcript
 
     succeeded = True
-    started_at = 0.0
-    active_tool = ""
-    has_active_tool = False
+    # Multiple opportunities now run concurrently (plan 19 Part B), so track each
+    # in flight by its opportunity_id: tool name + when its card was shown. A
+    # completion is matched back to its start by opportunity_id, so overlapping
+    # tool calls render as independent cards instead of one being mislabelled.
+    inflight: dict[str, dict] = {}
     with console.status("[bold cyan]Investigation running…[/]", spinner="dots") as spinner:
         for event in events:
             data = event.data
@@ -138,18 +140,17 @@ def _run_investigation_events(
             elif event.type == "opportunities":
                 pass  # folded into the spinner via "state"; the next "decision" is what matters
             elif event.type == "decision":
+                opp_id = str(data.get("opportunity_id") or "")
                 tool = str(data.get("tool") or "")
                 params = data.get("params") or {}
-                has_active_tool = bool(tool)
-                active_tool = tool
-                started_at = time.monotonic()
                 if tool:
+                    inflight[opp_id] = {"tool": tool, "started_at": time.monotonic()}
                     print_tool_start_live(
-                        tool, params, {"tool_call_id": data.get("opportunity_id", "")},
+                        tool, params, {"tool_call_id": opp_id},
                         transcript=transcript, source=source,
                     )
                 else:
-                    # An analytical opportunity (no tool — promote_observations/
+                    # An analytical opportunity (no tool —
                     # detect_anomalies/refresh_exploit_candidates/sweep_netblock):
                     # a real action, just not a Kali tool call, so it gets a
                     # spinner update, never a fake tool-call card.
@@ -157,13 +158,14 @@ def _run_investigation_events(
                     reason = data.get("rationale") or "highest-priority opportunity"
                     spinner.update(f"[bold cyan]{label}[/] — {reason}")
             elif event.type == "capability_started":
-                resumed_tool = str(data.get("tool") or "")
-                if data.get("resumed") and resumed_tool:
-                    has_active_tool = True
-                    active_tool = resumed_tool
-                    started_at = time.monotonic()
+                # For a launched opportunity the "decision" above already drew
+                # the start card. A RESUMED job (adopted on /resume) has no
+                # decision this session, so draw its start card here.
+                if data.get("resumed") and data.get("tool"):
+                    opp_id = str(data.get("opportunity_id") or data.get("job_id") or "")
+                    inflight[opp_id] = {"tool": str(data["tool"]), "started_at": time.monotonic()}
                     print_tool_start_live(
-                        resumed_tool, {}, {"tool_call_id": data.get("opportunity_id", "")},
+                        str(data["tool"]), {}, {"tool_call_id": opp_id},
                         transcript=transcript, source=source,
                     )
             elif event.type == "capability_log":
@@ -171,22 +173,33 @@ def _run_investigation_events(
             elif event.type == "capability_progress":
                 spinner.update(f"[bold cyan]{data.get('progress', 'Working…')}[/]")
             elif event.type == "capability_completed":
-                if not has_active_tool:
-                    continue  # analytical completion already summarized via the spinner — no fake tool-end card
+                opp_id = str(data.get("opportunity_id") or "")
+                started = inflight.pop(opp_id, None)
                 detail = _capability_result_detail(data)
-                tool = str(detail.get("tool") or active_tool)
-                elapsed = time.monotonic() - started_at if started_at else 0.0
+                if started is None:
+                    # No start card for this completion — either an analytical
+                    # opportunity (no tool → nothing to render) or a job adopted
+                    # on /resume (we missed its start this session). Render a
+                    # standalone card only when the result names a real tool.
+                    if not detail.get("tool"):
+                        continue
+                    tool = str(detail.get("tool"))
+                    elapsed = 0.0
+                else:
+                    tool = str(detail.get("tool") or started["tool"])
+                    elapsed = time.monotonic() - started["started_at"]
                 print_tool_end_live(
                     tool,
                     {
                         "success": bool(detail.get("success", True)),
+                        "timed_out": bool(detail.get("timed_out", False)),
+                        "partial": bool(detail.get("partial", False)),
                         "duration_seconds": elapsed,
                         "finding_titles": detail.get("finding_titles") or [],
                         "preview": detail.get("error") or "",
                     },
                     transcript=transcript, source=source,
                 )
-                has_active_tool = False
             elif event.type == "checkpoint_started":
                 print_info(f"— checkpoint: {data.get('reason', '')} — handing control to the LLM briefly —")
             elif event.type == "checkpoint_llm_event":

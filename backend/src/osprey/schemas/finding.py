@@ -64,6 +64,36 @@ _NARRATIVE_TYPES: frozenset[FindingType] = frozenset(
 )
 
 
+# The ONLY finding types a brain may file as a CONCLUSION (plan 19 Phase 7).
+# A finding is an evidence-backed security judgment — a vulnerability, an
+# exploit-ready access/entry point, or confirmed sensitive material (a
+# credential/secret a brain is asserting is real and relevant). Everything else
+# in FindingType — subdomain/host/url/port/service/technology/dns_record/the
+# OSINT entities/raw observation/http_response — is a STRUCTURAL FACT, and a
+# fact belongs in the observation store + asset graph, never the finding store.
+# ``file_finding`` enforces this so "only a brain writes a conclusion, never a
+# structural fact" is structural, not a convention.
+_CONCLUSION_TYPES: frozenset[FindingType] = frozenset(
+    {
+        FindingType.VULNERABILITY,
+        FindingType.ACCESS,
+        FindingType.CREDENTIAL,
+        FindingType.SECRET,
+    }
+)
+
+
+def is_conclusion_type(finding_type: "FindingType | str") -> bool:
+    """True when ``finding_type`` is a brain-authored conclusion (fileable as a
+    finding), False when it is a structural fact (belongs in observations/graph).
+    Accepts the enum or its string value."""
+    try:
+        ft = finding_type if isinstance(finding_type, FindingType) else FindingType(str(finding_type))
+    except ValueError:
+        return False
+    return ft in _CONCLUSION_TYPES
+
+
 class FindingConfidence(StrEnum):
     CONFIRMED = "confirmed"
     LIKELY = "likely"
@@ -134,9 +164,9 @@ class Finding(BaseModel):
     # --- Earned-finding provenance (plans/harness/03-earned-finding-pipeline.md) ---
     # The claim's evidentiary basis. ``confidence`` above is a pure function of
     # these (``services.confidence.confidence_for``) for every finding built via
-    # ``platform_file_finding``/``promote_observations`` — the only two writers
-    # once every legacy Finding-minting call site is migrated (Step 6/7). Kept
-    # optional/default-empty here so the field exists without yet breaking a
+    # ``file_finding`` — the one and only writer since plan 19 Phase 6 deleted
+    # promote_observations. Kept optional/default-empty here so the field exists
+    # without yet breaking a
     # Finding built the old way; the hard "observation_ids required" assertion
     # lands once nothing else constructs Finding directly on the hot paths.
     observation_ids: list[str] = Field(default_factory=list)

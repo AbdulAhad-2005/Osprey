@@ -145,20 +145,6 @@ def test_file_finding_attestation_unaffected_by_grounding_check():
         assert resp.json()["finding"]["confidence"] == "confirmed"
 
 
-def test_promote_endpoint_returns_findings_for_scanner_signals():
-    eid = _make_engagement("promote-endpoint.test")
-    get_observation_store().record(Observation(
-        engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="promote-endpoint.test",
-        source_tool="nuclei_scan", details={"title": "CVE-2099-0003", "claimed_severity": "medium"},
-    ))
-    with TestClient(app) as client:
-        resp = client.post("/api/v1/findings/promote", params={"engagement_id": eid})
-        assert resp.status_code == 200, resp.text
-        data = resp.json()
-        assert data["total"] == 1
-        assert data["findings"][0]["confidence"] == "hypothesis"
-
-
 def test_mark_false_positive_endpoint_retracts_and_lists_pattern():
     eid = _make_engagement("fp-endpoint.test")
     obs = get_observation_store().record(Observation(
@@ -232,8 +218,8 @@ def test_reverify_finding_endpoint_with_nothing_reverifiable():
         file_resp = client.post(
             "/api/v1/findings/file",
             json={
-                "engagement_id": eid, "title": "manual note",
-                "finding_type": "observation", "observation_ids": [obs.id],
+                "engagement_id": eid, "title": "manual vuln note",
+                "finding_type": "vulnerability", "observation_ids": [obs.id],
                 "evidence_records": [{"kind": "attestation", "detail": "noted"}],
             },
         )

@@ -13,9 +13,8 @@ Explicit markers (print from platform_script):
 A ``FINDING|...`` marker is a script *claiming* a verdict — per Plan 03's one
 law, say-so is not evidence. It becomes a SCANNER_SIGNAL observation carrying
 the claim as structural detail (``claimed_confidence``/``claimed_severity``/
-``claimed_finding_type``); ``platform_file_finding``/``promote_observations``
-decide, from whatever evidence actually backs it, whether it earns a real
-Finding.
+``claimed_finding_type``); a brain, via ``platform_file_finding``, decides from
+whatever evidence actually backs it whether it earns a real Finding.
 """
 
 from __future__ import annotations

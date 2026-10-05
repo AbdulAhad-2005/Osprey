@@ -477,8 +477,8 @@ class JobStore:
                 )
             if not llm_configured():
                 # The direct platform_spawn_agent path (its REST endpoint turns
-                # this ValueError into a clear HTTP 429 detail message) — a
-                # PhaseAgent job would otherwise queue, run, and only fail
+                # this ValueError into a clear HTTP 429 detail message) — an
+                # agent job would otherwise queue, run, and only fail
                 # once it makes its first real completion() call. Note:
                 # phase_supervisor.start_pipeline() (platform_pipeline's MCP
                 # path) deliberately does NOT call llm_configured() at all

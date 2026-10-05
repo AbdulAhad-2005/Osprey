@@ -90,10 +90,12 @@ New capability = data + registration, not driver forks.
 
 ## 4. Explicit scoped-agent surface
 
-`services/phase_agent.py`, `/pipeline/spawn-agent`, and `platform_spawn_agent`
-provide opt-in, scoped LLM jobs. They reuse the execution kernel but do not own
-or autonomously drive the root engagement loop. Phase readiness remains a
-read-only signal for the CLI or another external harness.
+`services/agent_runner.py`, `/pipeline/spawn-agent`, and `platform_spawn_agent`
+provide opt-in, scoped LLM jobs — each one a headless instance of the CLI's own
+`cli.agent.loop.Runner` (no second, backend-native loop). They reuse the
+execution kernel but do not own or autonomously drive the root engagement
+loop. Phase readiness remains a read-only signal for the CLI or another
+external harness.
 
 ---
 

@@ -82,7 +82,7 @@ def test_reverify_finding_with_no_reverifiable_observation_reports_nothing_to_ch
         source_tool="operator_record", details={"title": "manual note"},
     ))
     result = file_finding(
-        engagement_id=eid, title="manual note", finding_type=FindingType.OBSERVATION,
+        engagement_id=eid, title="manual vuln note", finding_type=FindingType.VULNERABILITY,
         observation_ids=[obs.id],
         evidence_records=[EvidenceRecord(kind=EvidenceRecordKind.ATTESTATION, detail="I saw this")],
     )

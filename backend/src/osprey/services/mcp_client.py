@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import shutil
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -185,6 +186,10 @@ def _parse_tool_output(
             command=command,
             success=returncode == 0 and not timed_out,
             returncode=returncode,
+            # Not the real duration (see plan 19) — this ToolResult is a
+            # throwaway, feeding only the tool's own parse() for structured
+            # extraction; the actual ToolExecutionResponse returned to the
+            # caller carries the real wall-clock duration_seconds instead.
             duration_seconds=0.0,
             raw_stdout=stdout,
             raw_stderr=stderr,
@@ -547,11 +552,14 @@ class MCPClient:
         # one caller is ever inside this lock for this category at a time, so
         # re-fetching here is always the current, live process, never stale.
         req_lock = self._req_locks.setdefault(server_category, asyncio.Lock())
+        started = time.monotonic()
         try:
             async with req_lock:
                 proc = await self.ensure_server(server_category)
                 response_bytes = await self._send_and_receive(proc, request, timeout)
-            return self._parse_response(tool_name, response_bytes)
+            response = self._parse_response(tool_name, response_bytes)
+            response.duration_seconds = time.monotonic() - started
+            return response
         except asyncio.TimeoutError:
             # The server is very likely still blocked finishing THIS request
             # internally (its own tool call hasn't returned yet) — releasing the
@@ -623,10 +631,16 @@ class MCPClient:
 
     async def _exec_docker_once(
         self, command: str, timeout: int, *, run_as_root: bool = False
-    ) -> tuple[str, str, int | None, bool]:
-        """One docker-exec attempt. Returns (stdout, stderr, returncode, timed_out) —
-        never raises for a timeout (drains partial output instead), so the retry
-        loop above has a uniform result shape to make a decision on."""
+    ) -> tuple[str, str, int | None, bool, float]:
+        """One docker-exec attempt. Returns (stdout, stderr, returncode, timed_out,
+        duration_seconds) — never raises for a timeout (drains partial output
+        instead), so the retry loop above has a uniform result shape to make a
+        decision on. ``duration_seconds`` is real wall-clock time around the
+        subprocess, not a placeholder — every ``ToolExecutionResponse`` this
+        feeds needs it to be real for the CLI/dashboard to ever distinguish a
+        genuine re-execution from a cache hit or a replayed event (it was
+        hardcoded to 0 everywhere before; see plan 19)."""
+        started = time.monotonic()
         proc: asyncio.subprocess.Process | None = None
         # Create a unique pidfile to track this command's process group for targeted timeout kills.
         # `setsid` makes the shell a new session leader. Capturing `$$` before execution remains valid
@@ -661,12 +675,12 @@ class MCPClient:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
             stdout = stdout_bytes.decode(errors="replace") if stdout_bytes else ""
             stderr = stderr_bytes.decode(errors="replace") if stderr_bytes else ""
-            return stdout, stderr, proc.returncode, False
+            return stdout, stderr, proc.returncode, False, time.monotonic() - started
         except asyncio.TimeoutError:
             partial_stdout, partial_stderr = await _drain_partial(proc)
             await _kill_and_reap(proc)
             await self._kill_remote_process_group(pidfile)
-            return partial_stdout, partial_stderr, None, True
+            return partial_stdout, partial_stderr, None, True, time.monotonic() - started
 
     async def _call_via_docker_exec(
         self,
@@ -748,7 +762,7 @@ class MCPClient:
             while True:
                 attempt += 1
                 logger.info("Executing in kali-tools (attempt %d): %s", attempt, command)
-                stdout, stderr, returncode, timed_out = await self._exec_docker_once(
+                stdout, stderr, returncode, timed_out, attempt_duration = await self._exec_docker_once(
                     command, timeout, run_as_root=run_as_root
                 )
 
@@ -764,7 +778,7 @@ class MCPClient:
                         stdout=_truncate_stdout(stdout, tool_name),
                         stderr=stderr[:10000],
                         parsed=parsed_data,
-                        duration_seconds=0,
+                        duration_seconds=attempt_duration,
                     )
                     if recovery_history:
                         response.recovery_info = {
@@ -870,6 +884,7 @@ class MCPClient:
                 error=error_message
                 + (" — partial output captured below" if timed_out and stdout else ""),
                 timed_out=timed_out,
+                duration_seconds=attempt_duration,
                 alternative_tool_suggested=alternative_tool,
                 recovery_info={
                     "attempts_made": attempt,
@@ -912,6 +927,7 @@ class MCPClient:
 
         printable = " ".join(argv)
         logger.info("Shell argv in kali-tools: %s", printable)
+        started = time.monotonic()
         try:
             # -e PATH so a bare (non-login) docker exec still resolves ~/.local/bin
             # and pipx tools, matching the tool/script execution paths.
@@ -940,7 +956,7 @@ class MCPClient:
                 returncode=returncode,
                 stdout=_truncate_stdout(stdout, tool_name),
                 stderr=stderr[:10000],
-                duration_seconds=0,
+                duration_seconds=time.monotonic() - started,
             )
         except asyncio.TimeoutError:
             partial_stdout, partial_stderr = await _drain_partial(proc)
@@ -954,6 +970,7 @@ class MCPClient:
                 error=f"Execution timed out after {timeout}s"
                 + (" — partial output captured below" if partial_stdout else ""),
                 timed_out=True,
+                duration_seconds=time.monotonic() - started,
             )
         except Exception as exc:
             logger.exception("Shell argv failed for %s", tool_name)
@@ -999,6 +1016,7 @@ class MCPClient:
         # chmod/the script itself) still reaps whichever one was in flight —
         # a single `proc` var isn't bound until the last step is reached.
         spawned: list[asyncio.subprocess.Process] = []
+        started = time.monotonic()
         try:
             mkdir = await asyncio.create_subprocess_exec(
                 "docker",
@@ -1122,7 +1140,7 @@ class MCPClient:
                 returncode=proc.returncode,
                 stdout=preview[:280000],
                 stderr=raw_err[:40000],
-                duration_seconds=0,
+                duration_seconds=time.monotonic() - started,
                 parsed={"artifacts": meta},
                 hybrid={
                     "artifacts": meta,
@@ -1148,6 +1166,7 @@ class MCPClient:
                 stderr=partial_stderr[:10000],
                 error=f"Script timed out after {timeout}s",
                 timed_out=True,
+                duration_seconds=time.monotonic() - started,
                 hybrid={
                     "artifacts": {"stdout_path": stdout_path, "stderr_path": stderr_path},
                     "note": (
@@ -1173,6 +1192,7 @@ class MCPClient:
         printable = " ".join(argv)
         logger.info("Shell argv on host (native mode): %s", printable)
         proc: asyncio.subprocess.Process | None = None
+        started = time.monotonic()
         try:
             proc = await asyncio.create_subprocess_exec(
                 *argv,
@@ -1191,7 +1211,7 @@ class MCPClient:
                 returncode=proc.returncode,
                 stdout=_truncate_stdout(stdout, tool_name),
                 stderr=stderr[:10000],
-                duration_seconds=0,
+                duration_seconds=time.monotonic() - started,
             )
         except FileNotFoundError as exc:
             return ToolExecutionResponse(
@@ -1215,6 +1235,7 @@ class MCPClient:
                 error=f"Execution timed out after {timeout}s"
                 + (" — partial output captured below" if partial_stdout else ""),
                 timed_out=True,
+                duration_seconds=time.monotonic() - started,
             )
         except Exception as exc:
             logger.exception("Native shell argv failed for %s", tool_name)
@@ -1259,6 +1280,7 @@ class MCPClient:
         printable = f"{interpreter} {script_path}"
         logger.info("Script on host (native mode): %s", printable)
         proc: asyncio.subprocess.Process | None = None
+        started = time.monotonic()
         try:
             argv = [interpreter] + (["-u"] if interpreter == "python" else []) + [str(script_path)]
             proc = await asyncio.create_subprocess_exec(
@@ -1281,7 +1303,7 @@ class MCPClient:
                 returncode=proc.returncode,
                 stdout=stdout[:280000],
                 stderr=stderr[:40000],
-                duration_seconds=0,
+                duration_seconds=time.monotonic() - started,
                 parsed={"artifacts": meta},
                 hybrid={"artifacts": meta, "note": "Native mode — script output saved on host temp dir."},
             )
@@ -1303,6 +1325,7 @@ class MCPClient:
                 stderr=partial_stderr[:10000],
                 error=f"Script timed out after {timeout}s",
                 timed_out=True,
+                duration_seconds=time.monotonic() - started,
                 hybrid={"artifacts": {"stdout_path": str(stdout_path), "stderr_path": str(stderr_path)}},
             )
         except Exception as exc:

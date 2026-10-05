@@ -1,6 +1,6 @@
 """CLI parity for plans/harness/03 (earned-finding pipeline) and 05 (world
 model + attack paths + reasoning) — these commands didn't exist until this
-sweep; before it, only an MCP client could reach file_finding/promote/world
+sweep; before it, only an MCP client could reach file_finding/world
 model/attack paths/questions/hypotheses. Mocks at the APIClient boundary,
 same convention as test_fp_cache_cli.py — the backend-side logic has its own
 test suite (backend/tests/test_finding_pipeline.py, test_reasoning_endpoints.py).
@@ -22,7 +22,6 @@ from cli.commands.slash import (
     handle_link,
     handle_observations,
     handle_priority,
-    handle_promote,
     handle_question,
     handle_record,
     handle_skills,
@@ -53,14 +52,6 @@ def test_observations_lists_rows(client, capsys):
     handle_observations(["port"], client)
     client.list_observations.assert_called_once_with("eng1", observation_type="port", target="", limit=200)
     assert "id=o1" in capsys.readouterr().out
-
-
-def test_promote_reports_confidence_breakdown(client, capsys):
-    client.promote_observations.return_value = {"total": 1, "findings": [{"confidence": "hypothesis"}]}
-    handle_promote([], client)
-    out = capsys.readouterr().out
-    assert "Promoted 1 finding(s)" in out
-    assert "hypothesis" in out
 
 
 def test_file_requires_engagement():

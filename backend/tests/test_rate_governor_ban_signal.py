@@ -1,8 +1,8 @@
 """A WAF/rate-limit ban signal detected while pacing our OWN calls describes
 Osprey's execution against the target, not a fact about the target's
 security posture — it must never enter observation_store/findings_store
-(which every downstream consumer — promote_observations, reports, priority
-scoring, exploit candidates — treats as claims about the target). It
+(which every downstream consumer — reports, priority scoring, exploit
+candidates — treats as claims about the target). It
 belongs only on the calling tool's audit-log entry.
 
 Regression coverage for the fix that replaced tool_execution.py's

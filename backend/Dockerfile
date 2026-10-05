@@ -19,12 +19,23 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml requirements.txt /app/
-COPY src /app/src
+COPY backend/pyproject.toml backend/requirements.txt /app/
+COPY backend/src /app/src
+
+# The CLI's own agent loop (cli/agent/) and its embedded platform-mcp gateway
+# (platform-mcp/) — services/agent_runner.py runs a headless instance of that
+# SAME loop for every backend-spawned scoped agent, rather than a second,
+# independently-coded backend loop. Build context is the repo root (see
+# docker-compose.yml) specifically so these two sibling directories are
+# reachable here; backend/requirements.txt already pins litellm/mcp/httpx/
+# prompt_toolkit identically to cli/requirements.txt for exactly this reason.
+COPY cli /app/cli
+COPY platform-mcp /app/platform-mcp
 
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir -e .
+    && pip install --no-cache-dir -e . \
+    && pip install --no-cache-dir -e /app/cli
 
 # Keyless Python-tool runtime deps (the light set from mcp-servers/requirements.txt).
 # Installing them here means the custom Python tools (domain_hunter, js_recon, subdomain_takeover,

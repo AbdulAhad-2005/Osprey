@@ -576,7 +576,7 @@ def _analyze_or_bind(raw: str, *, force_new: bool = False) -> str:
     # into platform_pipeline/platform_spawn_agent explicitly
     # when backend-autonomous help is actually wanted. A prior version of
     # this function auto-started platform_pipeline here, which meant a
-    # server-side PhaseAgent tried to run through the BACKEND's own LLM
+    # server-side agent tried to run through the BACKEND's own LLM
     # config — a second, usually-unconfigured "brain" that failed opaquely
     # whenever the real driver was an external MCP client (this one) with no
     # reason for the backend to also hold an LLM key. Removed outright rather
@@ -1666,6 +1666,25 @@ def _record_reasoned_finding(
         timeout=30,
     )
 
+    # A structural fact (url/host/port/subdomain/technology/observation/…) is
+    # recorded as an Observation (done above) and stops there — it is NOT a
+    # finding (plan 19 Phase 7; the backend's file_finding rejects it anyway).
+    # Only a brain-authored CONCLUSION (vulnerability/access/credential/secret)
+    # continues to file_finding with the reasoning as an attestation.
+    _CONCLUSION_FTYPES = {"vulnerability", "access", "credential", "secret"}
+    if ftype not in _CONCLUSION_FTYPES:
+        return {
+            "recorded_observation": True,
+            "finding": None,
+            "observation_id": obs.get("id"),
+            "note": (
+                f"Recorded as an observation (type={obs.get('type')}). A {ftype!r} is a "
+                "structural fact, not a conclusion — it lives in the observation store / asset "
+                "graph, not the finding store. File a finding only for a vulnerability/access/"
+                "credential/secret you've concluded, with evidence."
+            ),
+        }
+
     derived_ids = [x.strip() for x in (derived_from or "").replace(";", ",").split(",") if x.strip()]
     # FileFindingRequest (schemas/finding.py) has no confidence/source_tool
     # fields at the top level — confidence_for computes confidence from
@@ -1754,6 +1773,14 @@ def platform_record_finding(
                 f"title: {title}\n"
                 f"Not filed — matches a known false-positive pattern: {result.get('suppressed_reason')}"
             )
+        if result.get("recorded_observation") and not result.get("finding"):
+            return (
+                "### OPERATOR MIRROR — RECORDED OBSERVATION\n"
+                f"{_session_header(ctx)}\n"
+                f"Stored observation id={result.get('observation_id')}\n"
+                f"title: {title}\n"
+                f"{result.get('note', '')}"
+            )
         data = result.get("finding") or {}
         return (
             "### OPERATOR MIRROR — RECORDED FINDING\n"
@@ -1805,6 +1832,7 @@ def platform_record_findings(items_json: Any, engagement_id: str = "") -> str:
             return "ERROR: too many items (max 100 per call — split into batches)"
 
         stored: list[dict[str, Any]] = []
+        observations_only = 0
         suppressed_count = 0
         errors: list[str] = []
         for i, item in enumerate(raw):
@@ -1828,16 +1856,19 @@ def platform_record_findings(items_json: Any, engagement_id: str = "") -> str:
                 errors.append(f"item {i}: {result}")
             elif result.get("suppressed"):
                 suppressed_count += 1
+            elif result.get("recorded_observation") and not result.get("finding"):
+                observations_only += 1
             else:
                 stored.append(result.get("finding") or {})
 
-        if not stored and not suppressed_count:
+        if not stored and not suppressed_count and not observations_only:
             return "ERROR: no valid findings.\n" + "\n".join(errors[:20])
 
         parts = [
-            "### OPERATOR MIRROR — RECORDED FINDINGS (bulk)",
+            "### OPERATOR MIRROR — RECORDED (bulk)",
             _session_header(ctx),
-            f"Stored {len(stored)} finding(s) (of {len(raw)} submitted"
+            f"Filed {len(stored)} conclusion finding(s) (of {len(raw)} submitted"
+            + (f"; {observations_only} structural fact(s) recorded as observations" if observations_only else "")
             + (f"; {suppressed_count} suppressed by FP-cache" if suppressed_count else "")
             + ").",
         ]
@@ -1958,50 +1989,13 @@ def platform_file_finding(
 
 
 @mcp.tool()
-def platform_promote_observations(engagement_id: str = "") -> str:
-    """
-    Deterministic promotion (no LLM required) — plans/harness/03-earned-
-    finding-pipeline.md Step 5. Clusters SCANNER_SIGNAL observations
-    (nuclei/nikto/sqlmap/nmap-NSE/… matches, subdomain-takeover checks,
-    Shodan CVE tags), attaches whatever corroboration already exists
-    (independent tools that reported the same fact), and files each through
-    the same evidence law as platform_file_finding. Never runs a destructive
-    PoC — a single-source signal still becomes a finding, honestly graded
-    HYPOTHESIS, not dropped or inflated.
-    """
-    def _run() -> str:
-        ctx = _resolve_engagement(engagement_id)
-        resp = _client().post(
-            "/api/v1/findings/promote",
-            params={"engagement_id": ctx.engagement_id, "run_id": ctx.run_id},
-            timeout=min(60.0, HTTP_TIMEOUT),
-        )
-        resp.raise_for_status()
-        result = resp.json()
-        total = result.get("total", 0)
-        findings = result.get("findings") or []
-        by_conf: dict[str, int] = {}
-        for f in findings:
-            by_conf[f.get("confidence", "?")] = by_conf.get(f.get("confidence", "?"), 0) + 1
-        return (
-            "### OPERATOR MIRROR — PROMOTED OBSERVATIONS\n"
-            f"{_session_header(ctx)}\n"
-            f"Promoted {total} finding(s): {by_conf}\n"
-            "Call platform_findings to see them."
-        )
-
-    return _safe(_run)
-
-
-@mcp.tool()
 def platform_mark_false_positive(finding_id: str, reason: str = "", target_glob: str = "") -> str:
     """
     Mark a finding as noise, once, forever — plans/harness/04-learning-fp-
     cache.md. Appends an FP-cache pattern keyed on the finding's own type and
     title, and retracts the finding from THIS engagement. Every future
-    platform_file_finding / platform_promote_observations call on a matching
-    candidate is suppressed automatically — a human judgment captured once,
-    applied forever.
+    platform_file_finding call on a matching candidate is suppressed
+    automatically — a human judgment captured once, applied forever.
 
     target_glob: left empty (the default), the pattern scopes to THIS
     finding's own target only — marking noise on one host can never suppress
@@ -2604,8 +2598,8 @@ def platform_observations(
                 "\n".join(lines) if lines else "(none)",
             ),
             "Use an id above with platform_file_finding(observation_ids=...) once you have "
-            "evidence beyond the raw signal, or platform_promote_observations() for the "
-            "no-LLM deterministic route.",
+            "evidence beyond the raw signal — the only route into the finding store. A raw "
+            "scanner match stays a scanner_claim observation until a brain confirms it.",
         ]
         return "\n\n".join(parts)
 

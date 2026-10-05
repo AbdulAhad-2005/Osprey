@@ -245,7 +245,7 @@ def attempts_for_asset(
             f"- {r.tool_name} @ {r.asset} success={r.success} "
             # findings_count is really "structural items extracted" (Observations,
             # never Findings — Plan 02's split) — a real Finding only exists once
-            # promote_observations/platform_file_finding earns it from evidence.
+            # file_finding (a brain citing evidence) earns it.
             # Labeling it "signals" here instead of "findings" is a real fix, not
             # cosmetic: an operator/LLM comparing this against platform_findings'
             # honest count (often 0 at this point) was reading a contradiction.

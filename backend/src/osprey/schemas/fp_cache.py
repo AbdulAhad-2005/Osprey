@@ -1,8 +1,8 @@
 """False-positive cache — plans/harness/04-learning-fp-cache.md.
 
 A human judgment ("this recurring pattern is noise"), captured once via
-``mark_false_positive``, applied forever: every future ``promote_observations``
-/ ``platform_file_finding`` call consults these patterns before promotion.
+``mark_false_positive``, applied forever: every future ``file_finding`` call
+consults these patterns before admitting a finding.
 """
 
 from __future__ import annotations

@@ -4,11 +4,14 @@ Two layers, not one: a short structural overview (seed -> sister domains ->
 subdomains -> IPs, built on attack_surface_tree.py's existing tree assembly,
 reused not re-derived) for orientation, followed by the actual substance —
 every tool's output, grouped by tool then by target, evidence included even
-when unparsed. The overview alone is not the report: it only reflects
-whatever made it into structured graph fields (ports/services/tech lists),
-which is a fraction of what tools actually returned. The detailed section
-is what makes this a real technical appendix instead of a thin summary —
-nothing a tool produced is left out just because no parser structured it.
+when unparsed.
+
+Plan 19: the substance comes from OBSERVATIONS (what each tool actually
+produced), not findings. Findings now hold only brain-authored CONCLUSIONS, so
+reading tool output from them left a no-LLM recon report blank. Scanner matches
+are shown as unverified CLAIMS (SCANNER_SIGNAL observations), kept distinct from
+any brain-authored vulnerability conclusion — a scanner match is never dressed
+up as a confirmed vulnerability here.
 """
 
 from __future__ import annotations
@@ -18,15 +21,17 @@ from datetime import datetime, timezone
 
 from osprey.schemas.attack_surface import DomainBranch, HostSurface
 from osprey.schemas.finding import Finding, FindingType
+from osprey.schemas.observation import Observation, ObservationType
 from osprey.services.attack_surface_tree import build_attack_surface_tree
 from osprey.services.findings_store import get_findings_store
+from osprey.services.observation_store import get_observation_store
 
 # Uncapped relative to attack_surface_tree's interactive-view defaults (25-80
 # hosts) — a saved report is read later, not rendered live in a chat turn, so
 # it can afford to be complete rather than trimmed for context budget.
 _REPORT_HOST_CAP = 2000
 _REPORT_SISTER_CAP = 500
-_MAX_FINDINGS_SCANNED = 10_000
+_MAX_SCANNED = 20_000
 _EVIDENCE_SNIPPET_CHARS = 1500
 
 
@@ -37,30 +42,40 @@ def build_recon_markdown(engagement_id: str) -> str | None:
     if tree is None:
         return None
 
-    findings = get_findings_store().list(
-        engagement_id=engagement_id, limit=_MAX_FINDINGS_SCANNED, exclude_noise=False,
-    )
+    observations = get_observation_store().list_for_engagement(engagement_id, limit=_MAX_SCANNED)
+    # Conclusions (brain-authored) — shown alongside unverified scanner claims
+    # in the Vulnerabilities section, clearly distinguished.
+    conclusions = [
+        f for f in get_findings_store().list(engagement_id=engagement_id, limit=_MAX_SCANNED, exclude_noise=False)
+        if f.finding_type == FindingType.VULNERABILITY
+    ]
 
     lines: list[str] = [
         f"# Recon Report — {tree.seed}",
         f"_Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}_",
         "",
     ]
-    lines.extend(_summary_section(tree, findings))
-    lines.extend(_tools_executed_section(findings))
+    lines.extend(_summary_section(tree, observations))
+    lines.extend(_tools_executed_section(observations))
     lines.extend(_asset_overview_section(tree))
-    lines.extend(_contact_osint_section(findings))
-    lines.extend(_vulnerabilities_section(findings))
-    lines.extend(_detailed_by_tool_section(findings))
+    lines.extend(_contact_osint_section(observations))
+    lines.extend(_vulnerabilities_section(observations, conclusions))
+    lines.extend(_detailed_by_tool_section(observations))
 
     return "\n".join(lines)
 
 
-def _sev(f: Finding) -> str:
-    return str(getattr(f.claim_severity, "value", f.claim_severity) or "none")
+def _obs_label(o: Observation) -> str:
+    d = o.details or {}
+    return str(d.get("title") or d.get("url") or d.get("hostname") or o.target or o.type.value)
 
 
-def _summary_section(tree, findings: list[Finding]) -> list[str]:
+def _obs_content(o: Observation) -> str:
+    d = o.details or {}
+    return str(d.get("raw") or d.get("snippet") or d.get("evidence") or d.get("response") or "")
+
+
+def _summary_section(tree, observations: list[Observation]) -> list[str]:
     lines = [
         "## Summary",
         f"- Sister/associated domains: {tree.stats.sisters}",
@@ -69,7 +84,7 @@ def _summary_section(tree, findings: list[Finding]) -> list[str]:
         f"- Open ports: {tree.stats.open_ports}",
         f"- Services identified: {tree.stats.services}",
         f"- Orphan hosts (not clearly under seed/sisters): {tree.stats.orphan_hosts}",
-        f"- Total individual findings/tool outputs recorded: {len(findings)}",
+        f"- Total tool observations recorded: {len(observations)}",
     ]
     if tree.truncated:
         lines.append("- Some sections were capped even at report-generation size — surface is unusually large.")
@@ -77,15 +92,14 @@ def _summary_section(tree, findings: list[Finding]) -> list[str]:
     return lines
 
 
-def _tools_executed_section(findings: list[Finding]) -> list[str]:
+def _tools_executed_section(observations: list[Observation]) -> list[str]:
     """What actually ran, and how much each one produced — answers "did
-    anything even run" before the reader has to infer it from scattered
-    mentions further down. Rate-limiting/ban signals never reach ``findings``
-    at all (they're execution telemetry recorded on the audit log, not a
-    claim about the target — see tool_execution.py), so no exclusion is
-    needed here."""
-    counts = Counter(f.source_tool or "(unknown)" for f in findings)
-    lines = ["## Tools Executed", "| Tool | Findings/Outputs |", "|---|---|"]
+    anything even run" before the reader infers it from scattered mentions.
+    Rate-limiting/ban signals never reach observations at all (execution
+    telemetry on the audit log, not a claim about the target), so no exclusion
+    is needed here."""
+    counts = Counter(o.source_tool or "(unknown)" for o in observations)
+    lines = ["## Tools Executed", "| Tool | Observations |", "|---|---|"]
     for tool, count in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])):
         lines.append(f"| {tool} | {count} |")
     lines.append("")
@@ -152,91 +166,111 @@ def _asset_overview_section(tree) -> list[str]:
     return lines
 
 
-def _contact_osint_section(findings: list[Finding]) -> list[str]:
-    """Emails/phones/orgs/whois pulled out and surfaced up front — high
-    value, easy to miss buried in a per-tool dump further down."""
-    whois_findings = [f for f in findings if f.source_tool == "whois_lookup"]
-    emails = [f for f in findings if f.finding_type == FindingType.EMAIL]
-    phones = [f for f in findings if f.finding_type == FindingType.PHONE]
-    orgs = [f for f in findings if f.finding_type == FindingType.ORGANIZATION]
-    persons = [f for f in findings if f.finding_type == FindingType.PERSON]
-    usernames = [f for f in findings if f.finding_type == FindingType.USERNAME]
+def _contact_osint_section(observations: list[Observation]) -> list[str]:
+    """Emails/phones/orgs/whois pulled out and surfaced up front — high value,
+    easy to miss buried in a per-tool dump further down. All sourced from
+    observations by type."""
+    def _of_type(t: ObservationType) -> list[Observation]:
+        return [o for o in observations if o.type == t]
+
+    whois = [o for o in observations if o.source_tool == "whois_lookup"]
+    emails = _of_type(ObservationType.EMAIL)
+    phones = _of_type(ObservationType.PHONE)
+    orgs = _of_type(ObservationType.ORGANIZATION)
+    persons = _of_type(ObservationType.PERSON)
+    usernames = _of_type(ObservationType.USERNAME)
     other_subs = [
-        f for f in findings
-        if f.finding_type == FindingType.SUBDOMAIN and (f.source_tool or "") == "theharvester"
+        o for o in observations
+        if o.type == ObservationType.SUBDOMAIN and (o.source_tool or "") == "theharvester"
     ]
 
-    if not any([whois_findings, emails, phones, orgs, persons, usernames]):
+    if not any([whois, emails, phones, orgs, persons, usernames]):
         return []
 
     lines = ["## Contact Info / WHOIS / OSINT"]
-    if whois_findings:
+    if whois:
         lines.append("### WHOIS")
-        for f in whois_findings[:50]:
-            lines.append(f"- {f.title}")
+        for o in whois[:50]:
+            lines.append(f"- {_obs_label(o)}")
         lines.append("")
     if emails:
         lines.append("### Emails")
-        for f in emails[:100]:
-            lines.append(f"- {f.title}" + (f" (via {f.source_tool})" if f.source_tool else ""))
+        for o in emails[:100]:
+            lines.append(f"- {_obs_label(o)}" + (f" (via {o.source_tool})" if o.source_tool else ""))
         lines.append("")
     if phones:
         lines.append("### Phone Numbers")
-        for f in phones[:100]:
-            lines.append(f"- {f.title}" + (f" (via {f.source_tool})" if f.source_tool else ""))
+        for o in phones[:100]:
+            lines.append(f"- {_obs_label(o)}" + (f" (via {o.source_tool})" if o.source_tool else ""))
         lines.append("")
     if orgs or persons or usernames:
         lines.append("### Organizations / People / Usernames")
-        for f in orgs[:50]:
-            lines.append(f"- [org] {f.title}")
-        for f in persons[:50]:
-            lines.append(f"- [person] {f.title}")
-        for f in usernames[:50]:
-            lines.append(f"- [username] {f.title}")
+        for o in orgs[:50]:
+            lines.append(f"- [org] {_obs_label(o)}")
+        for o in persons[:50]:
+            lines.append(f"- [person] {_obs_label(o)}")
+        for o in usernames[:50]:
+            lines.append(f"- [username] {_obs_label(o)}")
         lines.append("")
     if other_subs:
         lines.append("### Subdomains via theHarvester")
-        for f in other_subs[:100]:
-            lines.append(f"- {f.title}")
+        for o in other_subs[:100]:
+            lines.append(f"- {_obs_label(o)}")
         lines.append("")
     return lines
 
 
-def _vulnerabilities_section(findings: list[Finding]) -> list[str]:
-    vulns = [f for f in findings if f.finding_type == FindingType.VULNERABILITY]
+def _vulnerabilities_section(observations: list[Observation], conclusions: list[Finding]) -> list[str]:
+    """Two clearly-separated classes: unverified scanner CLAIMS (SCANNER_SIGNAL
+    observations) and brain-authored CONCLUSIONS (VULNERABILITY findings). A
+    scanner match is never printed as a confirmed vulnerability."""
+    claims = [o for o in observations if o.type == ObservationType.SCANNER_SIGNAL]
     lines = ["## Vulnerabilities"]
-    if vulns:
+
+    lines.append("### Confirmed / Reported (analyst conclusions)")
+    if conclusions:
         seen: set[str] = set()
-        for f in vulns:
+        for f in conclusions:
             key = f.title.split(" (")[0]
             if key in seen:
                 continue
             seen.add(key)
-            affected = sorted({v.target for v in vulns if v.title.split(" (")[0] == key and v.target})
+            sev = str(getattr(f.claim_severity, "value", f.claim_severity) or "none")
+            affected = sorted({v.target for v in conclusions if v.title.split(" (")[0] == key and v.target})
             affected_str = f" — {', '.join(affected)}" if affected else ""
-            lines.append(f"- **[{_sev(f)}]** {key}{affected_str}")
+            lines.append(f"- **[{sev}]** {key}{affected_str}")
     else:
-        lines.append("_None confirmed yet — this run focused on recon/surface mapping._")
+        lines.append("_None — no analyst/LLM has filed a vulnerability conclusion for this engagement._")
+    lines.append("")
+
+    lines.append("### Scanner Claims (UNVERIFIED — require analyst confirmation)")
+    if claims:
+        for o in claims[:300]:
+            d = o.details or {}
+            sev = str(d.get("claimed_severity") or "unknown")
+            via = f" (via {o.source_tool})" if o.source_tool else ""
+            tgt = f" — {o.target}" if o.target else ""
+            lines.append(f"- _[scanner-claimed {sev}]_ {_obs_label(o)}{tgt}{via}")
+    else:
+        lines.append("_No scanner claims recorded this run._")
     lines.append("")
     return lines
 
 
-def _detailed_by_tool_section(findings: list[Finding]) -> list[str]:
+def _detailed_by_tool_section(observations: list[Observation]) -> list[str]:
     """The actual substance: every tool's output, grouped by tool then by
-    target, with evidence included verbatim — even when no parser structured
-    it into a typed finding. Vulnerabilities already have their own section
-    above; excluded here to avoid duplicating them. URL-history findings
-    (gau/waybackurls/hakrawler rows) are collapse per target to a compact
-    list — hundreds of same-shape URL rows are not a technical record, they
-    are noise that drowns the per-host signal."""
+    target, evidence included verbatim — even when no parser structured it.
+    Scanner claims have their own section above; excluded here to avoid
+    duplication. URL-history rows (gau/waybackurls/hakrawler) are collapsed per
+    target — hundreds of same-shape URL rows are noise, not a technical record."""
     _URL_HISTORY_CAP_PER_TARGET = 40
-    by_tool: dict[str, dict[str, list[Finding]]] = {}
-    for f in findings:
-        if f.finding_type == FindingType.VULNERABILITY:
+    by_tool: dict[str, dict[str, list[Observation]]] = {}
+    for o in observations:
+        if o.type == ObservationType.SCANNER_SIGNAL:
             continue
-        tool = f.source_tool or "(unknown tool)"
-        tgt = f.target or "(engagement-wide)"
-        by_tool.setdefault(tool, {}).setdefault(tgt, []).append(f)
+        tool = o.source_tool or "(unknown tool)"
+        tgt = o.target or "(engagement-wide)"
+        by_tool.setdefault(tool, {}).setdefault(tgt, []).append(o)
 
     if not by_tool:
         return []
@@ -250,30 +284,29 @@ def _detailed_by_tool_section(findings: list[Finding]) -> list[str]:
     for tool in sorted(by_tool):
         targets = by_tool[tool]
         total = sum(len(items) for items in targets.values())
-        lines.append(f"### {tool} ({total} finding(s) across {len(targets)} target(s))")
+        lines.append(f"### {tool} ({total} observation(s) across {len(targets)} target(s))")
         for tgt in sorted(targets):
             items = targets[tgt]
             lines.append(f"**{tgt}**")
             url_items = [
-                f for f in items
-                if f.finding_type == FindingType.URL or "url_history" in (f.tags or [])
+                o for o in items
+                if o.type == ObservationType.URL or "url_history" in (o.tags or [])
             ]
-            structured_items = [f for f in items if f not in url_items]
-            if structured_items:
-                for f in structured_items:
-                    title = f.title.strip()
-                    content = (f.raw_data or f.evidence or "").strip()
-                    if content and content != title:
-                        lines.append(f"- {title}")
-                        lines.append("  ```")
-                        lines.append("  " + content[:_EVIDENCE_SNIPPET_CHARS].replace("\n", "\n  "))
-                        lines.append("  ```")
-                    else:
-                        lines.append(f"- {title}")
+            structured_items = [o for o in items if o not in url_items]
+            for o in structured_items:
+                title = _obs_label(o).strip()
+                content = _obs_content(o).strip()
+                if content and content != title:
+                    lines.append(f"- {title}")
+                    lines.append("  ```")
+                    lines.append("  " + content[:_EVIDENCE_SNIPPET_CHARS].replace("\n", "\n  "))
+                    lines.append("  ```")
+                else:
+                    lines.append(f"- {title}")
             if url_items:
                 shown = url_items[:_URL_HISTORY_CAP_PER_TARGET]
-                for f in shown:
-                    lines.append(f"- {f.title.strip()}")
+                for o in shown:
+                    lines.append(f"- {_obs_label(o).strip()}")
                 if len(url_items) > len(shown):
                     lines.append(f"- _(+{len(url_items) - len(shown)} more URLs — see raw tool output)_")
             lines.append("")

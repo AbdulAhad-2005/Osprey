@@ -11,13 +11,11 @@ from osprey.schemas.agent_run import StructuredFindingsExport
 from osprey.schemas.finding import (
     FileFindingRequest,
     FileFindingResponse,
-    Finding,
     FindingListResponse,
     FindingType,
     GroupedFindingListResponse,
 )
 from osprey.schemas.fp_cache import FpPatternListResponse
-from osprey.services.engagement_graph import get_engagement_graph
 from osprey.services.findings_store import get_findings_store
 from osprey.services.target_utils import resolve_ipv4
 
@@ -201,20 +199,6 @@ def file_finding_endpoint(request: FileFindingRequest) -> FileFindingResponse:
     )
 
 
-@router.post("/promote")
-def promote_observations_endpoint(
-    engagement_id: str = Query(...), run_id: str = Query(default=""),
-) -> FindingListResponse:
-    """Deterministic promotion (Step 5) — the no-LLM route. Clusters
-    SCANNER_SIGNAL observations, attaches whatever corroboration already
-    exists, and files each through the same evidence law as ``file_finding``.
-    """
-    from osprey.services.finding_pipeline import promote_observations
-
-    findings = promote_observations(engagement_id, run_id=run_id)
-    return FindingListResponse(findings=findings, total=len(findings))
-
-
 @router.post("/{finding_id}/fp")
 def mark_false_positive_endpoint(
     finding_id: str,
@@ -277,26 +261,13 @@ def list_suppressed_promotions_endpoint(engagement_id: str = Query(...)) -> dict
     return {"suppressed": [s.model_dump(mode="json") for s in items], "total": len(items)}
 
 
-@router.post("/", response_model=Finding)
-def create_finding(finding: Finding) -> Finding:
-    stored = get_findings_store().add(finding)
-    get_engagement_graph().ingest_finding(stored)
-    return stored
-
-
-@router.post("/bulk", response_model=FindingListResponse)
-def create_findings_bulk(findings: list[Finding]) -> FindingListResponse:
-    """Persist many operator-authored findings in one call.
-
-    Lets the LLM store everything it noticed in a single raw-output read
-    (paths, cookie domains, IP clusters, version banners) instead of one
-    round-trip per fact. Reuses the same dedup + graph ingest as single
-    writes, so counters and the engagement graph stay consistent.
-    """
-    if not findings:
-        return FindingListResponse(findings=[], total=0)
-    store = get_findings_store()
-    stored = store.add_many(findings)
-    if stored:
-        get_engagement_graph().ingest_many(stored)
-    return FindingListResponse(findings=stored, total=len(stored))
+# The raw POST "/" (create_finding) and POST "/bulk" (create_findings_bulk)
+# endpoints were deleted here (plan 19 Phase 7). They accepted an arbitrary
+# Finding — including structural facts — and wrote it straight to the store,
+# bypassing the evidence law entirely; the bulk one existed expressly to let an
+# LLM dump "paths, cookie domains, IP clusters, version banners" in as findings.
+# That is the laundering this plan closes. The ONLY way a finding is created now
+# is POST "/file" → file_finding(), which requires a brain's evidence and
+# rejects structural types (schemas/finding.is_conclusion_type). Structural
+# facts are recorded via the observation store (POST /observations/), which
+# auto-ingests into the asset graph.

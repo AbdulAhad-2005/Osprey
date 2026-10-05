@@ -63,6 +63,24 @@ def _status_icon(success: bool | None) -> str:
     return "✓" if success else "✗"
 
 
+def _rec_style(rec: ToolRecord) -> str:
+    """Style for a completed record. A timeout is a WARNING (yellow), not a red
+    failure — a slow pentest tool that hit its budget isn't broken."""
+    if rec.success:
+        return "green"
+    if rec.is_warning:
+        return "yellow"
+    return "red"
+
+
+def _rec_icon(rec: ToolRecord) -> str:
+    if rec.success:
+        return "✓"
+    if rec.is_warning:
+        return "⧖"
+    return "✗"
+
+
 def _quiet_tool(rec: ToolRecord, transcript: ToolTranscript, success: bool | None = None) -> bool:
     if transcript.detail_mode == "verbose":
         return False
@@ -126,8 +144,8 @@ def print_tool_end_live(
     rec = transcript.end({**data, "tool_name": tool_name}, source=source)
     if _quiet_tool(rec, transcript, rec.success):
         return
-    style = _status_style(rec.success)
-    icon = _status_icon(rec.success)
+    style = _rec_style(rec)
+    icon = _rec_icon(rec)
     findings = f" · {len(rec.finding_titles)} finding(s)" if rec.finding_titles else ""
     output = " · output saved" if rec.stdout_path or rec.stderr_path else ""
     cache = " · cache" if rec.cache_hit else ""
@@ -160,6 +178,19 @@ def print_background_event(
     agent's own tool calls); tagged with a `[role]` prefix so it's visually
     distinguishable from the current interactive turn's own output without
     looking like a different, disconnected thing."""
+    # A raw ``source="tool"`` echo is published to the event bus by
+    # tool_execution.execute_tool_request for EVERY tool call (so the web
+    # dashboard can show activity). The CLI must NOT render it: whoever drove
+    # that call already renders it in the foreground — the --engine investigation
+    # renderer (scan_shared), the interactive ReAct loop (cli/agent/loop.py), or,
+    # for a spawned sub-agent, its own ``source="agent:<role>"`` events (which
+    # this function DOES render). Rendering the "tool" echo too was the
+    # double-render (every call appearing twice, once as a 0.0s "output saved"
+    # twin with a second /tool id, sometimes with a contradictory status). This
+    # stream is for genuinely-background sources only — pipeline lifecycle and
+    # spawned agents — exactly as this function's contract states.
+    if source == "tool" and event_type in ("tool_start", "tool_end"):
+        return
     label = f"[bold yellow][{escape(source)}][/]"
     if event_type == "tool_start":
         rec = transcript.start(data, source=source)
@@ -175,8 +206,8 @@ def print_background_event(
         rec = transcript.end(data, source=source)
         if _quiet_tool(rec, transcript, rec.success):
             return
-        style = _status_style(rec.success)
-        icon = _status_icon(rec.success)
+        style = _rec_style(rec)
+        icon = _rec_icon(rec)
         findings = f" · {len(rec.finding_titles)} finding(s)" if rec.finding_titles else ""
         output = " · output saved" if rec.stdout_path or rec.stderr_path else ""
         console.print(

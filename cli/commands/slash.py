@@ -64,7 +64,6 @@ def handle_help(args: list[str], client: "APIClient") -> None:
             "Show findings, grouped by issue pattern (noise excluded; --all shows everything; --flat = one row per instance)"
         ),
         "/observations [type] [--target <t>] [--limit N]": "List stored Observations — structural facts, not verdicts",
-        "/promote": "No-LLM: cluster corroborated scanner-signal observations into findings",
         '/file <type> <obs_id,...> "<title>" [--severity ..] [--evidence ..]': "File an evidence-backed finding",
         "/finding fp <id> [--scope <glob>] [reason...]": "Mark a finding as noise (scoped to its own target by default)",
         "/fp list | remove <id>": "Audit/prune FP-cache patterns",
@@ -729,7 +728,7 @@ def handle_observations(args: list[str], client: "APIClient") -> None:
     Usage: /observations [type] [--target <t>] [--engagement <id>] [--limit N]
     plans/harness/02-evidence-and-observation-layer.md: these are facts, not
     verdicts. Use an id shown here with /file to file an evidence-backed
-    finding, or /promote for the no-LLM deterministic route.
+    finding — the only route into the finding store (a brain citing evidence).
     """
     engagement_id, args = _take_flag(args, "--engagement")
     engagement_id = engagement_id or client.active_engagement_id
@@ -754,32 +753,6 @@ def handle_observations(args: list[str], client: "APIClient") -> None:
         details = o.get("details") or {}
         label = details.get("title") or details.get("url") or details.get("hostname") or o.get("target", "")
         print(f"  id={o['id']} [{o['type']}] {label}  (via {o.get('source_tool', '')}, seen {o.get('occurrence_count', 1)}x)")
-
-
-def handle_promote(args: list[str], client: "APIClient") -> None:
-    """Deterministic, no-LLM promotion of scanner-signal observations to findings.
-
-    Usage: /promote [--engagement <id>]
-    plans/harness/03-earned-finding-pipeline.md Step 5: clusters SCANNER_SIGNAL
-    observations, attaches whatever corroboration already exists, and files
-    each through the same evidence law as /file. Never runs a destructive PoC —
-    a single-source signal still becomes a finding, honestly graded HYPOTHESIS.
-    """
-    engagement_id, args = _take_flag(args, "--engagement")
-    engagement_id = engagement_id or client.active_engagement_id
-    if not _require_engagement(engagement_id):
-        return
-    try:
-        result = client.promote_observations(engagement_id)
-    except httpx.HTTPStatusError as exc:
-        print_error(_api_error_text(exc))
-        return
-    findings = result.get("findings") or []
-    by_conf: dict[str, int] = {}
-    for f in findings:
-        by_conf[f.get("confidence", "?")] = by_conf.get(f.get("confidence", "?"), 0) + 1
-    print_success(f"Promoted {result.get('total', 0)} finding(s): {by_conf}")
-    print_info("Use /findings to review.")
 
 
 def handle_file(args: list[str], client: "APIClient") -> None:
@@ -1772,7 +1745,6 @@ SLASH_COMMANDS: dict[str, tuple[str, "callable"]] = {
     "/finding": ("Act on one finding by id (fp <id> [reason] | reverify <id>)", handle_finding),
     "/fp": ("FP-cache patterns: list | remove <id>", handle_fp),
     "/observations": ("List stored Observations (structural facts, not verdicts)", handle_observations),
-    "/promote": ("No-LLM: promote corroborated scanner-signal observations to findings", handle_promote),
     "/file": ("File an evidence-backed finding (no confidence flag — evidence computes it)", handle_file),
     "/world": ("Query the world model: assets|related|incomplete|unexplained|conflicts", handle_world),
     "/priority": ("What's worth doing next: top items, or phase <vuln|exploit> unlock status", handle_priority),

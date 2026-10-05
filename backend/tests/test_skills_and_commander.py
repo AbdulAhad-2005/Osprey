@@ -68,7 +68,7 @@ def test_implicit_binding_ambiguous_asks_clarification():
 
 def test_phase_agents_only_expose_explicit_scoped_roles():
     from osprey.schemas.jobs import AGENT_ROLES
-    from osprey.services.phase_agent import _AGENT_PHASES
 
-    assert _AGENT_PHASES == frozenset(AGENT_ROLES)
-    assert "commander" not in _AGENT_PHASES
+    # "commander" is a system-prompt persona (skills/commander/), never a
+    # scoped-agent role a job can be spawned with.
+    assert "commander" not in AGENT_ROLES

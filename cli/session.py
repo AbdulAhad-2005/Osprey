@@ -31,12 +31,27 @@ class ToolRecord:
     display_quiet: bool = False
     cache_hit: bool = False
     next_hint: str = ""
+    timed_out: bool = False
+    partial: bool = False
 
     @property
     def status_text(self) -> str:
+        # A tool that hit its budget is "timed out", not "failed" — slow is not
+        # broken (a pentest tool can legitimately run for minutes). If it still
+        # produced output, that is partial coverage worth keeping, not a failure.
         if self.success is None:
             return "running"
-        return "ok" if self.success else "failed"
+        if self.success:
+            return "ok"
+        if self.timed_out:
+            return "timed out (partial kept)" if self.partial else "timed out"
+        return "failed"
+
+    @property
+    def is_warning(self) -> bool:
+        """A non-success that is a timeout, not a hard failure — rendered as a
+        warning (slow/partial), never a red error."""
+        return self.success is False and self.timed_out
 
 
 class ToolTranscript:
@@ -74,6 +89,8 @@ class ToolTranscript:
             rec = self.start(data, source=source)
         rec.ended_at = datetime.now(timezone.utc)
         rec.success = bool(data.get("success", False))
+        rec.timed_out = bool(data.get("timed_out", False))
+        rec.partial = bool(data.get("partial", False))
         rec.duration_seconds = float(data.get("duration_seconds") or 0)
         rec.preview = str(data.get("preview") or "")
         rec.command = str(data.get("command") or "")
