@@ -19,6 +19,7 @@ from typing import Any
 
 import httpx
 from mcp.server.fastmcp import FastMCP
+from typed_app_analysis import register_typed_app_analysis_tools
 from typed_browser import register_typed_browser_tools
 from typed_exploit import register_typed_exploit_tools
 from typed_osint import register_typed_osint_tools
@@ -3802,6 +3803,9 @@ _log(f"registered {_TYPED_OSINT_COUNT} typed passive-OSINT tools")
 
 _TYPED_CONTENT_COUNT = register_typed_recon_content_tools(mcp, execute=_typed_execute)
 _log(f"registered {_TYPED_CONTENT_COUNT} typed recon-content tools")
+
+_TYPED_APP_COUNT = register_typed_app_analysis_tools(mcp, execute=_typed_execute)
+_log(f"registered {_TYPED_APP_COUNT} typed app-analysis tools")
 
 _TYPED_VULN_COUNT = register_typed_vuln_tools(mcp, execute=_typed_execute)
 _log(f"registered {_TYPED_VULN_COUNT} typed vulnerability-analysis tools")

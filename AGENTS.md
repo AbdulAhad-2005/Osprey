@@ -125,6 +125,11 @@ baseline, not how you drive.
    explicit operator constraint like "no full port scan."
 7. **Web depth** — tech, paths, crawl/history (`gau`/`katana`/`ffuf`/`arjun`/`js_recon`);
    reach for `platform_script` when the catalog is thin.
+   - **App surface** — if the org ships a mobile or desktop app (Android/iOS/Electron),
+     pull it and run `app_recon` on it: shipped apps hardcode the backend they call —
+     API hosts, routes, keys, cloud buckets — that DNS/port enumeration never reaches.
+     Its backend hosts feed straight back into recon as new seeds. See
+     `skills/recon/app-analysis`.
 8. **Profile each worthwhile host fully** — IP, tech, WAF, services on open ports, and an
    OS-detection attempt (`nmap_custom_scan -O`/`-A`, or `shodan_host_info`). OS is
    best-effort; the rest should have a real result, not just a tool having run once.
@@ -151,7 +156,9 @@ retries, and ingests findings for you.
 `rustscan_fast_scan` (ports) · `cdn_origin_probe` `origin_ip_attribution`
 `subdomain_takeover_check` (infra) · `gau_discovery` `waybackurls_discovery` `hakrawler_crawl`
 `katana_crawl` (history/crawl) · `feroxbuster_scan` `ffuf_scan` `gobuster_scan` (content) ·
-`arjun_scan` (hidden params) · `js_recon` (JS endpoints/secrets) · `well_known_probe`
+`arjun_scan` (hidden params) · `js_recon` (JS endpoints/secrets) ·
+`app_recon` (mobile/desktop app static analysis: APK/IPA/Electron/jar/binary → backend
+endpoints+hosts, secrets, cloud refs, permissions/schemes/ATS posture) · `well_known_probe`
 `email_security_probe` · `shodan_search` `shodan_host_info` `intelx_scan` `resecurity_scan`
 (passive/breach intel) · `web_search` (free DuckDuckGo search, no API key — fresh CVE PoC/
 writeup hunting when searchsploit's offline DB is empty, general technique research).

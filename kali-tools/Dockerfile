@@ -193,6 +193,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-install-retry.sh 5 falco || true
 
+# App-analysis helpers for app_recon's Android path. Best-effort: the tool is
+# stdlib-only and recovers manifest facts by string extraction without these —
+# aapt/apktool just make the Android package/permission read authoritative.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-install-retry.sh 5 apktool aapt || true
+
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     command -v whois >/dev/null 2>&1 || apt-install-retry.sh 5 whois
@@ -374,6 +381,11 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     pipx install prowler || true
+
+# apkid — Android compiler/packer/obfuscator fingerprinting, a deeper pass the
+# operator can run via platform_shell. Best-effort; app_recon does not need it.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pipx install apkid || true
 
 # checkov/kube-hunter/arjun: invoked as subprocess CLIs elsewhere in this
 # project, not imported as libraries, so pipx isolation is safe here (same
