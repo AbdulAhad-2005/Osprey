@@ -45,12 +45,18 @@ mined like a jar (text + string extraction).
 ## Getting the app first
 
 `app_recon` needs the package in the container, one of two ways:
-- **`url=`** — a direct download link (vendor CDN, an APK mirror, a release artifact). `app_recon`
-  downloads it, analyzes it, and cleans up. URLs with `&` in them are blocked by the param guard —
-  `wget` them via `platform_shell` first, then use `app_path=`.
-- **`app_path=`** — a file already in the container: one the operator uploaded, or one you fetched
-  with `platform_shell` (`wget -O /tmp/app.apk <url>`). Store/marketplace pulls (Play, App Store)
-  need the operator to provide the artifact — Osprey does not scrape stores.
+- **`url=`** — a direct **http/https** download link (vendor CDN, an APK mirror, a release
+  artifact). `app_recon` downloads it (TLS verified, so a MITM can't swap in a tampered package),
+  analyzes it, and cleans up. Only http/https are accepted — `file://`/`ftp://` are refused so a
+  URL can't make the worker read a local path. URLs with `&` in them are blocked by the param
+  guard — `wget` them via `platform_shell` first, then use `app_path=`.
+- **`app_path=`** — a file **or a directory** already in the container. A directory is treated as
+  an unpacked app: an iOS `.app` bundle, an Electron `resources/` tree, or an
+  apktool/jadx-decompiled APK (its `AndroidManifest.xml`, `Info.plist`, `package.json` are read
+  just like inside an archive). This is the natural follow-up after `apktool d` / `unzip`.
+  The file itself can be one the operator uploaded or one you fetched with `platform_shell`
+  (`wget -O /tmp/app.apk <url>`). Store/marketplace pulls (Play, App Store) need the operator to
+  provide the artifact — Osprey does not scrape stores.
 
 Large apps can exceed the foreground call budget — run `app_recon` via `platform_job_start` and
 poll, exactly like a slow scan.

@@ -59,15 +59,18 @@ from _recon_extract import (
     extract_urls,
     host_of,
     is_interesting,
+    sanitize_text,
 )
 
 _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
+# TLS verification stays ON: the whole point is to analyze the genuine package,
+# and a MITM that can swap the download can feed a tampered one whose extracted
+# "secrets"/endpoints are attacker-chosen. A download that fails verification is
+# reported as a download failure, not silently trusted.
 _CTX = ssl.create_default_context()
-_CTX.check_hostname = False
-_CTX.verify_mode = ssl.CERT_NONE
 
 # Budgets — an app can be hundreds of MB; cap what we read so one call can't
 # blow memory or the tool timeout. Mirrors js_recon's per-file byte cap.
@@ -76,12 +79,15 @@ _MAX_ENTRY_BYTES = 8 * 1024 * 1024       # read at most 8 MB from any one file
 _MAX_TOTAL_BYTES = 120 * 1024 * 1024     # stop mining after 120 MB scanned
 _MAX_ENTRIES = 6000                      # and after this many package members
 
-# Text-ish members worth decoding whole (vs. string-scraping as binary).
-_TEXT_EXT = (
-    ".js", ".json", ".xml", ".txt", ".html", ".htm", ".map", ".properties",
-    ".yml", ".yaml", ".plist", ".mf", ".cfg", ".conf", ".ini", ".env",
-    ".ts", ".jsx", ".tsx", ".vue", ".graphql", ".proto", ".md", ".csv",
-)
+# Output bounds. The emitted JSON is parsed downstream and truncated by the
+# platform at a fixed char budget — if it overflows, the truncated body is no
+# longer valid JSON and every structured fact is lost. So cap the long lists
+# and, as a hard backstop, trim the (lowest-value, most numerous) endpoint list
+# until the serialized result fits well under that budget. Permissions, hosts,
+# secrets and platform metadata are never dropped.
+_MAX_EMIT_ENDPOINTS = 300
+_MAX_EMIT_HOSTS = 300
+_MAX_OUTPUT_CHARS = 14000
 
 # Android permissions whose presence is worth surfacing on its own (the
 # high-blast-radius subset). Still just "declared", never "abused".
@@ -109,11 +115,29 @@ _BORING_SCHEMES = {"http", "https", "file", "data", "content", "javascript",
 # ---------------------------------------------------------------------------
 # Download / input
 # ---------------------------------------------------------------------------
-def _download(url: str, timeout: int, notes: list[str]) -> str:
-    """Fetch an app to a temp file. Return the path, or '' on failure."""
+def _url_suffix(url: str) -> str:
+    """Known app extension from a URL path, so the temp file keeps its type
+    hint (mkstemp otherwise strips it and e.g. a .asar is misdetected as a raw
+    binary). Only a short allow-list of real app extensions, never arbitrary."""
+    from urllib.parse import urlparse
+    name = os.path.basename(urlparse(url).path).lower()
+    for ext in (".apk", ".aab", ".ipa", ".asar", ".jar", ".xapk", ".apks"):
+        if name.endswith(ext):
+            return ext
+    return ""
+
+
+def _download(url: str, timeout: int, notes: list[str]) -> tuple[str, str]:
+    """Fetch an app to a temp file. Return (path, error). On success error is
+    ''. Only http/https are allowed — file://, ftp://, data:, etc. are refused
+    so a URL can never make the worker read an arbitrary local path (SSRF/LFR)."""
+    from urllib.parse import urlparse
+    scheme = urlparse(url).scheme.lower()
+    if scheme not in ("http", "https"):
+        return "", f"refusing non-http(s) url scheme {scheme!r}: only http/https are allowed"
     try:
         req = Request(url, headers={"User-Agent": _UA, "Accept": "*/*"})
-        fd, path = tempfile.mkstemp(prefix="osprey_app_")
+        fd, path = tempfile.mkstemp(prefix="osprey_app_", suffix=_url_suffix(url))
         total = 0
         with urlopen(req, timeout=timeout, context=_CTX) as resp, os.fdopen(fd, "wb") as out:
             while True:
@@ -125,10 +149,15 @@ def _download(url: str, timeout: int, notes: list[str]) -> str:
                     notes.append(f"download truncated at {_MAX_DOWNLOAD_BYTES} bytes")
                     break
                 out.write(chunk)
-        return path
+        if total == 0:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            return "", "download produced no data (empty response)"
+        return path, ""
     except Exception as exc:  # noqa: BLE001
-        notes.append(f"download failed: {type(exc).__name__}: {exc}")
-        return ""
+        return "", f"download failed: {type(exc).__name__}: {exc}"
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +173,22 @@ def _strings(data: bytes) -> str:
     parts: list[str] = [m.group().decode("ascii", "replace") for m in _ASCII_RUN.finditer(data)]
     parts += [m.group().decode("utf-16-le", "replace") for m in _UTF16_RUN.finditer(data)]
     return "\n".join(parts)
+
+
+def _looks_binary(data: bytes) -> bool:
+    """Decide text vs binary by CONTENT, not file extension. Compiled Android
+    resources (AXML, resources.arsc) and .dex carry a .xml/.arsc name or none
+    yet are binary; decoding them as utf-8 turns their string pools into
+    control-char/replacement-char soup that inflates output with junk. A NUL
+    byte or a high control-char ratio in the head is the reliable tell; UTF-8
+    high bytes (accented/CJK real text) are deliberately not counted."""
+    sample = data[:8192]
+    if not sample:
+        return False
+    if b"\x00" in sample:
+        return True
+    ctrl = sum(1 for b in sample if b < 0x09 or 0x0e <= b < 0x20)
+    return ctrl / len(sample) > 0.05
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +249,9 @@ class _Miner:
     def feed(self, source: str, text: str) -> None:
         if not text or self._budget <= 0:
             return
+        # Neutralize any binary framing before extraction so a token can never
+        # span garbage (defense-in-depth; the extractors also reject junk).
+        text = sanitize_text(text)
         if len(text) > self._budget:
             text = text[: self._budget]
         self._budget -= len(text)
@@ -229,6 +277,14 @@ class _Miner:
     def feed_bytes(self, source: str, data: bytes) -> None:
         self.feed(source, _strings(data))
 
+    def feed_auto(self, source: str, data: bytes) -> None:
+        """Route by CONTENT: binary members (compiled resources, .dex, native
+        code) go through string extraction; genuine text is decoded whole."""
+        if _looks_binary(data):
+            self.feed_bytes(source, data)
+        else:
+            self.feed(source, data.decode("utf-8", "replace"))
+
 
 def _host_of_endpoint(ep: str) -> str:
     m = _URL_HOST_RE.match(ep)
@@ -236,10 +292,6 @@ def _host_of_endpoint(ep: str) -> str:
         return ""
     host = m.group(1).split("@")[-1].split(":")[0].strip().lower()
     return host if _HOST_RE.match(host) else ""
-
-
-def _is_text(name: str) -> bool:
-    return name.lower().endswith(_TEXT_EXT)
 
 
 def _read_entry(zf: zipfile.ZipFile, info: zipfile.ZipInfo) -> bytes:
@@ -260,10 +312,7 @@ def _mine_zip(zf: zipfile.ZipFile, miner: _Miner, skip: set[str] | None = None) 
             data = _read_entry(zf, info)
         except Exception:  # noqa: BLE001
             continue
-        if _is_text(info.filename):
-            miner.feed(info.filename, data.decode("utf-8", "replace"))
-        else:
-            miner.feed_bytes(info.filename, data)
+        miner.feed_auto(info.filename, data)
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +341,21 @@ def _aapt_badging(path: str) -> dict:
     return {}
 
 
+def _android_manifest_facts(text: str) -> tuple[set[str], set[str]]:
+    """Permissions + declared component class names from a manifest's strings
+    (works on binary-AXML string output or a decompiled text manifest alike)."""
+    perms = {m.group(1) for m in _PERM_RE.finditer(text)}
+    components = {
+        m.group(1) for m in _COMPONENT_RE.finditer(text)
+        if ".permission." not in m.group(1)
+    }
+    return perms, components
+
+
+def _cleartext_permitted(xml: str) -> bool:
+    return 'cleartexttrafficpermitted="true"' in xml.lower().replace(" ", "")
+
+
 def analyze_apk(path: str, miner: _Miner, notes: list[str]) -> dict:
     meta: dict = {"platform": "android"}
     perms: set[str] = set()
@@ -315,14 +379,9 @@ def analyze_apk(path: str, miner: _Miner, notes: list[str]) -> dict:
                 manifest = _strings(zf.read("AndroidManifest.xml"))
             except Exception:  # noqa: BLE001
                 manifest = ""
-            for m in _PERM_RE.finditer(manifest):
-                perms.add(m.group(1))
-            for m in _COMPONENT_RE.finditer(manifest):
-                cls = m.group(1)
-                # A permission string (ending in .permission.FOO) also matches
-                # the component shape — keep those out of the component list.
-                if ".permission." not in cls and cls not in perms:
-                    components.add(cls)
+            mp, mc = _android_manifest_facts(manifest)
+            perms.update(mp)
+            components.update(mc)
             miner.feed("AndroidManifest.xml", manifest)
         # network_security_config: an honest cleartext signal lives here as XML.
         for n in names:
@@ -334,7 +393,7 @@ def analyze_apk(path: str, miner: _Miner, notes: list[str]) -> dict:
                     xml = zf.read(n).decode("utf-8", "replace")
                 except Exception:  # noqa: BLE001
                     continue
-                if "cleartexttrafficpermitted=\"true\"" in xml.lower().replace(" ", ""):
+                if _cleartext_permitted(xml):
                     cleartext = True
                 miner.feed(n, xml)
         _mine_zip(zf, miner, skip={"AndroidManifest.xml"})
@@ -359,25 +418,13 @@ def analyze_ipa(path: str, miner: _Miner, notes: list[str]) -> dict:
             (n for n in names if re.match(r"Payload/[^/]+\.app/Info\.plist$", n)), ""
         )
         if info_plist:
+            raw = zf.read(info_plist)
+            _apply_ios_plist(raw, meta, notes)
+            # Plist string values themselves carry endpoints/domains sometimes.
             try:
-                pl = plistlib.loads(zf.read(info_plist))
-            except Exception as exc:  # noqa: BLE001
-                pl = {}
-                notes.append(f"Info.plist parse failed: {type(exc).__name__}")
-            if isinstance(pl, dict):
-                meta["bundle_id"] = pl.get("CFBundleIdentifier", "")
-                meta["version"] = pl.get("CFBundleShortVersionString", "") or pl.get("CFBundleVersion", "")
-                meta["app_label"] = pl.get("CFBundleDisplayName", "") or pl.get("CFBundleName", "")
-                schemes: list[str] = []
-                for entry in pl.get("CFBundleURLTypes", []) or []:
-                    if isinstance(entry, dict):
-                        schemes.extend(entry.get("CFBundleURLSchemes", []) or [])
-                meta["url_schemes"] = sorted({str(s).lower() for s in schemes})
-                ats = pl.get("NSAppTransportSecurity")
-                if isinstance(ats, dict):
-                    meta["ats_arbitrary_loads"] = bool(ats.get("NSAllowsArbitraryLoads"))
-                # Plist values themselves carry endpoints/domains sometimes.
-                miner.feed(info_plist, json.dumps(_plist_text(pl)))
+                miner.feed(info_plist, json.dumps(_plist_text(plistlib.loads(raw))))
+            except Exception:  # noqa: BLE001
+                pass
         _mine_zip(zf, miner)
     return meta
 
@@ -415,10 +462,7 @@ def analyze_asar(path: str, miner: _Miner, notes: list[str]) -> dict:
                     meta["app_label"] = pkg.get("productName", "") or pkg.get("name", "")
             except ValueError:
                 pass
-        if _is_text(name):
-            miner.feed(name, data.decode("utf-8", "replace"))
-        else:
-            miner.feed_bytes(name, data)
+        miner.feed_auto(name, data)
     return meta
 
 
@@ -435,21 +479,127 @@ def analyze_binary(path: str, miner: _Miner, notes: list[str]) -> dict:
     return {"platform": "native"}
 
 
+def analyze_directory(path: str, miner: _Miner, notes: list[str]) -> dict:
+    """Analyze an UNPACKED app tree — an iOS ``.app`` bundle, an Electron
+    resources dir, or an apktool/jadx-decompiled APK. Walks every file, mines
+    it by content, and reads the same signature files (AndroidManifest.xml,
+    Info.plist, package.json) the archive analyzers do."""
+    meta: dict = {"platform": "directory"}
+    perms: set[str] = set()
+    components: set[str] = set()
+    cleartext = None
+    sig = {"android": False, "ios": False, "electron": False}
+    count = 0
+    for root, _dirs, files in os.walk(path):
+        for fn in files:
+            if miner._budget <= 0 or count > _MAX_ENTRIES:
+                break
+            count += 1
+            fp = os.path.join(root, fn)
+            try:
+                with open(fp, "rb") as fh:
+                    data = fh.read(_MAX_ENTRY_BYTES)
+            except OSError:
+                continue
+            low = fn.lower()
+            rel = os.path.relpath(fp, path)
+            if low == "androidmanifest.xml":
+                sig["android"] = True
+                mp, mc = _android_manifest_facts(
+                    data.decode("utf-8", "replace") if not _looks_binary(data) else _strings(data)
+                )
+                perms.update(mp)
+                components.update(mc)
+            elif low == "info.plist":
+                sig["ios"] = True
+                _apply_ios_plist(data, meta, notes)
+            elif low == "package.json" and not meta.get("package"):
+                sig["electron"] = True
+                try:
+                    pkg = json.loads(data.decode("utf-8", "replace"))
+                    if isinstance(pkg, dict):
+                        meta["package"] = pkg.get("name", "")
+                        meta["version"] = pkg.get("version", "")
+                        meta["app_label"] = pkg.get("productName", "") or pkg.get("name", "")
+                except ValueError:
+                    pass
+            elif low.endswith(".xml") and ("network" in low or "security" in low):
+                if _cleartext_permitted(data.decode("utf-8", "replace")):
+                    cleartext = True
+            miner.feed_auto(rel, data)
+    if sig["android"]:
+        meta["platform"] = "android"
+        meta["permissions"] = sorted(perms)
+        meta["dangerous_permissions"] = sorted(
+            p for p in perms if p.rsplit(".", 1)[-1] in _DANGEROUS_PERMS
+        )
+        meta["components"] = sorted(components)[:200]
+        meta["cleartext_traffic"] = cleartext
+    elif sig["ios"]:
+        meta["platform"] = "ios"
+    elif sig["electron"]:
+        meta["platform"] = "electron"
+    return meta
+
+
+def _apply_ios_plist(data: bytes, meta: dict, notes: list[str]) -> None:
+    """Read Info.plist facts into meta (shared by IPA + directory analyzers)."""
+    try:
+        pl = plistlib.loads(data)
+    except Exception as exc:  # noqa: BLE001
+        notes.append(f"Info.plist parse failed: {type(exc).__name__}")
+        return
+    if not isinstance(pl, dict):
+        return
+    meta["bundle_id"] = pl.get("CFBundleIdentifier", "")
+    meta["version"] = pl.get("CFBundleShortVersionString", "") or pl.get("CFBundleVersion", "")
+    meta["app_label"] = pl.get("CFBundleDisplayName", "") or pl.get("CFBundleName", "")
+    schemes: list[str] = []
+    for entry in pl.get("CFBundleURLTypes", []) or []:
+        if isinstance(entry, dict):
+            schemes.extend(entry.get("CFBundleURLSchemes", []) or [])
+    meta["url_schemes"] = sorted({str(s).lower() for s in schemes})
+    ats = pl.get("NSAppTransportSecurity")
+    if isinstance(ats, dict):
+        meta["ats_arbitrary_loads"] = bool(ats.get("NSAllowsArbitraryLoads"))
+
+
 # ---------------------------------------------------------------------------
 # Type detection
 # ---------------------------------------------------------------------------
-def detect_type(path: str, forced: str) -> str:
-    if forced and forced != "auto":
-        return forced
+_MACHO_MAGICS = (
+    b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
+)
+
+
+def _is_asar(path: str) -> bool:
+    """True if the file parses as an asar archive (pickled JSON header with a
+    'files' tree). Lets a URL-downloaded Electron bundle be detected even when
+    the name carries no .asar extension."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(16)
+            if len(head) < 16:
+                return False
+            json_len = struct.unpack("<I", head[12:16])[0]
+            if json_len <= 0 or json_len > 50_000_000:
+                return False
+            hdr = fh.read(min(json_len, 65536))
+        return b'"files"' in hdr
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _content_type(path: str) -> tuple[str, bool]:
+    """Detect app type from CONTENT. Returns (type, confident). confident=False
+    means nothing matched and we are defaulting to a raw-strings scan."""
     low = path.lower()
     try:
         with open(path, "rb") as fh:
             head = fh.read(8)
     except OSError:
-        head = b""
-    if low.endswith(".asar"):
-        return "electron"
-    if head[:4] == b"PK\x03\x04" or head[:4] == b"PK\x05\x06" or zipfile.is_zipfile(path):
+        return "binary", False
+    if zipfile.is_zipfile(path):
         try:
             with zipfile.ZipFile(path) as zf:
                 names = zf.namelist()
@@ -457,24 +607,25 @@ def detect_type(path: str, forced: str) -> str:
             names = []
         nameset = set(names)
         if "AndroidManifest.xml" in nameset or any(n.endswith(".dex") for n in names):
-            return "apk"
+            return "apk", True
         if any(re.match(r"Payload/[^/]+\.app/", n) for n in names):
-            return "ipa"
-        if low.endswith((".asar",)):
-            return "electron"
-        return "jar"  # generic zip / jar / aab-like → text+class mining
-    if low.endswith(".apk"):
-        return "apk"
-    if low.endswith(".ipa"):
-        return "ipa"
-    if low.endswith(".jar"):
-        return "jar"
-    # Native executable magic.
-    if head[:4] in (b"\x7fELF",) or head[:2] == b"MZ" or head[:4] in (
-        b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca"
-    ):
-        return "binary"
-    return "binary"
+            return "ipa", True
+        if low.endswith(".asar"):
+            return "electron", True
+        return "jar", True  # it genuinely is a zip (jar / aab / generic)
+    if low.endswith(".asar") or _is_asar(path):
+        return "electron", True
+    if head[:4] == b"\x7fELF" or head[:2] == b"MZ" or head[:4] in _MACHO_MAGICS:
+        return "binary", True
+    # No container, no executable magic — extension is only a weak hint and the
+    # file is likely corrupt/unknown; scan as raw strings but say so.
+    return "binary", False
+
+
+def detect_type(path: str, forced: str) -> str:
+    if forced and forced != "auto":
+        return forced
+    return _content_type(path)[0]
 
 
 _ANALYZERS = {
@@ -499,9 +650,31 @@ def _re1(pattern: str, text: str) -> str:
     return m.group(1) if m else ""
 
 
+def _bounded_json(result: dict) -> str:
+    """Serialize result, trimming the endpoint list (lowest-value, highest-count)
+    until it fits the output budget, so the JSON is always valid and the
+    high-value facts (permissions/hosts/secrets/platform) always survive."""
+    out = json.dumps(result, indent=None)
+    if len(out) <= _MAX_OUTPUT_CHARS or not result.get("endpoints"):
+        return out
+    eps = list(result["endpoints"])
+    while eps and len(out) > _MAX_OUTPUT_CHARS:
+        drop = max(1, len(eps) // 4)
+        eps = eps[: len(eps) - drop]
+        trimmed = dict(result)
+        trimmed["endpoints"] = eps
+        trimmed["endpoints_truncated"] = True
+        trimmed["notes"] = list(result.get("notes") or []) + [
+            f"endpoint list trimmed to {len(eps)} of {result.get('endpoint_count', len(eps))} "
+            "to keep output within the parse budget (full count preserved in endpoint_count)"
+        ]
+        out = json.dumps(trimmed, indent=None)
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Static recon over a mobile/desktop app package.")
-    ap.add_argument("--app-path", default="", help="Path to an app file already in the container")
+    ap.add_argument("--app-path", default="", help="Path to an app file/dir already in the container")
     ap.add_argument("--url", default="", help="URL to download the app from first")
     ap.add_argument("--type", default="auto",
                     choices=["auto", "apk", "ipa", "electron", "jar", "binary"])
@@ -512,25 +685,50 @@ def main() -> int:
     cleanup = ""
     path = args.app_path.strip()
     if not path and args.url.strip():
-        path = _download(args.url.strip(), args.timeout, notes)
+        path, err = _download(args.url.strip(), args.timeout, notes)
         cleanup = path
+        if err:
+            print(json.dumps({"error": err, "target": args.url, "notes": notes}))
+            return 1
     if not path:
-        print(json.dumps({"error": "provide --app-path (file in container) or --url", "notes": notes}))
+        print(json.dumps({"error": "provide --app-path (file/dir in container) or --url", "notes": notes}))
         return 1
-    if not os.path.isfile(path):
-        print(json.dumps({"error": f"file not found: {path}", "notes": notes}))
+    is_dir = os.path.isdir(path)
+    if not is_dir and not os.path.isfile(path):
+        print(json.dumps({"error": f"path is not a readable file or directory: {path}", "notes": notes}))
         return 1
 
     try:
-        app_type = detect_type(path, args.type)
         miner = _Miner()
-        analyzer = _ANALYZERS.get(app_type, analyze_binary)
-        try:
-            meta = analyzer(path, miner, notes)
-        except zipfile.BadZipFile:
-            notes.append(f"{app_type}: not a valid archive — falling back to binary string scan")
-            app_type = "binary"
-            meta = analyze_binary(path, miner, notes)
+        if is_dir:
+            app_type = "directory"
+            meta = analyze_directory(path, miner, notes)
+            size_bytes = 0
+        else:
+            content_type, confident = _content_type(path)
+            app_type = args.type if args.type != "auto" else content_type
+            # Honor a forced type (it is the escape hatch for e.g. an
+            # extension-less download) but never silently mislabel: if content
+            # confidently looks like something else, say so.
+            if args.type != "auto" and confident and content_type != args.type \
+                    and content_type in ("apk", "ipa", "electron", "jar"):
+                notes.append(
+                    f"forced type={args.type} but the file's content looks like "
+                    f"{content_type} — reporting as {args.type} as requested"
+                )
+            if args.type == "auto" and not confident:
+                notes.append(
+                    "input matched no known app package (APK/IPA/Electron/JAR/executable); "
+                    "scanned as raw strings — results may be noise if this is not an app"
+                )
+            analyzer = _ANALYZERS.get(app_type, analyze_binary)
+            try:
+                meta = analyzer(path, miner, notes)
+            except zipfile.BadZipFile:
+                notes.append(f"{app_type}: not a valid archive — falling back to binary string scan")
+                app_type = "binary"
+                meta = analyze_binary(path, miner, notes)
+            size_bytes = os.path.getsize(path)
 
         ranked = sorted(
             miner.endpoints,
@@ -540,11 +738,12 @@ def main() -> int:
         result = {
             "target": args.url or args.app_path,
             "app_type": app_type,
-            "size_bytes": os.path.getsize(path),
+            "size_bytes": size_bytes,
             "files_analyzed": miner.files_analyzed,
-            "endpoints": ranked[:1000],
+            "endpoints": ranked[:_MAX_EMIT_ENDPOINTS],
             "endpoint_count": len(ranked),
-            "hosts": sorted(miner.hosts)[:500],
+            "hosts": sorted(miner.hosts)[:_MAX_EMIT_HOSTS],
+            "host_count": len(miner.hosts),
             "url_schemes": schemes,
             "secrets": dedupe_secrets(miner.secrets),
             "cloud_assets": dedupe_cloud(miner.cloud),
@@ -552,7 +751,7 @@ def main() -> int:
         }
         result.update(meta)
         result["url_schemes"] = schemes  # meta may re-add ios-only schemes
-        print(json.dumps(result, indent=None))
+        print(_bounded_json(result))
         return 0
     finally:
         if cleanup and os.path.isfile(cleanup):

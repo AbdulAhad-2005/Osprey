@@ -215,8 +215,8 @@ RECON_TOOLS: list[ToolDefinition] = [
        "iOS URL schemes + App Transport Security posture. app_path= a file in the container, or "
        "url= to download first.",
        ["mobile", "apk", "ipa", "electron", "endpoints", "secrets", "cloud", "attack-surface"],
-       {"app_path": _p("", "App file already in the container (APK/IPA/.asar/.jar/binary)"),
-        "url": _p("", "URL to download the app from first"),
+       {"app_path": _p("", "App file OR unpacked directory already in the container (APK/IPA/.asar/.jar/binary, or a decompiled/.app tree)"),
+        "url": _p("", "http/https URL to download the app from first (other schemes refused)"),
         "type": _p("auto", "auto|apk|ipa|electron|jar|binary"),
         "timeout": _p("120", "Download timeout seconds"),
         **_COMMON_PARAMS},

@@ -21,8 +21,10 @@ TYPED_APP_ANALYSIS_TOOLS: tuple[str, ...] = ("app_recon",)
 
 _TOOL_BLURBS: dict[str, str] = {
     "app_recon": (
-        "Static app analysis (app_path= a file already in the Kali container, or url= to "
-        "download first). Handles Android APK, iOS IPA, Electron .asar, Java .jar, and native "
+        "Static app analysis (app_path= a file OR an unpacked directory already in the Kali "
+        "container — e.g. an apktool/jadx-decompiled tree or an .app bundle — or url= an "
+        "http/https link to download first; file:// and other schemes are refused). Handles "
+        "Android APK, iOS IPA, Electron .asar, Java .jar, and native "
         "binaries (type=auto detects; override with type=apk|ipa|electron|jar|binary). Extracts "
         "backend endpoints + hostnames (new recon seeds), hardcoded secrets (API keys/tokens/"
         "JWTs/private keys), exposed cloud storage, and platform posture: Android permissions/"

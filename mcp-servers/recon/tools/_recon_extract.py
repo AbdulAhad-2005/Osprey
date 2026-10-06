@@ -98,8 +98,41 @@ _ASSET_NOISE_RE = re.compile(
 # LinkFinder-style and only fires on quoted strings — right for JavaScript,
 # but app packages carry many *unquoted* URLs (compiled into native binaries,
 # .properties/.plist config, strings tables). This catches those.
-_BARE_URL_RE = re.compile(r"\bhttps?://[^\s\"'<>()\[\]{}|\\^`]+", re.I)
+#
+# The character class deliberately excludes ASCII control bytes, the C1 range,
+# and the Unicode replacement char: when a binary blob (a compiled AXML/arsc
+# string pool, a .dex) is decoded as text, a greedy class would let a URL run
+# on across the surrounding framing bytes, producing one giant garbage
+# "endpoint" and massively inflating output. A URL never legitimately contains
+# those bytes, so excluding them keeps the match to the real URL.
+_BARE_URL_RE = re.compile(
+    r"\bhttps?://[^\s\"'<>()\[\]{}|\\^`\x00-\x1f\x7f-\x9f�]+", re.I
+)
 _HOSTNAME_RE = re.compile(r"^(?:[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$", re.I)
+
+# Any control byte, C1 control, or the Unicode replacement char. A real
+# endpoint/URL/secret never contains these — their presence means the match
+# spanned binary framing, so the whole token is junk and is dropped.
+_JUNK_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f�]")
+
+
+_WS_RE = re.compile(r"\s")
+
+
+def _is_clean(token: str) -> bool:
+    return not _JUNK_CHARS_RE.search(token)
+
+
+def sanitize_text(text: str) -> str:
+    """Replace runs of non-printable/binary bytes (control, C1, replacement
+    char) with a newline so an extractor token can never span binary framing.
+
+    Keeps tab/newline/carriage-return. Callers that mine text recovered from
+    binary containers (compiled resources, string pools) should run this first;
+    the extractors below also reject any junk-bearing token as a second line of
+    defense, so a caller that forgets is still safe, just noisier.
+    """
+    return _JUNK_CHARS_RE.sub("\n", text or "")
 
 
 def extract_endpoints(text: str) -> list[str]:
@@ -109,7 +142,10 @@ def extract_endpoints(text: str) -> list[str]:
         ep = m.group(1).strip()
         if not ep or len(ep) > 300:
             continue
-        if _ASSET_NOISE_RE.search(ep):
+        # A path/URL never contains raw whitespace — a match that does spanned
+        # a newline the quote-anchored regex allowed through (common once binary
+        # framing has been turned into newlines by sanitize_text). Drop it.
+        if _ASSET_NOISE_RE.search(ep) or not _is_clean(ep) or _WS_RE.search(ep):
             continue
         out.append(ep)
     return out
@@ -122,7 +158,7 @@ def extract_secrets(text: str, source: str) -> list[dict]:
         for m in pat.finditer(text):
             value = m.group(0)
             captured = m.group(m.lastindex) if m.lastindex else value
-            if PLACEHOLDER_RE.search(captured):
+            if PLACEHOLDER_RE.search(captured) or not _is_clean(value):
                 continue
             if name == "generic_secret_assignment" and captured.isdigit():
                 continue
@@ -150,7 +186,7 @@ def extract_urls(text: str) -> list[str]:
     out: list[str] = []
     for m in _BARE_URL_RE.finditer(text):
         url = m.group(0).rstrip(".,;:)\"'")
-        if len(url) > 500 or _ASSET_NOISE_RE.search(url):
+        if len(url) > 500 or _ASSET_NOISE_RE.search(url) or not _is_clean(url):
             continue
         out.append(url)
     return out
