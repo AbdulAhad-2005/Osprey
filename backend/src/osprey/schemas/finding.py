@@ -121,11 +121,25 @@ class EvidenceRecordKind(StrEnum):
     RECHECK_FAILED = "recheck_failed"  # a later re-run of the same check did NOT reproduce it
 
 
+class RecheckReason(StrEnum):
+    """Why a RECHECK_FAILED happened. Only NOT_REPRODUCED downgrades a past
+    confirmation; INCONCLUSIVE (target unreachable/timeout/tool error) learns
+    nothing about the target and leaves confidence unchanged."""
+
+    NOT_REPRODUCED = "not_reproduced"  # tool ran clean, the signal is now gone
+    INCONCLUSIVE = "inconclusive"  # target unreachable / timeout / tool error
+
+
 class EvidenceRecord(BaseModel):
     kind: EvidenceRecordKind
     source_tool: str = ""
     observation_id: str = ""
     detail: str = ""
+    reason: str = ""  # RecheckReason value for a RECHECK_FAILED record
+    # True ONLY for an ATTESTATION stamped by the out-of-band operator-confirm
+    # channel (B0). An agent/MCP-filed attestation is always False and never
+    # confirms. The file path forces this False; only confirm_finding sets it.
+    human: bool = False
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 

@@ -670,8 +670,7 @@ async def execute_tool_request(
     # Parsed-output compression (a real transformation, not a nudge) stays; the
     # advisory recovery/parallel/memory hint text was removed — it duplicated the
     # skills + phase-readiness layer and bloated every tool response. The
-    # deterministic recovery *actions* (_maybe_auto_fallback below,
-    # _maybe_auto_scan_network_vulns in the conductor) remain.
+    # deterministic recovery *action* (_maybe_auto_fallback below) remains.
     _attach_digest(response)
 
     if pflags:

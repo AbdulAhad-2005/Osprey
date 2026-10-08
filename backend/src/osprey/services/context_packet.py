@@ -26,12 +26,14 @@ from osprey.services.engagement_store import get_engagement_store
 from osprey.services.evidence_store import get_evidence_store
 from osprey.services.knowledge_browser import find_skills
 from osprey.services.observation_store import get_observation_store
+from osprey.services.scan_run_store import get_scan_run_store
 from osprey.services.tool_coverage_store import get_tool_coverage_store
 
 _TOP_PRIORITIES_LIMIT = 8
 _RECENT_EVIDENCE_LIMIT = 8
 _TOOLS_RUN_ASSET_LIMIT = 15
 _RELEVANT_SKILLS_LIMIT = 5
+_TRIED_EMPTY_LIMIT = 8
 
 
 def _objective_and_scope(engagement_id: str) -> str:
@@ -159,6 +161,31 @@ def _tools_already_run(engagement_id: str) -> str:
     return "\n".join(lines)
 
 
+def _recently_tried_empty(engagement_id: str) -> str:
+    """Compact "already tried, came back empty/failed" digest (B1) so the brain
+    stops re-picking dead ends without having to call platform_attempts. A
+    restart-interrupted run is excluded (it never really ran)."""
+    rows = get_scan_run_store().list_for_engagement(engagement_id, limit=40)
+    lines: list[str] = []
+    for r in rows:
+        status = r.get("status")
+        result = r.get("result") if isinstance(r.get("result"), dict) else {}
+        success = result.get("success") if result else None
+        if not (status == "failed" or (status == "completed" and success is False)):
+            continue
+        if (r.get("error") or "").startswith("Interrupted: the backend restarted"):
+            continue
+        label = r.get("label") or r.get("kind") or "action"
+        target = r.get("target") or ""
+        err = (r.get("error") or "").strip().splitlines()[0][:80] if r.get("error") else "no result"
+        lines.append(f"- {label}{(' on ' + target) if target else ''} — {err}")
+        if len(lines) >= _TRIED_EMPTY_LIMIT:
+            break
+    if not lines:
+        return "(nothing has come back empty/failed yet)"
+    return "Don't re-pick these unless evidence changed:\n" + "\n".join(lines)
+
+
 def _constraints(engagement_id: str) -> str:
     eng = get_engagement_store().get(engagement_id)
     if eng is None:
@@ -197,6 +224,7 @@ def build_context_packet(engagement_id: str) -> str:
         ("ACTIVE ATTACK PATHS", _active_attack_paths(eid)),
         ("RECENT EVIDENCE", _recent_evidence(eid)),
         ("TOOLS ALREADY RUN", _tools_already_run(eid)),
+        ("RECENTLY TRIED — NOTHING FOUND", _recently_tried_empty(eid)),
         ("CONSTRAINTS", _constraints(eid)),
     ]
     parts = [f"CONTEXT PACKET — generated {datetime.now(timezone.utc).isoformat(timespec='seconds')}"]

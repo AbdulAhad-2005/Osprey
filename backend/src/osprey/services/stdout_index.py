@@ -7,15 +7,15 @@ from __future__ import annotations
 
 import threading
 import time
-from collections import defaultdict, deque
+from collections import deque
 from typing import Any
+
+from osprey.services.bounded_cache import cap_lru
 
 _LOCK = threading.Lock()
 _MAX_PER_ENGAGEMENT = 24
-# engagement_id -> deque of entries
-_INDEX: dict[str, deque[dict[str, Any]]] = defaultdict(
-    lambda: deque(maxlen=_MAX_PER_ENGAGEMENT)
-)
+# engagement_id -> deque of entries (key count bounded by cap_lru)
+_INDEX: dict[str, deque[dict[str, Any]]] = {}
 
 
 def record_stdout_entry(
@@ -47,7 +47,10 @@ def record_stdout_entry(
         "success": success,
     }
     with _LOCK:
-        _INDEX[eid].append(entry)
+        dq = _INDEX.pop(eid, None) or deque(maxlen=_MAX_PER_ENGAGEMENT)
+        dq.append(entry)
+        _INDEX[eid] = dq  # reinsert newest-last for LRU eviction
+        cap_lru(_INDEX)
     return entry
 
 

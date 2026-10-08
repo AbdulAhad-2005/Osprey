@@ -66,6 +66,7 @@ web_depth:               # web-app depth on live hosts (only after a host is liv
   - {tool: js_recon, param: target}
   - {tool: feroxbuster_scan, param: target}
   - {tool: waybackurls_discovery, param: domain}
+  - {tool: katana_crawl, param: target}   # active crawl, not just history-mining (E1.6)
 
 ptr_expansion:           # reverse DNS on the IP frontier (co-located hosts)
   - {tool: dnsx_reverse, param: target}

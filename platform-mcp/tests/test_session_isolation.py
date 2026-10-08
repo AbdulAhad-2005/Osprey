@@ -168,6 +168,36 @@ def test_finding_body_uses_the_resolved_context_not_ambient_globals(server, monk
         assert body["target"] == "pinned.example"
 
 
+def test_unpinned_call_is_rejected_once_multiple_engagements_are_bound(server, monkeypatch) -> None:
+    """B5.2 — once this process has bound more than one target, the ambient
+    "current" session is ambiguous, so an UNPINNED stateful resolve is rejected
+    rather than silently routed to whichever was bound last. A PINNED call
+    always resolves its own engagement regardless of ambient state."""
+    server._clear_session()
+    server._BOUND_ENGAGEMENTS.clear()
+    server._ENGAGEMENT_CACHE.clear()
+    server._ENGAGEMENT_RUN_IDS.clear()
+    monkeypatch.setattr(server, "_ensure_run_registered", lambda *_a: None)
+    monkeypatch.setattr(server, "_get", lambda path, **_kw: {
+        "id": path.rsplit("/", 1)[-1], "target": f"{path.rsplit('/', 1)[-1]}.example",
+    })
+
+    # One engagement bound → unpinned ambient still works.
+    server._SESSION_TARGET = "a.example"
+    server._SESSION_ENGAGEMENT_ID = "eng-a"
+    server._BOUND_ENGAGEMENTS.add("eng-a")
+    server._ENGAGEMENT_CACHE["eng-a"] = {"target": "a.example", "kind": "domain", "scope": ""}
+    assert server._resolve_engagement("").engagement_id == "eng-a"
+
+    # A second target bound (e.g. a concurrent chat) → unpinned is now ambiguous.
+    server._BOUND_ENGAGEMENTS.add("eng-b")
+    with pytest.raises(RuntimeError, match="[Aa]mbiguous engagement"):
+        server._resolve_engagement("")
+
+    # A pinned call still resolves its own engagement, unaffected.
+    assert server._resolve_engagement("eng-b").engagement_id == "eng-b"
+
+
 def test_every_engagement_scoped_platform_tool_accepts_a_pin(server) -> None:
     scoped = {
         "platform_investigation_step",

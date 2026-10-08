@@ -45,7 +45,10 @@ what to do with them. Nothing here blocks you — it guides.
    not just on trust — the `evidence_detail` you write must quote a real excerpt (20+ chars)
    from the cited observation's actual recorded tool output, or it's rejected with a 422. Use
    `canary_confirm`/`response_diff_confirm` to produce that output when you don't already have
-   a tool run to cite, or `evidence_kind='attestation'` if you're vouching without one.
+   a tool run to cite. `evidence_kind='attestation'` records that you're vouching, but it does
+   NOT reach CONFIRMED — only a human operator confirms, out of band (CLI
+   `/finding confirm <id>` or the dashboard button). To earn CONFIRMED yourself, show grounded
+   reproduction/verification.
 9. **Broken backend** — on a `tool_unavailable` flood, stop and tell the user the fix;
    don't silently run scanners outside Osprey.
 10. **Safety** — authorized targets only; exploit/destructive actions need explicit user OK.

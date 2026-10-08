@@ -60,6 +60,7 @@ def build_recon_markdown(engagement_id: str) -> str | None:
     lines.extend(_asset_overview_section(tree))
     lines.extend(_contact_osint_section(observations))
     lines.extend(_vulnerabilities_section(observations, conclusions))
+    lines.extend(_coverage_and_next_section(engagement_id, observations))
     lines.extend(_detailed_by_tool_section(observations))
 
     return "\n".join(lines)
@@ -236,9 +237,12 @@ def _vulnerabilities_section(observations: list[Observation], conclusions: list[
                 continue
             seen.add(key)
             sev = str(getattr(f.claim_severity, "value", f.claim_severity) or "none")
+            conf = str(getattr(f.confidence, "value", f.confidence) or "hypothesis")
             affected = sorted({v.target for v in conclusions if v.title.split(" (")[0] == key and v.target})
             affected_str = f" — {', '.join(affected)}" if affected else ""
-            lines.append(f"- **[{sev}]** {key}{affected_str}")
+            # Severity is always paired with confidence: a CRITICAL (hypothesis)
+            # claim must never read as a confirmed CRITICAL.
+            lines.append(f"- **[{sev} ({conf})]** {key}{affected_str}")
     else:
         lines.append("_None — no analyst/LLM has filed a vulnerability conclusion for this engagement._")
     lines.append("")
@@ -253,6 +257,70 @@ def _vulnerabilities_section(observations: list[Observation], conclusions: list[
             lines.append(f"- _[scanner-claimed {sev}]_ {_obs_label(o)}{tgt}{via}")
     else:
         lines.append("_No scanner claims recorded this run._")
+    lines.append("")
+    return lines
+
+
+def _coverage_and_next_section(engagement_id: str, observations: list[Observation]) -> list[str]:
+    """The coverage-honest dossier (E3) — the guaranteed end-state of an
+    engine-only run, so a human with no LLM still gets an actionable hand-off:
+    research candidates (applicability still to establish), what failed and why,
+    and a ranked "verify this next" queue. Honest about limits — a scanner
+    having run is not proof a thing was covered."""
+    from osprey.services import priority
+    from osprey.services.scan_run_store import get_scan_run_store
+
+    lines = ["## Coverage & Next Steps"]
+
+    # CVE/exploit research candidates — leads, never confirmations (a version
+    # match is not a vulnerability until applicability is established, B0).
+    candidates = [
+        o for o in observations
+        if (o.details or {}).get("cve")
+        or "exploit_hint" in (o.tags or [])
+        or "vulners" in (o.tags or [])
+        or o.source_tool == "searchsploit_lookup"
+    ]
+    lines.append("### Research candidates (applicability UNVERIFIED)")
+    if candidates:
+        for o in candidates[:50]:
+            cve = (o.details or {}).get("cve") or ""
+            lead = f"{cve + ' — ' if cve else ''}{_obs_label(o)}"
+            tgt = f" ({o.target})" if o.target else ""
+            lines.append(f"- {lead}{tgt} _[via {o.source_tool or '?'}]_")
+    else:
+        lines.append("_No version→CVE or exploit-DB candidates surfaced._")
+    lines.append("")
+
+    # What failed and why (durable, restart-interrupts excluded).
+    failures: list[str] = []
+    for r in get_scan_run_store().list_for_engagement(engagement_id, limit=60):
+        status = r.get("status")
+        result = r.get("result") if isinstance(r.get("result"), dict) else {}
+        if not (status == "failed" or (status == "completed" and result.get("success") is False)):
+            continue
+        if (r.get("error") or "").startswith("Interrupted: the backend restarted"):
+            continue
+        label = r.get("label") or r.get("kind") or "action"
+        target = r.get("target") or ""
+        why = (r.get("error") or "").strip().splitlines()[0][:100] if r.get("error") else "no result"
+        failures.append(f"- {label}{(' on ' + target) if target else ''} — {why}")
+    lines.append("### What failed (and why)")
+    lines.extend(failures[:30] or ["_Nothing recorded as failed._"])
+    lines.append("")
+
+    # Ranked manual-verify queue — what a human should check next.
+    top = priority.top_priorities(engagement_id, limit=15)
+    lines.append("### Ranked manual-verify queue")
+    if top:
+        for it in top:
+            lines.append(f"- [{it.total:.2f}] {it.item_kind}:{it.type_key} {it.label or it.target}")
+    else:
+        lines.append("_Nothing scored yet._")
+    lines.append(
+        "\n_Untested = any applicable check not listed above as tested or candidate; "
+        "run `platform_priority` for the full ranked queue and `platform_context` for gaps._"
+    )
     lines.append("")
     return lines
 

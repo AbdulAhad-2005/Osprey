@@ -41,6 +41,27 @@ def test_unknown_engagement_returns_none():
     assert build_recon_markdown("does-not-exist") is None
 
 
+def test_report_includes_coverage_honest_dossier():
+    """E3 — an engine-only report always ends with the coverage-honest dossier:
+    research candidates (unverified), what failed, and a ranked verify queue."""
+    eid = _new_engagement("coverage.example.com")
+    graph = get_engagement_graph()
+    graph.ensure_node(engagement_id=eid, asset_type=AssetType.DOMAIN, label="coverage.example.com", metadata={"role": "seed"})
+    # A searchsploit-style candidate (lead, not a confirmation).
+    get_observation_store().record(Observation(
+        engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="coverage.example.com",
+        source_tool="searchsploit_lookup", details={"title": "Apache 2.4.49 path traversal", "cve": "CVE-2021-41773"},
+        tags=["exploit_hint"],
+    ))
+    md = build_recon_markdown(eid)
+    assert md is not None
+    assert "## Coverage & Next Steps" in md
+    assert "Research candidates (applicability UNVERIFIED)" in md
+    assert "CVE-2021-41773" in md
+    assert "What failed (and why)" in md
+    assert "Ranked manual-verify queue" in md
+
+
 def test_report_includes_seed_subdomain_and_vuln_sections():
     eid = _new_engagement("example.com")
     graph = get_engagement_graph()
@@ -64,7 +85,8 @@ def test_report_includes_seed_subdomain_and_vuln_sections():
     assert "www.example.com" in md
     assert "## Vulnerabilities" in md
     assert "Slowloris DOS attack" in md
-    assert "[medium]" in md
+    # Severity is always paired with confidence (B3) — never a bare [medium].
+    assert "[medium (hypothesis)]" in md
 
 
 def test_report_shows_no_conclusions_and_no_claims_messages_when_empty():

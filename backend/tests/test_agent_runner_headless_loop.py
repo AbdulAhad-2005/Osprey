@@ -13,7 +13,11 @@ import asyncio
 import uuid
 from unittest.mock import patch
 
-from cli.agent.loop import Event
+import pytest
+
+# Backend depends on the sibling cli package at runtime; skip cleanly if its
+# deps aren't installed in a backend-only venv (conftest puts repo root on path).
+Event = pytest.importorskip("cli.agent.loop").Event
 from osprey.core.config import LLMSettings
 
 _CONFIGURED = LLMSettings(model="groq/compound-mini", api_key="sk-test-key")

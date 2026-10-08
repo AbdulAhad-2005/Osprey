@@ -203,7 +203,46 @@ signals:
       reason: "IPs known — map ASN/netblock to expand scope to the org's IP range (skip cloud-provider ranges)"
       priority: 4
 
+  - id: dangling_cname_takeover_check
+    # A subdomain with a CNAME → always check for a dangling/claimable takeover
+    # (E1.4). subdomain_takeover_check is read-only and only inspects the
+    # target's own CNAMEs, so it is on by default — elite always checks. The
+    # check itself decides whether the CNAME is actually dangling.
+    match:
+      finding_type: dns_record
+      metadata_key: cname
+      scope: per_match
+    dispatch:
+      task_id: subdomain_takeover_check
+      default_tool: subdomain_takeover_check
+      skill_file: recon/subdomain-takeover.md
+      reason: "Subdomain has a CNAME — check for a dangling/claimable takeover (read-only, in-scope)"
+      priority: 6
+      params_from:
+        target: hostname
+
   # --- Recon → Vulnerability-analysis handoff (advisory) ---
+  - id: service_version_cve_candidates
+    # A versioned service (nmap -sV yields ObservationType.SERVICE with the full
+    # product+version string in details.service) → look up CVE/exploit CANDIDATES
+    # from the offline Exploit-DB. searchsploit_lookup is read-only (PASSIVE), so
+    # engine_may_autorun allows it even though it's cataloged under exploit (E1.1/
+    # E2). Results are research candidates only — a version match is never a
+    # confirmed vulnerability (patch/backport), so the engine files none; the
+    # brain/human establishes applicability (B0).
+    match:
+      finding_type: service
+      min_count: 1
+      scope: per_match
+    dispatch:
+      task_id: cve_candidate_lookup
+      default_tool: searchsploit_lookup
+      skill_file: vuln/network-vuln-scan.md
+      reason: "Versioned service detected — look up CVE/PoC candidates (read-only; candidates, not confirmations)"
+      priority: 6
+      params_from:
+        query: service
+
   - id: tech_known_nuclei_scan
     match:
       finding_type: technology

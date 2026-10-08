@@ -1,7 +1,16 @@
 """Pytest configuration and environment fixtures for osprey tests."""
 
 import os
+import sys
 from pathlib import Path
+
+# Some tests exercise code that imports the sibling ``cli`` package at runtime
+# (e.g. agent_runner -> cli.agent.loop). Put the repo root on sys.path so
+# ``import cli`` resolves; tests whose cli deps (rich, etc.) are absent in a
+# backend-only venv skip via importorskip rather than aborting collection.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 # Tests must NEVER run against the application's own configured DATABASE_URL —
 # only an explicit, dedicated OSPREY_TEST_DATABASE_URL (for CI pointing at a

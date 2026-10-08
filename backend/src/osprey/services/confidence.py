@@ -15,30 +15,31 @@ CI lint gate (Step 7) forbids ``finding_type ==`` / ``switch(type)`` in this
 module and every other module in the finding-creation/evidence-capability
 path — see scripts/lint_no_type_branching.py.
 
-RECHECK_FAILED (plans/harness's re-verification capability,
-``services.finding_reverification``): evidence is append-only — a failed
-recheck is never allowed to erase or edit a past REPRODUCTION/VERIFICATION/
-ATTESTATION record, so the historical fact "this was confirmed once" is
-never lost. What it changes is what the CURRENT confidence read means: if
-the most recent recheck for this finding failed to reproduce it, CONFIRMED
-would be actively misleading ("still true right now") even though it once
-was. This is recency-aware, not a blanket downgrade — a later successful
-re-verification (a fresh CONFIRMING record after the failed recheck) clears
-it, the same way a flaky target coming back up should.
+RECHECK_FAILED (``services.finding_reverification``): evidence is append-only,
+so a failed recheck never edits a past confirming record. It only changes the
+CURRENT read: if the most recent NOT_REPRODUCED recheck is newer than the most
+recent confirming record, CONFIRMED drops to LIKELY (a later successful
+re-verification clears it). An INCONCLUSIVE recheck (target unreachable/timeout)
+learns nothing and never moves confidence.
 """
 
 from __future__ import annotations
 
-from osprey.schemas.finding import EvidenceRecord, EvidenceRecordKind, FindingConfidence
+from osprey.schemas.finding import EvidenceRecord, EvidenceRecordKind, FindingConfidence, RecheckReason
 
-# Evidence kinds strong enough to confirm a claim outright: an actual
-# reproduction, a direct read of the config/permission in question, or a
-# human saying so. None of these is type-specific — a reproduction record
-# means the same thing whether it came from a SQLi PoC or a misconfigured
-# S3 bucket check.
-_CONFIRMING_KINDS = frozenset(
-    {EvidenceRecordKind.REPRODUCTION, EvidenceRecordKind.VERIFICATION, EvidenceRecordKind.ATTESTATION}
+# A machine-checkable artifact confirms outright: an actual reproduction or a
+# direct config/permission read (both grounded against real tool output at file
+# time). Neither is type-specific. ATTESTATION confirms ONLY when it carries
+# human provenance (B0) — an agent vouching for itself is not evidence.
+_GROUNDED_CONFIRMING = frozenset(
+    {EvidenceRecordKind.REPRODUCTION, EvidenceRecordKind.VERIFICATION}
 )
+
+
+def _is_confirming(er: EvidenceRecord) -> bool:
+    if er.kind in _GROUNDED_CONFIRMING:
+        return True
+    return er.kind == EvidenceRecordKind.ATTESTATION and er.human
 
 
 def confidence_for(
@@ -48,39 +49,44 @@ def confidence_for(
 ) -> FindingConfidence:
     """Compute confidence from evidence alone.
 
-    - a reproduction, a direct verification, or a human attestation → CONFIRMED
-      — UNLESS the most recent RECHECK_FAILED is more recent than the most
-      recent confirming record, in which case → LIKELY (it earned CONFIRMED
-      once; the latest check couldn't reproduce it, so it's not honest to
-      keep reporting it as currently confirmed).
+    - a reproduction, a direct verification, or a HUMAN attestation → CONFIRMED
+      — UNLESS the most recent active RECHECK_FAILED is newer than the most
+      recent confirming record, in which case → LIKELY.
     - >=2 independent source tools, or an explicit corroboration record → LIKELY
-    - anything else (just the raw signal) → HYPOTHESIS
+    - anything else (raw signal, or agent-only attestation) → HYPOTHESIS
     """
     records = evidence_records or []
     tools: set[str] = {t.strip() for t in (source_tools or []) if t and t.strip()}
-    kinds: set[EvidenceRecordKind] = set()
+    has_confirming = False
     latest_confirming_at = None
     latest_recheck_failed_at = None
+    has_corroboration = False
     for er in records:
-        kinds.add(er.kind)
         if er.source_tool and er.source_tool.strip():
             tools.add(er.source_tool.strip())
-        if er.kind in _CONFIRMING_KINDS:
+        if _is_confirming(er):
+            has_confirming = True
             if latest_confirming_at is None or er.created_at > latest_confirming_at:
                 latest_confirming_at = er.created_at
+        elif er.kind == EvidenceRecordKind.CORROBORATION:
+            has_corroboration = True
         elif er.kind == EvidenceRecordKind.RECHECK_FAILED:
+            # Only an active non-reproduction downgrades. An inconclusive recheck
+            # (target unreachable/timeout) learns nothing, so it never moves
+            # confidence. Legacy records (no reason) keep the old downgrading
+            # behavior rather than silently un-downgrading something.
+            if er.reason == RecheckReason.INCONCLUSIVE.value:
+                continue
             if latest_recheck_failed_at is None or er.created_at > latest_recheck_failed_at:
                 latest_recheck_failed_at = er.created_at
 
-    if kinds & _CONFIRMING_KINDS:
+    if has_confirming:
         stale = (
             latest_recheck_failed_at is not None
             and (latest_confirming_at is None or latest_recheck_failed_at > latest_confirming_at)
         )
-        if not stale:
-            return FindingConfidence.CONFIRMED
-        return FindingConfidence.LIKELY
-    if len(tools) >= 2 or EvidenceRecordKind.CORROBORATION in kinds:
+        return FindingConfidence.LIKELY if stale else FindingConfidence.CONFIRMED
+    if len(tools) >= 2 or has_corroboration:
         return FindingConfidence.LIKELY
     return FindingConfidence.HYPOTHESIS
 

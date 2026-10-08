@@ -89,3 +89,38 @@ def test_observation_field_reads_target_title_and_details():
     assert _observation_field(o, "target") == "user@example.test"
     assert _observation_field(o, "domain") == "example.test"
     assert _observation_field(o, "missing_field") == ""
+
+
+def test_service_observation_feeds_searchsploit_query(monkeypatch):
+    """E1.1 — a versioned SERVICE observation matches the CVE-candidate rule and
+    its details.service (the product+version string) resolves as the
+    searchsploit query via params_from."""
+    svc = _obs("service", {"service": "Apache httpd 2.4.49", "port": "80"}, target="web.example.test")
+    matched, per_match = _matches({"finding_type": "service", "scope": "per_match"}, [svc], None, "")
+    assert matched is True and per_match == [svc]
+    assert _observation_field(svc, "service") == "Apache httpd 2.4.49"
+
+
+def test_cve_candidate_rule_is_wired_in_config():
+    """Guard the E1.1 rule: it must fire searchsploit_lookup off a service
+    observation and map its version string into the query param."""
+    from osprey.services.config_loader import read_config
+
+    rules = {r["id"]: r for r in read_config("tech_dispatch.yaml")["signals"]}
+    rule = rules["service_version_cve_candidates"]
+    assert rule["match"]["finding_type"] == "service"
+    assert rule["dispatch"]["default_tool"] == "searchsploit_lookup"
+    assert rule["dispatch"]["params_from"] == {"query": "service"}
+
+
+def test_dangling_cname_takeover_rule_is_wired_in_config():
+    """Guard the E1.4 rule: a CNAME DNS record fires the (read-only) takeover
+    check on that hostname."""
+    from osprey.services.config_loader import read_config
+
+    rules = {r["id"]: r for r in read_config("tech_dispatch.yaml")["signals"]}
+    rule = rules["dangling_cname_takeover_check"]
+    assert rule["match"]["finding_type"] == "dns_record"
+    assert rule["match"]["metadata_key"] == "cname"
+    assert rule["dispatch"]["default_tool"] == "subdomain_takeover_check"
+    assert rule["dispatch"]["params_from"] == {"target": "hostname"}

@@ -28,7 +28,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from osprey.schemas.finding import EvidenceRecord, EvidenceRecordKind
+from osprey.schemas.finding import EvidenceRecord, EvidenceRecordKind, RecheckReason
 from osprey.schemas.observation import observation_signature
 from osprey.services.findings_store import get_findings_store
 from osprey.services.observation_store import get_observation_store
@@ -88,7 +88,7 @@ async def reverify_finding(finding_id: str, *, run_id: str = "") -> dict[str, An
         before_last_seen = obs.last_seen_at
         checked_tools.append(obs.source_tool)
         try:
-            await execute_tool_request(
+            response = await execute_tool_request(
                 ToolExecutionRequest(
                     tool_name=obs.source_tool,
                     params={"target": obs.target},
@@ -98,7 +98,8 @@ async def reverify_finding(finding_id: str, *, run_id: str = "") -> dict[str, An
                     force_refresh=True,  # a cache hit would prove nothing about NOW
                 )
             )
-        except Exception as exc:  # noqa: BLE001 — a tool failure is itself "did not reproduce"
+        except Exception as exc:  # noqa: BLE001
+            # The tool couldn't run — inconclusive, learns nothing about the target.
             logger.info("reverify_finding: %s failed for finding %s (non-fatal): %s", obs.source_tool, finding_id, exc)
             failed += 1
             findings_store.append_evidence(
@@ -107,14 +108,30 @@ async def reverify_finding(finding_id: str, *, run_id: str = "") -> dict[str, An
                     kind=EvidenceRecordKind.RECHECK_FAILED,
                     source_tool=obs.source_tool,
                     observation_id=obs.id,
-                    detail=f"Re-run failed: {str(exc)[:200]}",
+                    reason=RecheckReason.INCONCLUSIVE.value,
+                    detail=f"Re-run could not complete: {str(exc)[:200]}",
+                ),
+            )
+            continue
+
+        if not getattr(response, "success", False):
+            # Tool ran but errored/returned nothing (e.g. target unreachable) —
+            # also inconclusive, not evidence the issue is gone.
+            failed += 1
+            findings_store.append_evidence(
+                finding_id,
+                EvidenceRecord(
+                    kind=EvidenceRecordKind.RECHECK_FAILED,
+                    source_tool=obs.source_tool,
+                    observation_id=obs.id,
+                    reason=RecheckReason.INCONCLUSIVE.value,
+                    detail=f"Re-ran {obs.source_tool} against {obs.target} but it did not complete cleanly.",
                 ),
             )
             continue
 
         refreshed = obs_store.get(obs.id)
-        # observation_store bumps last_seen_at on the SAME signature re-appearing
-        # (see observation_store.py) — a real reproduction, not just "the tool ran".
+        # observation_store bumps last_seen_at on the SAME signature re-appearing.
         same_signature_seen_again = (
             refreshed is not None
             and observation_signature(refreshed) == before_signature
@@ -124,6 +141,7 @@ async def reverify_finding(finding_id: str, *, run_id: str = "") -> dict[str, An
         if same_signature_seen_again:
             reproduced += 1
         else:
+            # Tool ran clean and the signal is gone — actively not reproduced.
             failed += 1
             findings_store.append_evidence(
                 finding_id,
@@ -131,6 +149,7 @@ async def reverify_finding(finding_id: str, *, run_id: str = "") -> dict[str, An
                     kind=EvidenceRecordKind.RECHECK_FAILED,
                     source_tool=obs.source_tool,
                     observation_id=obs.id,
+                    reason=RecheckReason.NOT_REPRODUCED.value,
                     detail=f"Re-ran {obs.source_tool} against {obs.target} — the original signal did not reappear.",
                 ),
             )

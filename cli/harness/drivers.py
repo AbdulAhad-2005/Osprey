@@ -186,14 +186,6 @@ class InvestigationStep:
         )
 
 
-@dataclass(frozen=True)
-class Decision:
-    opportunity_id: str
-    expected_revision: str
-    driver: str
-    rationale: str
-
-
 class CapabilityJobDriver:
     """Lifecycle adapter for an explicitly selected backend utility job.
 
@@ -259,9 +251,6 @@ class InvestigationDriver:
 
     def __init__(self, runtime: "HarnessRuntime") -> None:
         self.runtime = runtime
-
-    def decide(self, step: InvestigationStep) -> Decision | None:
-        raise NotImplementedError
 
     def _sense(self) -> InvestigationStep:
         engagement_id = self.runtime.active_engagement_id
@@ -507,27 +496,15 @@ class InvestigationDriver:
 
 
 class DeterministicInvestigationDriver(InvestigationDriver):
-    """Select only the backend's highest-priority returned opportunity."""
+    """Select only the backend's highest-priority returned opportunity.
+
+    Selection happens inline in ``InvestigationDriver.drive`` (``max`` over the
+    launchable opportunities by priority); this subclass exists only to name the
+    deterministic driver — there is deliberately no separate ``decide()`` hook
+    and no LLM-driven opportunity picker here.
+    """
 
     name = "deterministic"
-
-    def decide(self, step: InvestigationStep) -> Decision | None:
-        candidates = [item for item in step.opportunities if item.id]
-        if not candidates:
-            return None
-        selected = max(candidates, key=lambda item: item.priority)
-        rationale = selected.rationale or (
-            f"highest backend-ranked opportunity (priority {selected.priority:g})"
-        )
-        return Decision(
-            opportunity_id=selected.id,
-            expected_revision=step.revision,
-            driver=self.name,
-            rationale=rationale,
-        )
-
-
-# There is deliberately no LLM-driven investigation opportunity picker here.
 # An earlier design (LLMOpportunityDriver) let a real LLM choose only one
 # opaque opportunity id per turn from a server-computed menu — "add model
 # judgment without giving the model a second control plane." That was the

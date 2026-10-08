@@ -9,11 +9,12 @@ recheck is never allowed to edit or delete a past confirming record.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from osprey.schemas.finding import ClaimSeverity, EvidenceRecord, EvidenceRecordKind, FindingType
+from osprey.schemas.finding import ClaimSeverity, EvidenceRecord, EvidenceRecordKind, FindingType, RecheckReason
 from osprey.schemas.observation import Observation, ObservationType
 from osprey.services import finding_reverification
 from osprey.services.finding_pipeline import file_finding
@@ -39,21 +40,23 @@ def _record_scanner_signal(eid: str, *, target: str, title: str, tool: str = "nu
 
 
 def test_append_evidence_recomputes_confidence_and_can_downgrade():
+    from osprey.services.finding_pipeline import confirm_finding
+
     eid = _make_engagement("reverify-append.test")
     obs = _record_scanner_signal(eid, target="a.reverify-append.test", title="RCE via deserialization")
     result = file_finding(
         engagement_id=eid, title="RCE via deserialization", finding_type=FindingType.VULNERABILITY,
         observation_ids=[obs.id], claim_severity=ClaimSeverity.CRITICAL,
-        evidence_records=[EvidenceRecord(kind=EvidenceRecordKind.ATTESTATION, detail="operator confirmed")],
     )
     finding = result.finding
     assert finding is not None
-    assert finding.confidence.value == "confirmed"
+    # Operator confirmation (the only path to CONFIRMED without a grounded artifact).
+    assert confirm_finding(finding.id).confidence.value == "confirmed"
 
     store = get_findings_store()
     updated = store.append_evidence(finding.id, EvidenceRecord(
         kind=EvidenceRecordKind.RECHECK_FAILED, source_tool="nuclei_scan", observation_id=obs.id,
-        detail="did not reproduce",
+        reason=RecheckReason.NOT_REPRODUCED.value, detail="did not reproduce",
     ))
     assert updated is not None
     assert updated.confidence.value == "likely"
@@ -95,11 +98,10 @@ def test_reverify_finding_with_no_reverifiable_observation_reports_nothing_to_ch
 
 
 def test_reverify_finding_downgrades_when_signal_no_longer_reproduces():
-    """The tool re-runs (mocked — no real Kali call in a unit test) but the
-    observation store never sees the same signature again (nothing calls
-    record_many to bump last_seen_at) — exactly what "the target no longer
-    exhibits this" looks like. Confidence must move CONFIRMED -> LIKELY, and
-    a RECHECK_FAILED record must land."""
+    """The tool re-runs cleanly (success) but the observation store never sees
+    the same signature again — exactly what "the target no longer exhibits this"
+    looks like. Confidence must move CONFIRMED -> LIKELY with a NOT_REPRODUCED
+    recheck record."""
     eid = _make_engagement("reverify-fail.test")
     real_output = "sqlmap identified the following injection point: id=1 AND SLEEP(5) -- dumped 5 rows"
     obs = get_observation_store().record(Observation(
@@ -117,7 +119,7 @@ def test_reverify_finding_downgrades_when_signal_no_longer_reproduces():
 
     with patch(
         "osprey.services.tool_execution.execute_tool_request",
-        new=AsyncMock(return_value=object()),  # tool "ran" — its actual return value is unused by reverify_finding
+        new=AsyncMock(return_value=SimpleNamespace(success=True)),  # ran clean, no re-observation
     ):
         outcome = asyncio.run(finding_reverification.reverify_finding(finding.id))
 
@@ -128,7 +130,8 @@ def test_reverify_finding_downgrades_when_signal_no_longer_reproduces():
     assert outcome["confidence_after"] == "likely"
 
     refiled = get_findings_store().get(finding.id)
-    assert any(er.kind == EvidenceRecordKind.RECHECK_FAILED for er in refiled.evidence_records)
+    recheck = [er for er in refiled.evidence_records if er.kind == EvidenceRecordKind.RECHECK_FAILED]
+    assert recheck and recheck[-1].reason == RecheckReason.NOT_REPRODUCED.value
     # The original REPRODUCTION record is still there — never deleted.
     assert any(er.kind == EvidenceRecordKind.REPRODUCTION for er in refiled.evidence_records)
 
@@ -162,7 +165,7 @@ def test_reverify_finding_stays_confirmed_when_signal_still_reproduces():
             engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="c.reverify-ok.test",
             source_tool="nuclei_scan", details={"title": "XSS reflected", "claimed_severity": "high", "snippet": real_output},
         ))
-        return object()
+        return SimpleNamespace(success=True)
 
     with patch("osprey.services.tool_execution.execute_tool_request", new=_fake_execute):
         outcome = asyncio.run(finding_reverification.reverify_finding(finding.id))
@@ -176,16 +179,21 @@ def test_reverify_finding_stays_confirmed_when_signal_still_reproduces():
     assert not any(er.kind == EvidenceRecordKind.RECHECK_FAILED for er in refiled.evidence_records)
 
 
-def test_reverify_finding_treats_a_tool_exception_as_did_not_reproduce():
+def test_reverify_finding_treats_a_tool_exception_as_inconclusive():
+    """A tool that can't run learns nothing about the target (B4), so it must
+    NOT downgrade a past confirmation — it records an INCONCLUSIVE recheck and
+    leaves confidence unchanged."""
+    from osprey.services.finding_pipeline import confirm_finding
+
     eid = _make_engagement("reverify-error.test")
     obs = _record_scanner_signal(eid, target="d.reverify-error.test", title="open redirect")
     result = file_finding(
         engagement_id=eid, title="open redirect", finding_type=FindingType.VULNERABILITY,
         observation_ids=[obs.id],
-        evidence_records=[EvidenceRecord(kind=EvidenceRecordKind.ATTESTATION, detail="confirmed manually")],
     )
     finding = result.finding
     assert finding is not None
+    assert confirm_finding(finding.id).confidence.value == "confirmed"
 
     async def _boom(*_a, **_kw):
         raise RuntimeError("tool crashed")
@@ -194,4 +202,35 @@ def test_reverify_finding_treats_a_tool_exception_as_did_not_reproduce():
         outcome = asyncio.run(finding_reverification.reverify_finding(finding.id))
 
     assert outcome["failed"] == 1
-    assert outcome["confidence_after"] == "likely"
+    assert outcome["confidence_after"] == "confirmed"  # unchanged — inconclusive
+    refiled = get_findings_store().get(finding.id)
+    recheck = [er for er in refiled.evidence_records if er.kind == EvidenceRecordKind.RECHECK_FAILED]
+    assert recheck and recheck[-1].reason == RecheckReason.INCONCLUSIVE.value
+
+
+def test_reverify_finding_treats_a_soft_tool_failure_as_inconclusive():
+    """The tool ran but did not complete cleanly (success=False, e.g. target
+    unreachable) — also inconclusive, no downgrade."""
+    from osprey.services.finding_pipeline import confirm_finding
+
+    eid = _make_engagement("reverify-soft.test")
+    obs = _record_scanner_signal(eid, target="e.reverify-soft.test", title="SSRF")
+    result = file_finding(
+        engagement_id=eid, title="SSRF", finding_type=FindingType.VULNERABILITY,
+        observation_ids=[obs.id],
+    )
+    finding = result.finding
+    assert finding is not None
+    assert confirm_finding(finding.id).confidence.value == "confirmed"
+
+    with patch(
+        "osprey.services.tool_execution.execute_tool_request",
+        new=AsyncMock(return_value=SimpleNamespace(success=False)),
+    ):
+        outcome = asyncio.run(finding_reverification.reverify_finding(finding.id))
+
+    assert outcome["failed"] == 1
+    assert outcome["confidence_after"] == "confirmed"
+    refiled = get_findings_store().get(finding.id)
+    recheck = [er for er in refiled.evidence_records if er.kind == EvidenceRecordKind.RECHECK_FAILED]
+    assert recheck and recheck[-1].reason == RecheckReason.INCONCLUSIVE.value

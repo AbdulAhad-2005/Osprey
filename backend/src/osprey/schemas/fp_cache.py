@@ -24,11 +24,15 @@ class FpPattern(BaseModel):
     target_glob: str = "*"
     # Empty = matches any finding type.
     finding_type: str = ""
-    title_contains: str = ""
-    # Optional exact match against an Observation's signature
-    # (schemas.observation.observation_signature) — tighter than title_contains
-    # when the operator wants to suppress one specific structural fact.
+    # Structured matchers only (B2) — no free-text title substring. A pattern
+    # matches when its exact observation_signature is among the candidate's, OR
+    # its finding_fingerprint (finding_type|normalized-title, exact) equals the
+    # candidate's. observation_signature is robust for same-target recurrence
+    # (it is volatile-stripped and tool-independent); finding_fingerprint is
+    # target-independent, so an explicit wildcard target_glob can suppress the
+    # same claim across targets.
     observation_signature: str = ""
+    finding_fingerprint: str = ""
     reason: str = ""
     marked_by: str = "operator"
     marked_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

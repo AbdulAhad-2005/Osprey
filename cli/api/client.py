@@ -296,6 +296,17 @@ class APIClient:
         resp.raise_for_status()
         return resp.json()
 
+    def confirm_finding(self, finding_id: str, *, note: str = "") -> dict[str, Any]:
+        """Operator confirmation (B0) — stamps a human attestation so a finding
+        can reach CONFIRMED. Only reachable from this interactive CLI, never the
+        agent's MCP tool surface."""
+        resp = self._client.post(
+            self._url(f"/api/v1/findings/{finding_id}/confirm"),
+            params={"note": note},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def list_fp_patterns(self) -> dict[str, Any]:
         resp = self._client.get(self._url("/api/v1/findings/fp/patterns"))
         resp.raise_for_status()

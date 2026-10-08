@@ -217,6 +217,25 @@ def mark_false_positive_endpoint(
     return {"pattern": pattern.model_dump(mode="json"), "retracted_finding_id": finding_id}
 
 
+@router.post("/{finding_id}/confirm")
+def confirm_finding_endpoint(
+    finding_id: str,
+    note: str = Query(default="", description="Optional operator note recorded with the confirmation"),
+    confirmed_by: str = Query(default="operator"),
+) -> dict[str, Any]:
+    """Operator confirmation channel (B0) — stamps a HUMAN attestation so a
+    finding can reach CONFIRMED. Deliberately has no MCP tool wrapper: only the
+    interactive CLI (/confirm) and the dashboard confirm button call it, so an
+    agent can't confirm its own claim through its function-calling surface."""
+    from osprey.services.finding_pipeline import ConfirmFindingError, confirm_finding
+
+    try:
+        finding = confirm_finding(finding_id, note=note, confirmed_by=confirmed_by)
+    except ConfirmFindingError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"finding": finding.model_dump(mode="json") if finding else None}
+
+
 @router.post("/{finding_id}/reverify")
 async def reverify_finding_endpoint(
     finding_id: str, run_id: str = Query(default=""),

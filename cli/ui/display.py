@@ -356,17 +356,18 @@ def print_findings(findings: list[dict[str, Any]]) -> None:
     table.add_column("Title")
     table.add_column("Type")
     table.add_column("Severity")
+    table.add_column("Confidence")
     table.add_column("Tool")
     for finding in findings:
-        # The Finding schema's field is `claim_severity`, not `severity` —
-        # reading the wrong key silently showed "info" for every finding
-        # regardless of actual severity.
+        # Schema field is `claim_severity`, not `severity`.
         severity = finding.get("claim_severity") or "info"
+        confidence = finding.get("confidence") or "hypothesis"
         table.add_row(
             finding.get("id", "-"),
             finding.get("title", "-"),
             finding.get("finding_type", "-"),
             Text(severity, style=_SEVERITY_STYLE.get(severity, "dim")),
+            confidence,
             finding.get("source_tool", "-"),
         )
     console.print(table)
@@ -386,11 +387,13 @@ def print_findings_grouped(data: dict[str, Any]) -> None:
     table.add_column("Title")
     table.add_column("Type")
     table.add_column("Severity")
+    table.add_column("Confidence")
     table.add_column("Count", justify="right")
     table.add_column("Affected")
     table.add_column("Tool")
     for g in groups:
         severity = g.get("severity") or "info"
+        confidence = g.get("confidence") or "hypothesis"
         targets = g.get("affected_targets") or []
         shown = ", ".join(targets[:3])
         if len(targets) > 3:
@@ -399,6 +402,7 @@ def print_findings_grouped(data: dict[str, Any]) -> None:
             g.get("title", "-"),
             g.get("finding_type", "-"),
             Text(severity, style=_SEVERITY_STYLE.get(severity, "dim")),
+            confidence,
             str(g.get("count", 0)),
             shown or "-",
             g.get("source_tool", "-"),

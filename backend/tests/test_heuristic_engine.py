@@ -16,3 +16,19 @@ from osprey.services import heuristic_engine as he
 
 def test_non_autonomous_categories_are_the_downstream_ones():
     assert he.NON_AUTONOMOUS_CATEGORIES == frozenset({"exploit", "creds", "postex"})
+
+
+def test_engine_may_autorun_allows_passive_tool_in_a_gated_category():
+    # searchsploit_lookup is cataloged under exploit but is read-only (PASSIVE),
+    # so the engine may auto-run it for CVE-candidate research (E1.1/E2).
+    assert he.engine_may_autorun("searchsploit_lookup") is True
+
+
+def test_engine_may_autorun_still_gates_intrusive_tools():
+    assert he.engine_may_autorun("metasploit_run") is False  # active exploit
+    assert he.engine_may_autorun("hydra_attack") is False    # creds attack
+
+
+def test_engine_may_autorun_allows_ordinary_recon():
+    assert he.engine_may_autorun("httpx_probe") is True
+    assert he.engine_may_autorun("nmap_service_scan") is True

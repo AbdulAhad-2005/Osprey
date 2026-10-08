@@ -34,7 +34,7 @@ CATEGORY = "web"
 
 def build_command(**params: Any) -> str:
     """Build CLI command."""
-    url = params.get("url", "")
+    url = params.get("url") or params.get("target") or ""
     depth = params.get("depth", 3)
     js_crawl = params.get("js_crawl", True)
     form_extraction = params.get("form_extraction", True)

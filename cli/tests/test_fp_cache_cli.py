@@ -30,7 +30,7 @@ def test_finding_fp_usage_with_no_args(capsys):
 def test_finding_fp_marks_and_prints_pattern(capsys):
     client = MagicMock()
     client.mark_finding_fp.return_value = {
-        "pattern": {"id": "p1", "target_glob": "host-a.test", "title_contains": "501 Not Implemented"},
+        "pattern": {"id": "p1", "target_glob": "host-a.test", "observation_signature": "501 Not Implemented"},
         "retracted_finding_id": "f1",
     }
     handle_finding(["fp", "f1", "known", "noise"], client)
@@ -45,7 +45,7 @@ def test_finding_fp_marks_and_prints_pattern(capsys):
 def test_finding_fp_with_explicit_scope_flag(capsys):
     client = MagicMock()
     client.mark_finding_fp.return_value = {
-        "pattern": {"id": "p1", "target_glob": "*", "title_contains": "scanner self-banner"},
+        "pattern": {"id": "p1", "target_glob": "*", "observation_signature": "scanner self-banner"},
         "retracted_finding_id": "f1",
     }
     handle_finding(["fp", "f1", "--scope", "*", "always", "noise"], client)
@@ -104,7 +104,7 @@ def test_fp_list_shows_patterns(capsys):
     client.list_fp_patterns.return_value = {
         "patterns": [
             {"id": "p1", "target_glob": "*", "finding_type": "vulnerability",
-             "title_contains": "501 Not Implemented", "reason": "scanner noise"},
+             "observation_signature": "501 Not Implemented", "reason": "scanner noise"},
         ],
         "total": 1,
     }

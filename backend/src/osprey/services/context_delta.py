@@ -12,6 +12,8 @@ import threading
 import time
 from typing import Any
 
+from osprey.services.bounded_cache import cap_lru
+
 _lock = threading.Lock()
 _STORE: dict[str, dict[str, Any]] = {}
 
@@ -93,7 +95,9 @@ def snapshot_counts(
         prev = _STORE.get(eid)
         if prev is None and eid:
             prev = _load_prev_from_db(eid)
+        _STORE.pop(eid, None)  # reinsert newest-last for LRU eviction
         _STORE[eid] = current
+        cap_lru(_STORE)
     if eid:
         _persist(eid, current)
     if not prev:

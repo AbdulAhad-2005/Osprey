@@ -142,25 +142,47 @@ def test_file_finding_accepts_verification_record_grounded_in_real_output():
     assert result.finding.confidence == FindingConfidence.CONFIRMED
 
 
-def test_file_finding_attestation_record_is_never_grounded():
-    """ATTESTATION is the deliberate escape hatch for vouching without a
-    machine-checkable artifact — it must reach confidence_for() untouched,
-    even when the observation has no raw output to check against at all."""
+def test_file_finding_agent_attestation_is_never_grounded_and_never_confirms():
+    """ATTESTATION is exempt from grounding (vouching without a machine-checkable
+    artifact), so it must not raise. But an AGENT-filed attestation does NOT
+    confirm (B0) — file_finding strips any human flag, so it lands at the
+    confidence the rest of the evidence earns (HYPOTHESIS here), never CONFIRMED."""
     eid = _make_engagement("file-finding-attest.test")
     obs = get_observation_store().record(
         Observation(engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="file-finding-attest.test",
                     source_tool="nmap_custom_scan", details={}),
     )
     result = file_finding(
-        engagement_id=eid, title="Operator attests to this finding",
+        engagement_id=eid, title="Agent attests to this finding",
         finding_type=FindingType.VULNERABILITY, observation_ids=[obs.id],
         evidence_records=[EvidenceRecord(
             kind=EvidenceRecordKind.ATTESTATION,
-            detail="I am attesting as operator: derived from prior artifacts, no raw excerpt recorded here",
+            detail="derived from prior artifacts, no raw excerpt recorded here",
+            human=True,  # even a forged human flag is stripped on the agent path
         )],
     )
     assert result.finding is not None
-    assert result.finding.confidence == FindingConfidence.CONFIRMED
+    assert result.finding.confidence == FindingConfidence.HYPOTHESIS
+    assert all(not er.human for er in result.finding.evidence_records)
+
+
+def test_confirm_finding_reaches_confirmed_via_operator_channel():
+    """The out-of-band operator-confirm channel (B0) stamps a human attestation
+    that DOES confirm — the only path to CONFIRMED without a grounded artifact."""
+    from osprey.services.finding_pipeline import confirm_finding
+
+    eid = _make_engagement("file-finding-confirm.test")
+    obs = get_observation_store().record(
+        Observation(engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="file-finding-confirm.test",
+                    source_tool="nmap_custom_scan", details={}),
+    )
+    result = file_finding(
+        engagement_id=eid, title="Operator will confirm this",
+        finding_type=FindingType.VULNERABILITY, observation_ids=[obs.id],
+    )
+    assert result.finding.confidence == FindingConfidence.HYPOTHESIS
+    confirmed = confirm_finding(result.finding.id, note="verified manually in a browser")
+    assert confirmed.confidence == FindingConfidence.CONFIRMED
 
 
 def test_file_finding_claiming_confirmed_with_no_evidence_still_yields_hypothesis():
@@ -233,13 +255,18 @@ def test_file_finding_accepts_conclusion_types(conclusion_type):
 
 def test_file_finding_suppressed_by_matching_fp_pattern():
     eid = _make_engagement("fp-suppress.test")
-    fp_cache.add_pattern(title_contains="known noise pattern", reason="always noise")
+    title = "known noise pattern"
+    fp_cache.add_pattern(
+        finding_type="vulnerability",
+        finding_fingerprint=fp_cache.compute_finding_fingerprint("vulnerability", title),
+        reason="always noise",
+    )
     obs = get_observation_store().record(
         Observation(engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="fp-suppress.test",
                     source_tool="nuclei_scan"),
     )
     result = file_finding(
-        engagement_id=eid, title="This is a known noise pattern here",
+        engagement_id=eid, title=title,
         finding_type=FindingType.VULNERABILITY, observation_ids=[obs.id],
     )
     assert result.finding is None
@@ -338,13 +365,17 @@ def test_mark_false_positive_explicit_wildcard_still_widens_scope():
 
 def test_removing_pattern_re_enables_promotion():
     eid = _make_engagement("fp-unsuppress.test")
-    pattern = fp_cache.add_pattern(title_contains="temporarily noisy")
+    title = "temporarily noisy signal"
+    pattern = fp_cache.add_pattern(
+        finding_type="vulnerability",
+        finding_fingerprint=fp_cache.compute_finding_fingerprint("vulnerability", title),
+    )
     obs = get_observation_store().record(
         Observation(engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="fp-unsuppress.test",
                     source_tool="nuclei_scan"),
     )
     suppressed = file_finding(
-        engagement_id=eid, title="temporarily noisy signal", finding_type=FindingType.VULNERABILITY,
+        engagement_id=eid, title=title, finding_type=FindingType.VULNERABILITY,
         observation_ids=[obs.id],
     )
     assert suppressed.finding is None

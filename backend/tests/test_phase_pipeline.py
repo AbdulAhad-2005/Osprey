@@ -8,11 +8,12 @@ Two clusters of tests used to live here and were removed, not patched around:
   threshold, not a hardcoded count). Its replacement is covered by
   ``test_priority.py::test_phase_unlocks_on_priority_not_finding_count`` /
   ``test_phase_locked_when_nothing_scored``.
-- ``decide_actions(signals=...)`` tests — ``decide_actions`` itself is still
-  live, but its signature changed to ``phase_unlock: dict[str, tuple[bool,
-  str]]`` (precomputed priority-unlock results) in the same plan. Identical
-  scenarios are covered against the current signature by
-  ``test_phase_supervisor_decide_actions.py``.
+- ``decide_actions(signals=...)`` tests — ``decide_actions`` and its
+  ``SpawnAction``/``PipelineState`` scaffolding were dead code (the conductor is
+  read-only and never spawned from them) and were deleted outright, along with
+  this test cluster. Phase unlocking is covered by
+  ``test_priority.py::test_phase_unlocks_on_priority_not_finding_count`` /
+  ``test_phase_locked_when_nothing_scored``.
 
 What's left here is genuinely not covered anywhere else: the data-driven
 expansion tool-selection filter, and the agent-job spawn depth guard.

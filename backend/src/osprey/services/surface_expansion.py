@@ -21,6 +21,7 @@ from typing import Any
 
 from osprey.schemas.engagement_graph import AssetNode, AssetType
 from osprey.services.config_loader import read_config_layered
+from osprey.services.config_validation import ConfigValidationError, validate_expansion
 from osprey.services.target_utils import resolve_host_ip
 from osprey.services.tool_registry import get_tool
 
@@ -115,6 +116,12 @@ def _expansion_config() -> dict[str, Any]:
     batch_defaults = dict(_DEFAULT_EXPANSION.get("batch") or {})
     raw = read_config_layered("expansion.yaml")
     if isinstance(raw, dict):
+        try:
+            validate_expansion(raw)  # loud fail on a malformed operator edit (G1)
+        except ConfigValidationError:
+            # Keep the shipped defaults rather than half-applying a bad edit (G3).
+            logger.exception("expansion.yaml rejected — keeping built-in defaults")
+            raw = {}
         for section, entries in raw.items():
             if section == "batch" and isinstance(entries, dict):
                 batch_defaults.update(entries)

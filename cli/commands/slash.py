@@ -630,6 +630,23 @@ def handle_finding(args: list[str], client: "APIClient") -> None:
     only appends a record of what a fresh check found. See
     services.finding_reverification.
     """
+    if args and args[0].lower() == "confirm" and len(args) >= 2:
+        # Operator confirmation channel (B0) — human-only, by design not an MCP
+        # tool. Stamps a human attestation so the finding can reach CONFIRMED.
+        finding_id = args[1]
+        note = " ".join(args[2:]).strip()
+        try:
+            result = client.confirm_finding(finding_id, note=note)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                print_error(f"No finding with id '{finding_id}'.")
+            else:
+                print_error(f"Confirm failed: {exc}")
+            return
+        conf = (result.get("finding") or {}).get("confidence", "?")
+        print_success(f"Confirmed {finding_id} (operator attestation). Confidence now: {conf}.")
+        return
+
     if args and args[0].lower() == "reverify" and len(args) >= 2:
         finding_id = args[1]
         try:
@@ -653,7 +670,11 @@ def handle_finding(args: list[str], client: "APIClient") -> None:
         return
 
     if not args or args[0].lower() != "fp" or len(args) < 2:
-        print_info('Usage: /finding fp <id> [--scope "<glob>"] [reason...]\n       /finding reverify <id>')
+        print_info(
+            'Usage: /finding fp <id> [--scope "<glob>"] [reason...]\n'
+            "       /finding reverify <id>\n"
+            "       /finding confirm <id> [note...]"
+        )
         return
     finding_id = args[1]
     rest = list(args[2:])
@@ -674,9 +695,15 @@ def handle_finding(args: list[str], client: "APIClient") -> None:
     print_success(
         f"Retracted finding {finding_id}. Learned FP-cache pattern "
         f"[{pattern.get('id')}] scope={pattern.get('target_glob')} "
-        f"title_contains='{pattern.get('title_contains')}' — suppresses matching "
+        f"match={_fp_matcher(pattern)} — suppresses matching "
         "candidates on every future promotion. /fp list to review."
     )
+
+
+def _fp_matcher(p: dict) -> str:
+    """How an FP pattern matches: its exact observation signature, else its
+    structural finding fingerprint."""
+    return p.get("observation_signature") or p.get("finding_fingerprint") or "(none)"
 
 
 def handle_fp(args: list[str], client: "APIClient") -> None:
@@ -697,7 +724,7 @@ def handle_fp(args: list[str], client: "APIClient") -> None:
         for p in patterns:
             print(
                 f"  [{p['id']}] scope={p['target_glob']} type={p.get('finding_type') or 'any'} "
-                f"title_contains='{p['title_contains']}' reason='{p.get('reason', '')}'"
+                f"match={_fp_matcher(p)} reason='{p.get('reason', '')}'"
             )
     elif sub == "remove" and len(args) > 1:
         try:
@@ -1742,7 +1769,7 @@ SLASH_COMMANDS: dict[str, tuple[str, "callable"]] = {
     "/cancel": ("Cancel the active investigation or a named job", handle_cancel),
     "/engage": ("Manage engagements", handle_engagements),
     "/findings": ("Show findings", handle_findings),
-    "/finding": ("Act on one finding by id (fp <id> [reason] | reverify <id>)", handle_finding),
+    "/finding": ("Act on one finding by id (fp <id> [reason] | reverify <id> | confirm <id> [note])", handle_finding),
     "/fp": ("FP-cache patterns: list | remove <id>", handle_fp),
     "/observations": ("List stored Observations (structural facts, not verdicts)", handle_observations),
     "/file": ("File an evidence-backed finding (no confidence flag — evidence computes it)", handle_file),

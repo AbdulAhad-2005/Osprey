@@ -2,116 +2,79 @@
 
 ``platform_pipeline`` and the REST pipeline endpoints report what evidence has
 unlocked; they do not drive an engagement or spawn agents. External harnesses
-may use the returned briefs to start explicit scoped-agent jobs. The pure
-decision helpers remain useful for evaluating readiness policy, but no backend
-root loop consumes them.
+may use the returned briefs to start explicit scoped-agent jobs with their own
+native subagent mechanism. Nothing in this module runs a root loop or spawns
+anything — it is a pure readiness/status/brief provider.
 """
 
 from __future__ import annotations
 
 import logging
-import time
-from dataclasses import dataclass, field
 from typing import Any
 
-from osprey.schemas.jobs import JobKind, JobStartRequest
 from osprey.services import priority, sufficiency
 from osprey.services.job_store import get_job_store
 
 logger = logging.getLogger(__name__)
 
-# Downstream phases the conductor auto-triggers (recon is the always-on entry
-# phase, handled separately; network/web/osint are left to the LLM/harness to
-# spawn explicitly via spawn_agent when it judges them worthwhile).
+# Downstream phases whose readiness the conductor reports (recon is the
+# always-on entry phase, handled separately). Unlocking is a signal only — the
+# LLM/harness decides whether to spawn work for them via its own subagent
+# mechanism (or platform_spawn_agent).
 _DOWNSTREAM_PHASES = ("vuln", "exploit")
 
 
-@dataclass
-class SpawnAction:
-    phase: str
-    reason: str
-
-
-@dataclass
-class PipelineState:
-    engagement_id: str
-    run_id: str
-    started_at: float = field(default_factory=time.monotonic)
-    spawned_by_phase: dict[str, int] = field(default_factory=dict)
-    triggered: set[str] = field(default_factory=set)
-    last_reopen_count: int = 0
-    stable_polls: int = 0
-    last_findings_total: int = -1
-
-
-def decide_actions(
-    *,
-    phase_unlock: dict[str, tuple[bool, str]],
-    active_by_phase: dict[str, int],
-    spawned_by_phase: dict[str, int],
-    max_agents_per_phase: int,
-) -> list[SpawnAction]:
-    """Pure decision: which downstream phase agents to spawn right now.
-
-    A phase is spawned when it's unlocked (plans/harness/06-prioritization-
-    engine.md Step 4: a multi-factor priority score crossing a threshold, not
-    a finding-count trigger — ``phase_unlock`` is precomputed by the caller via
-    ``priority.should_unlock_phase`` since that needs DB/graph reads this pure
-    function deliberately stays free of) AND no agent for it is currently
-    active AND its per-phase spawn budget is not exhausted. Upstream phases
-    are never stopped — this only ADDS concurrent work.
-    """
-    actions: list[SpawnAction] = []
-    for phase in _DOWNSTREAM_PHASES:
-        if active_by_phase.get(phase, 0) > 0:
-            continue
-        if spawned_by_phase.get(phase, 0) >= max_agents_per_phase:
-            continue
-        unlocked, reason = phase_unlock.get(phase, (False, ""))
-        if unlocked:
-            actions.append(SpawnAction(phase=phase, reason=reason))
-    return actions
-
-
+# The brief handed to a spawned worker must match the doctrine the top-level
+# operator follows (AGENTS.md operator card point #4: drive the typed tools
+# directly; platform_investigation_step/execute is the no-LLM deterministic
+# baseline, never how an LLM-driven worker should operate). A CI test
+# (test_subagent_briefs_match_doctrine) asserts no LLM-facing brief here ever
+# recommends platform_investigation_step, so this can't silently drift back.
 _SUBAGENT_BRIEFS: dict[str, str] = {
     "recon": (
-        "Drive platform_investigation_step -> platform_investigation_execute one bounded "
-        "decision at a time. Poll each job, read the new state, and replan; never hide the "
-        "engagement behind one opaque expansion call. The returned opportunities cover discovery, "
-        "resolution, liveness, CDN/origin and service profiling over typed graph assets. "
-        "Apply YOUR judgment on top: go deeper on "
-        "anything platform_priority ranks high, chase something odd it can't decide, run "
-        "additional tools (js_recon, katana, feroxbuster, more scan kinds) where the "
-        "bounded capability under- or over-shot. Check platform_attempts first to avoid "
-        "re-running what's already tried. Pass engagement_id=<id> on every call "
-        "(concurrent-chat protection). Return a concise final report: what was probed, what "
-        "was found with evidence, what is noise and why."
+        "Drive the typed recon tools directly, one at a time, reading each result before "
+        "choosing the next — exactly as the top-level operator does. Discover with "
+        "subfinder_scan/amass_scan/crt_sh_query (and domain_hunter for sisters); resolve with "
+        "dnsx_resolve; check liveness with httpx_probe; find ports/services with "
+        "naabu_port_scan then nmap_service_scan -sV; probe fronted/dangling hosts with "
+        "cdn_origin_probe/subdomain_takeover_check; go web-deep with js_recon/katana_crawl/"
+        "feroxbuster. Use platform_context and platform_priority to see what is ranked highest "
+        "and why after each result, and platform_attempts to avoid re-running what was already "
+        "tried. Do NOT route work through platform_investigation_step/execute — that is the "
+        "no-LLM deterministic baseline, not how you drive. Pass engagement_id=<id> on every "
+        "call (concurrent-chat protection). Return a concise final report: what was probed, "
+        "what was found with evidence, what is noise and why."
     ),
     "vuln": (
-        "Use the shared investigation state: evidence-backed vulnerability opportunities "
-        "appear there once recon makes them worthwhile. Execute one bounded opportunity, "
-        "poll it, and replan. Layer your own judgment on top: "
-        "confirm real issues with proof (body/banner), never a hostname or nuclei title "
-        "alone; run additional/deeper checks the mechanical dispatch wouldn't pick (custom "
-        "payloads, chained checks, business-logic probes). If you surface a new "
-        "host/subdomain/service, report it back so recon can be reopened on it. Pass "
-        "engagement_id=<id> on every call. Return a concise final report: what was probed, "
-        "what was found with evidence, what is noise and why."
+        "Drive the typed vuln tools directly against the evidence-backed surface recon "
+        "established, one at a time, reading each result: nuclei_scan/wpscan_analyze/nikto_scan/"
+        "sslyze_scan/graphql_cop_scan per detected technology, arjun_scan/x8_parameter_discovery "
+        "for hidden params, sqlmap_scan/dalfox_xss_scan on injection points. Use "
+        "platform_context/platform_priority to see what is ranked highest and platform_attempts "
+        "to avoid redo. Confirm real issues with observed proof (body/banner), never a hostname "
+        "or a scanner title alone; run deeper/custom checks the mechanical dispatch wouldn't pick "
+        "(chained checks, business-logic and auth probes). If you surface a new host/subdomain/"
+        "service, report it so recon can reopen on it. Do NOT route work through "
+        "platform_investigation_step/execute (the no-LLM baseline). Pass engagement_id=<id> on "
+        "every call. Return a concise final report: what was probed, what was found with "
+        "evidence, what is noise and why."
     ),
     "exploit": (
         "Attempt exploitation ONLY for evidence-backed candidates the vuln phase produced, "
         "and only within scope the user has explicitly authorized (Safety section — "
         "destructive/exploit work needs explicit permission). Without that approval, limit "
-        "yourself to exploit-queue review and PoC-tier reads. Pass engagement_id=<id> on "
-        "every call. Return a concise final report of what was confirmed vs. attempted."
+        "yourself to exploit-queue review and PoC-tier reads. Drive the typed exploit tools "
+        "directly; do NOT route work through platform_investigation_step/execute. Pass "
+        "engagement_id=<id> on every call. Return a concise final report of what was confirmed "
+        "vs. attempted."
     ),
 }
 
 
 def subagent_brief(phase: str) -> str:
     """Ready-to-spawn task brief for a phase subagent — copy straight into your
-    native Task/subagent mechanism. Single source of truth for the recon/vuln/
-    exploit orchestration pattern documented in AGENTS.md, so the two can't drift."""
+    native Task/subagent mechanism. Kept in sync with AGENTS.md's operator
+    doctrine (drive typed tools directly) by test_subagent_briefs_match_doctrine."""
     return _SUBAGENT_BRIEFS.get(phase, "")
 
 
@@ -187,88 +150,6 @@ def phase_readiness_text(snapshot: dict[str, Any], *, include_briefs: bool = Tru
     if reopen:
         lines.append(f"recon reopen candidates: {reopen} new host/subdomain finding(s) — spawn another recon subagent scoped to them")
     return "\n".join(lines)
-
-
-async def _maybe_auto_scan_network_vulns(*, engagement_id: str, run_id: str) -> None:
-    """Deterministically run a comprehensive nmap vuln/vulners scan against
-    whatever ports recon has established, right before the vuln phase spawns
-    — instead of leaving it to agent discretion. Best-effort: any failure
-    here must never block the phase transition. Runs once per engagement
-    (tool_coverage guards re-running)."""
-    try:
-        from osprey.schemas.finding import FindingType
-        from osprey.schemas.tools import ToolExecutionRequest
-        from osprey.services.engagement_store import get_engagement_store
-        from osprey.services.findings_store import get_findings_store
-        from osprey.services.target_utils import resolve_ipv4
-        from osprey.services.tool_coverage_store import get_tool_coverage_store
-        from osprey.services.tool_execution import execute_tool_request
-
-        eng = get_engagement_store().get(engagement_id)
-        target = eng.target if eng else ""
-        if not target:
-            return
-        scan_target = resolve_ipv4(target) or target
-
-        coverage = get_tool_coverage_store()
-        if coverage.has_run(engagement_id=engagement_id, tool_name="nmap_custom_scan", asset=scan_target):
-            return
-
-        store = get_findings_store()
-        port_findings = store.list(engagement_id=engagement_id, finding_type=FindingType.PORT, limit=300)
-        port_findings += store.list(engagement_id=engagement_id, finding_type=FindingType.SERVICE, limit=300)
-        ports = sorted(
-            {str(f.metadata.get("port")) for f in port_findings if str(f.metadata.get("port") or "").isdigit()},
-            key=int,
-        )
-        if not ports:
-            return
-
-        await execute_tool_request(
-            ToolExecutionRequest(
-                tool_name="nmap_custom_scan",
-                params={"target": scan_target},
-                engagement_id=engagement_id,
-                run_id=run_id,
-                additional_args=f'-Pn -sV --script "vuln,vulners" -p {",".join(ports)}',
-                timeout=600,
-                use_recovery=True,
-                record_findings=True,
-            )
-        )
-    except Exception:
-        logger.exception(
-            "Auto network-vuln scan failed for engagement %s (non-fatal, phase transition continues)",
-            engagement_id,
-        )
-
-
-def _active_by_phase(engagement_id: str) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for job in get_job_store().list_active_agents(engagement_id):
-        counts[job.role] = counts.get(job.role, 0) + 1
-    return counts
-
-
-def _spawn_agent_job(
-    *, engagement_id: str, run_id: str, role: str, task: str = "", depth: int = 0
-) -> str | None:
-    """Spawn a phase-agent job; returns job_id or None if a cap/budget blocked it."""
-    try:
-        summary = get_job_store().create_and_spawn(
-            JobStartRequest(
-                kind=JobKind.AGENT,
-                engagement_id=engagement_id,
-                run_id=run_id,
-                role=role,
-                task=task,
-                depth=depth,
-            )
-        )
-        return summary.job_id
-    except ValueError as exc:
-        logger.info("supervisor: could not spawn %s agent — %s", role, exc)
-        return None
 
 
 def _reopen_signal(finding_type: str) -> str:

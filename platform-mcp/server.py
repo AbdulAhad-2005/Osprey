@@ -41,6 +41,13 @@ SESSION_RUN_ID = _CONFIGURED_RUN_ID or uuid.uuid4().hex[:12]
 _SESSION_TARGET = ""
 _SESSION_ENGAGEMENT_ID = ""
 _SESSION_SWITCH_NOTICE = ""
+# Every engagement id bound via set_target in THIS process. Once more than one
+# has been bound, the ambient "current" session is ambiguous (concurrent chats
+# sharing one process, or a sequential target switch), so an UNPINNED stateful
+# call is rejected rather than silently routed to whichever was bound last
+# (B5.2). The backend itself never uses an ambient — every op takes an explicit
+# engagement_id — so pinning makes isolation airtight.
+_BOUND_ENGAGEMENTS: set[str] = set()
 # Kind + scope of the bound target so the agent picks the right tools (an IP →
 # no subdomain enum; a port → scope network/web tools to it). Re-derivable from
 # the target string, but held here to surface in every session header.
@@ -127,6 +134,7 @@ def _restore_session() -> bool:
         "scope": _SESSION_SCOPE,
     }
     _ENGAGEMENT_RUN_IDS[eid] = SESSION_RUN_ID
+    _BOUND_ENGAGEMENTS.add(eid)
     _log(f"restored session binding {eid} for target {tgt} after process respawn")
     return True
 
@@ -151,6 +159,7 @@ def _clear_session(*, engagement_id: str = "") -> None:
     if eid:
         _ENGAGEMENT_CACHE.pop(eid, None)
         _ENGAGEMENT_RUN_IDS.pop(eid, None)
+        _BOUND_ENGAGEMENTS.discard(eid)
         _REGISTERED_RUNS.difference_update(
             {key for key in _REGISTERED_RUNS if key[0] == eid}
         )
@@ -363,6 +372,7 @@ def _bind_target(target: str, *, force_new: bool = False, kind: str = "domain", 
     }
     _ENGAGEMENT_RUN_IDS[_SESSION_ENGAGEMENT_ID] = SESSION_RUN_ID
     _ensure_run_registered(_SESSION_ENGAGEMENT_ID, SESSION_RUN_ID)
+    _BOUND_ENGAGEMENTS.add(_SESSION_ENGAGEMENT_ID)
     _persist_session()
 
     created = bool(data.get("created"))
@@ -423,6 +433,13 @@ def _resolve_engagement(engagement_id_override: str = "") -> _EngagementContext:
     pinned = bool(requested) and requested != _SESSION_ENGAGEMENT_ID
     if not requested:
         _require_bound_target()
+        if len(_BOUND_ENGAGEMENTS) > 1:
+            raise RuntimeError(
+                "Ambiguous engagement: this process has bound more than one target, so the "
+                "ambient 'current' session can't be trusted (B5.2 — a concurrent chat may have "
+                "switched it). Pass engagement_id=<the id platform_set_target returned for YOUR "
+                "target> on this call. Bound here: " + ", ".join(sorted(_BOUND_ENGAGEMENTS)) + "."
+            )
         requested = _SESSION_ENGAGEMENT_ID
 
     metadata = _ENGAGEMENT_CACHE.get(requested)
@@ -1630,9 +1647,9 @@ def _record_reasoned_finding(
     not caught the first time since this call site predates the earned-
     finding pipeline's observation-write endpoint. Fixed the complete way:
     record an Observation first (extracted_by=llm — a fact, not a verdict),
-    then file_finding against it with evidence_kind=attestation ("I'm
-    personally attesting to this"). Confidence is still computed by
-    confidence_for, never asserted; only WHAT was observed is caller-supplied.
+    then file_finding against it with evidence_kind=attestation. Confidence is
+    computed by confidence_for, never asserted; an agent attestation does NOT
+    reach CONFIRMED (B0) — only a human operator confirms, out of band.
 
     Returns the filed/suppressed finding dict, or an ERROR string.
     """
@@ -1916,10 +1933,14 @@ def platform_file_finding(
         recorded tool output — a paraphrase or bare "it worked" is rejected,
         deterministically, not on the platform's trust in you. Point
         evidence_observation_id at whichever of observation_ids has that
-        output if it isn't the first one. No qualifying output to quote? Use
-        attestation instead — that one is trust-based on purpose.
+        output if it isn't the first one.
       - verification: you read the config/permission directly and confirmed it.
-      - attestation: you (the operator) are personally attesting to this.
+      - attestation: a note that you're vouching for this. NOTE (B0): an
+        agent/tool attestation does NOT confirm — it never reaches CONFIRMED on
+        its own say-so. Only a human operator, via the out-of-band confirm
+        channel (CLI `/finding confirm <id>` or the dashboard button), can
+        confirm a finding. To earn CONFIRMED yourself, show a grounded
+        reproduction/verification excerpt instead.
     Omit evidence_kind for a bare signal with no extra evidence — it stays
     HYPOTHESIS unless >=2 independent source tools already observed it.
 
@@ -2025,7 +2046,7 @@ def platform_mark_false_positive(finding_id: str, reason: str = "", target_glob:
             f"{_session_header(ctx)}\n"
             f"Retracted finding {finding_id}. New FP-cache pattern id={pattern.get('id')} "
             f"scope={pattern.get('target_glob')} type={pattern.get('finding_type') or 'any'}\n"
-            f"title_contains: {pattern.get('title_contains')}\n"
+            f"match: {pattern.get('observation_signature') or pattern.get('finding_fingerprint') or '(none)'}\n"
             "This pattern now suppresses matching candidates on every future promotion. "
             "platform_fp_list to review/prune."
         )
@@ -2101,8 +2122,8 @@ def platform_fp_list() -> str:
             return "No FP-cache patterns yet. Mark noise with platform_mark_false_positive."
         lines = [
             f"- id={p.get('id')} scope={p.get('target_glob')} type={p.get('finding_type') or 'any'} "
-            f"title_contains='{p.get('title_contains')}' reason='{p.get('reason')}' "
-            f"marked_by={p.get('marked_by')}"
+            f"match='{p.get('observation_signature') or p.get('finding_fingerprint') or '(none)'}' "
+            f"reason='{p.get('reason')}' marked_by={p.get('marked_by')}"
             for p in patterns
         ]
         return "### OPERATOR MIRROR — FP-CACHE PATTERNS\n" + "\n".join(lines)

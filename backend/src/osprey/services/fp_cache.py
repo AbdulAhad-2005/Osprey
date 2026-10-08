@@ -61,22 +61,36 @@ def list_patterns() -> list[FpPattern]:
         return list(_cache)
 
 
+def compute_finding_fingerprint(finding_type: str, title: str) -> str:
+    """A target-independent structural claim key: finding_type|normalized-title
+    (lowercased, whitespace-collapsed), matched EXACTLY — never as a substring.
+    Target scoping is done separately by target_glob, so this is what lets an
+    operator suppress the same claim across targets with an explicit wildcard
+    scope. Exact match (not substring) is what kills the over-suppression a
+    short title substring used to cause."""
+    ft = (finding_type or "").strip().lower()
+    norm = " ".join((title or "").split()).strip().lower()
+    if not ft or not norm:
+        return ""
+    return f"{ft}|{norm}"
+
+
 def add_pattern(
     *,
     target_glob: str = "*",
     finding_type: str = "",
-    title_contains: str = "",
     observation_signature: str = "",
+    finding_fingerprint: str = "",
     reason: str = "",
     marked_by: str = "operator",
 ) -> FpPattern:
-    if not (title_contains or "").strip() and not (observation_signature or "").strip():
-        raise ValueError("A pattern needs title_contains or observation_signature to match on.")
+    if not (observation_signature or "").strip() and not (finding_fingerprint or "").strip():
+        raise ValueError("A pattern needs observation_signature or finding_fingerprint to match on.")
     pattern = FpPattern(
         target_glob=(target_glob or "*").strip() or "*",
         finding_type=(finding_type or "").strip().lower(),
-        title_contains=(title_contains or "").strip(),
         observation_signature=(observation_signature or "").strip(),
+        finding_fingerprint=(finding_fingerprint or "").strip(),
         reason=(reason or "").strip(),
         marked_by=(marked_by or "operator").strip(),
     )
@@ -105,27 +119,24 @@ def matches(
     *,
     target: str,
     finding_type: str = "",
-    title: str = "",
     observation_signatures: list[str] | None = None,
+    finding_fingerprint: str = "",
 ) -> FpPattern | None:
     """First pattern (if any) matching this candidate. A pattern matches when
-    its target_glob matches the target AND (its finding_type is empty or
-    equals the candidate's) AND (its observation_signature exactly matches
-    one of the candidate's, OR its title_contains is a case-insensitive
-    substring of the candidate's title)."""
+    its target_glob matches the target AND (its finding_type is empty or equals
+    the candidate's) AND (its observation_signature is among the candidate's, OR
+    its finding_fingerprint equals the candidate's). No title-substring path."""
     tgt = (target or "").strip().lower()
     ftype = (finding_type or "").strip().lower()
-    title_low = (title or "").strip().lower()
+    fp = (finding_fingerprint or "").strip()
     sigs = set(observation_signatures or [])
     for p in list_patterns():
         if not fnmatch.fnmatch(tgt, p.target_glob.strip().lower() or "*"):
             continue
         if p.finding_type and p.finding_type != ftype:
             continue
-        if p.observation_signature:
-            if p.observation_signature in sigs:
-                return p
-            continue
-        if p.title_contains and p.title_contains.lower() in title_low:
+        if p.observation_signature and p.observation_signature in sigs:
+            return p
+        if p.finding_fingerprint and fp and p.finding_fingerprint == fp:
             return p
     return None

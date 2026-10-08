@@ -123,6 +123,10 @@ def test_file_finding_accepts_reproduction_claim_grounded_in_real_snippet():
 
 
 def test_file_finding_attestation_unaffected_by_grounding_check():
+    """An attestation via the /file endpoint is exempt from grounding (no 422),
+    but it is agent provenance — it does NOT confirm (B0). The operator-confirm
+    endpoint is the only path to CONFIRMED without a grounded artifact, and it
+    cannot be reached from the agent's MCP tool surface."""
     eid = _make_engagement("attestation-repro.test")
     obs = get_observation_store().record(Observation(
         engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="attestation-repro.test",
@@ -133,16 +137,22 @@ def test_file_finding_attestation_unaffected_by_grounding_check():
             "/api/v1/findings/file",
             json={
                 "engagement_id": eid,
-                "title": "Manually confirmed",
+                "title": "Agent vouches for this",
                 "finding_type": "vulnerability",
                 "observation_ids": [obs.id],
+                # A forged human flag on the agent path must be ignored.
                 "evidence_records": [
-                    {"kind": "attestation", "detail": "I personally verified this by hand"}
+                    {"kind": "attestation", "detail": "the agent says it verified this", "human": True}
                 ],
             },
         )
         assert resp.status_code == 200, resp.text
-        assert resp.json()["finding"]["confidence"] == "confirmed"
+        finding_id = resp.json()["finding"]["id"]
+        assert resp.json()["finding"]["confidence"] == "hypothesis"
+
+        confirmed = client.post(f"/api/v1/findings/{finding_id}/confirm", params={"note": "verified by hand"})
+        assert confirmed.status_code == 200, confirmed.text
+        assert confirmed.json()["finding"]["confidence"] == "confirmed"
 
 
 def test_mark_false_positive_endpoint_retracts_and_lists_pattern():
@@ -183,7 +193,10 @@ def test_mark_false_positive_endpoint_404_for_unknown_finding():
 
 def test_suppressed_promotions_audit_endpoint():
     eid = _make_engagement("fp-audit-endpoint.test")
-    fp_cache.add_pattern(title_contains="always suppressed")
+    fp_cache.add_pattern(
+        finding_type="vulnerability",
+        finding_fingerprint=fp_cache.compute_finding_fingerprint("vulnerability", "always suppressed signal"),
+    )
     obs = get_observation_store().record(Observation(
         engagement_id=eid, type=ObservationType.SCANNER_SIGNAL, target="fp-audit-endpoint.test",
         source_tool="nuclei_scan",

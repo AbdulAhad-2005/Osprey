@@ -43,8 +43,17 @@ def test_verification_record_is_confirmed():
     assert confidence_for(records) == FindingConfidence.CONFIRMED
 
 
-def test_attestation_record_is_confirmed():
-    records = [EvidenceRecord(kind=EvidenceRecordKind.ATTESTATION, detail="operator confirmed manually")]
+def test_agent_attestation_does_not_confirm():
+    """B0: an attestation without human provenance is say-so, not evidence — it
+    never confirms. With nothing else, the finding stays HYPOTHESIS."""
+    records = [EvidenceRecord(kind=EvidenceRecordKind.ATTESTATION, detail="the agent swears it works")]
+    assert confidence_for(records) == FindingConfidence.HYPOTHESIS
+
+
+def test_human_attestation_confirms():
+    """B0: only an attestation stamped by the operator-confirm channel (human=True)
+    confirms."""
+    records = [EvidenceRecord(kind=EvidenceRecordKind.ATTESTATION, human=True, detail="operator confirmed manually")]
     assert confidence_for(records) == FindingConfidence.CONFIRMED
 
 
@@ -120,6 +129,34 @@ def test_recheck_failed_alone_never_promotes_above_hypothesis():
     what the base tiers already compute."""
     records = [EvidenceRecord(kind=EvidenceRecordKind.RECHECK_FAILED, detail="never confirmed to begin with")]
     assert confidence_for(records) == FindingConfidence.HYPOTHESIS
+
+
+def test_inconclusive_recheck_after_confirmation_does_not_downgrade():
+    """B4: an INCONCLUSIVE recheck (target unreachable/timeout) learns nothing,
+    so a past confirmation stands. Only an active NOT_REPRODUCED recheck moves
+    it to LIKELY."""
+    from datetime import datetime, timedelta, timezone
+
+    from osprey.schemas.finding import RecheckReason
+
+    t0 = datetime.now(timezone.utc)
+    inconclusive = [
+        EvidenceRecord(kind=EvidenceRecordKind.REPRODUCTION, detail="sqlmap dumped 5 rows", created_at=t0),
+        EvidenceRecord(
+            kind=EvidenceRecordKind.RECHECK_FAILED, detail="target unreachable",
+            reason=RecheckReason.INCONCLUSIVE.value, created_at=t0 + timedelta(hours=1),
+        ),
+    ]
+    assert confidence_for(inconclusive) == FindingConfidence.CONFIRMED
+
+    not_reproduced = [
+        EvidenceRecord(kind=EvidenceRecordKind.REPRODUCTION, detail="sqlmap dumped 5 rows", created_at=t0),
+        EvidenceRecord(
+            kind=EvidenceRecordKind.RECHECK_FAILED, detail="signal gone",
+            reason=RecheckReason.NOT_REPRODUCED.value, created_at=t0 + timedelta(hours=1),
+        ),
+    ]
+    assert confidence_for(not_reproduced) == FindingConfidence.LIKELY
 
 
 def test_evidence_summary_reflects_kinds_present():

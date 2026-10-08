@@ -25,6 +25,8 @@ from collections import deque
 from collections.abc import AsyncIterator
 from typing import Any
 
+from osprey.services.bounded_cache import cap_lru_skip
+
 _HISTORY_CAP = 300
 _QUEUE_CAP = 500
 
@@ -40,7 +42,11 @@ def publish(engagement_id: str, event: str, data: dict[str, Any], *, source: str
     if not eid:
         return
     record = {"ts": time.time(), "event": event, "source": source, "data": data}
-    _history.setdefault(eid, deque(maxlen=_HISTORY_CAP)).append(record)
+    buf = _history.pop(eid, None) or deque(maxlen=_HISTORY_CAP)
+    buf.append(record)
+    _history[eid] = buf  # reinsert newest-last for LRU eviction
+    # Never evict an engagement with a live subscriber mid-stream.
+    cap_lru_skip(_history, skip=set(_subscribers))
     for queue in list(_subscribers.get(eid, ())):
         try:
             queue.put_nowait(record)

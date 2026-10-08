@@ -131,8 +131,8 @@ def file_finding(
     fp_hit = fp_cache.matches(
         target=resolved_target,
         finding_type=finding_type.value,
-        title=title,
         observation_signatures=signatures,
+        finding_fingerprint=fp_cache.compute_finding_fingerprint(finding_type.value, title),
     )
     if fp_hit is not None:
         reason = fp_hit.reason or "matched FP-cache pattern"
@@ -170,6 +170,11 @@ def file_finding(
     # Defaults a blank observation_id to the first resolved observation so
     # this backstops callers that bypass the MCP layer's own default too,
     # not just platform_file_finding's.
+    # This is the agent-reachable creation path, so it can never mint human
+    # provenance (B0): human=True comes only from confirm_finding's out-of-band
+    # channel. Strip any human flag an incoming record tried to carry.
+    records = [er.model_copy(update={"human": False}) if er.human else er for er in records]
+
     _GROUNDED_KINDS = {EvidenceRecordKind.REPRODUCTION, EvidenceRecordKind.VERIFICATION}
     by_id = {o.id: o for o in observations}
     for er in records:
@@ -219,6 +224,30 @@ def file_finding(
 # markdown_report), not by minting findings.
 
 
+class ConfirmFindingError(ValueError):
+    """Raised when confirm_finding is given an unknown finding_id."""
+
+
+def confirm_finding(finding_id: str, *, note: str = "", confirmed_by: str = "operator"):
+    """The out-of-band operator-confirmation channel (B0): stamp a human
+    ATTESTATION so the finding can reach CONFIRMED. This is deliberately NOT a
+    platform/MCP tool — only an interactive CLI command or the dashboard
+    confirm button reaches it, so an agent can't confirm its own claim through
+    its function-calling surface. Evidence stays append-only."""
+    store = get_findings_store()
+    if store.get(finding_id) is None:
+        raise ConfirmFindingError(f"no finding with id '{finding_id}'")
+    return store.append_evidence(
+        finding_id,
+        EvidenceRecord(
+            kind=EvidenceRecordKind.ATTESTATION,
+            human=True,
+            detail=(note or "Confirmed by operator.").strip()[:500],
+            source_tool=confirmed_by or "operator",
+        ),
+    )
+
+
 class MarkFalsePositiveError(ValueError):
     """Raised when mark_false_positive is given an unknown finding_id."""
 
@@ -230,28 +259,33 @@ def mark_false_positive(
     marked_by: str = "operator",
     target_glob: str = "",
 ) -> FpPattern:
-    """Learn a noise pattern once, apply it forever — plans/harness/04-
-    learning-fp-cache.md Step 3. Appends a pattern keyed on the finding's own
-    (finding_type, title) and retracts the finding from the CURRENT
-    engagement. The pattern — not this deletion — is what prevents the same
-    signal from being promoted again on a future replay/scan; the underlying
-    Observations/Evidence are never touched (Step 4).
+    """Learn a noise pattern once, apply it forever. Keys the pattern on the
+    finding's observation_signature (precise, tool-independent, volatile-
+    stripped) and its finding_type|title fingerprint — never a title substring
+    (B2), so marking noise can't suppress an unrelated finding that merely
+    shares words. Retracts the finding; Observations/Evidence are untouched.
 
-    target_glob scopes the pattern. Left empty (the default), it scopes to
-    THIS finding's own target only — marking noise on host A can never
-    suppress the same-titled signal on host B by accident. An operator who
-    deliberately knows a pattern is noise everywhere (e.g. a scanner's own
-    banner) passes an explicit glob ("*" or "*.internal.corp") to widen it;
-    that is an opt-in, not a default.
+    target_glob scopes the pattern. Empty (default) scopes to THIS finding's
+    own target only; an explicit glob ("*", "*.internal.corp") widens the
+    claim-fingerprint match across targets.
     """
     finding = get_findings_store().get(finding_id)
     if finding is None:
         raise MarkFalsePositiveError(f"no finding with id '{finding_id}'")
     scope = (target_glob or "").strip() or finding.target or "*"
+
+    store = get_observation_store()
+    sig = ""
+    for oid in finding.observation_ids:
+        obs = store.get(oid)
+        if obs is not None:
+            sig = observation_signature(obs)
+            break
     pattern = fp_cache.add_pattern(
         target_glob=scope,
         finding_type=finding.finding_type.value,
-        title_contains=finding.title,
+        observation_signature=sig,
+        finding_fingerprint=fp_cache.compute_finding_fingerprint(finding.finding_type.value, finding.title),
         reason=reason,
         marked_by=marked_by,
     )

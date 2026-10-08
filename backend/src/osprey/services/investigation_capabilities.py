@@ -281,29 +281,35 @@ def _failed_opportunity_ids(engagement_id: str) -> set[str]:
     every driver (CLI ``--engine``, supervised, any deterministic MCP use)
     reads its opportunities, not patched into one caller.
 
-    In-memory job history is bounded and clears on restart, which is the
-    intended behavior: a restart (or genuinely new evidence, which mints a
-    new opportunity id) is a legitimate fresh chance.
+    Both sources are unioned so the cap survives a restart (B1): the in-memory
+    job store (fast, current session) and the durable ``scan_run_store`` (full
+    history, matching ``_successful_opportunity_ids`` — restart-interrupted runs
+    are excluded there as transient). Genuinely new evidence mints a new
+    opportunity id and is a legitimate fresh chance; only identical repeated
+    failures are capped.
     """
     from collections import Counter
 
     from osprey.services.job_store import get_job_store
+    from osprey.services.scan_run_store import get_scan_run_store
 
     fail_counts: Counter[str] = Counter()
     for job in get_job_store().list_for_engagement(engagement_id, limit=500):
         if job.kind != JobKind.INVESTIGATION_STEP or not job.opportunity_id:
             continue
-        # Two shapes of failure, both counted: the normal path where the
-        # capability's tool reported success=False (job COMPLETED, success
-        # False — a routine 502/timeout, job_store.py's INVESTIGATION_STEP
-        # branch keeps these COMPLETED on purpose), and the exception path
-        # where execute_capability itself raised (job FAILED, success None).
+        # Two shapes of failure, both counted: a capability tool reporting
+        # success=False (job COMPLETED, success False — a routine 502/timeout)
+        # and execute_capability itself raising (job FAILED, success None).
         failed = job.status == JobStatus.FAILED or (
             job.status == JobStatus.COMPLETED and job.success is False
         )
         if failed:
             fail_counts[job.opportunity_id] += 1
-    return {oid for oid, n in fail_counts.items() if n >= _MAX_OPPORTUNITY_FAILURES}
+    capped = {oid for oid, n in fail_counts.items() if n >= _MAX_OPPORTUNITY_FAILURES}
+    capped |= get_scan_run_store().failed_investigation_opportunity_ids(
+        engagement_id, min_failures=_MAX_OPPORTUNITY_FAILURES
+    )
+    return capped
 
 
 def _successful_opportunity_ids(engagement_id: str) -> set[str]:
@@ -634,23 +640,19 @@ def list_step(engagement_id: str, run_id: str = "") -> InvestigationStep:
     # --- Tech-aware vulnerability dispatch — already atomic (one suggestion
     # = one tool); now carries tool/params directly instead of round-tripping
     # through capability_input/DispatchSuggestion reconstruction. ---
-    from osprey.services.heuristic_engine import NON_AUTONOMOUS_CATEGORIES, _category_of
+    from osprey.services.heuristic_engine import engine_may_autorun
     from osprey.services.tech_dispatch import suggest_dispatch
 
     # No phase-unlock gate here (plan 19: phases never gate mandatory work).
     # suggest_dispatch is self-gating — a rule only fires when the mechanical
-    # facts it keys off actually exist (a TECHNOLOGY observation for nuclei, an
-    # injection-point tag for sqlmap, a live host in the graph, ...). Gating it
-    # behind a separate priority-score "vuln unlock" was exactly the judgment-
-    # on-mandatory-work anti-pattern that (together with dispatch reading the
-    # empty findings store) kept the deterministic floor from ever reaching
-    # vulnerability analysis. The NON_AUTONOMOUS_CATEGORIES filter below is the
-    # one gate that stays: it's the RoE/exploit safety boundary, not a phase gate.
+    # facts it keys off actually exist. The one gate that stays is the RoE/safety
+    # boundary (engine_may_autorun, E2): a PASSIVE read-only tool is always
+    # eligible; an intrusive exploit/creds/postex tool is gated.
     root_subject = domains[:1] or nodes[:1]
     label_to_node = {n.label: n for n in nodes}
     if root_subject:
         for suggestion in suggest_dispatch(engagement_id=eid, run_id=run_id):
-            if not suggestion.default_tool or _category_of(suggestion.default_tool) in NON_AUTONOMOUS_CATEGORIES:
+            if not suggestion.default_tool or not engine_may_autorun(suggestion.default_tool):
                 continue
             # A per-match suggestion (Plan 18 Workstream B) names the real
             # asset that matched — resolve it; an engagement-wide suggestion

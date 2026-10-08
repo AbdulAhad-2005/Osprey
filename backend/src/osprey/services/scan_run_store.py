@@ -154,6 +154,45 @@ class ScanRunStore:
                 completed.add(str(opportunity_id))
         return completed
 
+    def failed_investigation_opportunity_ids(
+        self, engagement_id: str, *, min_failures: int = 2
+    ) -> set[str]:
+        """Durable mirror of the in-memory failure cap (B1): opportunity ids that
+        have genuinely failed at least ``min_failures`` times, so the planner
+        stops re-offering them even across a restart. A restart-interrupted run
+        is NOT a genuine failure of the opportunity (the tool never got to run),
+        so it is excluded — only a real tool failure (completed + success False)
+        or an execution exception (failed, not the restart marker) counts."""
+        from collections import Counter
+
+        with self._lock:
+            db = SessionLocal()
+            try:
+                rows = db.scalars(
+                    select(ScanRunRow).where(
+                        ScanRunRow.engagement_id == engagement_id,
+                        ScanRunRow.kind == "investigation_step",
+                        ScanRunRow.status.in_(("completed", "failed")),
+                    )
+                ).all()
+            finally:
+                db.close()
+        counts: Counter[str] = Counter()
+        for row in rows:
+            request = _loads(row.request_json, {})
+            oid = request.get("opportunity_id") if isinstance(request, dict) else ""
+            if not oid:
+                continue
+            result = _loads(row.result_json, {})
+            if row.status == "completed":
+                if isinstance(result, dict) and result.get("success") is False:
+                    counts[str(oid)] += 1
+            elif row.status == "failed":
+                if (row.error or "").startswith("Interrupted: the backend restarted"):
+                    continue  # transient restart artifact, not the opportunity's fault
+                counts[str(oid)] += 1
+        return {oid for oid, n in counts.items() if n >= min_failures}
+
     def get(self, job_id: str) -> dict | None:
         with self._lock:
             db = SessionLocal()

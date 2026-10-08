@@ -31,7 +31,8 @@ from typing import Any
 
 from osprey.schemas.hybrid import DispatchSuggestion
 from osprey.schemas.observation import Observation, ObservationType
-from osprey.services.config_loader import read_config
+from osprey.services.config_loader import read_config_layered
+from osprey.services.config_validation import ConfigValidationError, validate_tech_dispatch
 from osprey.services.engagement_graph import get_engagement_graph
 from osprey.services.observation_store import get_observation_store
 
@@ -46,10 +47,24 @@ _PHASE_EVIDENCE: dict[str, ObservationType] = {
 }
 
 
+# Last config that validated clean — kept so a malformed hot-reloaded edit
+# falls back to it (G3 last-known-good) instead of crashing the engine.
+_LAST_GOOD: dict[str, Any] = {"signals": []}
+
+
 @lru_cache(maxsize=1)
 def _load() -> dict[str, Any]:
-    data = read_config("tech_dispatch.yaml")
-    return data or {"signals": []}
+    # Layered so an operator can add/edit/remove checks via tech_dispatch.local
+    # .yaml with no core-code change (G2); validated loudly so a malformed edit
+    # names its offending field instead of silently no-opping (G1); and on a bad
+    # edit the last valid config is retained, never half-applied (G3).
+    global _LAST_GOOD
+    data = read_config_layered("tech_dispatch.yaml") or {"signals": []}
+    try:
+        _LAST_GOOD = validate_tech_dispatch(data)
+    except ConfigValidationError:
+        logger.exception("tech_dispatch.yaml rejected — keeping last-known-good config")
+    return _LAST_GOOD
 
 
 def suggest_dispatch(
