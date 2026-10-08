@@ -64,6 +64,16 @@ _COMMON_PARAMS = {
 # ---- RECON (10 tools) ----------------------------------------------------
 
 RECON_TOOLS: list[ToolDefinition] = [
+# ---- Router Enumeration Tool ---------------------------------------------
+    _t("web_fingerprint", ToolCategory.NETWORK, "python3", ToolSafetyLevel.PASSIVE,
+        "Passive HTTP(S) fingerprinting for network/security appliances. Retrieves a web page "
+        "with GET only and matches vendor/product signatures for Fortinet, Palo Alto, SonicWall, "
+        "Cisco ASA/IOS, Ivanti/Pulse, Citrix Gateway/ADC, MikroTik, Juniper, F5 BIG-IP, and Cyberoam.",
+        ["network", "fingerprinting", "web", "router", "firewall", "appliance"],
+        {"url": _p("", "Target HTTP(S) URL or host"),
+         "timeout": _p("10", "HTTP request timeout in seconds"),
+         "verify_tls": _p("true", "Verify TLS certificates")},
+        install_hint="Bundled: mcp-servers/network/tools/web_fingerprint.py (Python stdlib only)."),
     _t("subfinder_scan", ToolCategory.RECON, "subfinder", ToolSafetyLevel.PASSIVE,
        "Passive subdomain enumeration across public data sources.",
        ["subdomains", "osint", "asset-discovery"],
