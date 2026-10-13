@@ -188,9 +188,7 @@ def _run_scan_noninteractive(args: argparse.Namespace) -> int:
     if args.engine or args.phase == "full":
         from cli.commands.slash import _run_engine_scan
 
-        succeeded = _run_engine_scan(
-            client, target, driver="deterministic" if args.engine else "llm"
-        )
+        succeeded = _run_engine_scan(client, target)
         client.close()
         return 0 if succeeded else 1
 
