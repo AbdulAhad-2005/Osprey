@@ -47,6 +47,7 @@ TYPED_RECON_NETWORK_TOOLS: tuple[str, ...] = (
     "rustscan_fast_scan",
     "naabu_port_scan",
     "masscan_high_speed",
+    "web_fingerprint",
 )
 
 _TOOL_BLURBS: dict[str, str] = {
@@ -77,6 +78,7 @@ _TOOL_BLURBS: dict[str, str] = {
     "rustscan_fast_scan": "Fast port discovery (target=).",
     "naabu_port_scan": "Naabu fast port discovery. target= accepts ONE host, a comma-separated IP list (multi-host auto-written to a temp -l list), or a CIDR. ports= accepts a list/range OR 'top-N' (e.g. ports='top-1000'); top_ports=N also works. Default: top-ports 1000.",
     "masscan_high_speed": "Masscan (target=, ports=).",
+    "web_fingerprint": "Passive HTTP(S) appliance fingerprint (url= or target=): identifies firewall/router/VPN vendor+product (Fortinet, Palo Alto, Cisco, Ivanti, Citrix, MikroTik, F5, …) from the web UI. Read-only GET; retries unverified on a cert failure.",
 }
 
 

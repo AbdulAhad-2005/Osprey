@@ -813,6 +813,17 @@ EXPLOIT_TOOLS: list[ToolDefinition] = [
        {"module": _p("", "Metasploit module path"),
         "options": _p("{}", "Module options JSON"),
         **_COMMON_PARAMS}),
+    _t("routersploit_run", ToolCategory.EXPLOIT, "rsf.py", ToolSafetyLevel.GATED,
+       "Run a RouterSploit module against an embedded/network device (router, firewall, "
+       "camera, IoT). module= scanners/autopwn (check the target against all known exploits), "
+       "exploits/<device/cve>, or creds/<service>_default_creds. Sends active checks/exploit "
+       "attempts — GATED (needs allow_exploitation + an authorized target).",
+       ["exploitation", "router", "firewall", "iot", "embedded", "routersploit"],
+       {"module": _p("scanners/autopwn", "RouterSploit module path"),
+        "target": _p("", "Target host/IP"),
+        "port": _p("", "Target port (optional)"),
+        "options": _p("{}", "Extra module options JSON"),
+        **_COMMON_PARAMS}),
     _t("msfvenom_generate", ToolCategory.EXPLOIT, "msfvenom", ToolSafetyLevel.GATED,
        "Generate payloads with MSFVenom.",
        ["payloads", "exploitation"],

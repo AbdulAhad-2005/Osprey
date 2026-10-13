@@ -65,6 +65,18 @@ signals:
       reason: "Live host — check robots.txt / sitemap / .well-known for surface + policy leads"
       priority: 4
 
+  - id: live_host_appliance_fingerprint
+    match:
+      finding_type: url
+      min_count: 1
+      scope: per_match
+    dispatch:
+      task_id: appliance_fingerprint
+      default_tool: web_fingerprint
+      skill_file: recon/technology-identification.md
+      reason: "Live host — passively fingerprint its web UI for a firewall/router/VPN appliance (vendor+product)"
+      priority: 4
+
   - id: domain_email_posture
     match:
       finding_type: subdomain
