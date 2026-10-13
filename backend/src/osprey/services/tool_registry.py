@@ -327,9 +327,19 @@ OSINT_TOOLS: list[ToolDefinition] = [
         **_COMMON_PARAMS}),
 ]
 
-# ---- NETWORK (15 tools) ---------------------------------------------------
+# ---- NETWORK (16 tools) ---------------------------------------------------
 
 NETWORK_TOOLS: list[ToolDefinition] = [
+    _t("web_fingerprint", ToolCategory.NETWORK, "python3", ToolSafetyLevel.PASSIVE,
+        "Passive HTTP(S) fingerprinting for network/security appliances. Retrieves a web page "
+        "with GET only and matches vendor/product signatures for Fortinet, Palo Alto, SonicWall, "
+        "Cisco ASA/IOS/Firepower, Ivanti/Pulse, Citrix Gateway/ADC, MikroTik, Juniper, F5 BIG-IP, "
+        "Cyberoam, and other router/firewall web UIs.",
+        ["network", "fingerprinting", "web", "router", "firewall", "appliance"],
+        {"url": _p("", "Target HTTP(S) URL or host"),
+         "timeout": _p("10", "HTTP request timeout in seconds"),
+         "verify_tls": _p("true", "Verify TLS certs; on a cert failure it retries unverified and flags it (appliances are self-signed)")},
+        install_hint="Bundled: mcp-servers/network/tools/web_fingerprint.py (Python stdlib only)."),
     _t("nmap_syn_scan", ToolCategory.NETWORK, "nmap", ToolSafetyLevel.ACTIVE,
        "TCP SYN scan (-sS) — requires_root=True runs it as real root in the Kali "
        "container (docker exec -u 0), so it always gets a genuine raw-socket SYN "
