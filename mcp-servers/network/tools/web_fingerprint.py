@@ -1,8 +1,10 @@
-"""Retrieve an HTTP(S) page and fingerprint common network/security appliances.
+"""Fingerprint common network/security appliances over HTTP(S).
 
-Returns vendor/product matches with confidence and the matched evidence. This is
-passive fingerprinting: it performs a GET request only and does not authenticate
-or submit forms.
+GETs the target's web UI and matches vendor/product signatures, returning
+matches with confidence and evidence. Passive — GET only, no auth or form
+submission. When the root page is inconclusive it also GETs the known vendor
+login paths (same origin) and re-scores, since an appliance is often
+identifiable only on its login endpoint.
 """
 from __future__ import annotations
 
@@ -23,7 +25,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from _core.result import ToolResult
-from _core.runner import default_parse, run_tool
+from _core.runner import run_tool
 
 TOOL_NAME = "web_fingerprint"
 CATEGORY = "network"
@@ -177,7 +179,49 @@ SIGNATURES: dict[str, dict[str, Any]] = {
             ("cisco codecs", 4), ("cisco endpoint", 3),
         ],
     },
+    # SOHO / consumer routers (the ticket covers routers broadly). The web UI
+    # often reveals little on the root, so vendor-specific UI paths carry weight.
+    "TP-Link": {
+        "product": "TP-Link router / Archer",
+        "patterns": [
+            ("tp-link", 6), ("tplink", 5), ("archer", 5), ("/webpages/", 6),
+            ("tp link", 5), ("tether", 3),
+        ],
+    },
+    "Huawei": {
+        "product": "Huawei router / gateway",
+        "patterns": [
+            ("huawei", 6), ("huaweihomegateway", 7), ("echolife", 6),
+            ("/html/index.html", 2),
+        ],
+    },
+    "ZTE": {
+        "product": "ZTE router / gateway",
+        "patterns": [("zte corporation", 7), ("zxhn", 6), ("zte", 4)],
+    },
+    "Netgear": {
+        "product": "Netgear router",
+        "patterns": [("netgear", 6), ("genie", 4), ("/cgi-bin/", 1), ("orbi", 5)],
+    },
+    "ASUS": {
+        "product": "ASUS router / ASUSWRT",
+        "patterns": [("asuswrt", 7), ("asus wireless router", 7), ("rt-ac", 4), ("merlin", 3)],
+    },
+    "OpenWrt": {
+        "product": "OpenWrt / LuCI",
+        "patterns": [("openwrt", 7), ("luci", 6), ("/cgi-bin/luci", 7), ("powered by luci", 7)],
+    },
 }
+
+
+# Vendor login paths to probe when the root page is inconclusive — harvested
+# from the signatures themselves so the two never drift (an appliance is often
+# identifiable only on its login endpoint, not its bare root).
+_LOGIN_PATHS = list(dict.fromkeys(
+    needle for spec in SIGNATURES.values() for needle, _w in spec["patterns"] if needle.startswith("/")
+))
+_MAX_PROBE_PATHS = 14
+_STRONG_SCORE = 7  # a confident single-vendor hit — stop probing further paths
 
 
 def _strip_html(html: str) -> str:
@@ -187,14 +231,12 @@ def _strip_html(html: str) -> str:
     return re.sub(r"\s+", " ", unescape(html)).strip()
 
 
-def fingerprint(url: str, timeout: int = 10, verify_tls: bool = True, max_bytes: int = 1_000_000) -> dict[str, Any]:
-    if not re.match(r"^https?://", url, re.I):
-        url = "https://" + url
-
+def _fetch(url: str, timeout: int, verify_tls: bool, max_bytes: int) -> dict[str, Any]:
+    """GET one URL → {text, title, headers, final_url, status, tls_failed}.
+    An HTTP error status still yields its body/headers. Appliances routinely
+    serve self-signed certs, so a verified request that fails on a cert error
+    retries once unverified and flags it. Raises on a connection failure."""
     def _do_get(ctx):
-        """(raw, headers, final_url, status). Raises on a connection/TLS
-        failure; an HTTP error status still yields its body/headers (a 403/404/
-        500 page carries fingerprintable content)."""
         req = urllib.request.Request(
             url,
             headers={"User-Agent": "Osprey-WebFingerprinter/1.0", "Accept": "text/html,application/xhtml+xml,*/*;q=0.8"},
@@ -213,63 +255,113 @@ def fingerprint(url: str, timeout: int = 10, verify_tls: bool = True, max_bytes:
             return (raw_, {k.lower(): v for k, v in (exc.headers or {}).items()},
                     exc.geturl() or url, exc.code)
 
-    tls_verification_failed = False
+    tls_failed = False
     try:
-        raw, headers, final_url, status = _do_get(
-            None if verify_tls else ssl._create_unverified_context()
-        )
+        raw, headers, final_url, status = _do_get(None if verify_tls else ssl._create_unverified_context())
     except (urllib.error.URLError, ssl.SSLError) as exc:
-        # Appliances (the whole target class) routinely serve self-signed/invalid
-        # certs; don't fail on exactly the devices we fingerprint — retry once
-        # unverified and flag it (a bad cert is itself a reportable fact).
         reason = getattr(exc, "reason", exc)
         if verify_tls and isinstance(reason, ssl.SSLError):
-            try:
-                raw, headers, final_url, status = _do_get(ssl._create_unverified_context())
-                tls_verification_failed = True
-            except Exception as exc2:
-                return {"url": url, "error": str(exc2), "matches": []}
+            raw, headers, final_url, status = _do_get(ssl._create_unverified_context())
+            tls_failed = True
         else:
-            return {"url": url, "error": str(exc), "matches": []}
+            raise
+
+    body = raw.decode("utf-8", errors="ignore")
+    title_m = re.search(r"(?is)<title[^>]*>(.*?)</title>", body)
+    # Match on RESPONSE content only — never the request URL. Folding the path we
+    # chose to GET into the text would self-match that path's vendor signature
+    # (probing /cgi-bin/sslvpnclient must not "prove" SonicWall).
+    text = " ".join((body, _strip_html(body), headers.get("content-type", ""),
+                     " ".join(str(v) for v in headers.values()))).lower()
+    meta = re.search(r'(?is)<meta[^>]+http-equiv=["\']?refresh["\']?[^>]*content=["\']?[^;"\']*;\s*url=([^"\'>\s]+)', body)
+    return {
+        "text": text, "title": _strip_html(title_m.group(1)) if title_m else "",
+        "meta_refresh": meta.group(1).strip() if meta else "",
+        "headers": headers, "final_url": final_url, "status": status, "tls_failed": tls_failed,
+    }
+
+
+def _score(text: str) -> list[dict[str, Any]]:
+    results = []
+    for vendor, spec in SIGNATURES.items():
+        evidence = [needle for needle, _w in spec["patterns"] if needle.lower() in text]
+        score = sum(weight for needle, weight in spec["patterns"] if needle.lower() in text)
+        if score:
+            results.append({
+                "vendor": vendor, "product": spec["product"], "score": score,
+                "confidence": round(min(0.99, 0.35 + score / 20.0), 2),  # bounded, not a probability
+                "evidence": evidence,
+            })
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return results
+
+
+def fingerprint(url: str, timeout: int = 10, verify_tls: bool = True,
+                probe_paths: bool = True, max_bytes: int = 1_000_000) -> dict[str, Any]:
+    if not re.match(r"^https?://", url, re.I):
+        url = "https://" + url
+    try:
+        base = _fetch(url, timeout, verify_tls, max_bytes)
     except Exception as exc:
         return {"url": url, "error": str(exc), "matches": []}
 
-    content_type = headers.get("content-type", "")
-    body = raw.decode("utf-8", errors="ignore")
-    header_text = " ".join(str(v) for v in headers.values())
-    text = (body + " " + _strip_html(body) + " " + final_url + " " + content_type
-            + " " + header_text).lower()
-    title_m = re.search(r"(?is)<title[^>]*>(.*?)</title>", body)
-    title = _strip_html(title_m.group(1)) if title_m else ""
+    from urllib.parse import urljoin, urlsplit, urlunsplit
 
-    results = []
-    for vendor, spec in SIGNATURES.items():
-        evidence = []
-        score = 0
-        for needle, weight in spec["patterns"]:
-            if needle.lower() in text:
-                score += weight
-                evidence.append(needle)
-        if score:
-            # Confidence is bounded and intentionally not a probability.
-            confidence = min(0.99, 0.35 + score / 20.0)
-            results.append({
-                "vendor": vendor,
-                "product": spec["product"],
-                "score": score,
-                "confidence": round(confidence, 2),
-                "evidence": evidence,
-            })
+    # The base includes its server-chosen final_url (a redirect to e.g.
+    # /remote/login is a legit signal); probed pages contribute content only.
+    texts = [base["text"], (base["final_url"] or "").lower()]
+    tls_failed = base["tls_failed"]
+    title = base["title"]
+    probed: list[str] = []
+    followed: list[str] = []
 
-    results.sort(key=lambda x: x["score"], reverse=True)
+    # Follow one meta-refresh hop — many device UIs redirect to their real page
+    # via <meta refresh>, not an HTTP 3xx, so urllib would otherwise stop at the
+    # stub (e.g. a TP-Link root that meta-refreshes to /webpages/index.html).
+    if base.get("meta_refresh"):
+        try:
+            hop = _fetch(urljoin(base["final_url"] or url, base["meta_refresh"]),
+                         timeout, verify_tls and not tls_failed, max_bytes)
+            # The refresh TARGET path is server-chosen (in the root HTML), so it is
+            # a legit signal like a redirect Location — e.g. /webpages/ => TP-Link.
+            texts.append(hop["text"])
+            texts.append(base["meta_refresh"].lower())
+            tls_failed = tls_failed or hop["tls_failed"]
+            title = title or hop["title"]
+            followed.append(base["meta_refresh"])
+        except Exception:
+            pass
+
+    results = _score(" ".join(texts))
+
+    # If still no confident vendor, probe the known appliance login paths (same
+    # origin) and re-score — bounded, GET-only, stops once one vendor is confident.
+    if probe_paths and (not results or results[0]["score"] < _STRONG_SCORE):
+        parts = urlsplit(base["final_url"] or url)
+        origin = urlunsplit((parts.scheme, parts.netloc, "", "", ""))
+        probe_verify = verify_tls and not tls_failed  # skip the known-failing verify pass
+        for path in _LOGIN_PATHS[:_MAX_PROBE_PATHS]:
+            try:
+                page = _fetch(origin + path, min(timeout, 6), probe_verify, max_bytes)
+            except Exception:
+                continue
+            probed.append(path)
+            texts.append(page["text"])
+            tls_failed = tls_failed or page["tls_failed"]
+            results = _score(" ".join(texts))
+            if results and results[0]["score"] >= _STRONG_SCORE:
+                break
+
     return {
         "url": url,
-        "final_url": final_url,
-        "status": status,
-        "content_type": content_type,
+        "final_url": base["final_url"],
+        "status": base["status"],
+        "content_type": base["headers"].get("content-type", ""),
         "title": title,
-        "server": headers.get("server", ""),
-        "tls_verification_failed": tls_verification_failed,
+        "server": base["headers"].get("server", ""),
+        "tls_verification_failed": tls_failed,
+        "followed": followed,
+        "probed_paths": probed,
         "matches": results,
         "best_match": results[0] if results else None,
     }

@@ -111,3 +111,50 @@ def test_non_cert_connection_error_does_not_fall_back(monkeypatch):
     _patch(monkeypatch, refused)
     r = wf.fingerprint("https://dead.test")
     assert r.get("error") and r["matches"] == []
+
+
+def test_probes_login_paths_when_root_is_bland(monkeypatch):
+    """gap #4: a bland root page identifies nothing, but the vendor's login
+    path does — fingerprint() probes it (same origin) and finds the match."""
+    def by_path(req, timeout=10, context=None):
+        url = req.full_url
+        if url.endswith("/dana-na/"):  # Ivanti/Pulse login endpoint
+            return _Resp(body=b"<title>Ivanti Connect Secure</title> pulse connect secure", url=url)
+        return _Resp(body=b"<html><title>Login</title>welcome</html>", url=url)  # bland root
+
+    _patch(monkeypatch, by_path)
+    r = wf.fingerprint("https://vpn.test", verify_tls=False)
+    assert r["best_match"] and r["best_match"]["vendor"] == "Ivanti/Pulse", r.get("matches")
+    assert "/dana-na/" in r["probed_paths"]
+
+
+def test_follows_meta_refresh_and_scores_server_chosen_target(monkeypatch):
+    """Real-device case (a TP-Link gateway): the root is a <meta refresh> stub to
+    /webpages/index.html — urllib won't follow it, so fingerprint() does (one
+    hop), and the server-chosen target path identifies the vendor."""
+    def by_path(req, timeout=10, context=None):
+        url = req.full_url
+        if url.rstrip("/").endswith("192.168.0.1") or url.endswith("//192.168.0.1"):
+            body = b'<meta http-equiv="refresh" content="0; URL=/webpages/index.html" />'
+            return _Resp(body=body, url=url)
+        return _Resp(body=b"<html>forbidden</html>", url=url, status=403)  # deep page 403s
+
+    _patch(monkeypatch, by_path)
+    r = wf.fingerprint("https://192.168.0.1", verify_tls=False)
+    assert "/webpages/index.html" in r["followed"]
+    assert r["best_match"] and r["best_match"]["vendor"] == "TP-Link", r.get("matches")
+
+
+def test_strong_root_match_skips_probing(monkeypatch):
+    """A confident root match (score >= strong) must NOT trigger extra path
+    requests — keeps the common case to a single GET."""
+    calls = {"n": 0}
+
+    def count(req, timeout=10, context=None):
+        calls["n"] += 1
+        return _Resp(body=b"mikrotik routeros webfig", url=req.full_url)
+
+    _patch(monkeypatch, count)
+    r = wf.fingerprint("https://m.test", verify_tls=False)
+    assert r["best_match"]["vendor"] == "MikroTik"
+    assert calls["n"] == 1 and r["probed_paths"] == []
