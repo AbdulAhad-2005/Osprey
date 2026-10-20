@@ -83,6 +83,37 @@
   background: transparent;
 }
 
+/* Print / PDF export — render only the report, faithfully (dark theme kept). */
+@media print {
+  @page {
+    margin: 14mm;
+  }
+  body {
+    background: #0a1020 !important;
+  }
+  body * {
+    visibility: hidden !important;
+  }
+  #osprey-report,
+  #osprey-report * {
+    visibility: visible !important;
+  }
+  #osprey-report {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-width: none;
+    padding: 0 8mm;
+    background: #0a1020;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
+
 /* Prose tweaks for assistant markdown */
 .osprey-prose {
   @apply text-[14.5px] leading-[1.7] text-ink;

@@ -2,16 +2,17 @@
 
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { MessageSquare, Radar, ShieldAlert, Copy, Check } from "lucide-react";
+import { MessageSquare, Radar, ShieldAlert, FileText, Copy, Check } from "lucide-react";
 import { useWorkspace } from "@/components/shell/WorkspaceProvider";
 import { ChatView } from "@/components/chat/ChatView";
 import { AttackSurfaceTab } from "@/components/tabs/AttackSurfaceTab";
 import { FindingsTab } from "@/components/tabs/FindingsTab";
+import { ReportTab } from "@/components/tabs/ReportTab";
 import { TabNav, type TabDef } from "@/components/ui/Tabs";
 import { cn } from "@/lib/cn";
 
-type TabKey = "chat" | "surface" | "findings";
-const VALID: TabKey[] = ["chat", "surface", "findings"];
+type TabKey = "chat" | "surface" | "findings" | "report";
+const VALID: TabKey[] = ["chat", "surface", "findings", "report"];
 
 export function EngagementWorkspace({ engagementId }: { engagementId: string }) {
   const { engagements } = useWorkspace();
@@ -40,6 +41,7 @@ export function EngagementWorkspace({ engagementId }: { engagementId: string }) 
     { key: "chat", label: "Chat", icon: MessageSquare },
     { key: "surface", label: "Attack Surface", icon: Radar },
     { key: "findings", label: "Findings", icon: ShieldAlert, count: engagement?.findings_count },
+    { key: "report", label: "Report", icon: FileText },
   ];
 
   return (
@@ -71,6 +73,11 @@ export function EngagementWorkspace({ engagementId }: { engagementId: string }) 
         {tab === "findings" && (
           <div className="absolute inset-0 overflow-y-auto">
             <FindingsTab engagementId={engagementId} />
+          </div>
+        )}
+        {tab === "report" && (
+          <div className="absolute inset-0 overflow-y-auto">
+            <ReportTab engagementId={engagementId} />
           </div>
         )}
       </div>

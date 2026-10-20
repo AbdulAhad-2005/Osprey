@@ -31,14 +31,31 @@ from osprey.services.phase_supervisor import phase_readiness_snapshot
 from osprey.services.visualization import generate_mermaid
 
 
+# Ordered: the FIRST keyword found in the title/description wins, so put the
+# more specific signals before the broad ones.
 _REMEDIATION_HINTS = {
     "xss": "Implement context-aware HTML entity encoding and enforce a strong Content Security Policy (CSP).",
     "sqli": "Use parameterized queries / prepared statements for all database access.",
+    "sql injection": "Use parameterized queries / prepared statements for all database access.",
     "cors": "Restrict Access-Control-Allow-Origin to trusted domains and avoid combining wildcard '*' with Allow-Credentials: true.",
+    "access key": "Revoke and rotate the exposed key immediately, remove it from client-shipped code, and move secrets to a server-side secrets manager.",
+    "secret": "Revoke and rotate the exposed secret, purge it from source/bundles and VCS history, and load it from a secrets manager at runtime.",
+    "api key": "Revoke and rotate the exposed API key, scope it to least privilege, and keep it server-side only.",
+    "credential": "Force a password reset for the affected account(s), enforce MFA, and block credential reuse across services.",
+    "password": "Force a reset of the exposed password, enforce MFA, and verify the credential is not reused elsewhere.",
+    "debug": "Disable debug mode in production, remove verbose error output and stack traces, and restrict any debug endpoints.",
+    "hsts": "Add Strict-Transport-Security, Content-Security-Policy and related security response headers.",
+    "security header": "Add the missing security response headers (CSP, HSTS, X-Content-Type-Options, X-Frame-Options).",
+    "csp": "Add and tighten a Content-Security-Policy; avoid 'unsafe-inline' and wildcard sources.",
+    "staging": "Restrict non-production environments to authenticated/allowlisted access or take them off the public internet.",
+    "non-production": "Restrict non-production environments to authenticated/allowlisted access or take them off the public internet.",
     "eol": "Upgrade software stack to an actively supported version to receive security patches.",
+    "outdated": "Upgrade the affected component to a current, supported release and apply available security patches.",
     "jwt": "Enforce signature verification with strong algorithms and validate key expiration/claims.",
     "subdomain_takeover": "Remove dangling CNAME / DNS records pointing to unallocated third-party resources.",
+    "takeover": "Remove dangling CNAME / DNS records pointing to unallocated third-party resources.",
     "exposure": "Restrict public access to sensitive endpoints/documents via authentication or IP whitelisting.",
+    "exposed": "Restrict public access to the exposed resource via authentication, network controls, or removal.",
 }
 
 

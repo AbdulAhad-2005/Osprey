@@ -52,6 +52,77 @@ export interface Observation {
   created_at?: string;
 }
 
+/* --- Canonical report (one backend source) ------------------------------- */
+
+export interface ReportFinding {
+  id: string;
+  type: string;
+  title: string;
+  description: string;
+  severity: Severity;
+  confidence: string;
+  source_tool: string;
+  target: string;
+  evidence_snippet: string;
+  remediation_hint: string;
+}
+
+export interface ReportData {
+  error?: string;
+  meta: {
+    engagement_id: string;
+    target: string;
+    name: string;
+    status: string;
+    generated_at: string;
+    started_at: string | null;
+    updated_at: string | null;
+    tools_executed: number;
+  };
+  executive_summary: {
+    overall_risk: Severity;
+    overall_risk_label: string;
+    narrative: string;
+    key_stats: Record<string, number>;
+    top_risks: { title: string; severity: string; target: string }[];
+  };
+  scope: {
+    target: string;
+    description: string;
+    in_scope: string[];
+    out_of_scope: string[];
+    allowed_techniques: string[];
+    blocked_techniques: string[];
+    requires_human_approval: boolean;
+    allow_exploitation: boolean;
+    allow_post_exploitation: boolean;
+    destructive_actions_allowed: boolean;
+    rate_limit_rps: number;
+    max_concurrent_tools: number;
+    time_window: string | null;
+  };
+  methodology: { phase: string; tools: string[] }[];
+  findings_by_severity: { severity: Severity; count: number; findings: ReportFinding[] }[];
+  scanner_claims: {
+    observation_id: string;
+    source_tool: string;
+    target: string;
+    title: string;
+    scanner_claimed_severity: string;
+    template_id: string;
+    verified: boolean;
+  }[];
+  infrastructure_notes: { waf_detected: string[]; cloudflare_assets: string[]; email_posture: string[] };
+  technologies: string[];
+  recon_appendix: {
+    key: string;
+    label: string;
+    count: number;
+    items: { type: string; value: string; detail: string; source_tool: string }[];
+  }[];
+  totals: { findings: number; by_severity: Record<string, number> };
+}
+
 /** A node in the engagement attack-surface graph. */
 export interface AssetNode {
   id: string;
