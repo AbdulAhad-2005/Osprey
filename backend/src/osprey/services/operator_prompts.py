@@ -98,7 +98,9 @@ def open_question(
     try:
         from osprey.services import question_store
 
-        question_store.raise_question(eid, text=pq.text, raised_by="llm")
+        # Tagged distinctly from the agent's own reasoning "open questions" so an
+        # interactive gate isn't mistaken for an unresolved analytical question.
+        question_store.raise_question(eid, text=pq.text, raised_by="operator_gate")
     except Exception:  # noqa: BLE001
         logger.debug("question_store.raise_question failed (non-fatal)", exc_info=True)
     return pq

@@ -35,11 +35,15 @@ one execution kernel (``tool_execution.execute_tool_request``).
 from __future__ import annotations
 
 import logging
-import os
 import time
 
-from osprey.core.config import get_settings
-from osprey.services.agent_common import AgentEventHandler, AgentResponse, AgentToolCall
+from osprey.services.agent_common import (
+    AgentEventHandler,
+    AgentResponse,
+    AgentToolCall,
+    api_base_url,
+    resolve_model_config,
+)
 from osprey.services.engagement_store import get_engagement_store
 
 logger = logging.getLogger(__name__)
@@ -67,16 +71,6 @@ _ROLE_FRAMING: dict[str, str] = {
 }
 
 
-def _api_base_url() -> str:
-    """This backend's own reachable address — the CLI's embedded gateway
-    calls tools over real HTTP even when imported in-process (see
-    cli/agent/tools.py), so a backend-spawned agent loops back to itself over
-    the network the same way any other client reaches it. Same env var and
-    default the CLI itself uses (cli/main.py), so one already-correct setting
-    covers both."""
-    return os.getenv("API_BASE_URL", "http://localhost:9000")
-
-
 def _build_task_prompt(role: str, task: str, scope: str) -> str:
     parts: list[str] = []
     if scope.strip():
@@ -93,26 +87,6 @@ def _build_task_prompt(role: str, task: str, scope: str) -> str:
         "through shared engagement memory, so what you record is what they see."
     )
     return " ".join(parts)
-
-
-def _resolve_model_config() -> "CLIModelConfig | None":  # noqa: F821 - see import below
-    """Build a CLIModelConfig from the backend's OWN settings, not
-    ``CLIModelConfig.from_env()``. The two read the same env var names
-    (LLM_MODEL/LLM_API_KEY/LLM_API_BASE), but ``get_settings().llm`` prefers
-    the live .env FILE over the frozen process env (core/config.py's
-    ``settings_customise_sources``) precisely because this backend is a
-    long-running process — a plain ``os.getenv()`` read here would silently
-    keep serving whatever was baked in at container start, even after an
-    operator edits the project .env. Reusing the backend's own resolution
-    keeps both drivers reading one live LLM identity from one place."""
-    from cli.agent.llm import CLIModelConfig
-
-    settings = get_settings().llm
-    model = (settings.model or "").strip()
-    api_key = (settings.api_key or "").strip()
-    if not model or model == "<model-provider>/<model-name>" or not api_key:
-        return None
-    return CLIModelConfig(model=model, api_key=api_key, api_base=(settings.api_base or "").strip())
 
 
 async def run_scoped_agent(
@@ -141,7 +115,7 @@ async def run_scoped_agent(
             if result is not None:
                 await result
 
-    config = _resolve_model_config()
+    config = resolve_model_config()
     if config is None:
         message = (
             "No driving model configured for this engagement's backend — set "
@@ -154,7 +128,7 @@ async def run_scoped_agent(
     engagement = get_engagement_store().get(engagement_id) if engagement_id else None
     target = engagement.target if engagement else ""
 
-    gateway = EmbeddedToolGateway(_api_base_url())
+    gateway = EmbeddedToolGateway(api_base_url())
     if engagement_id:
         gateway.bind(engagement_id=engagement_id, target=target)
 
@@ -164,7 +138,7 @@ async def run_scoped_agent(
         # own worker cap) — same rule, same reason, not reinvented here.
         return Runner(
             config=config,
-            api_base_url=_api_base_url(),
+            api_base_url=api_base_url(),
             engagement_id=engagement_id,
             target=target,
             allow_spawn=False,
@@ -177,7 +151,7 @@ async def run_scoped_agent(
     role_framing = _ROLE_FRAMING.get(role, "")
     runner = Runner(
         config=config,
-        api_base_url=_api_base_url(),
+        api_base_url=api_base_url(),
         engagement_id=engagement_id,
         target=target,
         agent_prompt=role_framing,

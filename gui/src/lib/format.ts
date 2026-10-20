@@ -157,11 +157,14 @@ export function workerTag(name: string): string | null {
   return m ? `W${m[1]}` : null;
 }
 
-export const SEVERITY_META: Record<Severity, { label: string; dot: string; text: string; bg: string }> = {
-  critical: { label: "Critical", dot: "bg-sev-critical", text: "text-sev-critical", bg: "bg-sev-critical/12" },
-  high: { label: "High", dot: "bg-sev-high", text: "text-sev-high", bg: "bg-sev-high/12" },
-  medium: { label: "Medium", dot: "bg-sev-medium", text: "text-sev-medium", bg: "bg-sev-medium/12" },
-  low: { label: "Low", dot: "bg-sev-low", text: "text-sev-low", bg: "bg-sev-low/12" },
-  info: { label: "Info", dot: "bg-sev-info", text: "text-sev-info", bg: "bg-sev-info/12" },
-  none: { label: "—", dot: "bg-ink-faint", text: "text-ink-faint", bg: "bg-white/5" },
+export const SEVERITY_META: Record<
+  Severity,
+  { label: string; dot: string; text: string; bg: string; border: string }
+> = {
+  critical: { label: "Critical", dot: "bg-sev-critical", text: "text-sev-critical", bg: "bg-sev-critical/12", border: "border-sev-critical/30" },
+  high: { label: "High", dot: "bg-sev-high", text: "text-sev-high", bg: "bg-sev-high/12", border: "border-sev-high/30" },
+  medium: { label: "Medium", dot: "bg-sev-medium", text: "text-sev-medium", bg: "bg-sev-medium/12", border: "border-sev-medium/25" },
+  low: { label: "Low", dot: "bg-sev-low", text: "text-sev-low", bg: "bg-sev-low/12", border: "border-sev-low/25" },
+  info: { label: "Info", dot: "bg-sev-info", text: "text-sev-info", bg: "bg-sev-info/12", border: "border-sev-info/25" },
+  none: { label: "—", dot: "bg-ink-faint", text: "text-ink-faint", bg: "bg-white/5", border: "border-border" },
 };

@@ -18,31 +18,40 @@ that path, it only renders the conversation.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from osprey.services import operator_prompts
+from osprey.services.agent_common import api_base_url, resolve_model_config
 from osprey.services.conversation_store import append_message, get_history
+
+if TYPE_CHECKING:
+    from cli.agent.loop import Runner
+    from cli.agent.tools import EmbeddedToolGateway
 
 logger = logging.getLogger(__name__)
 
-# One Runner per engagement, bounded so a long-lived backend doesn't accumulate
+
+@dataclass
+class ChatSession:
+    """One engagement's live chat state: its Runner (holds the conversation in
+    memory across turns) plus the gateway we build system prompts through, so
+    callers never reach into Runner internals for the tool caller. Guarded by a
+    lock so one engagement runs one turn at a time."""
+
+    runner: "Runner"
+    gateway: "EmbeddedToolGateway"
+    lock: asyncio.Lock
+
+
+# One session per engagement, bounded so a long-lived backend doesn't accumulate
 # sessions without end. Single-process by design (see event_bus).
-_runners: dict[str, Any] = {}
-_locks: dict[str, Any] = {}
-_RUNNER_CAP = 16
-
-
-def _lock(engagement_id: str):
-    import asyncio
-
-    lock = _locks.get(engagement_id)
-    if lock is None:
-        lock = asyncio.Lock()
-        _locks[engagement_id] = lock
-    return lock
+_sessions: dict[str, ChatSession] = {}
+_SESSION_CAP = 16
 
 
 def _gate_grant(record: dict[str, Any]) -> tuple[str, list[str]]:
@@ -64,14 +73,14 @@ def _gate_grant(record: dict[str, Any]) -> tuple[str, list[str]]:
     return field, proceed
 
 
-def _get_runner(engagement_id: str, config, api_base: str):
+def _get_session(engagement_id: str, config, api_base: str) -> ChatSession:
     from cli.agent.loop import Runner
     from cli.agent.tools import EmbeddedToolGateway
     from osprey.services.engagement_store import get_engagement_store
 
-    runner = _runners.get(engagement_id)
-    if runner is not None:
-        return runner
+    session = _sessions.get(engagement_id)
+    if session is not None:
+        return session
 
     engagement = get_engagement_store().get(engagement_id) if engagement_id else None
     target = engagement.target if engagement else ""
@@ -121,18 +130,17 @@ def _get_runner(engagement_id: str, config, api_base: str):
     if history:
         runner.messages = [{"role": m["role"], "content": m["content"]} for m in history]
 
-    if len(_runners) >= _RUNNER_CAP:
-        _runners.pop(next(iter(_runners)), None)
-    _runners[engagement_id] = runner
-    return runner
+    if len(_sessions) >= _SESSION_CAP:
+        _sessions.pop(next(iter(_sessions)), None)  # evicts the session + its lock together
+    session = ChatSession(runner=runner, gateway=gateway, lock=asyncio.Lock())
+    _sessions[engagement_id] = session
+    return session
 
 
 async def stream_chat(engagement_id: str, prompt: str) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """Yield (event_name, data) pairs for the SSE endpoint. Never raises into the
     response — a failure becomes an ``error`` + ``done`` so the UI always closes
     the turn cleanly."""
-    from osprey.services.agent_runner import _api_base_url, _resolve_model_config
-
     eid = (engagement_id or "").strip()
     prompt = (prompt or "").strip()
     if not eid or not prompt:
@@ -140,7 +148,7 @@ async def stream_chat(engagement_id: str, prompt: str) -> AsyncIterator[tuple[st
         yield ("done", {"content": ""})
         return
 
-    config = _resolve_model_config()
+    config = resolve_model_config()
     if config is None:
         msg = (
             "No model configured. Set LLM_MODEL and LLM_API_KEY in the project .env "
@@ -153,13 +161,12 @@ async def stream_chat(engagement_id: str, prompt: str) -> AsyncIterator[tuple[st
 
     from cli.agent.context import build_system_prompt
 
-    api_base = _api_base_url()
-    lock = _lock(eid)
-    await lock.acquire()
+    session = _get_session(eid, config, api_base_url())
+    await session.lock.acquire()
     try:
-        runner = _get_runner(eid, config, api_base)
+        runner = session.runner
         append_message(eid, "user", prompt)
-        system_prompt = await build_system_prompt(eid, tool_caller=runner._tool_gateway.call)
+        system_prompt = await build_system_prompt(eid, tool_caller=session.gateway.call)
 
         final_text = ""
         async for ev in runner.run(prompt, system_prompt=system_prompt):
@@ -179,7 +186,7 @@ async def stream_chat(engagement_id: str, prompt: str) -> AsyncIterator[tuple[st
         yield ("done", {"content": ""})
     finally:
         operator_prompts.cancel_for_engagement(eid, reason="(run ended)")
-        lock.release()
+        session.lock.release()
 
 
 def _translate(ev) -> tuple[str | None, dict[str, Any]]:

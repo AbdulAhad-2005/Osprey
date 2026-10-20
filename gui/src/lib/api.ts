@@ -1,4 +1,4 @@
-import type { ChatEvent, Engagement, FindingSummary } from "./types";
+import type { AssetNode, ChatEvent, Engagement, FindingSummary, Observation } from "./types";
 
 /**
  * API base. In dev, next.config rewrites proxy `/api/*` to the Osprey backend
@@ -85,11 +85,37 @@ export async function clearConversation(engagementId: string): Promise<void> {
 
 /* --- Findings (used by the chat sidebar glance + viz milestone) ---------- */
 
-export async function listFindings(engagementId: string): Promise<FindingSummary[]> {
+export async function listFindings(
+  engagementId: string,
+  signal?: AbortSignal,
+): Promise<FindingSummary[]> {
   const data = await getJSON<{ findings?: FindingSummary[] } | FindingSummary[]>(
     `/api/v1/findings/?engagement_id=${encodeURIComponent(engagementId)}`,
+    { signal },
   );
   return Array.isArray(data) ? data : (data.findings ?? []);
+}
+
+export async function listObservations(
+  engagementId: string,
+  signal?: AbortSignal,
+): Promise<Observation[]> {
+  const data = await getJSON<{ observations?: Observation[] }>(
+    `/api/v1/observations/?engagement_id=${encodeURIComponent(engagementId)}&limit=2000`,
+    { signal },
+  );
+  return data.observations ?? [];
+}
+
+export async function listAssets(
+  engagementId: string,
+  signal?: AbortSignal,
+): Promise<AssetNode[]> {
+  const data = await getJSON<{ assets?: AssetNode[] }>(
+    `/api/v1/reasoning/assets?engagement_id=${encodeURIComponent(engagementId)}`,
+    { signal },
+  );
+  return data.assets ?? [];
 }
 
 /* --- Interactive questions ----------------------------------------------- */

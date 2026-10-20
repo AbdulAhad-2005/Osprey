@@ -29,6 +29,38 @@ export interface FindingSummary {
   target: string;
   source_tool: string;
   phase: string;
+  description?: string;
+  evidence?: string;
+  evidence_summary?: string;
+  occurrence_count?: number;
+  last_seen_at?: string;
+  tags?: string[];
+}
+
+/** Typed fact with provenance — the raw material of the attack-surface views. */
+export interface Observation {
+  id: string;
+  type: string;
+  details: Record<string, unknown>;
+  confidence: string;
+  source_tool: string;
+  target: string;
+  tags: string[];
+  signature?: string;
+  occurrence_count?: number | null;
+  last_seen_at?: string | null;
+  created_at?: string;
+}
+
+/** A node in the engagement attack-surface graph. */
+export interface AssetNode {
+  id: string;
+  asset_type: string;
+  label: string;
+  confidence: string;
+  observation_ids: string[];
+  source_tools: string[];
+  metadata: Record<string, unknown>;
 }
 
 /* --- Chat / agent event stream ------------------------------------------- *
