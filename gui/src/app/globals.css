@@ -83,13 +83,16 @@
   background: transparent;
 }
 
-/* Print / PDF export — render only the report, faithfully (dark theme kept). */
+/* Print / PDF export — render only the report, in the chosen theme. */
 @media print {
   @page {
     margin: 14mm;
   }
   body {
     background: #0a1020 !important;
+  }
+  body:has(#osprey-report.report-light) {
+    background: #ffffff !important;
   }
   body * {
     visibility: hidden !important;
@@ -109,9 +112,43 @@
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
+  #osprey-report.report-light {
+    background: #ffffff;
+  }
   .no-print {
     display: none !important;
   }
+}
+
+/* Light (print-friendly) report theme — scoped overrides on screen + print.
+   Severity/accent colours are intentionally left intact; they read on white. */
+#osprey-report.report-light {
+  background: #ffffff;
+  color: #16202e;
+}
+#osprey-report.report-light .text-ink {
+  color: #121a28 !important;
+}
+#osprey-report.report-light .text-ink-dim {
+  color: #37435a !important;
+}
+#osprey-report.report-light .text-ink-faint {
+  color: #6b7a91 !important;
+}
+#osprey-report.report-light .bg-surface,
+#osprey-report.report-light .bg-surface-2,
+#osprey-report.report-light .bg-surface-3,
+#osprey-report.report-light .bg-surface\/50,
+#osprey-report.report-light .bg-surface\/60,
+#osprey-report.report-light .bg-surface\/70 {
+  background: #eef1f5 !important;
+}
+#osprey-report.report-light .bg-abyss {
+  background: #eef1f5 !important;
+}
+#osprey-report.report-light .border-border,
+#osprey-report.report-light .border-border\/60 {
+  border-color: #e1e5ec !important;
 }
 
 /* Prose tweaks for assistant markdown */

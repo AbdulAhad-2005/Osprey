@@ -1,6 +1,7 @@
 "use client";
 
-import { Download, Printer, FileText, ShieldAlert, Radar, ListChecks, ScrollText } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Download, Printer, FileText, ShieldAlert, Radar, ListChecks, ScrollText, Sun, Moon } from "lucide-react";
 import { getReport, reportMarkdownUrl } from "@/lib/api";
 import { useResource } from "@/hooks/useResource";
 import type { ReportData, ReportFinding, Severity } from "@/lib/types";
@@ -12,6 +13,27 @@ import { Loading, EmptyState, ErrorState } from "@/components/ui/States";
 
 export function ReportTab({ engagementId }: { engagementId: string }) {
   const rep = useResource((s) => getReport(engagementId, s), [engagementId]);
+  const [light, setLight] = useState(false);
+
+  // Remember the report theme per viewer (print-friendly light vs. on-screen dark).
+  useEffect(() => {
+    try {
+      setLight(localStorage.getItem("osprey.report.light") === "1");
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  function toggleTheme() {
+    setLight((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem("osprey.report.light", next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }
 
   if (rep.loading && !rep.loaded) return <Loading label="Assembling report…" />;
   if (rep.error) return <ErrorState message={rep.error} onRetry={rep.refetch} />;
@@ -35,6 +57,14 @@ export function ReportTab({ engagementId }: { engagementId: string }) {
     <div className="relative">
       {/* Export toolbar (not printed) */}
       <div className="no-print sticky top-0 z-10 flex items-center justify-end gap-2 border-b border-border bg-base/80 px-5 py-2 backdrop-blur">
+        <button
+          onClick={toggleTheme}
+          className="btn-ghost"
+          title={light ? "Switch to dark report" : "Switch to light (print-friendly) report"}
+        >
+          {light ? <Moon size={14} /> : <Sun size={14} />}
+          {light ? "Dark" : "Light"}
+        </button>
         <button onClick={downloadMarkdown} className="btn-outline">
           <Download size={14} /> Markdown
         </button>
@@ -43,7 +73,10 @@ export function ReportTab({ engagementId }: { engagementId: string }) {
         </button>
       </div>
 
-      <article id="osprey-report" className="mx-auto max-w-4xl px-6 py-8">
+      <article
+        id="osprey-report"
+        className={cn("mx-auto max-w-4xl px-6 py-8", light && "report-light")}
+      >
         <ReportHeader report={report} />
         <ExecutiveSummary report={report} />
         <ScopeSection report={report} />

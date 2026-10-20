@@ -78,13 +78,22 @@ export function useChat(engagementId: string, opts?: { mock?: boolean }): UseCha
         }
       } catch (e) {
         if ((e as Error)?.name !== "AbortError") {
-          const message = e instanceof Error ? e.message : "stream failed";
+          // A transport drop (vs. an explicit backend error event) — keep it
+          // calm and non-destructive: the partial turn stays, and durable
+          // findings are already saved server-side.
+          const raw = e instanceof Error ? e.message : "stream failed";
+          const message = /fetch|network|stream|load failed|Failed to fetch/i.test(raw)
+            ? "Connection to Osprey was interrupted. Any findings so far are saved — send another message to continue."
+            : raw;
           setActivity({ kind: "error", message });
           setTurns((prev) => applyEvent(prev, { event: "error", data: { message } }));
         }
       } finally {
         setStreaming(false);
         setActivity((a) => (a.kind === "error" ? a : { kind: "idle" }));
+        // Never leave an assistant turn stuck in the streaming state if the
+        // stream ended without a terminal event (abnormal close / cancel).
+        setTurns((prev) => applyEvent(prev, { event: "done", data: { content: "" } }));
         abortRef.current = null;
       }
     },
