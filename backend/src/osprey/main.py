@@ -3,7 +3,10 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
+import os
+
 from fastapi import FastAPI, Response, status
+from fastapi.middleware.cors import CORSMiddleware
 
 from osprey.api.v1.router import api_v1_router
 from osprey.contract import APP_VERSION
@@ -49,6 +52,21 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Osprey Pentest Platform", version=APP_VERSION, lifespan=lifespan)
+
+# The GUI is a browser client. In dev it proxies same-origin (Next rewrites),
+# but allow a configured split-origin deployment too. Local-first, so the
+# default is just the loopback dev origins; override with OSPREY_CORS_ORIGINS
+# (comma-separated, or "*").
+_default_cors = "http://localhost:3000,http://localhost:3100,http://127.0.0.1:3000,http://127.0.0.1:3100"
+_cors_origins = [o.strip() for o in os.getenv("OSPREY_CORS_ORIGINS", _default_cors).split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"] if "*" in _cors_origins else _cors_origins,
+    allow_credentials="*" not in _cors_origins,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(api_v1_router, prefix="/api/v1")
 
 

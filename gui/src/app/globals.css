@@ -1,0 +1,115 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Newsreader", ui-serif, Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html,
+  body {
+    @apply h-full bg-base text-ink antialiased;
+    font-feature-settings: "cv11", "ss01";
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    /* A faint aurora of amber + navy — barely there, gives the deep bg life */
+    background-image:
+      radial-gradient(900px 500px at 12% -8%, rgba(245, 166, 35, 0.05), transparent 60%),
+      radial-gradient(1100px 600px at 100% 0%, rgba(56, 189, 248, 0.045), transparent 55%);
+    background-attachment: fixed;
+  }
+  ::selection {
+    background: rgba(245, 166, 35, 0.26);
+  }
+}
+
+@layer components {
+  .glass {
+    @apply bg-surface/80 backdrop-blur-xl border border-border;
+  }
+  .panel {
+    @apply bg-surface border border-border rounded-xl shadow-card;
+  }
+  .hairline {
+    @apply border-b border-border;
+  }
+  /* A tactile, quiet button baseline */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium
+      transition-colors duration-150 select-none disabled:opacity-40 disabled:pointer-events-none;
+  }
+  .btn-ghost {
+    @apply btn text-ink-dim hover:text-ink hover:bg-white/5 px-2.5 py-1.5;
+  }
+  .btn-primary {
+    @apply btn bg-amber text-abyss hover:bg-amber-soft px-3.5 py-2 font-semibold;
+  }
+  .btn-outline {
+    @apply btn border border-border-strong text-ink hover:border-amber/60 hover:text-amber-soft px-3 py-1.5;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1
+      text-xs text-ink-dim;
+  }
+}
+
+/* Scrollbars — thin, unobtrusive, navy */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #233049 transparent;
+}
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #223049;
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #2d3d59;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Prose tweaks for assistant markdown */
+.osprey-prose {
+  @apply text-[14.5px] leading-[1.7] text-ink;
+}
+.osprey-prose p {
+  @apply my-2.5;
+}
+.osprey-prose strong {
+  @apply text-ink font-semibold;
+}
+.osprey-prose code {
+  @apply font-mono text-[12.5px] bg-surface-3 text-amber-soft px-1.5 py-0.5 rounded;
+}
+.osprey-prose ul {
+  @apply my-2 pl-5 list-disc marker:text-ink-faint;
+}
+.osprey-prose ol {
+  @apply my-2 pl-5 list-decimal marker:text-ink-faint;
+}
+.osprey-prose li {
+  @apply my-1;
+}
+.osprey-prose a {
+  @apply text-signal hover:text-signal-soft underline underline-offset-2;
+}
+.osprey-prose h1,
+.osprey-prose h2,
+.osprey-prose h3 {
+  @apply font-semibold text-ink mt-4 mb-1.5;
+}

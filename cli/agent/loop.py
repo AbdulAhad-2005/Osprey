@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -196,6 +196,70 @@ _SPAWN_TOOL_SCHEMA = {
 }
 
 
+# CLI/transport-native — not a platform tool. Lets the model pause the run to
+# put a bounded decision to the operator (an exploitation gate, a scope choice)
+# with proposed answers, instead of guessing or stopping. Only advertised when
+# a caller injects an `ask_handler` (the GUI/CLI foreground loop); a headless
+# sub-agent or an unattended run never sees it, so it can't block on a human
+# who isn't there.
+_ASK_TOOL_NAME = "ask_operator"
+_ASK_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": _ASK_TOOL_NAME,
+        "description": (
+            "Pause and ask the human operator a single, consequential decision "
+            "that changes what you do next — e.g. whether to cross from findings "
+            "into active exploitation, whether to pull in a newly-discovered "
+            "root/sister domain as in-scope, or which of two materially different "
+            "paths to take. The run blocks until they answer, then you continue "
+            "with their decision. Do NOT use this for trivia, for progress "
+            "updates, or to ask permission for an ordinary next tool call — only "
+            "for a real fork that needs a human's call. Offer 2-4 concrete "
+            "options."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "The decision to put to the operator, in one or two sentences.",
+                },
+                "options": {
+                    "type": "array",
+                    "minItems": 2,
+                    "maxItems": 4,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "value": {"type": "string", "description": "Short machine value, e.g. 'proceed'."},
+                            "label": {"type": "string", "description": "Button text the operator sees."},
+                            "detail": {"type": "string", "description": "Optional one-line consequence of this choice."},
+                            "intent": {
+                                "type": "string",
+                                "enum": ["default", "primary", "danger"],
+                                "description": "Visual weight; use 'danger' for an exploitation/destructive go.",
+                            },
+                        },
+                        "required": ["value", "label"],
+                    },
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": ["gate", "scope", "choice"],
+                    "description": "'gate' for an exploitation/destructive gate, 'scope' for a scope-expansion decision, else 'choice'.",
+                },
+                "allow_freeform": {
+                    "type": "boolean",
+                    "description": "Allow the operator to type a custom answer in addition to the options.",
+                },
+            },
+            "required": ["question", "options"],
+        },
+    },
+}
+
+
 @dataclass
 class Event:
     type: str
@@ -218,6 +282,7 @@ class Runner:
         agent_prompt: str = "",
         tool_gateway: "platform_tools.EmbeddedToolGateway | None" = None,
         worker_factory: "Callable[..., Runner] | None" = None,
+        ask_handler: "Callable[[dict[str, Any]], Awaitable[str]] | None" = None,
         max_turns: int | None = None,
     ) -> None:
         self.config = config
@@ -233,6 +298,11 @@ class Runner:
         self._tool_filter = tool_filter
         self._tool_gateway = tool_gateway or platform_tools.EmbeddedToolGateway(api_base_url)
         self._worker_factory = worker_factory
+        # When set, the model is offered the `ask_operator` tool and this async
+        # callback is awaited to obtain the operator's answer. None (the default,
+        # for the CLI and all headless sub-agents) means the tool is never
+        # advertised, so nothing can block on an absent human.
+        self._ask_handler = ask_handler
         self._engagement_id = (engagement_id or "").strip()
         self._target = (target or "").strip()
         self._agent_prompt = agent_prompt
@@ -273,6 +343,8 @@ class Runner:
             schemas = [s for s in schemas if self._tool_filter(s["function"]["name"])]
         if self._allow_spawn:
             schemas.append(_SPAWN_TOOL_SCHEMA)
+        if self._ask_handler is not None:
+            schemas.append(_ASK_TOOL_SCHEMA)
         return schemas
 
     async def _complete_with_feedback(self, tool_schemas: list[dict[str, Any]]) -> AsyncIterator[Event]:
@@ -613,6 +685,8 @@ class Runner:
     ) -> str:
         if name == _SPAWN_TOOL_NAME:
             return await self._spawn_subagents(args.get("tasks") or [], event_queue=event_queue)
+        if name == _ASK_TOOL_NAME:
+            return await self._ask_operator(args, event_queue=event_queue)
         # Enforce the active mode's tool scope even if the model names a tool that
         # wasn't advertised — advertising-only scoping isn't real enforcement.
         if self._tool_filter is not None and not self._tool_filter(name):
@@ -621,6 +695,43 @@ class Runner:
                 "Use a tool this mode allows, or switch mode with /agent."
             )
         return await self._tool_gateway.call(name, args)
+
+    async def _ask_operator(
+        self, args: dict[str, Any], *, event_queue: "asyncio.Queue[Event] | None" = None
+    ) -> str:
+        """Put a bounded decision to the operator and block until they answer.
+
+        Generates the question id here so the `question` event (streamed to the
+        client) and the answer the caller's ``ask_handler`` resolves share one
+        id — the client answers that id, the handler's Future completes, and
+        this tool call returns the chosen answer into the ReAct loop. The
+        handler is transport-owned (the GUI/CLI foreground loop injects it), so
+        the loop itself stays backend-agnostic."""
+        if self._ask_handler is None:  # defensive: tool not advertised without a handler
+            return "ask_operator is unavailable in this run."
+        question = (args.get("question") or "").strip()
+        if not question:
+            return "ask_operator requires a 'question'."
+        options = _normalize_options(args.get("options") or [])
+        if len(options) < 2:
+            return "ask_operator requires 2-4 concrete options."
+        import uuid
+
+        record = {
+            "id": uuid.uuid4().hex[:12],
+            "text": question,
+            "options": options,
+            "kind": (args.get("kind") or "choice"),
+            "allow_freeform": bool(args.get("allow_freeform", False)),
+        }
+        if event_queue is not None:
+            await event_queue.put(Event("question", record))
+        answer = await self._ask_handler(record)
+        answer = (answer or "").strip() or "(no answer)"
+        return (
+            f"The operator answered: {answer!r}. Treat this as their decision and "
+            f"continue accordingly — do not ask the same question again."
+        )
 
     async def _worker_system_prompt(self, brief: str, scope: str, *, engagement_id: str = "") -> str:
         """A spawned worker's system prompt — plans/harness/08-skill-system-
@@ -713,6 +824,28 @@ class Runner:
         summaries = await asyncio.gather(*(_one(i + 1, t) for i, t in enumerate(tasks)))
         parts = [f"Worker {i + 1} ({t.get('scope') or t.get('task', '')[:40]}):\n{s}" for i, (t, s) in enumerate(zip(tasks, summaries))]
         return "\n\n---\n\n".join(parts)
+
+
+def _normalize_options(raw: list[Any]) -> list[dict[str, Any]]:
+    """Coerce model-supplied options into {value,label,detail?,intent?}, keeping
+    only well-formed ones, capped at 4."""
+    out: list[dict[str, Any]] = []
+    for item in raw[:4]:
+        if not isinstance(item, dict):
+            continue
+        value = str(item.get("value") or item.get("label") or "").strip()
+        label = str(item.get("label") or item.get("value") or "").strip()
+        if not value or not label:
+            continue
+        opt: dict[str, Any] = {"value": value, "label": label}
+        detail = str(item.get("detail") or "").strip()
+        if detail:
+            opt["detail"] = detail
+        intent = str(item.get("intent") or "").strip()
+        if intent in ("default", "primary", "danger"):
+            opt["intent"] = intent
+        out.append(opt)
+    return out
 
 
 def _tag_worker_event(worker_num: int, event: Event) -> Event:

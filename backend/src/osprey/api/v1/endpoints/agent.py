@@ -89,6 +89,53 @@ def pipeline_activity(engagement_id: str) -> dict[str, Any]:
     }
 
 
+class ChatRequest(BaseModel):
+    engagement_id: str
+    prompt: str
+
+
+@router.post("/chat", summary="Foreground operator chat — live SSE event stream")
+async def agent_chat(req: ChatRequest) -> EventSourceResponse:
+    """Run the one ReAct loop in the foreground for a GUI/CLI operator and stream
+    its events (assistant text, reasoning, tool_start/tool_end with full output,
+    interactive questions, done) as Server-Sent Events. The agent may pause with
+    an `ask_operator` question; answer it via POST /agent/question/{id}/answer to
+    resume the same open stream. Needs LLM_MODEL/LLM_API_KEY configured."""
+    from osprey.services.foreground_chat import stream_chat
+
+    async def event_generator() -> Any:
+        async for name, data in stream_chat(req.engagement_id, req.prompt):
+            yield {"event": name, "data": json.dumps(data)}
+
+    # ping keeps the stream alive through the long human-wait on a question.
+    return EventSourceResponse(event_generator(), ping=15)
+
+
+class AnswerRequest(BaseModel):
+    engagement_id: str = ""
+    answer: str
+
+
+@router.post("/question/{question_id}/answer", summary="Answer an interactive operator question")
+async def answer_question(question_id: str, req: AnswerRequest) -> dict[str, Any]:
+    from osprey.services import operator_prompts
+
+    result = operator_prompts.answer(question_id, req.answer)
+    if result is None:
+        return {"ok": False, "reason": "unknown or already-answered question"}
+    return {"ok": True, **result}
+
+
+@router.get("/questions/{engagement_id}", summary="List open interactive questions")
+def open_questions(engagement_id: str) -> dict[str, Any]:
+    from osprey.services import operator_prompts
+
+    return {
+        "engagement_id": engagement_id,
+        "questions": operator_prompts.list_open(engagement_id),
+    }
+
+
 @router.get("/status", summary="Get agent status")
 async def agent_status() -> AgentStatusResponse:
     llm_service = get_llm_service()
