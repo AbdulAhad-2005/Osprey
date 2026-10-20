@@ -92,7 +92,17 @@ wait_for_backend() {
   done
   printf '\n'
   warn "Backend did not respond within ${tries}s. It may still be starting."
-  warn "Inspect logs with:  docker compose logs -f backend"
+  # Most common first-run failure: an existing Postgres volume was initialized
+  # with a different password than DATABASE_URL now uses (e.g. an old .env that
+  # still had the <db-password> placeholder). The password baked into the volume
+  # can't be changed by env vars — the volume must be reset.
+  if command -v docker >/dev/null 2>&1 && docker compose logs backend 2>/dev/null | grep -qiE "password authentication failed|PasswordError|OperationalError.*password"; then
+    fail "Database password mismatch: the Postgres volume was created with a different password."
+    muted "Reset the database volume (this DELETES local DB data) and re-run the wizard:"
+    muted "    docker compose down -v  &&  bash scripts/install.sh"
+  else
+    warn "Inspect logs with:  docker compose logs -f backend"
+  fi
   return 1
 }
 
@@ -103,6 +113,34 @@ resolve_python_path() {
     command -v python3
   else
     printf 'python3'
+  fi
+}
+
+# The Osprey MCP server is a small local stdio bridge to the backend's HTTP API —
+# it needs its own Python deps (mcp, httpx) regardless of how the backend runs.
+# In Docker-only setups no .venv is ever created, so the MCP config would point at
+# a system Python without those deps and the harness launch dies with
+# "ModuleNotFoundError: No module named 'httpx'". Ensure a .venv that HAS the deps
+# so resolve_python_path returns a usable interpreter for the MCP command.
+ensure_mcp_python() {
+  local py="$ROOT_DIR/.venv/bin/python"
+  if [ -f "$py" ] && "$py" -c "import httpx, mcp" >/dev/null 2>&1; then
+    return 0  # already usable
+  fi
+  info "Preparing a local Python environment for the Osprey MCP bridge..."
+  if [ ! -f "$py" ]; then
+    if command -v python3 >/dev/null 2>&1; then
+      python3 -m venv "$ROOT_DIR/.venv" || { warn "Could not create .venv; MCP may fail to launch."; return 1; }
+    else
+      warn "python3 not found — cannot prepare the MCP environment. Install Python 3, then re-run."
+      return 1
+    fi
+  fi
+  "$py" -m pip install --upgrade pip --quiet >/dev/null 2>&1 || true
+  if "$py" -m pip install --quiet -r "$ROOT_DIR/platform-mcp/requirements.txt"; then
+    ok "MCP bridge dependencies installed into .venv (mcp, httpx)."
+  else
+    warn "Failed to install MCP deps into .venv; the harness launch may fail."
   fi
 }
 
@@ -167,6 +205,11 @@ case "$runtime_choice" in
     img_choice="${img_choice:-1}"
 
     env_set "KALI_CONTAINER" "osprey-kali"
+    # Keep the Postgres password and the DATABASE_URL password in lock-step —
+    # a stale .env may still carry the <db-password> placeholder, which would
+    # make the DB init with one password and the backend connect with another
+    # (503 Service Unavailable on first start).
+    env_set "POSTGRES_PASSWORD" "pentest"
     env_set "DATABASE_URL" "postgresql+psycopg://pentest:pentest@postgres:5432/pentest"
 
     if [ "$img_choice" = "2" ]; then
@@ -200,6 +243,7 @@ case "$runtime_choice" in
     if [ -z "$tools_cont" ]; then fail "Container name cannot be empty."; exit 1; fi
 
     env_set "KALI_CONTAINER" "$tools_cont"
+    env_set "POSTGRES_PASSWORD" "pentest"
     env_set "DATABASE_URL" "postgresql+psycopg://pentest:pentest@postgres:5432/pentest"
 
     info "Starting Postgres + Backend in Docker (targeting container '$tools_cont')..."
@@ -213,6 +257,7 @@ case "$runtime_choice" in
 
   3)
     require_docker || exit 1
+    env_set "POSTGRES_PASSWORD" "pentest"
     env_set "DATABASE_URL" "postgresql+psycopg://pentest:pentest@localhost:5432/pentest"
     env_set "KALI_CONTAINER" ""
 
@@ -412,6 +457,9 @@ if [ "$opt_keys" = "y" ] || [ "$opt_keys" = "Y" ]; then
 fi
 
 # ── Generate reference mcp-config.json ────────────────────────────────────────
+# Make sure the interpreter we're about to hand the harness actually has the MCP
+# deps (mcp, httpx) — otherwise the harness shows "Osprey MCP failed to start".
+ensure_mcp_python
 python_exe="$(resolve_python_path)"
 server_script="$ROOT_DIR/platform-mcp/server.py"
 

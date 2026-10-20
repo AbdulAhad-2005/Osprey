@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type MouseEvent } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { PanelLeftClose, Plus, Search, Target, Loader2, RefreshCw } from "lucide-react";
+import { PanelLeftClose, Plus, Search, Target, Loader2, RefreshCw, Settings, Trash2 } from "lucide-react";
 import { OspreyLogo } from "@/components/brand/OspreyLogo";
 import { useWorkspace } from "./WorkspaceProvider";
 import { cn } from "@/lib/cn";
+import { deleteEngagement } from "@/lib/api";
 import type { Engagement } from "@/lib/types";
 
 export function Sidebar() {
@@ -55,9 +56,9 @@ export function Sidebar() {
             <Plus size={14} strokeWidth={2.5} />
           </span>
           New engagement
-          <kbd className="ml-auto rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-ink-faint">
+          {/* <kbd className="ml-auto rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-ink-faint">
             ⌘N
-          </kbd>
+          </kbd> */}
         </button>
       </div>
 
@@ -111,7 +112,7 @@ export function Sidebar() {
         )}
       </nav>
 
-      {/* Footer: backend status */}
+      {/* Footer: backend status + settings */}
       <div className="flex items-center gap-2 border-t border-border px-4 py-2.5 text-[12px] text-ink-dim">
         <span
           className={cn(
@@ -120,32 +121,67 @@ export function Sidebar() {
           )}
         />
         {backendUp == null ? "Connecting…" : backendUp ? "Backend live" : "Backend offline"}
+        <Link href="/settings" className="btn-ghost ml-auto -mr-1 p-1" title="Settings" aria-label="Settings">
+          <Settings size={15} />
+        </Link>
       </div>
     </aside>
   );
 }
 
 function SidebarItem({ e, active }: { e: Engagement; active: boolean }) {
+  const { refresh } = useWorkspace();
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+
+  async function onDelete(ev: MouseEvent) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (busy) return;
+    const label = e.target || e.name || e.id;
+    if (!window.confirm(`Delete engagement "${label}" and all its findings, observations and history?\n\nThis cannot be undone.`)) return;
+    setBusy(true);
+    try {
+      await deleteEngagement(e.id);
+      if (active) router.push("/");
+      await refresh();
+    } catch (err) {
+      window.alert(`Could not delete: ${err instanceof Error ? err.message : "unknown error"}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <li>
-      <Link
-        href={`/engagement/${encodeURIComponent(e.id)}`}
+      <div
         className={cn(
-          "group flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] transition-colors",
+          "group relative flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] transition-colors",
           active ? "bg-surface-3 text-ink" : "text-ink-dim hover:bg-white/[0.04] hover:text-ink",
         )}
       >
-        <Target
-          size={14}
-          className={cn("flex-none", active ? "text-amber" : "text-ink-faint group-hover:text-ink-dim")}
-        />
-        <span className="min-w-0 flex-1 truncate font-medium">{e.target || e.name || e.id}</span>
+        <Link href={`/engagement/${encodeURIComponent(e.id)}`} className="flex min-w-0 flex-1 items-center gap-2.5">
+          <Target
+            size={14}
+            className={cn("flex-none", active ? "text-amber" : "text-ink-faint group-hover:text-ink-dim")}
+          />
+          <span className="min-w-0 flex-1 truncate font-medium">{e.target || e.name || e.id}</span>
+        </Link>
         {e.findings_count > 0 && (
-          <span className="rounded-full bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-ink-dim">
+          <span className="rounded-full bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-ink-dim group-hover:hidden">
             {e.findings_count}
           </span>
         )}
-      </Link>
+        <button
+          onClick={onDelete}
+          disabled={busy}
+          className="hidden flex-none text-ink-faint transition-colors hover:text-danger group-hover:block"
+          title="Delete engagement"
+          aria-label="Delete engagement"
+        >
+          {busy ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+        </button>
+      </div>
     </li>
   );
 }

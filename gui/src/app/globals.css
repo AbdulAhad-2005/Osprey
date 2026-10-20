@@ -6,6 +6,9 @@
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-serif: "Newsreader", ui-serif, Georgia, serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* Rounded geometric display face for the "osprey" wordmark — echoes the
+     brand lockup's rounded lowercase type. */
+  --font-display: "Quicksand", "Inter", ui-sans-serif, system-ui, sans-serif;
 }
 
 @layer base {

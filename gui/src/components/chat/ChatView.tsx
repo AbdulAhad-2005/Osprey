@@ -1,10 +1,13 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Eraser, FlaskConical } from "lucide-react";
+import { motion } from "framer-motion";
+import { Eraser, FlaskConical, Zap } from "lucide-react";
 import { useChat } from "@/hooks/useChat";
 import { useWorkspace } from "@/components/shell/WorkspaceProvider";
 import { clearConversation } from "@/lib/api";
+import { QUICK_INTENTS, kickoffPrompt } from "@/lib/intents";
+import { OspreyMark } from "@/components/brand/OspreyMark";
 import { cn } from "@/lib/cn";
 import { TurnView } from "./TurnView";
 import { Composer } from "./Composer";
@@ -17,9 +20,10 @@ export function ChatView({
   engagementId: string;
   initialPrompt?: string;
 }) {
-  const { backendUp } = useWorkspace();
+  const { backendUp, engagements } = useWorkspace();
   const [mock, setMock] = useState(false);
   const chat = useChat(engagementId, { mock });
+  const target = engagements.find((e) => e.id === engagementId)?.target;
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
@@ -75,7 +79,12 @@ export function ChatView({
       <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl px-4 py-6">
           {chat.turns.length === 0 ? (
-            <EmptyState mock={mock} />
+            <ChatLanding
+              mock={mock}
+              target={target}
+              disabled={!mock && backendUp === false}
+              onSend={chat.send}
+            />
           ) : (
             <div className="space-y-6">
               {chat.turns.map((t) => (
@@ -102,17 +111,78 @@ export function ChatView({
   );
 }
 
-function EmptyState({ mock }: { mock: boolean }) {
+function ChatLanding({
+  mock,
+  target,
+  disabled,
+  onSend,
+}: {
+  mock: boolean;
+  target?: string;
+  disabled: boolean;
+  onSend: (prompt: string) => void;
+}) {
   return (
-    <div className="flex flex-col items-center justify-center py-24 text-center">
-      <p className="text-[15px] text-ink-dim">
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4 }}
+      className="flex flex-col items-center py-16 text-center"
+    >
+      <motion.div
+        animate={{ y: [0, -5, 0] }}
+        transition={{ duration: 4.5, repeat: Infinity, ease: "easeInOut" }}
+        className="mb-4"
+      >
+        <OspreyMark size={52} />
+      </motion.div>
+      <h2 className="font-serif text-[22px] font-semibold tracking-tight text-ink">
+        {mock ? "Demo mode" : target ? "Engagement bound" : "Ready"}
+      </h2>
+      <p className="mt-1.5 max-w-md text-[13.5px] text-ink-dim">
         {mock
-          ? "Demo mode — send anything to watch a scripted recon run."
-          : "Engagement bound. Tell Osprey what to do."}
+          ? "Send anything to watch a scripted recon run — no model key needed."
+          : target
+            ? <>Osprey is pointed at <span className="font-mono text-ink">{target}</span>. Start the hunt, or tell it exactly what to do.</>
+            : "Tell Osprey what to do, or start autonomous recon."}
       </p>
-      <p className="mt-1.5 text-[13px] text-ink-faint">
-        e.g. “map the attack surface”, “find exposed services”, “what did we learn so far?”
+
+      {/* Primary one-click start — no prompt required */}
+      <button
+        onClick={() => onSend(kickoffPrompt(target))}
+        disabled={disabled}
+        className="btn-primary mt-6 gap-2 disabled:opacity-50"
+      >
+        <Zap size={15} /> Start autonomous recon
+      </button>
+      <p className="mt-2 text-[11.5px] text-ink-faint">
+        Recon first · widens the surface · pauses before anything intrusive
       </p>
-    </div>
+
+      {/* Suggestion chips */}
+      <div className="mt-7 w-full max-w-xl">
+        <div className="mb-2 text-[11px] font-medium uppercase tracking-wider text-ink-faint">
+          Or start from a goal
+        </div>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {QUICK_INTENTS.map((q) => (
+            <button
+              key={q.label}
+              onClick={() => onSend(q.prompt)}
+              disabled={disabled}
+              className="group flex items-start gap-2.5 rounded-xl border border-border bg-surface/50 px-3.5 py-3 text-left transition-colors hover:border-border-strong hover:bg-surface-2 disabled:opacity-50"
+            >
+              <span className="mt-0.5 grid h-6 w-6 flex-none place-items-center rounded-md bg-amber/12 text-amber transition-colors group-hover:bg-amber/20">
+                <q.icon size={13.5} />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-[13px] font-medium text-ink">{q.label}</span>
+                <span className="mt-0.5 block text-[11.5px] leading-snug text-ink-faint">{q.prompt}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </motion.div>
   );
 }

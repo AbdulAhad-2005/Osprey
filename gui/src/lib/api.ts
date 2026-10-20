@@ -70,6 +70,72 @@ export async function createEngagement(target: string, name?: string): Promise<E
   });
 }
 
+export async function deleteEngagement(id: string): Promise<void> {
+  const res = await fetch(url(`/api/v1/engagements/${encodeURIComponent(id)}`), { method: "DELETE" });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new ApiError(res.status, `${res.status} — ${body.slice(0, 200)}`);
+  }
+}
+
+/* --- Settings: LLM config + models --------------------------------------- */
+
+export interface LlmConfig {
+  model: string;
+  has_api_key: boolean;
+  has_custom_base: boolean;
+  max_tokens: number;
+  temperature: number;
+  max_agent_turns: number;
+}
+
+export interface ModelInfo {
+  name: string;
+  provider: string;
+  description: string;
+  active: boolean;
+}
+
+export interface LlmConfigResult {
+  status: string;
+  model: string;
+  has_api_key: boolean;
+  has_custom_base?: boolean;
+  usable: boolean;
+  reason: string;
+}
+
+export async function getConfig(): Promise<LlmConfig> {
+  return getJSON("/api/v1/config/");
+}
+
+export async function setLlmConfig(body: {
+  model?: string;
+  api_key?: string;
+  api_base?: string;
+}): Promise<LlmConfigResult> {
+  return getJSON("/api/v1/config/llm", { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function reloadConfig(): Promise<{ status: string; model: string }> {
+  return getJSON("/api/v1/config/reload", { method: "POST" });
+}
+
+export async function listModels(): Promise<ModelInfo[]> {
+  const data = await getJSON<ModelInfo[] | { models?: ModelInfo[] }>("/api/v1/models/");
+  return Array.isArray(data) ? data : (data.models ?? []);
+}
+
+export interface AgentStatus {
+  model: string;
+  model_active: boolean;
+  tools_available: number;
+}
+
+export async function getAgentStatus(): Promise<AgentStatus> {
+  return getJSON("/api/v1/agent/status");
+}
+
 /* --- Conversation history ------------------------------------------------ */
 
 export interface StoredMessage {
@@ -144,6 +210,69 @@ export function reportMarkdownUrl(engagementId: string): string {
 
 /* --- Interactive questions ----------------------------------------------- */
 
+/* --- Run status / stop / live re-attach ---------------------------------- *
+ * Chat runs execute in the backend as a background task (they survive a
+ * refresh). A reconnecting client checks run-status and, if a run is live,
+ * re-attaches to the shared event stream to show it. */
+
+export async function getRunStatus(engagementId: string): Promise<boolean> {
+  try {
+    const d = await getJSON<{ active?: boolean }>(
+      `/api/v1/agent/run-status/${encodeURIComponent(engagementId)}`,
+    );
+    return !!d.active;
+  } catch {
+    return false;
+  }
+}
+
+export async function stopRun(engagementId: string): Promise<void> {
+  await fetch(url(`/api/v1/agent/stop/${encodeURIComponent(engagementId)}`), { method: "POST" }).catch(
+    () => {},
+  );
+}
+
+/** Re-attach to an in-flight run's live events (read-only; no new prompt). */
+export async function* attachChat(
+  engagementId: string,
+  signal?: AbortSignal,
+): AsyncGenerator<ChatEvent> {
+  // /stream/events is the Next streaming route handler over the backend event
+  // bus. replay=0 → only live events from the moment we attach (no stale
+  // terminal markers from a prior run).
+  const res = await fetch(`/stream/events/${encodeURIComponent(engagementId)}?replay=0`, {
+    headers: { accept: "text/event-stream" },
+    signal,
+  });
+  if (!res.ok || !res.body) return;
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let sep: number;
+      while ((sep = buffer.indexOf("\n\n")) !== -1) {
+        const frame = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        const parsed = parseFrame(frame);
+        if (!parsed) continue;
+        yield parsed;
+        // The engagement event stream is persistent (it never closes on its own
+        // when a run ends), so stop consuming once this run hits a terminal
+        // event — otherwise the client would hang in a "running" state forever.
+        if (parsed.event === "done" || parsed.event === "error" || parsed.event === "cancelled") {
+          return;
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 export async function answerQuestion(
   engagementId: string,
   questionId: string,
@@ -171,7 +300,11 @@ export async function* streamChat(
   req: ChatRequest,
   signal?: AbortSignal,
 ): AsyncGenerator<ChatEvent> {
-  const res = await fetch(url("/api/v1/agent/chat"), {
+  // Note: this hits the Next streaming Route Handler at /stream/chat (same
+  // origin, NOT the API_BASE-prefixed backend path) — the next.config rewrite
+  // proxy buffers SSE, so the chat stream is routed around it. See
+  // src/app/stream/chat/route.ts.
+  const res = await fetch("/stream/chat", {
     method: "POST",
     headers: { "content-type": "application/json", accept: "text/event-stream" },
     body: JSON.stringify(req),

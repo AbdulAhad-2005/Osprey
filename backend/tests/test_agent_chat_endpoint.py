@@ -30,7 +30,10 @@ def test_chat_without_model_streams_error_then_done(client, monkeypatch):
     body = r.text
     assert "event: error" in body
     assert "event: done" in body
-    assert "No model configured" in body
+    # The error points the operator at a fix (Settings / LLM_MODEL) rather than
+    # hanging silently on a chat with no usable model.
+    assert "No usable model is configured" in body
+    assert "Settings" in body
 
 
 def test_chat_requires_engagement_and_prompt(client, monkeypatch):

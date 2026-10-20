@@ -14,6 +14,9 @@
   "dependencies": {
     "clsx": "2.1.1",
     "cytoscape": "3.30.4",
+    "cytoscape-dagre": "2.5.0",
+    "cytoscape-fcose": "2.2.0",
+    "dagre": "0.8.5",
     "framer-motion": "11.15.0",
     "lucide-react": "0.469.0",
     "next": "^15.5.28",

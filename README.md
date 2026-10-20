@@ -8,6 +8,8 @@ backend, an MCP gateway, and an interactive Python CLI.
 
 - `backend/` — FastAPI control plane, API endpoints, database models, workflow logic
 - `cli/` — Osprey CLI tool (prompt_toolkit + Rich) for interacting with the platform
+- `gui/` — Operator Console: a Next.js web dashboard (live chat, attack-surface graph, findings, reports)
+- `agent_core/` — the shared ReAct agent loop driven by both the CLI and the backend
 - `mcp-servers/` — Capability-based tool adapters for recon, osint, network, web, vuln, …
 - `platform-mcp/` — MCP gateway server connecting AI clients to the platform
 - `docker-compose.yml` — Postgres + (optional) Kali Linux tools + FastAPI backend
@@ -230,6 +232,44 @@ execution mode is active (Kali container or host). Surface it with:
 
 The agent plans around what's present, so a partial toolset still works — you just
 get fewer techniques where a tool is missing.
+
+## Run the Operator Console (GUI)
+
+`gui/` is a **Next.js web dashboard** — the same engagement you drive from the CLI,
+in the browser: a live streaming chat with proper tool-call rendering and an
+interactive exploitation gate, an attack-surface **graph**, a **findings** table, and
+a standards-aligned **report** with Markdown/PDF export. It is a pure client of the
+FastAPI backend (no logic of its own) and talks to the same REST + SSE surface the CLI
+and MCP gateway use.
+
+**Prerequisites:** the backend running (default `http://localhost:9000`), and
+[Node.js](https://nodejs.org) 18.18+ (for Next.js 15).
+
+```bash
+cd gui
+npm install
+npm run dev            # http://localhost:3100
+```
+
+Then open **http://localhost:3100**, type a target, and start. Notes:
+
+- **Set your model in-app.** Click the ⚙ (sidebar footer) → **Settings** to pick the
+  LLM provider/model and paste an API key — no `.env` editing needed. A chat that
+  stalls is almost always a mistyped or rate-limited model id; Settings shows whether
+  the model is **usable**.
+- **No prompt required.** After a target is bound, click **Start autonomous recon** (or
+  a suggestion chip) — Osprey generates a recon-first plan and pauses before anything
+  intrusive.
+- **Demo mode** (toggle in the chat) replays a scripted run with no backend/key, so you
+  can see the interface immediately.
+- The dev server proxies `/api/*` to the backend; the chat/event **streams** are served
+  by streaming route handlers under `/stream/*` (Next's rewrite proxy buffers SSE, so
+  routing the live stream around it is what keeps events flowing in real time).
+- `scripts/setup.*` can install the GUI deps for you — pass `--gui` (bash) or
+  `-Gui` (PowerShell).
+
+For a production build: `npm run build && npm start`. More detail in
+[`gui/README.md`](gui/README.md).
 
 ## Adding your own skills (drop-in, zero code)
 

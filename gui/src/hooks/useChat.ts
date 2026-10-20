@@ -2,11 +2,19 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatEvent, ChatTurn } from "@/lib/types";
-import { answerQuestion as apiAnswer, getConversation, streamChat } from "@/lib/api";
+import {
+  answerQuestion as apiAnswer,
+  attachChat,
+  getConversation,
+  getRunStatus,
+  stopRun,
+  streamChat,
+} from "@/lib/api";
 import { applyEvent, answerQuestionBlock, uid, userTurn } from "@/lib/chatReducer";
 
 export type ChatActivity =
   | { kind: "idle" }
+  | { kind: "preparing"; message: string }
   | { kind: "thinking" }
   | { kind: "waiting"; elapsed: number }
   | { kind: "working" }
@@ -30,38 +38,81 @@ export function useChat(engagementId: string, opts?: { mock?: boolean }): UseCha
   const mock = opts?.mock ?? false;
 
   // Load persisted conversation (text-only; live turns carry full tool detail).
+  const hydrate = useCallback(async () => {
+    const messages = await getConversation(engagementId);
+    setTurns(
+      messages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((m) =>
+          m.role === "user"
+            ? userTurn(m.content)
+            : {
+                id: uid("a"),
+                role: "assistant" as const,
+                blocks: m.content.trim()
+                  ? [{ kind: "text" as const, id: uid("x"), content: m.content }]
+                  : [],
+              },
+        ),
+    );
+  }, [engagementId]);
+
+  // Shared consumer for both a freshly-sent stream and a live re-attach.
+  const pump = useCallback(async (source: AsyncGenerator<ChatEvent>, onEnd?: () => void) => {
+    try {
+      for await (const ev of source) {
+        applyActivity(ev, setActivity);
+        if (foldsIntoTurns(ev)) setTurns((prev) => applyEvent(prev, ev));
+      }
+    } catch (e) {
+      if ((e as Error)?.name !== "AbortError") {
+        const raw = e instanceof Error ? e.message : "stream failed";
+        const message = /fetch|network|stream|load failed|Failed to fetch/i.test(raw)
+          ? "Connection to Osprey was interrupted. The run keeps going on the server — reopen this engagement to see it."
+          : raw;
+        setActivity({ kind: "error", message });
+        setTurns((prev) => applyEvent(prev, { event: "error", data: { message } }));
+      }
+    } finally {
+      setStreaming(false);
+      setActivity((a) => (a.kind === "error" ? a : { kind: "idle" }));
+      setTurns((prev) => applyEvent(prev, { event: "done", data: { content: "" } }));
+      abortRef.current = null;
+      onEnd?.();
+    }
+  }, []);
+
+  // On mount / engagement change: load history, then — if a run is still going
+  // on the server (a long assessment the user navigated away from, or a refresh
+  // mid-run) — re-attach to its live event stream instead of showing a dead chat.
   useEffect(() => {
     let cancelled = false;
     if (!engagementId || mock) {
       setTurns([]);
       return;
     }
-    getConversation(engagementId)
-      .then((messages) => {
-        if (cancelled) return;
-        setTurns(
-          messages
-            .filter((m) => m.role === "user" || m.role === "assistant")
-            .map((m) =>
-              m.role === "user"
-                ? userTurn(m.content)
-                : {
-                    id: uid("a"),
-                    role: "assistant" as const,
-                    blocks: m.content.trim()
-                      ? [{ kind: "text" as const, id: uid("x"), content: m.content }]
-                      : [],
-                  },
-            ),
-        );
-      })
-      .catch(() => {
+    (async () => {
+      try {
+        await hydrate();
+      } catch {
         /* no history / backend down — start clean */
+      }
+      if (cancelled) return;
+      const active = await getRunStatus(engagementId);
+      if (cancelled || !active) return;
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
+      setStreaming(true);
+      setActivity({ kind: "working" });
+      await pump(attachChat(engagementId, ctrl.signal), () => {
+        if (!cancelled) void hydrate().catch(() => {});
       });
+    })();
     return () => {
       cancelled = true;
+      abortRef.current?.abort();
     };
-  }, [engagementId, mock]);
+  }, [engagementId, mock, hydrate, pump]);
 
   const runStream = useCallback(
     async (prompt: string) => {
@@ -69,35 +120,12 @@ export function useChat(engagementId: string, opts?: { mock?: boolean }): UseCha
       abortRef.current = ctrl;
       setStreaming(true);
       setActivity({ kind: "thinking" });
-      try {
-        const source = mock ? mockStream(prompt) : streamChat({ engagement_id: engagementId, prompt }, ctrl.signal);
-        for await (const ev of source) {
-          applyActivity(ev, setActivity);
-          const folded = foldsIntoTurns(ev);
-          if (folded) setTurns((prev) => applyEvent(prev, ev));
-        }
-      } catch (e) {
-        if ((e as Error)?.name !== "AbortError") {
-          // A transport drop (vs. an explicit backend error event) — keep it
-          // calm and non-destructive: the partial turn stays, and durable
-          // findings are already saved server-side.
-          const raw = e instanceof Error ? e.message : "stream failed";
-          const message = /fetch|network|stream|load failed|Failed to fetch/i.test(raw)
-            ? "Connection to Osprey was interrupted. Any findings so far are saved — send another message to continue."
-            : raw;
-          setActivity({ kind: "error", message });
-          setTurns((prev) => applyEvent(prev, { event: "error", data: { message } }));
-        }
-      } finally {
-        setStreaming(false);
-        setActivity((a) => (a.kind === "error" ? a : { kind: "idle" }));
-        // Never leave an assistant turn stuck in the streaming state if the
-        // stream ended without a terminal event (abnormal close / cancel).
-        setTurns((prev) => applyEvent(prev, { event: "done", data: { content: "" } }));
-        abortRef.current = null;
-      }
+      const source = mock
+        ? mockStream(prompt)
+        : streamChat({ engagement_id: engagementId, prompt }, ctrl.signal);
+      await pump(source);
     },
-    [engagementId, mock],
+    [engagementId, mock, pump],
   );
 
   const send = useCallback(
@@ -120,9 +148,12 @@ export function useChat(engagementId: string, opts?: { mock?: boolean }): UseCha
 
   const stop = useCallback(() => {
     abortRef.current?.abort();
+    // The run lives on the server (background task); abort only drops our stream.
+    // Tell the backend to actually cancel it.
+    if (!mock) void stopRun(engagementId);
     setStreaming(false);
     setActivity({ kind: "idle" });
-  }, []);
+  }, [engagementId, mock]);
 
   const clear = useCallback(() => {
     stop();
@@ -133,11 +164,16 @@ export function useChat(engagementId: string, opts?: { mock?: boolean }): UseCha
 }
 
 function foldsIntoTurns(ev: ChatEvent): boolean {
-  return !["llm_call_start", "llm_still_waiting", "compaction", "message_start"].includes(ev.event);
+  return !["llm_call_start", "llm_still_waiting", "compaction", "message_start", "status", "run_start"].includes(
+    ev.event,
+  );
 }
 
 function applyActivity(ev: ChatEvent, set: (a: ChatActivity) => void) {
   switch (ev.event) {
+    case "status":
+      set({ kind: "preparing", message: ev.data.message });
+      break;
     case "llm_call_start":
       set({ kind: "thinking" });
       break;

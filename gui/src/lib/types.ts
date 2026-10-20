@@ -174,6 +174,7 @@ export interface OperatorQuestion {
 
 export type ChatEvent =
   | { event: "message_start"; data: { turn_id: string } }
+  | { event: "status"; data: { stage: string; message: string } }
   | { event: "llm_call_start"; data: Record<string, never> }
   | { event: "llm_still_waiting"; data: { elapsed_seconds: number } }
   | { event: "thinking"; data: { content: string } }

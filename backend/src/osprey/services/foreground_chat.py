@@ -28,6 +28,13 @@ from typing import TYPE_CHECKING, Any
 from osprey.services import operator_prompts
 from osprey.services.agent_common import api_base_url, resolve_model_config
 from osprey.services.conversation_store import append_message, get_history
+from osprey.services.llm_service import llm_configured, llm_configured_reason
+
+# System-prompt preparation (a context-packet tool call) runs before the ReAct
+# loop emits anything; tick progress to the UI this often, and give up after the
+# cap so a hung backend surfaces an error instead of an endless spinner.
+_PREP_TICK_SECONDS = 3.0
+_PREP_MAX_SECONDS = 60.0
 
 if TYPE_CHECKING:
     from agent_core.loop import Runner
@@ -137,10 +144,105 @@ def _get_session(engagement_id: str, config, api_base: str) -> ChatSession:
     return session
 
 
+# One background run per engagement. The agent loop runs here as a task that
+# publishes every event to the shared event bus — NOT tied to the SSE client's
+# connection. So a refresh / navigate-away no longer kills a long assessment, and
+# any client (the original, or a reconnecting one) sees the run by subscribing to
+# the bus. One run per engagement; a second prompt attaches instead of blocking.
+_active_runs: dict[str, "asyncio.Task[None]"] = {}
+
+
+def run_active(engagement_id: str) -> bool:
+    """True when a background run is in flight for this engagement."""
+    task = _active_runs.get((engagement_id or "").strip())
+    return bool(task) and not task.done()
+
+
+def stop_run(engagement_id: str) -> bool:
+    """Cancel the in-flight run for this engagement (the Stop button). Returns
+    whether a run was actually cancelled."""
+    task = _active_runs.get((engagement_id or "").strip())
+    if task and not task.done():
+        task.cancel()
+        return True
+    return False
+
+
+async def _drive_run(eid: str, prompt: str, config) -> None:
+    """Drive the agent loop for one prompt, publishing every event to the shared
+    event bus and persisting the assistant reply. Runs as a background task so it
+    survives the originating client's disconnect; clients view it by subscribing
+    to the bus (``event_bus.subscribe``). Never raises out (cooperative cancel and
+    errors both become terminal bus events) so the task always cleans up."""
+    from agent_core.context import build_system_prompt
+    from osprey.services import event_bus
+
+    def emit(name: str, data: dict[str, Any]) -> None:
+        event_bus.publish(eid, name, data, source="commander")
+
+    session = _get_session(eid, config, api_base_url())
+    await session.lock.acquire()
+    final_text = ""
+    persisted = False
+    try:
+        append_message(eid, "user", prompt)
+        emit("run_start", {})
+        emit("status", {"stage": "preparing", "message": "Preparing engagement context…"})
+        prompt_task = asyncio.ensure_future(
+            build_system_prompt(eid, tool_caller=session.gateway.call)
+        )
+        waited = 0.0
+        while not prompt_task.done():
+            await asyncio.wait({prompt_task}, timeout=_PREP_TICK_SECONDS)
+            if prompt_task.done():
+                break
+            waited += _PREP_TICK_SECONDS
+            if waited >= _PREP_MAX_SECONDS:
+                prompt_task.cancel()
+                raise TimeoutError(
+                    f"Preparing engagement context timed out after {int(waited)}s "
+                    "(the backend context call did not return). Check the backend logs."
+                )
+            emit("status", {"stage": "preparing", "message": f"Preparing engagement context… ({int(waited)}s)"})
+        system_prompt = prompt_task.result()
+
+        async for ev in session.runner.run(prompt, system_prompt=system_prompt):
+            name, data = _translate(ev)
+            if name is None:
+                continue
+            if ev.type in ("assistant_text", "done"):
+                final_text = data.get("content", "") or final_text
+            emit(name, data)
+        if final_text and not final_text.startswith("(stopped:"):
+            append_message(eid, "assistant", final_text)
+            persisted = True
+    except asyncio.CancelledError:
+        # Explicit Stop. Keep any partial reply, then close the turn cleanly.
+        if final_text and not persisted and not final_text.startswith("(stopped:"):
+            append_message(eid, "assistant", final_text)
+            persisted = True
+        emit("cancelled", {"findings": ""})
+        emit("done", {"content": "(stopped)"})
+    except Exception as exc:  # noqa: BLE001 — never let the task crash
+        logger.exception("foreground chat error engagement=%s", eid)
+        if final_text and not persisted and not final_text.startswith("(stopped:"):
+            append_message(eid, "assistant", final_text)
+            persisted = True
+        emit("error", {"message": f"Chat loop error: {exc}"})
+        emit("done", {"content": ""})
+    finally:
+        operator_prompts.cancel_for_engagement(eid, reason="(run ended)")
+        session.lock.release()
+        _active_runs.pop(eid, None)
+
+
 async def stream_chat(engagement_id: str, prompt: str) -> AsyncIterator[tuple[str, dict[str, Any]]]:
-    """Yield (event_name, data) pairs for the SSE endpoint. Never raises into the
-    response — a failure becomes an ``error`` + ``done`` so the UI always closes
-    the turn cleanly."""
+    """Yield (event_name, data) pairs for the SSE endpoint. Starts a background
+    run if none is active for this engagement (otherwise attaches to the one in
+    flight), then streams the engagement's event bus to this client. The client
+    disconnecting does NOT stop the run — it keeps going on the bus."""
+    from osprey.services import event_bus
+
     eid = (engagement_id or "").strip()
     prompt = (prompt or "").strip()
     if not eid or not prompt:
@@ -148,45 +250,50 @@ async def stream_chat(engagement_id: str, prompt: str) -> AsyncIterator[tuple[st
         yield ("done", {"content": ""})
         return
 
+    # Pre-flight the model *before* any slow work so a missing/undialable model
+    # fails in under a second with a clear, actionable message (pointing at the
+    # Settings surface) instead of a silent multi-minute spinner.
     config = resolve_model_config()
-    if config is None:
+    if config is None or not llm_configured():
+        reason = llm_configured_reason() if config is not None else ""
+        detail = f" ({reason})" if reason else ""
         msg = (
-            "No model configured. Set LLM_MODEL and LLM_API_KEY in the project .env "
-            "(any LiteLLM provider), then try again. You can also use Demo mode to "
-            "preview the interface without a key."
+            f"No usable model is configured{detail}. Open Settings (or set LLM_MODEL and "
+            "LLM_API_KEY in the project .env — any LiteLLM provider) and try again. "
+            "Demo mode previews the interface without a key."
         )
         yield ("error", {"message": msg})
         yield ("done", {"content": ""})
         return
 
-    from agent_core.context import build_system_prompt
+    if run_active(eid):
+        # A run is already in flight — don't start a second one (that would block
+        # on the per-engagement lock, which is what made a follow-up message hang
+        # silently forever). Attach to the live activity instead.
+        yield (
+            "status",
+            {
+                "stage": "attached",
+                "message": "A run is already in progress for this engagement — showing its live activity. Your new message wasn't sent; wait for the run to finish or Stop it.",
+            },
+        )
+    else:
+        # ensure_future schedules the task but doesn't run it until we await below
+        # (inside subscribe) — by then the bus queue is registered, so the client
+        # misses none of the run's events even with replay=0.
+        _active_runs[eid] = asyncio.ensure_future(_drive_run(eid, prompt, config))
 
-    session = _get_session(eid, config, api_base_url())
-    await session.lock.acquire()
     try:
-        runner = session.runner
-        append_message(eid, "user", prompt)
-        system_prompt = await build_system_prompt(eid, tool_caller=session.gateway.call)
-
-        final_text = ""
-        async for ev in runner.run(prompt, system_prompt=system_prompt):
-            name, data = _translate(ev)
-            if name is None:
-                continue
-            if ev.type == "assistant_text":
-                final_text = data.get("content", "") or final_text
-            elif ev.type == "done":
-                final_text = data.get("content", "") or final_text
-            yield (name, data)
-        if final_text and not final_text.startswith("(stopped:"):
-            append_message(eid, "assistant", final_text)
-    except Exception as exc:  # noqa: BLE001 — never crash the response
-        logger.exception("foreground chat error engagement=%s", eid)
-        yield ("error", {"message": f"Chat loop error: {exc}"})
-        yield ("done", {"content": ""})
-    finally:
-        operator_prompts.cancel_for_engagement(eid, reason="(run ended)")
-        session.lock.release()
+        async for record in event_bus.subscribe(eid, replay=0):
+            name = record["event"]
+            if name == "run_start":
+                continue  # internal boundary marker; not a UI event
+            yield (name, record["data"])
+            if name in ("done", "error", "cancelled"):
+                break
+    except (asyncio.CancelledError, GeneratorExit):
+        # Client went away. The background run keeps going; just stop streaming.
+        raise
 
 
 def _translate(ev) -> tuple[str | None, dict[str, Any]]:

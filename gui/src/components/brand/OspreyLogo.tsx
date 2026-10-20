@@ -13,11 +13,11 @@ export function OspreyWordmark({
   className?: string;
   size?: "sm" | "md" | "lg";
 }) {
-  const scale = size === "sm" ? "text-[17px]" : size === "lg" ? "text-[26px]" : "text-[21px]";
+  const scale = size === "sm" ? "text-[18px]" : size === "lg" ? "text-[27px]" : "text-[22px]";
   return (
     <span
       className={clsx(
-        "font-serif font-semibold lowercase tracking-[-0.02em] text-ink leading-none",
+        "font-display font-bold lowercase tracking-[-0.01em] text-ink leading-none",
         scale,
         className,
       )}

@@ -20,8 +20,13 @@ same REST surface the CLI and MCP gateway already use.
                                                         └──────────────────────────┘
 ```
 
-- **Chat** → `POST /api/v1/agent/chat` streams `thinking` / `tool_start` /
-  `tool_end` / `question` / `assistant` / `done` as Server-Sent Events.
+- **Chat** → `POST /stream/chat` (a Next streaming Route Handler that proxies the
+  backend's `POST /api/v1/agent/chat`) streams `status` / `thinking` / `tool_start` /
+  `tool_end` / `question` / `assistant` / `done` as Server-Sent Events. The chat and
+  live-event streams go through `/stream/*` route handlers rather than the
+  `next.config` rewrite **because the rewrite proxy buffers SSE** — buffered events
+  never reach the browser until a run ends (a chat stuck on "Thinking" showing
+  nothing). The route handlers pump the upstream body through unbuffered.
 - **Interactive questions** → the agent's `ask_operator` tool emits a `question`
   event; the UI renders option chips; `POST /api/v1/agent/question/{id}/answer`
   resumes the same open stream. A `gate` question can flip the engagement's
@@ -46,8 +51,14 @@ Then open http://localhost:3100.
 - **Demo mode** (toggle in the chat top bar) replays a scripted run — tool
   cards, findings, and the exploitation gate — with **no backend or LLM key**,
   so you can see the interface immediately.
-- Without a configured model, a real chat returns a clear "set LLM_MODEL…"
-  message instead of failing.
+- **Settings** (⚙ in the sidebar footer) picks the LLM provider/model and stores
+  an API key — no `.env` editing. It shows whether the model is **usable**; a
+  mistyped or rate-limited model id is the usual cause of a stalled chat.
+- **No prompt needed:** after a target binds, **Start autonomous recon** (or a
+  suggestion chip) kicks off a recon-first plan that pauses before anything
+  intrusive.
+- Without a usable model, a real chat returns a clear error pointing at Settings
+  instead of hanging.
 
 ## Build / check
 

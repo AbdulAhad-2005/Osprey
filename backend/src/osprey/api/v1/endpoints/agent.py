@@ -42,7 +42,7 @@ def clear_conversation(engagement_id: str) -> dict[str, Any]:
 
 
 @router.get("/events/{engagement_id}", summary="Persistent live activity stream for an engagement")
-async def agent_events_stream(engagement_id: str) -> EventSourceResponse:
+async def agent_events_stream(engagement_id: str, replay: int = 30) -> EventSourceResponse:
     """The one live stream for everything happening on this engagement — the
     foreground driver activity and every spawned phase agent's tool calls,
     correctly attributed via `source`. A client
@@ -54,7 +54,7 @@ async def agent_events_stream(engagement_id: str) -> EventSourceResponse:
     from osprey.services import event_bus
 
     async def event_generator() -> Any:
-        async for record in event_bus.subscribe(engagement_id, replay=30):
+        async for record in event_bus.subscribe(engagement_id, replay=max(0, replay)):
             yield {
                 "event": record["event"],
                 "data": json.dumps({**record["data"], "source": record["source"], "ts": record["ts"]}),
@@ -114,6 +114,24 @@ async def agent_chat(req: ChatRequest) -> EventSourceResponse:
 class AnswerRequest(BaseModel):
     engagement_id: str = ""
     answer: str
+
+
+@router.get("/run-status/{engagement_id}", summary="Whether a background chat run is in flight")
+def run_status(engagement_id: str) -> dict[str, Any]:
+    """Lets a (re)connecting client know a run is still going for this engagement
+    so it can re-attach to the live stream instead of showing a dead chat."""
+    from osprey.services.foreground_chat import run_active
+
+    return {"engagement_id": engagement_id, "active": run_active(engagement_id)}
+
+
+@router.post("/stop/{engagement_id}", summary="Stop the in-flight chat run")
+def stop_run(engagement_id: str) -> dict[str, Any]:
+    """Cancel the background run for this engagement (the Stop button). The run's
+    cleanup publishes a terminal ``cancelled``/``done`` onto the event bus."""
+    from osprey.services.foreground_chat import stop_run as _stop
+
+    return {"engagement_id": engagement_id, "stopped": _stop(engagement_id)}
 
 
 @router.post("/question/{question_id}/answer", summary="Answer an interactive operator question")

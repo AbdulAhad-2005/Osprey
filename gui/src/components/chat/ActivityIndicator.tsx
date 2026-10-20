@@ -6,11 +6,13 @@ import type { ChatActivity } from "@/hooks/useChat";
 
 export function ActivityIndicator({ activity }: { activity: ChatActivity }) {
   const label =
-    activity.kind === "waiting"
-      ? `Still working with the model · ${Math.round(activity.elapsed)}s`
-      : activity.kind === "working"
-        ? "Running tools"
-        : "Thinking";
+    activity.kind === "preparing"
+      ? activity.message
+      : activity.kind === "waiting"
+        ? `Still working with the model · ${Math.round(activity.elapsed)}s`
+        : activity.kind === "working"
+          ? "Running tools"
+          : "Thinking";
 
   return (
     <div className="flex items-center gap-2.5 py-1">

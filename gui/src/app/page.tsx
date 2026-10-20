@@ -3,10 +3,10 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { ArrowUp, Loader2, Radar, Globe, ShieldAlert, Fingerprint } from "lucide-react";
+import { ArrowUp, Loader2 } from "lucide-react";
 import { useWorkspace } from "@/components/shell/WorkspaceProvider";
-import { OspreyMark } from "@/components/brand/OspreyMark";
 import { resolveEngagement } from "@/lib/api";
+import { QUICK_INTENTS as QUICK } from "@/lib/intents";
 import { cn } from "@/lib/cn";
 
 function greeting(): string {
@@ -16,13 +16,6 @@ function greeting(): string {
   if (h < 18) return "Good afternoon";
   return "Good evening";
 }
-
-const QUICK = [
-  { icon: Radar, label: "Map the attack surface", prompt: "Map the full external attack surface — subdomains, live hosts, ports, services, and tech stack." },
-  { icon: Globe, label: "Recon + OSINT", prompt: "Run recon and passive OSINT: subdomains, sister domains, emails, people, and exposed infrastructure." },
-  { icon: ShieldAlert, label: "Full assessment", prompt: "Run a full assessment: recon, then vulnerability discovery against the live surface. Pause before any exploitation." },
-  { icon: Fingerprint, label: "Find exposures", prompt: "Hunt for exposed credentials, secrets, and misconfigurations across the known surface." },
-];
 
 export default function HomePage() {
   const { engagements } = useWorkspace();
@@ -52,19 +45,23 @@ export default function HomePage() {
   return (
     <div className="flex h-full flex-col items-center overflow-y-auto px-6">
       <div className="flex w-full max-w-2xl flex-1 flex-col justify-center py-16">
-        {/* Soaring mark */}
+        {/* Brand lockup */}
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
-          className="mb-5 flex justify-center"
+          className="mb-6 flex justify-center"
         >
-          <motion.div
+          <motion.img
+            src="/osprey-lockup-light.png"
+            alt="Osprey"
+            width={248}
+            height={99}
             animate={{ y: [0, -5, 0] }}
             transition={{ duration: 4.5, repeat: Infinity, ease: "easeInOut" }}
-          >
-            <OspreyMark size={64} />
-          </motion.div>
+            className="h-auto w-[248px] select-none"
+            draggable={false}
+          />
         </motion.div>
 
         <motion.h1
