@@ -10,8 +10,8 @@ if TYPE_CHECKING:
 from rich.markdown import Markdown
 from rich.markup import escape
 
-from cli.agent.llm import LLMNotConfiguredError
-from cli.agent.loop import tool_result_failed
+from agent_core.llm import LLMNotConfiguredError
+from agent_core.loop import tool_result_failed
 from cli.commands.scan_shared import _api_error_text, _bind_engagement, _run_engine_scan
 from cli.harness import get_runtime
 from cli.ui.display import (

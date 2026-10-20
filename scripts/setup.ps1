@@ -36,7 +36,7 @@ Write-Host "Upgrading pip..." -ForegroundColor Cyan
 & $venvPython -m pip install --upgrade pip --quiet
 
 Write-Host "Installing backend and CLI in editable mode..." -ForegroundColor Cyan
-& $venvPython -m pip install -e "./backend[dev]" -e ./cli
+& $venvPython -m pip install -e ./agent_core -e "./backend[dev]" -e ./cli
 
 if (Test-Path "mcp-servers/requirements.txt") {
     Write-Host "Installing native tool-wrapper dependencies..." -ForegroundColor Cyan

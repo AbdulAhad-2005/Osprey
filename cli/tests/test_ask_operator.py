@@ -13,9 +13,9 @@ import asyncio
 import json
 from types import SimpleNamespace
 
-import cli.agent.loop as loop_mod
-from cli.agent.llm import CLIModelConfig
-from cli.agent.loop import Runner
+import agent_core.loop as loop_mod
+from agent_core.llm import CLIModelConfig
+from agent_core.loop import Runner
 
 
 class _FakeGateway:

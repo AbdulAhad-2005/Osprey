@@ -23,8 +23,8 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from cli.agent import tools as platform_tools
-from cli.agent.compaction import (
+from agent_core import tools as platform_tools
+from agent_core.compaction import (
     ContextBudget,
     build_budget,
     build_summary_request,
@@ -34,7 +34,7 @@ from cli.agent.compaction import (
     plan_compaction,
     spill_tool_result,
 )
-from cli.agent.llm import CLIModelConfig, complete, friendly_llm_error
+from agent_core.llm import CLIModelConfig, complete, friendly_llm_error
 
 _MAX_TURNS = 30
 _MAX_CONCURRENT_TOOLS = 4
@@ -753,7 +753,7 @@ class Runner:
           worker specifically needs while the top-level priority list is
           dominated by something else.
         """
-        from cli.agent.context import build_system_prompt
+        from agent_core.context import build_system_prompt
 
         base_prompt = await build_system_prompt(
             engagement_id,

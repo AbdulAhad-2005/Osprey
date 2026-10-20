@@ -182,7 +182,7 @@ def print_background_event(
     # tool_execution.execute_tool_request for EVERY tool call (so the web
     # dashboard can show activity). The CLI must NOT render it: whoever drove
     # that call already renders it in the foreground — the --engine investigation
-    # renderer (scan_shared), the interactive ReAct loop (cli/agent/loop.py), or,
+    # renderer (scan_shared), the interactive ReAct loop (agent_core/loop.py), or,
     # for a spawned sub-agent, its own ``source="agent:<role>"`` events (which
     # this function DOES render). Rendering the "tool" echo too was the
     # double-render (every call appearing twice, once as a 0.0s "output saved"

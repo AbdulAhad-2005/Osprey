@@ -738,7 +738,7 @@ class APIClient:
         ONCE and kept open for as long as the session cares about it, unlike
         a per-message request. Shows every backend job / spawned phase
         agent's tool calls as they happen (the CLI's own foreground
-        loop, cli/agent/loop.py, renders its own turn directly and doesn't
+        loop, agent_core/loop.py, renders its own turn directly and doesn't
         need this), tagged by `source` in each event's data — the
         fix for "background work is invisible": a harness has exactly one
         live activity feed, this is it. No read timeout — the connection is

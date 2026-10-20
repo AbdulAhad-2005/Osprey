@@ -70,8 +70,8 @@ class EmbeddedToolGateway:
 
 
 def _platform_mcp_dir() -> Path:
-    # cli/agent/tools.py -> repo root -> platform-mcp/
-    return Path(__file__).resolve().parents[2] / "platform-mcp"
+    # agent_core/tools.py -> repo root -> platform-mcp/
+    return Path(__file__).resolve().parents[1] / "platform-mcp"
 
 
 def load_server(api_base_url: str) -> Any:

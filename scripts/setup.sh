@@ -12,7 +12,7 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 
 # Backend (with dev extras: pytest, ruff, httpx) + CLI, both editable.
-pip install -e "./backend[dev]" -e ./cli
+pip install -e ./agent_core -e "./backend[dev]" -e ./cli
 
 # Native tool-wrapper deps — only needed if you run tools on the host instead of
 # the Kali container. Safe to install regardless.

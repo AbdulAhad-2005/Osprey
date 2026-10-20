@@ -6,8 +6,8 @@ tests for the two small helpers that fix this, no LLM/network needed.
 
 from __future__ import annotations
 
-from cli.agent.context import summarize_last_action
-from cli.agent.loop import refresh_system_message
+from agent_core.context import summarize_last_action
+from agent_core.loop import refresh_system_message
 
 
 def test_inserts_system_message_when_none_exists():

@@ -11,7 +11,7 @@ against what's currently hot). The plan's 10th section, LAST ACTION/NEXT, is
 not included here on purpose: it describes what THIS PARTICULAR caller's
 loop just did/said, which lives only in that caller's own local turn
 history, not in any backend store — a second harness driving the same
-engagement has a different last action. Each caller (cli/agent/loop.py,
+engagement has a different last action. Each caller (agent_core/loop.py,
 an external MCP harness) appends its own last-action line locally; this
 function is the shared, harness-agnostic part both build on.
 """

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from cli.agent.llm import LLMNotConfiguredError
+from agent_core.llm import LLMNotConfiguredError
 from cli.commands.prompt import handle_prompt
 
 

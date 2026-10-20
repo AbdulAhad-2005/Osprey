@@ -256,7 +256,7 @@ def _render_checkpoint_llm_event(data: dict, transcript: "ToolTranscript") -> No
             transcript=transcript, source="checkpoint",
         )
     elif inner_type == "tool_end":
-        from cli.agent.loop import tool_result_failed
+        from agent_core.loop import tool_result_failed
 
         tool_name = str(inner_data.get("tool_name") or "?")
         result = str(inner_data.get("result") or "")

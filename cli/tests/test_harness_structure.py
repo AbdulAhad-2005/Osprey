@@ -5,6 +5,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
+# The transport-agnostic agent core moved out of cli/ into its own top-level
+# package; the structural guards below cover both.
+SCAN_ROOTS = [ROOT / "cli", ROOT / "agent_core"]
+
 
 def test_http_client_contains_no_harness_state() -> None:
     source = (ROOT / "cli" / "api" / "client.py").read_text(encoding="utf-8")
@@ -20,7 +24,7 @@ def test_http_client_contains_no_harness_state() -> None:
 
 
 def test_runner_does_not_own_gateway_or_worker_construction() -> None:
-    source = (ROOT / "cli" / "agent" / "loop.py").read_text(encoding="utf-8")
+    source = (ROOT / "agent_core" / "loop.py").read_text(encoding="utf-8")
     assert "platform_tools.load_server" not in source
     assert "platform_tools.bind_session" not in source
     assert "platform_tools.current_engagement_id" not in source
@@ -28,11 +32,12 @@ def test_runner_does_not_own_gateway_or_worker_construction() -> None:
 
 
 def test_cli_never_reads_fastmcp_private_registry() -> None:
-    for path in (ROOT / "cli").rglob("*.py"):
-        if "tests" in path.parts:
-            continue
-        source = path.read_text(encoding="utf-8")
-        assert "mcp._tool_manager" not in source, str(path)
+    for root in SCAN_ROOTS:
+        for path in root.rglob("*.py"):
+            if "tests" in path.parts:
+                continue
+            source = path.read_text(encoding="utf-8")
+            assert "mcp._tool_manager" not in source, str(path)
 
 
 def test_every_main_entrypoint_wraps_transport_in_runtime() -> None:
@@ -41,9 +46,10 @@ def test_every_main_entrypoint_wraps_transport_in_runtime() -> None:
 
 
 def test_cli_engine_uses_step_contract_not_expansion_workflow() -> None:
-    for path in (ROOT / "cli").rglob("*.py"):
-        if "tests" in path.parts:
-            continue
-        source = path.read_text(encoding="utf-8")
-        assert "start_expansion_job" not in source, str(path)
-        assert "run_expansion(" not in source, str(path)
+    for root in SCAN_ROOTS:
+        for path in root.rglob("*.py"):
+            if "tests" in path.parts:
+                continue
+            source = path.read_text(encoding="utf-8")
+            assert "start_expansion_job" not in source, str(path)
+            assert "run_expansion(" not in source, str(path)

@@ -1,7 +1,7 @@
 """Scoped sub-agent runner — the executable body of a ``kind=agent`` job.
 
 A sub-agent is a headless instance of Osprey's ONE reasoning loop
-(``cli.agent.loop.Runner``) — the exact same ReAct loop the interactive CLI
+(``agent_core.loop.Runner``) — the exact same ReAct loop the interactive CLI
 and every CLI-spawned worker use, given no terminal to render into. There is
 no second, backend-native agent loop any more (the former ``PhaseAgent`` in
 ``services/phase_agent.py`` was deleted): two independently-coded loops meant
@@ -12,7 +12,7 @@ prompt instead of the CLI's AGENTS.md-driven one) simply because nobody kept
 it in sync. Importing the CLI's loop from the backend is an intentionally
 unusual dependency direction for a backend service — it is accepted here
 because the alternative (two loop implementations) is the actual bug class
-this module exists to close; a follow-up may extract ``cli/agent/`` into a
+this module exists to close; a follow-up may extract ``agent_core/`` into a
 transport-agnostic top-level package so neither side "owns" it, but that is
 a naming/packaging cleanup, not a behavior change, and isn't required for
 correctness.
@@ -25,7 +25,7 @@ driving over MCP — observes those findings through ``platform_findings`` /
 the inter-agent communication channel.
 
 Tool calls run through the CLI's embedded platform-mcp gateway
-(``cli.agent.tools.EmbeddedToolGateway``), the identical tool surface an
+(``agent_core.tools.EmbeddedToolGateway``), the identical tool surface an
 external MCP harness (OpenCode, Claude Code) already drives Osprey through —
 so a backend-spawned scoped agent, the interactive CLI, and an external
 harness all see the same tool names, the same schemas, and the same
@@ -49,7 +49,7 @@ from osprey.services.engagement_store import get_engagement_store
 logger = logging.getLogger(__name__)
 
 # Role → one-line framing injected into the shared system prompt (see
-# cli.agent.context.build_system_prompt's ``agent_prompt`` overlay). Roles
+# agent_core.context.build_system_prompt's ``agent_prompt`` overlay). Roles
 # exist so callers name intent ("exploit") rather than internal machinery;
 # "custom" is a free-form task with no extra framing beyond the task text.
 _ROLE_FRAMING: dict[str, str] = {
@@ -100,9 +100,9 @@ async def run_scoped_agent(
     on_event: AgentEventHandler | None = None,
 ) -> AgentResponse:
     """Run one scoped, headless CLI-loop worker and return its AgentResponse."""
-    from cli.agent.context import build_system_prompt
-    from cli.agent.loop import Runner
-    from cli.agent.tools import EmbeddedToolGateway
+    from agent_core.context import build_system_prompt
+    from agent_core.loop import Runner
+    from agent_core.tools import EmbeddedToolGateway
     from osprey.schemas.jobs import AGENT_ROLES
 
     role = (role or "recon").strip().lower()
@@ -169,7 +169,7 @@ async def run_scoped_agent(
 
     # Skills ranked against THIS agent's own task+scope, on top of the base
     # prompt's engagement-wide skill ranking — mirrors Runner._worker_system_prompt
-    # (cli/agent/loop.py), the same treatment the interactive CLI already gives
+    # (agent_core/loop.py), the same treatment the interactive CLI already gives
     # every spawned worker, so a role like "exploit" isn't left with only
     # whatever ranked highest for the engagement as a whole.
     query = f"{role_framing} {task} {scope}".strip()

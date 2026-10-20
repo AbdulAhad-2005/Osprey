@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 # Some tests exercise code that imports the sibling ``cli`` package at runtime
-# (e.g. agent_runner -> cli.agent.loop). Put the repo root on sys.path so
+# (e.g. agent_runner -> agent_core.loop). Put the repo root on sys.path so
 # ``import cli`` resolves; tests whose cli deps (rich, etc.) are absent in a
 # backend-only venv skip via importorskip rather than aborting collection.
 _REPO_ROOT = Path(__file__).resolve().parents[2]

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from cli.agent import flows
+from agent_core import flows
 
 
 def test_parse_frontmatter_extracts_meta_and_body():

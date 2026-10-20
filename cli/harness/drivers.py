@@ -4,9 +4,9 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable
 
-from cli.agent.context import build_system_prompt, summarize_last_action
-from cli.agent.llm import CLIModelConfig
-from cli.agent.loop import Event, Runner
+from agent_core.context import build_system_prompt, summarize_last_action
+from agent_core.llm import CLIModelConfig
+from agent_core.loop import Event, Runner
 
 if TYPE_CHECKING:
     from cli.harness.runtime import HarnessRuntime
@@ -509,7 +509,7 @@ class DeterministicInvestigationDriver(InvestigationDriver):
 # opaque opportunity id per turn from a server-computed menu — "add model
 # judgment without giving the model a second control plane." That was the
 # anti-pattern: it took away exactly the tool-by-tool reasoning an LLM
-# already does natively (see cli/agent/loop.py's Runner, used directly by
+# already does natively (see agent_core/loop.py's Runner, used directly by
 # LLMDriver above) and replaced it with a constrained multiple-choice
 # question. A real LLM operator should call the typed recon/vuln/exploit
 # tools directly — via LLMDriver's ReAct loop, guided by AGENTS.md's

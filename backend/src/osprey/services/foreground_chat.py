@@ -1,7 +1,7 @@
 """Foreground operator chat — the GUI's live conversation loop.
 
 This is the one piece the dashboard needs that no other driver already is: a
-*foreground* instance of Osprey's single ReAct loop (``cli.agent.loop.Runner``)
+*foreground* instance of Osprey's single ReAct loop (``agent_core.loop.Runner``)
 whose events stream straight to the browser as they happen, with the operator
 able to answer mid-run questions. It is the same loop ``agent_runner`` runs
 headlessly for sub-agent jobs — only here the events go to an SSE response
@@ -30,8 +30,8 @@ from osprey.services.agent_common import api_base_url, resolve_model_config
 from osprey.services.conversation_store import append_message, get_history
 
 if TYPE_CHECKING:
-    from cli.agent.loop import Runner
-    from cli.agent.tools import EmbeddedToolGateway
+    from agent_core.loop import Runner
+    from agent_core.tools import EmbeddedToolGateway
 
 logger = logging.getLogger(__name__)
 
@@ -74,8 +74,8 @@ def _gate_grant(record: dict[str, Any]) -> tuple[str, list[str]]:
 
 
 def _get_session(engagement_id: str, config, api_base: str) -> ChatSession:
-    from cli.agent.loop import Runner
-    from cli.agent.tools import EmbeddedToolGateway
+    from agent_core.loop import Runner
+    from agent_core.tools import EmbeddedToolGateway
     from osprey.services.engagement_store import get_engagement_store
 
     session = _sessions.get(engagement_id)
@@ -159,7 +159,7 @@ async def stream_chat(engagement_id: str, prompt: str) -> AsyncIterator[tuple[st
         yield ("done", {"content": ""})
         return
 
-    from cli.agent.context import build_system_prompt
+    from agent_core.context import build_system_prompt
 
     session = _get_session(eid, config, api_base_url())
     await session.lock.acquire()

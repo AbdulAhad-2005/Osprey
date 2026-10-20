@@ -14,8 +14,8 @@ import asyncio
 
 import pytest
 
-from cli.agent import loop as L
-from cli.agent.llm import CLIModelConfig
+from agent_core import loop as L
+from agent_core.llm import CLIModelConfig
 
 
 def _run(coro):

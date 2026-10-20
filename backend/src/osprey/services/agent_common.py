@@ -5,7 +5,7 @@ Everything tool-execution/system-prompt/message-hygiene related used to live
 here too (``execute_agent_tool``, ``build_engagement_context``,
 ``prune_message_history``, ...) but existed only to serve ``phase_agent.py``'s
 own ReAct loop. That loop was deleted — ``services/agent_runner.py`` now runs
-a headless ``cli.agent.loop.Runner`` instead, which already has its own
+a headless ``agent_core.loop.Runner`` instead, which already has its own
 tool-dispatch, system-prompt, and message-hygiene logic (the SAME logic the
 interactive CLI uses) — so those functions had zero remaining callers and
 were removed with it rather than kept as dead code. What's left is the two
@@ -23,14 +23,14 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from cli.agent.llm import CLIModelConfig
+    from agent_core.llm import CLIModelConfig
 
 AgentEventHandler = Callable[[str, dict[str, Any]], Awaitable[None] | None]
 
 
 def api_base_url() -> str:
     """This backend's own reachable address. The agent loop's embedded gateway
-    calls tools over real HTTP even in-process (see cli/agent/tools.py), so a
+    calls tools over real HTTP even in-process (see agent_core/tools.py), so a
     backend-driven agent loops back to itself over the network the same way any
     other client reaches it. Same env var and default the CLI uses, so one
     already-correct setting covers both the CLI and every backend driver
@@ -46,7 +46,7 @@ def resolve_model_config() -> "CLIModelConfig | None":
     ``os.getenv`` read would keep serving whatever was baked in at start even
     after an operator edits the project .env. One live LLM identity, one place,
     shared by every backend driver. Returns None when no usable model is set."""
-    from cli.agent.llm import CLIModelConfig
+    from agent_core.llm import CLIModelConfig
     from osprey.core.config import get_settings
 
     settings = get_settings().llm

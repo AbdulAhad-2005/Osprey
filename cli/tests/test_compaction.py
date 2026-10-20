@@ -1,4 +1,4 @@
-"""Unit tests for the CLI context-management logic (cli/agent/compaction.py).
+"""Unit tests for the CLI context-management logic (agent_core/compaction.py).
 
 Pure-function coverage — no live model needed. The token counter and model-info
 lookups degrade to safe fallbacks when litellm can't tokenize / doesn't know the
@@ -7,7 +7,7 @@ model, so these run offline.
 
 from __future__ import annotations
 
-from cli.agent import compaction as c
+from agent_core import compaction as c
 
 
 def test_spill_leaves_small_results_untouched():

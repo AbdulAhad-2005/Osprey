@@ -24,7 +24,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from cli.agent import tools as platform_tools
+from agent_core import tools as platform_tools
 
 
 @lru_cache(maxsize=1)
@@ -78,7 +78,7 @@ surface is genuinely exhausted, or ask the operator whether to go deeper.
 
 # Only appended when the operator has set LLM_TOOL_SCHEMA_BUDGET_TOKENS (a
 # specific provider's free-tier token-per-minute cap is smaller than the
-# full tool catalog — see cli/agent/tools.py's get_tool_schemas()). Every
+# full tool catalog — see agent_core/tools.py's get_tool_schemas()). Every
 # other tool still exists and is still callable; this is the one thing that
 # changes about how you reach them.
 _TOOL_BUDGET_POLICY = """\
