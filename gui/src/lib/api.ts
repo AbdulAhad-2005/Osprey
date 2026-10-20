@@ -1,4 +1,12 @@
-import type { AssetNode, ChatEvent, Engagement, FindingSummary, Observation, ReportData } from "./types";
+import type {
+  AssetNode,
+  ChatEvent,
+  CytoGraph,
+  Engagement,
+  FindingSummary,
+  Observation,
+  ReportData,
+} from "./types";
 
 /**
  * API base. In dev, next.config rewrites proxy `/api/*` to the Osprey backend
@@ -116,6 +124,14 @@ export async function listAssets(
     { signal },
   );
   return data.assets ?? [];
+}
+
+export async function getGraph(engagementId: string, signal?: AbortSignal): Promise<CytoGraph> {
+  const data = await getJSON<{ data?: CytoGraph }>(
+    `/api/v1/engagements/${encodeURIComponent(engagementId)}/visualization?format=json&max_nodes=400`,
+    { signal },
+  );
+  return data.data ?? { nodes: [], edges: [] };
 }
 
 export async function getReport(engagementId: string, signal?: AbortSignal): Promise<ReportData> {

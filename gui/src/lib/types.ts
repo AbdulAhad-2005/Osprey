@@ -123,6 +123,18 @@ export interface ReportData {
   totals: { findings: number; by_severity: Record<string, number> };
 }
 
+/** Cytoscape-shaped attack-surface graph (from /visualization?format=json). */
+export interface CytoNode {
+  data: { id: string; label: string; type: string; severity: Severity };
+}
+export interface CytoEdge {
+  data: { source: string; target: string; label: string; hypothesis: boolean };
+}
+export interface CytoGraph {
+  nodes: CytoNode[];
+  edges: CytoEdge[];
+}
+
 /** A node in the engagement attack-surface graph. */
 export interface AssetNode {
   id: string;
