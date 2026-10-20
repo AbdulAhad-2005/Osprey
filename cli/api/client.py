@@ -109,15 +109,22 @@ class APIClient:
             return []
 
     def get_report_markdown(self, engagement_id: str) -> str | None:
-        """Human-readable recon report (seed -> sister domains -> subdomains
-        -> IPs -> ports/services/tech, WHOIS/OSINT, vulnerabilities) as raw
-        Markdown text. None on any HTTP error (e.g. unknown engagement)."""
-        try:
-            resp = self._client.get(self._url(f"/api/v1/engagements/{engagement_id}/report.md"))
-            resp.raise_for_status()
-            return resp.text
-        except httpx.HTTPError:
-            return None
+        """Canonical penetration-test report as raw Markdown — the one report
+        the dashboard and chat also render (executive summary + overall risk,
+        scope/RoE, methodology, findings with evidence + remediation, and the
+        recon appendix), from the single report builder. Falls back to the
+        legacy recon report for older backends. None on any HTTP error."""
+        for path in (
+            f"/api/v1/report/{engagement_id}/markdown",
+            f"/api/v1/engagements/{engagement_id}/report.md",
+        ):
+            try:
+                resp = self._client.get(self._url(path))
+                resp.raise_for_status()
+                return resp.text
+            except httpx.HTTPError:
+                continue
+        return None
 
     def read_artifact(
         self,
