@@ -1,178 +1,191 @@
 "use client";
 
-import { Network, Server, Globe, Users, KeyRound, ShieldAlert, Radar, type LucideIcon } from "lucide-react";
-import { listFindings, listObservations } from "@/lib/api";
+import { useState } from "react";
+import { Radar, RefreshCw, ArrowUpRight } from "lucide-react";
+import { getReport } from "@/lib/api";
+import type { ReportData } from "@/lib/types";
 import { useResource } from "@/hooks/useResource";
-import {
-  SURFACE_BUCKETS,
-  STAT_CATEGORIES,
-  bucketObservations,
-  countByTypes,
-  obsDetail,
-  obsValue,
-  severityRollup,
-  SEVERITY_ORDER,
-} from "@/lib/surface";
-import type { Observation, Severity } from "@/lib/types";
-import { SEVERITY_META } from "@/lib/format";
-import { cn } from "@/lib/cn";
-import { Card, SectionHeader, StatTile, Chip } from "@/components/ui/primitives";
 import { DataTable, type Column } from "@/components/ui/DataTable";
-import { ConfidenceDot } from "@/components/ui/SeverityPill";
+import { RecordInspector } from "@/components/ui/RecordInspector";
+import type { RecordReference } from "@/lib/types";
+import { Chip } from "@/components/ui/primitives";
 import { Loading, EmptyState, ErrorState } from "@/components/ui/States";
+import { cn } from "@/lib/cn";
 
-const BUCKET_ICON: Record<string, LucideIcon> = {
-  infra: Network,
-  services: Server,
-  web: Globe,
-  identity: Users,
-  secrets: KeyRound,
-};
+type Item = ReportData["recon_appendix"][number]["items"][number];
+
+const columns: Column<Item>[] = [
+  {
+    key: "value",
+    header: "Asset",
+    sortKey: (row) => row.value,
+    className: "w-[45%]",
+    cell: (row) => (
+      <span className="break-all font-mono text-xs text-ink">{row.value}</span>
+    ),
+  },
+  {
+    key: "type",
+    header: "Type",
+    sortKey: (row) => row.type,
+    cell: (row) => <Chip>{row.type.replaceAll("_", " ")}</Chip>,
+  },
+  {
+    key: "detail",
+    header: "Context",
+    cell: (row) => (
+      <span className="break-words text-xs">
+        {row.detail || "No additional context recorded"}
+      </span>
+    ),
+  },
+  {
+    key: "source",
+    header: "Source",
+    sortKey: (row) => row.source_tool,
+    cell: (row) => (
+      <span className="break-all text-xs text-ink-faint">
+        {row.source_tool || "Engagement graph"}
+      </span>
+    ),
+  },
+];
 
 export function AttackSurfaceTab({ engagementId }: { engagementId: string }) {
-  const obs = useResource((s) => listObservations(engagementId, s), [engagementId]);
-  const fnd = useResource((s) => listFindings(engagementId, s), [engagementId]);
-
-  if (obs.loading && !obs.loaded) return <Loading label="Loading attack surface…" />;
-  if (obs.error) return <ErrorState message={obs.error} onRetry={obs.refetch} />;
-
-  const observations = obs.data ?? [];
-  const findings = fnd.data ?? [];
-  const roll = severityRollup(findings);
-  const vulnCount = findings.filter((f) => f.claim_severity && f.claim_severity !== "none").length;
-
-  if (observations.length === 0 && findings.length === 0) {
+  // The inventory and report share one normalized projection, including legacy
+  // assets. No per-tab interpretation of raw parser details or duplicate counts.
+  const resource = useResource(
+    (signal) => getReport(engagementId, signal),
+    [engagementId],
+  );
+  const [selected, setSelected] = useState("");
+  const [inspect, setInspect] = useState<Item | null>(null);
+  if (resource.loading && !resource.loaded)
+    return <Loading label="Building asset inventory…" />;
+  if (resource.error)
+    return <ErrorState message={resource.error} onRetry={resource.refetch} />;
+  const sections = resource.data?.recon_appendix || [];
+  const active =
+    sections.find((section) => section.key === selected) || sections[0];
+  const total = sections.reduce((sum, section) => sum + section.count, 0);
+  const rowRecords = (item: Item): RecordReference[] =>
+    item.record_refs || [
+      ...(item.observation_id
+        ? [{ kind: "observation" as const, id: item.observation_id }]
+        : []),
+      ...(item.finding_id
+        ? [{ kind: "finding" as const, id: item.finding_id }]
+        : []),
+      ...(item.asset_id ? [{ kind: "asset" as const, id: item.asset_id }] : []),
+    ];
+  const detailColumns: Column<Item>[] = [
+    ...columns,
+    {
+      key: "evidence",
+      header: "Evidence",
+      cell: (item) => (
+        <button
+          disabled={!rowRecords(item).length}
+          onClick={() => setInspect(item)}
+          className="btn-ghost text-xs"
+        >
+          Inspect ({rowRecords(item).length})
+        </button>
+      ),
+    },
+  ];
+  if (!active)
     return (
       <EmptyState
         icon={Radar}
-        title="No attack surface mapped yet"
-        hint="Run recon from the Chat tab — subdomains, hosts, ports, services and OSINT will populate here as Osprey discovers them."
+        title="No assets recorded"
+        hint="Reconnaissance populates this inventory. Raw execution logs are kept separately."
       />
     );
-  }
-
   return (
-    <div className="mx-auto max-w-6xl space-y-5 px-5 py-5">
-      {/* Stat tiles */}
-      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
-        {STAT_CATEGORIES.map((c) => {
-          const n = countByTypes(observations, c.types);
-          return <StatTile key={c.key} label={c.label} value={n} accent={n ? "text-ink" : "text-ink-faint"} />;
-        })}
-        <StatTile
-          label="Vulnerabilities"
-          value={vulnCount}
-          icon={ShieldAlert}
-          accent={vulnCount ? "text-sev-high" : "text-ink-faint"}
-        />
-      </div>
-
-      {/* Severity rollup */}
-      {vulnCount > 0 && <SeverityBar roll={roll} total={vulnCount} />}
-
-      {/* Buckets */}
-      {SURFACE_BUCKETS.map((bucket) => {
-        const rows = bucketObservations(observations, bucket.types);
-        if (rows.length === 0) return null;
-        const Icon = BUCKET_ICON[bucket.key] ?? Network;
-        return (
-          <Card key={bucket.key} className="p-4">
-            <SectionHeader title={bucket.label} count={rows.length} icon={Icon} accent="text-amber" />
-            <ObservationTable rows={rows} bucket={bucket.key} />
-          </Card>
-        );
-      })}
-    </div>
-  );
-}
-
-function SeverityBar({ roll, total }: { roll: Record<Severity, number>; total: number }) {
-  const shown = SEVERITY_ORDER.filter((s) => s !== "none" && roll[s] > 0);
-  return (
-    <Card className="p-4">
-      <SectionHeader title="Findings by severity" count={total} icon={ShieldAlert} accent="text-sev-high" />
-      <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-surface-2">
-        {shown.map((s) => (
-          <div
-            key={s}
-            className={SEVERITY_META[s].dot}
-            style={{ width: `${(roll[s] / total) * 100}%` }}
-            title={`${SEVERITY_META[s].label}: ${roll[s]}`}
-          />
-        ))}
-      </div>
-      <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1.5">
-        {shown.map((s) => (
-          <span key={s} className="flex items-center gap-1.5 text-[12px] text-ink-dim">
-            <span className={cn("h-2 w-2 rounded-full", SEVERITY_META[s].dot)} />
-            {SEVERITY_META[s].label}
-            <span className="font-mono text-ink">{roll[s]}</span>
-          </span>
-        ))}
-      </div>
-    </Card>
-  );
-}
-
-function ObservationTable({ rows, bucket }: { rows: Observation[]; bucket: string }) {
-  const columns: Column<Observation>[] = [
-    {
-      key: "type",
-      header: "Type",
-      sortKey: (o) => o.type,
-      cell: (o) => <Chip>{o.type.replace(/_/g, " ")}</Chip>,
-    },
-    {
-      key: "value",
-      header: "Value",
-      sortKey: (o) => obsValue(o),
-      className: "w-[42%]",
-      cell: (o) => (
-        <span
-          className={cn(
-            "break-all font-mono text-[12.5px]",
-            bucket === "secrets" ? "text-amber-soft" : "text-ink",
+    <div className="mx-auto max-w-7xl p-5 md:p-7">
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-[11px] uppercase tracking-[.18em] text-amber">
+            Asset intelligence
+          </p>
+          <h2 className="mt-1 font-serif text-2xl text-ink">
+            Attack surface inventory
+          </h2>
+          <p className="mt-2 text-sm text-ink-dim">
+            {total.toLocaleString()} recorded entries across {sections.length}{" "}
+            categories. Select a category to explore its evidence.
+          </p>
+          {resource.data?.data_limits?.possibly_partial && (
+            <p className="mt-2 text-xs text-amber-soft">
+              Inventory assembly reached a record limit; use Evidence to search
+              and page through the complete original store.
+            </p>
           )}
+        </div>
+        <button className="btn-outline" onClick={resource.refetch}>
+          <RefreshCw size={14} /> Refresh
+        </button>
+      </div>
+      <div className="grid items-start gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
+        <nav
+          aria-label="Asset categories"
+          className="grid grid-cols-2 gap-2 lg:grid-cols-1"
         >
-          {obsValue(o)}
-        </span>
-      ),
-    },
-    {
-      key: "detail",
-      header: "Detail",
-      cell: (o) => <span className="text-[12px] text-ink-dim">{obsDetail(o) || "—"}</span>,
-    },
-    {
-      key: "source",
-      header: "Source",
-      sortKey: (o) => o.source_tool,
-      cell: (o) => (o.source_tool ? <Chip className="text-ink-faint">{o.source_tool}</Chip> : <span className="text-ink-faint">—</span>),
-    },
-    {
-      key: "conf",
-      header: "Confidence",
-      cell: (o) => <ConfidenceDot confidence={o.confidence} />,
-    },
-    {
-      key: "count",
-      header: "Seen",
-      align: "right",
-      sortKey: (o) => o.occurrence_count ?? 1,
-      cell: (o) => <span className="font-mono text-[12px] text-ink-dim">{o.occurrence_count ?? 1}×</span>,
-    },
-  ];
-  return (
-    <DataTable
-      rows={rows}
-      columns={columns}
-      getRowKey={(o) => o.id}
-      initialSort={{ key: "type", dir: "asc" }}
-      filter={(o, q) =>
-        (obsValue(o) + " " + obsDetail(o) + " " + o.type + " " + o.source_tool).toLowerCase().includes(q)
-      }
-      searchPlaceholder="Filter…"
-      dense
-    />
+          {sections.map((section) => (
+            <button
+              key={section.key}
+              onClick={() => setSelected(section.key)}
+              aria-pressed={active.key === section.key}
+              className={cn(
+                "flex items-center justify-between rounded-xl border px-4 py-3 text-left text-sm",
+                active.key === section.key
+                  ? "border-amber/40 bg-amber/10 text-amber-soft"
+                  : "border-border bg-surface text-ink-dim hover:text-ink",
+              )}
+            >
+              <span>{section.label}</span>
+              <span className="ml-3 font-mono text-xs">
+                {section.count.toLocaleString()}
+              </span>
+            </button>
+          ))}
+        </nav>
+        <section className="min-w-0 rounded-2xl border border-border bg-surface/50 p-4">
+          <div className="mb-4 flex items-center gap-2">
+            <Radar size={16} className="text-signal" />
+            <h3 className="text-sm font-semibold">{active.label}</h3>
+            <span className="ml-auto text-xs text-ink-faint">
+              {active.count.toLocaleString()} assets
+            </span>
+          </div>
+          <DataTable
+            key={active.key}
+            rows={active.items}
+            columns={detailColumns}
+            getRowKey={(item, i) => `${item.type}:${item.value}:${i}`}
+            initialSort={{ key: "value", dir: "asc" }}
+            filter={(item, query) =>
+              `${item.value} ${item.detail} ${item.source_tool}`
+                .toLowerCase()
+                .includes(query)
+            }
+            searchPlaceholder={`Search ${active.label.toLowerCase()}…`}
+          />
+          <p className="mt-4 flex items-center gap-1 text-xs text-ink-faint">
+            <ArrowUpRight size={12} /> Discovery records establish surface, not
+            exploitability. Review security conclusions in Findings.
+          </p>
+        </section>
+      </div>
+      {inspect && (
+        <RecordInspector
+          engagementId={engagementId}
+          records={rowRecords(inspect)}
+          title={inspect.value}
+          onClose={() => setInspect(null)}
+        />
+      )}
+    </div>
   );
 }

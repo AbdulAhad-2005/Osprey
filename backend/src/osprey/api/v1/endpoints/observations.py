@@ -42,26 +42,25 @@ def list_observations(
     engagement_id: str = Query(...),
     type: str | None = Query(default=None),
     target: str | None = Query(default=None),
-    limit: int = Query(default=200, le=2000),
+    limit: int = Query(default=200, ge=1, le=2000),
+    offset: int = Query(default=0, ge=0),
+    q: str | None = Query(default=None),
 ) -> ObservationListResponse:
     store = get_observation_store()
-    if target:
-        items = store.list_by_target(engagement_id, target, limit=limit)
-    elif type:
+    otype = None
+    if type:
         try:
             otype = ObservationType(type.strip().lower())
         except ValueError:
             raise HTTPException(status_code=422, detail=f"Unknown observation type: {type!r}")
-        items = store.list_by_type(engagement_id, otype, limit=limit)
-    else:
-        items = store.list_for_engagement(engagement_id, limit=limit)
+    items = store.list_for_engagement(engagement_id, obs_type=otype, target=target, q=q, offset=offset, limit=limit)
     return ObservationListResponse(observations=items, total=len(items))
 
 
 @router.get("/{observation_id}", response_model=Observation)
-def get_observation(observation_id: str) -> Observation:
+def get_observation(observation_id: str, engagement_id: str | None = Query(default=None)) -> Observation:
     obs = get_observation_store().get(observation_id)
-    if obs is None:
+    if obs is None or (engagement_id is not None and obs.engagement_id != engagement_id):
         raise HTTPException(status_code=404, detail="Observation not found")
     return obs
 

@@ -10,10 +10,12 @@ export function QuestionPrompt({
   question,
   answered,
   onAnswer,
+  inactive = false,
 }: {
   question: OperatorQuestion;
   answered?: string;
   onAnswer: (value: string) => void;
+  inactive?: boolean;
 }) {
   const [freeform, setFreeform] = useState("");
   const isGate = question.kind === "gate";
@@ -55,7 +57,7 @@ export function QuestionPrompt({
               <CircleCheck size={15} className="text-ok" />
               You chose: <span className="font-medium text-ink">{chosen ?? answered}</span>
             </div>
-          ) : (
+          ) : inactive ? <p className="mt-3 text-xs text-ink-faint">This run has ended; the question is no longer open.</p> : (
             <>
               <div className="mt-3 grid gap-2">
                 {question.options.map((o) => (

@@ -55,6 +55,8 @@ export interface Observation {
 /* --- Canonical report (one backend source) ------------------------------- */
 
 export interface ReportFinding {
+  remediation_recorded?: boolean;
+  observation_ids?: string[];
   id: string;
   type: string;
   title: string;
@@ -68,7 +70,12 @@ export interface ReportFinding {
 }
 
 export interface ReportData {
+  data_limits?: {possibly_partial: boolean; collections: string[]};
   error?: string;
+  limitations?: string[];
+  supporting_records?: { count: number; description: string };
+  review_candidates?: ReportFinding[];
+  remediation_plan?: { priority: string; finding_ids: string[]; actions: string[] }[];
   meta: {
     engagement_id: string;
     target: string;
@@ -118,21 +125,27 @@ export interface ReportData {
     key: string;
     label: string;
     count: number;
-    items: { type: string; value: string; detail: string; source_tool: string }[];
+    items: { type: string; value: string; detail: string; source_tool: string;
+      observation_id?: string; finding_id?: string; asset_id?: string; record_refs?: RecordReference[] }[];
   }[];
   totals: { findings: number; by_severity: Record<string, number> };
 }
 
+export interface RecordReference { kind: "observation" | "finding" | "asset"; id: string }
+
 /** Cytoscape-shaped attack-surface graph (from /visualization?format=json). */
 export interface CytoNode {
-  data: { id: string; label: string; type: string; severity: Severity };
+  data: { id: string; label: string; type: string; severity: Severity; confidence?: string;
+      findings?: {id: string; title: string; severity: Severity; confidence: string; target: string}[];
+    source_tools?: string[]; observation_ids?: string[]; metadata?: Record<string, unknown> };
 }
 export interface CytoEdge {
-  data: { source: string; target: string; label: string; hypothesis: boolean };
+  data: { source: string; target: string; label: string; hypothesis: boolean; observation_ids?: string[] };
 }
 export interface CytoGraph {
   nodes: CytoNode[];
   edges: CytoEdge[];
+  meta?: { truncated: boolean; node_limit: number; edge_limit: number };
 }
 
 /** A node in the engagement attack-surface graph. */
@@ -173,6 +186,7 @@ export interface OperatorQuestion {
 }
 
 export type ChatEvent =
+  | { event: "run_start"; data: { prompt: string; run_id?: string; event_id?: number } }
   | { event: "message_start"; data: { turn_id: string } }
   | { event: "status"; data: { stage: string; message: string } }
   | { event: "llm_call_start"; data: Record<string, never> }
@@ -201,6 +215,7 @@ export type ChatEvent =
     }
   | { event: "compaction"; data: { messages_after?: number; forced?: boolean } }
   | { event: "question"; data: OperatorQuestion }
+  | { event: "question_answer"; data: {id: string; answer: string} }
   | { event: "error"; data: { message: string } }
   | { event: "done"; data: { content: string } }
   | { event: "cancelled"; data: { findings?: string } };
@@ -214,7 +229,7 @@ export interface ToolCallView {
   name: string;
   source?: string;
   args?: string;
-  status: "running" | "ok" | "fail";
+  status: "running" | "ok" | "fail" | "stopped";
   result?: string;
   durationSeconds?: number;
   findingTitles?: string[];

@@ -2,23 +2,26 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Eraser, FlaskConical, Zap } from "lucide-react";
 import { useChat } from "@/hooks/useChat";
 import { useWorkspace } from "@/components/shell/WorkspaceProvider";
-import { clearConversation } from "@/lib/api";
 import { QUICK_INTENTS, kickoffPrompt } from "@/lib/intents";
 import { OspreyMark } from "@/components/brand/OspreyMark";
 import { cn } from "@/lib/cn";
 import { TurnView } from "./TurnView";
 import { Composer } from "./Composer";
 import { ActivityIndicator } from "./ActivityIndicator";
+import { BackgroundJobs } from "./BackgroundJobs";
 
 export function ChatView({
   engagementId,
   initialPrompt,
+  visible = true,
 }: {
   engagementId: string;
   initialPrompt?: string;
+  visible?: boolean;
 }) {
   const { backendUp, engagements } = useWorkspace();
   const [mock, setMock] = useState(false);
@@ -28,10 +31,15 @@ export function ChatView({
   const bottomRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
   const sentInitial = useRef(false);
+  const router = useRouter();
+  const search = useSearchParams();
 
   useEffect(() => {
-    if (initialPrompt && !sentInitial.current && chat.turns.length === 0 && !chat.streaming) {
+    if (initialPrompt && !sentInitial.current && !chat.loading && !chat.streaming) {
       sentInitial.current = true;
+      const params = new URLSearchParams(search.toString());
+      params.delete("intent");
+      router.replace(`/engagement/${encodeURIComponent(engagementId)}${params.size ? `?${params}` : ""}`, {scroll:false});
       chat.send(initialPrompt);
     }
   }, [initialPrompt, chat]);
@@ -66,8 +74,7 @@ export function ChatView({
         </button>
         <button
           onClick={() => {
-            chat.clear();
-            if (!mock) void clearConversation(engagementId);
+            if (window.confirm("Clear this engagement's saved chat and stop its current run? Findings and evidence are retained.")) void chat.clear();
           }}
           className="rounded-lg border border-border bg-surface/70 p-1.5 text-ink-faint transition-colors hover:text-ink-dim"
           title="Clear conversation"
@@ -78,11 +85,14 @@ export function ChatView({
 
       <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl px-4 py-6">
+          {!mock && <BackgroundJobs engagementId={engagementId} visible={visible}/>}
+          {chat.loading && <p className="py-8 text-sm text-ink-faint">Restoring conversation…</p>}
+          {chat.activity.kind === "error" && <p role="alert" className="my-3 rounded-lg border border-sev-high/30 p-3 text-sm text-sev-high">{chat.activity.message}</p>}
           {chat.turns.length === 0 ? (
             <ChatLanding
               mock={mock}
               target={target}
-              disabled={!mock && backendUp === false}
+              disabled={chat.loading || (!mock && backendUp === false)}
               onSend={chat.send}
             />
           ) : (
@@ -105,7 +115,7 @@ export function ChatView({
         onSend={chat.send}
         onStop={chat.stop}
         streaming={chat.streaming}
-        disabled={!mock && backendUp === false}
+        disabled={chat.loading || (!mock && backendUp === false)}
       />
     </div>
   );

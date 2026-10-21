@@ -71,6 +71,18 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     void refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    let disposed = false;
+    const check = async () => {
+      if (document.visibilityState === "hidden") return;
+      try { const health = await getHealth(); if (!disposed) setBackendUp(!!health.ready); }
+      catch { if (!disposed) setBackendUp(false); }
+    };
+    const timer = window.setInterval(() => void check(), 15000);
+    window.addEventListener("focus", check);
+    return () => { disposed = true; window.clearInterval(timer); window.removeEventListener("focus", check); };
+  }, []);
+
   const value = useMemo<WorkspaceState>(
     () => ({
       engagements,

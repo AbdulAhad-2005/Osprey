@@ -17,7 +17,7 @@ function newAssistantTurn(): ChatTurn {
 function cloneTurns(turns: ChatTurn[]): ChatTurn[] {
   // Shallow-clone the array; mutate only the active (last) turn's blocks, which
   // we also clone. Older turns are immutable once streaming ends.
-  return turns.slice();
+  return turns.map((turn, i) => i === turns.length - 1 ? { ...turn, blocks: turn.blocks.slice() } : turn);
 }
 
 function activeAssistant(turns: ChatTurn[]): ChatTurn {
@@ -43,6 +43,12 @@ export function applyEvent(prev: ChatTurn[], ev: ChatEvent): ChatTurn[] {
   const turns = cloneTurns(prev);
 
   switch (ev.event) {
+    case "question_answer": return answerQuestionBlock(prev, ev.data.id, ev.data.answer);
+    case "run_start": {
+      const last = turns[turns.length - 1];
+      if (last?.role !== "user" || last.text !== ev.data.prompt) turns.push(userTurn(ev.data.prompt));
+      return turns;
+    }
     case "thinking": {
       const t = activeAssistant(turns);
       t.blocks = t.blocks.slice();
@@ -92,6 +98,12 @@ export function applyEvent(prev: ChatTurn[], ev: ChatEvent): ChatTurn[] {
 
     case "tool_end": {
       const t = activeAssistant(turns);
+      if (!t.blocks.some((b) => b.kind === "tools" && b.calls.some((c) => c.id === ev.data.tool_call_id))) {
+        t.blocks = [...t.blocks, { kind: "tools", id: uid("g"), calls: [{
+          id: ev.data.tool_call_id || uid("tc"), name: ev.data.tool_name, status: ev.data.success ? "ok" : "fail",
+          result: ev.data.result, durationSeconds: ev.data.duration_seconds,
+        }] }];
+      }
       t.blocks = t.blocks.map((b) => {
         if (b.kind !== "tools") return b;
         if (!b.calls.some((c) => c.id === ev.data.tool_call_id)) return b;
@@ -133,7 +145,14 @@ export function applyEvent(prev: ChatTurn[], ev: ChatEvent): ChatTurn[] {
     case "cancelled": {
       const last = turns[turns.length - 1];
       if (last && last.role === "assistant") {
-        turns[turns.length - 1] = { ...last, streaming: false };
+        const content = ev.event === "done" ? ev.data.content : "";
+        const hasText = last.blocks.some((b) => b.kind === "text" && b.content === content);
+        const blocks: TurnBlock[] = last.blocks.map((b) => b.kind === "tools" ? {
+          ...b, calls: b.calls.map((c) => c.status === "running" ? { ...c, status: "stopped" as const } : c),
+        } : b);
+        const errorAlreadyShown = content.startsWith("(stopped:") && last.blocks.some((block) => block.kind === "text" && block.content.startsWith("⚠️ "));
+        if (content && !hasText && !errorAlreadyShown) blocks.push({ kind: "text", id: uid("x"), content });
+        turns[turns.length - 1] = { ...last, blocks, streaming: false };
       }
       return turns;
     }

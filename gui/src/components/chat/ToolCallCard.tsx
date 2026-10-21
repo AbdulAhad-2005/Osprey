@@ -53,6 +53,7 @@ export function ToolCallCard({ call }: { call: ToolCallView }) {
     >
       <button
         onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
         className="flex w-full items-center gap-2.5 px-2.5 py-2 text-left"
       >
         <span className={cn("grid h-6 w-6 flex-none place-items-center rounded-md", meta.ring)}>
@@ -91,6 +92,7 @@ export function ToolCallCard({ call }: { call: ToolCallView }) {
           />
         </span>
       </button>
+      {prettyArgs && <div className="truncate px-11 pb-2 font-mono text-[11px] text-ink-faint" title={prettyArgs}>{prettyArgs.replace(/\s+/g, " ")}</div>}
 
       <AnimatePresence initial={false}>
         {open && (
@@ -148,6 +150,7 @@ function StatusIcon({ status }: { status: ToolCallView["status"] }) {
   if (status === "running")
     return <Loader2 size={13} className="animate-spin text-signal" />;
   if (status === "ok") return <Check size={13} className="text-ok" />;
+  if (status === "stopped") return <span className="text-ink-faint">interrupted</span>;
   return <X size={13} className="text-sev-critical" />;
 }
 

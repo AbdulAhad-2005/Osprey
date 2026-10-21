@@ -1,5 +1,6 @@
 from osprey.models.attack_path import AttackPathRow
 from osprey.models.audit_entry import AuditEntryRow
+from osprey.models.chat_event import ChatEventRow
 from osprey.models.context_snapshot import ContextSnapshotRow
 from osprey.models.conversation import ConversationMessageRow
 from osprey.models.engagement import EngagementRow
@@ -22,6 +23,7 @@ from osprey.models.target_ban import TargetBanRow
 from osprey.models.tool_coverage import ToolCoverageRow
 
 __all__ = [
+    "ChatEventRow",
     "AuditEntryRow",
     "EngagementRow",
     "RunRow",

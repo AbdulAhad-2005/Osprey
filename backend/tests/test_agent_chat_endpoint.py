@@ -23,8 +23,10 @@ def test_chat_without_model_streams_error_then_done(client, monkeypatch):
     import osprey.services.foreground_chat as fc
 
     monkeypatch.setattr(fc, "resolve_model_config", lambda: None)
-
-    r = client.post("/api/v1/agent/chat", json={"engagement_id": "eng-x", "prompt": "hi"})
+    from osprey.schemas.engagement import EngagementCreateRequest
+    from osprey.services.engagement_store import get_engagement_store
+    engagement = get_engagement_store().create(EngagementCreateRequest(target="chat-no-model.test"))
+    r = client.post("/api/v1/agent/chat", json={"engagement_id": engagement.id, "prompt": "hi"})
     assert r.status_code == 200
     assert "text/event-stream" in r.headers["content-type"]
     body = r.text
@@ -55,3 +57,15 @@ def test_open_questions_empty_for_fresh_engagement(client):
     r = client.get("/api/v1/agent/questions/eng-empty-123")
     assert r.status_code == 200
     assert r.json() == {"engagement_id": "eng-empty-123", "questions": []}
+
+
+def test_transcript_without_journal_returns_legacy_messages(client):
+    from osprey.schemas.engagement import EngagementCreateRequest
+    from osprey.services.engagement_store import get_engagement_store
+    from osprey.services.conversation_store import append_message
+    engagement = get_engagement_store().create(EngagementCreateRequest(target="legacy-chat.test"))
+    append_message(engagement.id, "user", "old prompt")
+    append_message(engagement.id, "assistant", "old answer")
+    response = client.get(f"/api/v1/agent/chat-events/{engagement.id}")
+    assert response.status_code == 200
+    assert [m["content"] for m in response.json()["legacy_messages"]] == ["old prompt", "old answer"]

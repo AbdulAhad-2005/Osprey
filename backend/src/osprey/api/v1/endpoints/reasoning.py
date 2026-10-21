@@ -60,6 +60,16 @@ def list_related(
     return {"related": result, "total": len(result)}
 
 
+@router.get("/asset", summary="Read one exact asset with full provenance")
+def get_asset(engagement_id: str = Query(...), asset_id: str = Query(...)) -> dict[str, Any]:
+    from osprey.services.engagement_graph import get_engagement_graph
+
+    nodes = get_engagement_graph().list_nodes(engagement_id=engagement_id, node_id=asset_id, limit=1)
+    if not nodes:
+        raise HTTPException(404, detail="Asset not found in this engagement")
+    return nodes[0].model_dump(mode="json")
+
+
 @router.get("/incomplete")
 def list_incomplete(engagement_id: str = Query(...)) -> dict[str, Any]:
     result = world_model.assets_with_incomplete_investigation(engagement_id)

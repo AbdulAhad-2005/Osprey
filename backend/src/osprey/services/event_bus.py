@@ -61,6 +61,8 @@ def publish(engagement_id: str, event: str, data: dict[str, Any], *, source: str
 def history(engagement_id: str, limit: int = 50) -> list[dict[str, Any]]:
     """Bounded recent history — used both for a subscriber's catch-up replay
     and for a plain pull-style snapshot (e.g. a REST status call)."""
+    if limit <= 0:
+        return []
     eid = (engagement_id or "").strip()
     buf = _history.get(eid)
     if not buf:
@@ -88,11 +90,13 @@ async def subscribe(engagement_id: str, *, replay: int = 20) -> AsyncIterator[di
     eid = (engagement_id or "").strip()
     if not eid:
         return
-    for record in history(eid, limit=replay):
-        yield record
     queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=_QUEUE_CAP)
     _subscribers.setdefault(eid, set()).add(queue)
     try:
+        # Register before yielding replay: a slow reader must not lose live
+        # events published while it is consuming the historical snapshot.
+        for record in history(eid, limit=replay):
+            yield record
         while True:
             yield await queue.get()
     finally:

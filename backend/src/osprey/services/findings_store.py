@@ -448,6 +448,7 @@ class FindingsStore:
         tag: str | None = None,
         q: str | None = None,
         limit: int = 200,
+        offset: int = 0,
         # False at the store level — the ~20 internal callers (report_generator,
         # hypothesis_engine, finding_correlator, phase_reflection, etc.) rely on
         # OBSERVATION rows by design (they exist specifically "for agent
@@ -519,7 +520,8 @@ class FindingsStore:
                     _CONFIDENCE_ORDER_CASE.desc(),
                     _SEVERITY_ORDER_CASE.desc(),
                     FindingRow.created_at.desc(),
-                ).limit(limit)
+                    FindingRow.id.asc(),
+                ).offset(max(0, offset)).limit(limit)
                 rows = list(db.scalars(stmt).all())
                 return [_row_to_finding(r) for r in rows]
             finally:

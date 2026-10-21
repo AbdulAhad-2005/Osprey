@@ -121,6 +121,20 @@
   .no-print {
     display: none !important;
   }
+  *:has(#osprey-report) {
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+    position: static !important;
+  }
+  #osprey-report .report-evidence {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  #osprey-report details { display: block; }
+  #osprey-report table { table-layout: fixed; }
+  #osprey-report tr { break-inside: avoid; }
+  #osprey-report h2, #osprey-report h3 { break-after: avoid; }
 }
 
 /* Light (print-friendly) report theme — scoped overrides on screen + print.

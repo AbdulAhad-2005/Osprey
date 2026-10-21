@@ -7,6 +7,34 @@ function fold(events: ChatEvent[], start: ChatTurn[] = []): ChatTurn[] {
 }
 
 describe("chatReducer.applyEvent", () => {
+  it("shows provider failures once without repeating the stopped message", () => {
+    const turns=fold([{event:"error",data:{message:"Provider rate limited"}},{event:"done",data:{content:"(stopped: Provider rate limited)"}}]);
+    expect(turns[0]!.blocks).toHaveLength(1);
+    expect(turns[0]!.streaming).toBe(false);
+  });
+  it("replays run starts without duplicating an optimistic prompt", () => {
+    const turns = fold([{event:"run_start",data:{prompt:"inspect"}}], [userTurn("inspect")]);
+    expect(turns).toHaveLength(1);
+  });
+
+  it("retains orphan completions and settles unfinished cards", () => {
+    const turns = fold([
+      {event:"tool_end",data:{tool_name:"fast",tool_call_id:"a",result:"retained",success:true,duration_seconds:1}},
+      {event:"tool_start",data:{tool_name:"slow",tool_call_id:"b"}},
+      {event:"done",data:{content:"Run stopped"}},
+    ]);
+    const block = turns[0]!.blocks[0]!;
+    if (block.kind !== "tools") throw new Error("expected tools");
+    expect(block.calls.map(call=>call.status)).toEqual(["ok","stopped"]);
+    expect(turns[0]!.blocks.some(block=>block.kind==="text" && block.content==="Run stopped")).toBe(true);
+  });
+
+  it("does not mutate a previously rendered turn", () => {
+    const before = fold([{event:"assistant",data:{content:"first"}}]);
+    const after = fold([{event:"assistant",data:{content:"second"}}], before);
+    expect(before[0]!.blocks[0]).toMatchObject({content:"first"});
+    expect(after[0]!.blocks[0]).toMatchObject({content:"first\n\nsecond"});
+  });
   it("groups consecutive tool calls into one batch", () => {
     const turns = fold([
       { event: "tool_start", data: { tool_name: "subfinder_scan", tool_call_id: "a" } },

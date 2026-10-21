@@ -36,6 +36,8 @@ export function SettingsView() {
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [apiBase, setApiBase] = useState("");
+  const [baseChanged, setBaseChanged] = useState(false);
+  const [removeKey, setRemoveKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
 
@@ -45,6 +47,11 @@ export function SettingsView() {
     if (c.status === "fulfilled") {
       setCfg(c.value);
       setModel(c.value.model);
+      setApiBase("");
+      setBaseChanged(false);
+    } else {
+      setCfg(null);
+      setResult({ok:false,message:"Could not read the current settings. Retry Reload before saving to avoid replacing an unknown configuration."});
     }
     if (m.status === "fulfilled") setModels(m.value);
     if (s.status === "fulfilled") setStatus(s.value);
@@ -61,10 +68,9 @@ export function SettingsView() {
     setResult(null);
     try {
       const body: { model?: string; api_key?: string; api_base?: string } = {};
-      if (model.trim() && model.trim() !== cfg?.model) body.model = model.trim();
-      else body.model = model.trim(); // always send model so provider is re-evaluated
-      if (apiKey.trim()) body.api_key = apiKey.trim();
-      if (apiBase.trim() || cfg?.has_custom_base) body.api_base = apiBase.trim();
+      body.model = model.trim();
+      if (apiKey.trim() || removeKey) body.api_key = removeKey ? "" : apiKey.trim();
+      if (baseChanged) body.api_base = apiBase.trim();
       const res = await setLlmConfig(body);
       setResult({
         ok: res.usable,
@@ -73,6 +79,8 @@ export function SettingsView() {
           : `Saved, but not usable yet: ${res.reason || "check the model id and key."}`,
       });
       setApiKey("");
+      setRemoveKey(false);
+      setBaseChanged(false);
       await refresh();
     } catch (e) {
       setResult({ ok: false, message: e instanceof Error ? e.message : "Failed to save." });
@@ -125,7 +133,7 @@ export function SettingsView() {
                     )}
                   >
                     {status?.model_active ? <Check size={11} /> : <TriangleAlert size={11} />}
-                    {status?.model_active ? "usable" : "not usable"}
+                    {status?.model_active ? "configured" : "not configured"}
                   </span>
                 )}
               </div>
@@ -136,8 +144,9 @@ export function SettingsView() {
                 <code className="font-mono">ollama/llama3.1</code> (local).
               </p>
 
-              <label className="mt-4 block text-[12px] font-medium text-ink-dim">Model id</label>
+              <label htmlFor="model-id" className="mt-4 block text-[12px] font-medium text-ink-dim">Model id</label>
               <input
+                id="model-id"
                 list="osprey-models"
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
@@ -152,12 +161,13 @@ export function SettingsView() {
                 ))}
               </datalist>
 
-              <label className="mt-4 block text-[12px] font-medium text-ink-dim">
+              <label htmlFor="api-key" className="mt-4 block text-[12px] font-medium text-ink-dim">
                 API key {cfg?.has_api_key && <span className="text-ink-faint">· currently set</span>}
               </label>
               <div className="mt-1 flex items-center gap-2 rounded-lg border border-border bg-base/60 px-3 focus-within:border-border-strong">
                 <KeyRound size={14} className="text-ink-faint" />
                 <input
+                  id="api-key"
                   type="password"
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
@@ -166,19 +176,23 @@ export function SettingsView() {
                   autoComplete="off"
                 />
               </div>
+              {cfg?.has_api_key && <label className="mt-2 flex gap-2 text-xs text-ink-dim"><input type="checkbox" checked={removeKey} onChange={(e) => setRemoveKey(e.target.checked)} /> Remove saved key</label>}
+              {model.split("/")[0] !== cfg?.model.split("/")[0] && <p className="mt-2 text-xs text-amber-soft">Changing providers clears the previous key and custom URL. Enter credentials for the new provider.</p>}
 
-              <label className="mt-4 block text-[12px] font-medium text-ink-dim">
+              <label htmlFor="api-base" className="mt-4 block text-[12px] font-medium text-ink-dim">
                 API base URL <span className="text-ink-faint">· optional (proxies / local Ollama)</span>
               </label>
               <input
+                id="api-base"
                 value={apiBase}
-                onChange={(e) => setApiBase(e.target.value)}
+                onChange={(e) => { setApiBase(e.target.value); setBaseChanged(true); }}
                 placeholder={cfg?.has_custom_base ? "custom base set — blank keeps it" : "https://… (leave blank for default)"}
                 className="mt-1 w-full rounded-lg border border-border bg-base/60 px-3 py-2 font-mono text-[13px] text-ink placeholder:text-ink-faint focus:border-border-strong focus:outline-none"
               />
+              {cfg?.has_custom_base && <button className="btn-ghost mt-1 text-xs" onClick={() => { setApiBase(""); setBaseChanged(true); }}>Use provider default URL</button>}
 
               <div className="mt-4 flex items-center gap-2">
-                <button onClick={save} disabled={saving} className="btn-primary">
+                <button onClick={save} disabled={saving || !cfg || !model.trim()} className="btn-primary">
                   {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Save & apply
                 </button>
                 <button onClick={doReload} disabled={saving} className="btn-outline" title="Re-read .env and tools">
@@ -199,8 +213,7 @@ export function SettingsView() {
 
               <p className="mt-3 text-[11.5px] text-ink-faint">
                 The key is written to <code className="font-mono">.env</code> on this machine and never shown
-                back here. A free-tier or mistyped model id is the usual cause of a chat that stalls — if a run
-                hangs, confirm the model shows <span className="text-ok">usable</span> above.
+                back here. Configuration checks do not verify network access, API-key validity, or tool-calling support. Changes apply to the next message; a running assessment keeps its current model.
               </p>
             </section>
 

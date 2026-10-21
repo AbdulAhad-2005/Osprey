@@ -61,5 +61,21 @@ export function useResource<T>(
   }, [...deps, nonce]);
 
   const refetch = useCallback(() => setNonce((n) => n + 1), []);
+  // Evidence can arrive while the operator is viewing another tab. Coalesce
+  // tool bursts instead of polling every store or rebuilding per tool event.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const queue = () => {
+      if (document.visibilityState === "hidden" || timer) return;
+      timer = setTimeout(() => { timer = undefined; refetch(); }, 750);
+    };
+    const changed = (event: Event) => {
+      if ((event as CustomEvent<string>).detail === deps[0]) queue();
+    };
+    window.addEventListener("osprey:evidence-changed", changed);
+    window.addEventListener("focus", queue);
+    return () => { if (timer) clearTimeout(timer); window.removeEventListener("osprey:evidence-changed",changed); window.removeEventListener("focus",queue); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deps[0],refetch]);
   return { data, loading, error, loaded, refetch };
 }

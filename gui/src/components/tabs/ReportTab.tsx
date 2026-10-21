@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Download, Printer, FileText, ShieldAlert, Radar, ListChecks, ScrollText, Sun, Moon } from "lucide-react";
+import { Download, Printer, FileText, ShieldAlert, Radar, ListChecks, ScrollText, Sun, Moon, RefreshCw } from "lucide-react";
 import { getReport, reportMarkdownUrl } from "@/lib/api";
 import { useResource } from "@/hooks/useResource";
 import type { ReportData, ReportFinding, Severity } from "@/lib/types";
@@ -10,15 +10,28 @@ import { cn } from "@/lib/cn";
 import { SeverityPill } from "@/components/ui/SeverityPill";
 import { Chip } from "@/components/ui/primitives";
 import { Loading, EmptyState, ErrorState } from "@/components/ui/States";
+import { RecordInspector } from "@/components/ui/RecordInspector";
 
 export function ReportTab({ engagementId }: { engagementId: string }) {
   const rep = useResource((s) => getReport(engagementId, s), [engagementId]);
-  const [light, setLight] = useState(false);
+  const [light, setLight] = useState(true);
+  const [exportError, setExportError] = useState("");
+  useEffect(() => {
+    let previouslyClosed: HTMLDetailsElement[] = [];
+    const before = () => {
+      previouslyClosed = [...document.querySelectorAll<HTMLDetailsElement>("#osprey-report details:not([open])")];
+      previouslyClosed.forEach((element) => { element.open = true; });
+    };
+    const after = () => previouslyClosed.forEach((element) => { element.open = false; });
+    window.addEventListener("beforeprint", before);
+    window.addEventListener("afterprint", after);
+    return () => { window.removeEventListener("beforeprint", before); window.removeEventListener("afterprint", after); };
+  }, []);
 
   // Remember the report theme per viewer (print-friendly light vs. on-screen dark).
   useEffect(() => {
     try {
-      setLight(localStorage.getItem("osprey.report.light") === "1");
+      setLight(localStorage.getItem("osprey.report.light") !== "0");
     } catch {
       /* ignore */
     }
@@ -44,6 +57,7 @@ export function ReportTab({ engagementId }: { engagementId: string }) {
 
   async function downloadMarkdown() {
     const res = await fetch(reportMarkdownUrl(engagementId));
+    if (!res.ok) throw new Error("Report export failed. Please refresh and retry.");
     const text = await res.text();
     const blob = new Blob([text], { type: "text/markdown" });
     const a = document.createElement("a");
@@ -57,6 +71,7 @@ export function ReportTab({ engagementId }: { engagementId: string }) {
     <div className="relative">
       {/* Export toolbar (not printed) */}
       <div className="no-print sticky top-0 z-10 flex items-center justify-end gap-2 border-b border-border bg-base/80 px-5 py-2 backdrop-blur">
+        <button onClick={rep.refetch} className="btn-ghost" disabled={rep.loading}><RefreshCw size={14}/> Refresh</button>
         <button
           onClick={toggleTheme}
           className="btn-ghost"
@@ -65,7 +80,8 @@ export function ReportTab({ engagementId }: { engagementId: string }) {
           {light ? <Moon size={14} /> : <Sun size={14} />}
           {light ? "Dark" : "Light"}
         </button>
-        <button onClick={downloadMarkdown} className="btn-outline">
+        {exportError && <span role="alert" className="text-xs text-red-soft">{exportError}</span>}
+        <button onClick={() => { setExportError(""); void downloadMarkdown().catch((error) => setExportError(error.message)); }} className="btn-outline">
           <Download size={14} /> Markdown
         </button>
         <button onClick={() => window.print()} className="btn-primary">
@@ -79,9 +95,12 @@ export function ReportTab({ engagementId }: { engagementId: string }) {
       >
         <ReportHeader report={report} />
         <ExecutiveSummary report={report} />
+        <section><H2 icon={ListChecks}>Assessment limitations</H2><ul className="list-disc space-y-2 pl-5 text-[13px] leading-relaxed text-ink-dim">{report.limitations?.map((line) => <li key={line}>{line}</li>)}</ul></section>
         <ScopeSection report={report} />
         <MethodologySection report={report} />
         <FindingsSection report={report} />
+        {!!report.review_candidates?.length && <details className="report-appendix mt-6 rounded-xl border border-border p-4"><summary className="cursor-pointer text-sm font-semibold text-ink">Legacy records requiring review · {report.review_candidates.length}</summary><p className="my-3 text-sm text-ink-dim">These older records have a severity label but were stored as structural facts or execution notes. They are excluded from security-conclusion totals. Full original evidence is available in Findings → Legacy records to review.</p><ul className="space-y-2 text-xs text-ink-dim">{report.review_candidates.map((finding) => <li key={finding.id} className="break-words"><span className="font-mono">{finding.id}</span> · {finding.title} · {finding.target} · recorded severity: {finding.severity}</li>)}</ul></details>}
+        <section><H2 icon={ListChecks}>Remediation priorities</H2>{report.remediation_plan?.map((group) => <div key={group.priority} className="mb-4"><h3 className="text-sm font-semibold text-ink">{group.priority.toUpperCase()} · {group.finding_ids.length} findings</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-ink-dim">{group.actions.map((action) => <li key={action}>{action}</li>)}</ul></div>)}</section>
         {report.scanner_claims.length > 0 && <ScannerClaimsSection report={report} />}
         <AppendixSection report={report} />
         <footer className="mt-10 border-t border-border pt-4 text-center text-[11.5px] text-ink-faint">
@@ -119,7 +138,7 @@ function ReportHeader({ report }: { report: ReportData }) {
         </div>
       </div>
       <div className={cn("rounded-xl border px-4 py-3 text-center", meta.border, meta.bg)}>
-        <div className="text-[10px] font-medium uppercase tracking-wider text-ink-faint">Overall risk</div>
+        <div className="text-[10px] font-medium uppercase tracking-wider text-ink-faint">Highest technical severity</div>
         <div className={cn("mt-0.5 text-[22px] font-bold", meta.text)}>{report.executive_summary.overall_risk_label}</div>
       </div>
     </header>
@@ -142,6 +161,9 @@ function ExecutiveSummary({ report }: { report: ReportData }) {
     <section>
       <H2 icon={ScrollText}>Executive Summary</H2>
       <p className="text-[14px] leading-relaxed text-ink-dim">{es.narrative}</p>
+      <div className="mt-5 grid gap-2 sm:grid-cols-5" aria-label="Security findings by severity">
+        {(["critical", "high", "medium", "low", "info"] as Severity[]).map((severity) => <div key={severity} className="rounded-lg border border-border p-3"><div className="flex items-center justify-between"><SeverityPill severity={severity} /><span className="font-mono text-lg text-ink">{report.totals.by_severity[severity] || 0}</span></div><div className="mt-3 h-1.5 rounded bg-surface-2"><div className={cn("h-full rounded", SEVERITY_META[severity].dot)} style={{width: `${100 * (report.totals.by_severity[severity] || 0) / Math.max(1, report.totals.findings)}%`}} /></div></div>)}
+      </div>
       <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-7">
         {STAT_LABELS.map(([key, label]) => (
           <div key={key} className="rounded-lg border border-border bg-surface/60 px-2.5 py-2 text-center">
@@ -238,7 +260,7 @@ function FindingsSection({ report }: { report: ReportData }) {
               </div>
               <div className="space-y-3">
                 {g.findings.map((f) => (
-                  <FindingBlock key={f.id} f={f} />
+                  <FindingBlock key={f.id} f={f} engagementId={report.meta.engagement_id} />
                 ))}
               </div>
             </div>
@@ -249,12 +271,14 @@ function FindingsSection({ report }: { report: ReportData }) {
   );
 }
 
-function FindingBlock({ f }: { f: ReportFinding }) {
+export function FindingBlock({ f, engagementId }: { f: ReportFinding; engagementId?: string }) {
+  const [inspect, setInspect] = useState(false);
   return (
-    <div className={cn("break-inside-avoid rounded-xl border bg-surface/50 p-4", SEVERITY_META[f.severity].border)}>
+    <div id={`finding-${f.id}`} className={cn("break-inside-avoid rounded-xl border bg-surface/50 p-4", SEVERITY_META[f.severity].border)}>
       <div className="flex items-start gap-2.5">
         <SeverityPill severity={f.severity} size="sm" />
         <div className="text-[14.5px] font-semibold text-ink">{f.title}</div>
+        <span className="ml-auto font-mono text-[10px] text-ink-faint">{f.id}</span>
       </div>
       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-ink-faint">
         <span className="font-mono text-ink-dim">{f.target || "—"}</span>
@@ -266,15 +290,18 @@ function FindingBlock({ f }: { f: ReportFinding }) {
       {f.evidence_snippet && (
         <div className="mt-2.5">
           <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-ink-faint">Evidence</div>
-          <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-abyss p-2.5 font-mono text-[11.5px] leading-relaxed text-ink-dim">
+          <pre className="report-evidence max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-abyss p-2.5 font-mono text-[11.5px] leading-relaxed text-ink-dim">
             {f.evidence_snippet}
           </pre>
         </div>
       )}
-      <div className="mt-2.5 rounded-lg border border-ok/25 bg-ok/[0.06] px-3 py-2 text-[12.5px] text-ink-dim">
-        <span className="font-semibold text-ok">Remediation. </span>
+      {!!f.observation_ids?.length && <p className="mt-2 break-all font-mono text-[10px] text-ink-faint">Observation references: {f.observation_ids.join(", ")}</p>}
+      {engagementId && <button className="btn-outline no-print mt-3 text-xs" onClick={()=>setInspect(true)}>Inspect original record &amp; observations</button>}
+      <div className={cn("mt-2.5 rounded-lg border px-3 py-2 text-[12.5px] text-ink-dim",f.remediation_recorded ? "border-ok/25 bg-ok/[0.06]" : "border-amber/25 bg-amber/[0.06]")}>
+        <span className={cn("font-semibold", f.remediation_recorded ? "text-ok" : "text-amber")}>{f.remediation_recorded ? "Recorded remediation. " : "Remediation needs authoring. "}</span>
         {f.remediation_hint}
       </div>
+      {inspect && engagementId && <RecordInspector engagementId={engagementId} records={[{kind:"finding",id:f.id},...(f.observation_ids || []).map(id=>({kind:"observation" as const,id}))]} title={f.title} onClose={()=>setInspect(false)}/>}
     </div>
   );
 }
@@ -306,7 +333,8 @@ function AppendixSection({ report }: { report: ReportData }) {
       <H2 icon={FileText}>Appendix — Attack Surface Inventory</H2>
       <div className="space-y-5">
         {report.recon_appendix.map((sec) => (
-          <div key={sec.key} className="break-inside-avoid">
+          <details key={sec.key} className="report-appendix break-inside-avoid rounded-lg border border-border p-3">
+            <summary className="cursor-pointer text-sm font-semibold text-ink">{sec.label} · {sec.count.toLocaleString()} assets</summary>
             <div className="mb-1.5 text-[13px] font-semibold text-ink">
               {sec.label} <span className="font-mono text-[11px] text-ink-faint">{sec.count}</span>
             </div>
@@ -323,7 +351,7 @@ function AppendixSection({ report }: { report: ReportData }) {
                 </tbody>
               </table>
             </div>
-          </div>
+          </details>
         ))}
       </div>
     </section>

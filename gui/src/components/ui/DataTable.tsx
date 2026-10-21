@@ -34,6 +34,8 @@ export function DataTable<T>({
   dense?: boolean;
 }) {
   const [q, setQ] = useState("");
+  const [page, setPage] = useState(0);
+  const pageSize = 40;
   const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(initialSort ?? null);
 
   const filtered = useMemo(() => {
@@ -53,8 +55,11 @@ export function DataTable<T>({
     }
     return out;
   }, [rows, q, sort, columns, filter]);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const currentPage = Math.min(page, pageCount - 1);
 
   function toggleSort(key: string) {
+    setPage(0);
     setSort((s) =>
       s?.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" },
     );
@@ -67,7 +72,7 @@ export function DataTable<T>({
           <Search size={13} className="text-ink-faint" />
           <input
             value={q}
-            onChange={(e) => setQ(e.target.value)}
+            onChange={(e) => { setQ(e.target.value); setPage(0); }}
             placeholder={searchPlaceholder}
             className="w-full bg-transparent text-[12.5px] text-ink placeholder:text-ink-faint focus:outline-none"
           />
@@ -110,7 +115,7 @@ export function DataTable<T>({
             </tr>
           </thead>
           <tbody>
-            {filtered.map((row, i) => (
+            {filtered.slice(currentPage * pageSize, (currentPage + 1) * pageSize).map((row, i) => (
               <tr
                 key={getRowKey(row, i)}
                 onClick={() => onRowClick?.(row)}
@@ -136,6 +141,13 @@ export function DataTable<T>({
             ))}
           </tbody>
         </table>
+      </div>
+      <div className="mt-3 flex items-center justify-between text-xs text-ink-faint">
+        <span>{filtered.length.toLocaleString()} records · page {currentPage + 1} of {pageCount}</span>
+        <div className="flex gap-2">
+          <button className="btn-ghost" disabled={currentPage === 0} onClick={() => setPage(Math.max(0, currentPage - 1))}>Previous</button>
+          <button className="btn-ghost" disabled={currentPage + 1 >= pageCount} onClick={() => setPage(currentPage + 1)}>Next</button>
+        </div>
       </div>
     </div>
   );

@@ -14,8 +14,24 @@
 import type { CytoGraph, Severity } from "./types";
 
 /** Leaf types collapsed into per-parent cluster badges when numerous. */
-const COLLAPSE_TYPES = new Set(["url", "technology", "email", "phone"]);
+const COLLAPSE_TYPES = new Set([
+  "subdomain",
+  "host",
+  "ip",
+  "url",
+  "technology",
+  "email",
+  "phone",
+  "port",
+  "service",
+]);
 const COLLAPSE_MIN = 4;
+
+/** Dagre's synchronous rank optimization can freeze a browser on large maps.
+ * Change only the layout strategy, never the set of represented records. */
+export function responsiveLayout(requested: string, nodeCount: number): string {
+  return requested === "dagre" && nodeCount > 150 ? "grid" : requested;
+}
 
 const SEV_RANK: Record<string, number> = {
   critical: 5,
@@ -46,6 +62,9 @@ export interface GEdgeData {
   target: string;
   label: string;
   hypothesis?: boolean;
+  /** Original edge indices, including parallel evidence-bearing edges. */
+  records?: number[];
+  count?: number;
 }
 export interface ClusterMember {
   id: string;
@@ -70,11 +89,7 @@ export interface ProcessedGraph {
 
 function plural(type: string, n: number): string {
   const label =
-    type === "url"
-      ? "endpoint"
-      : type === "technology"
-        ? "technology"
-        : type;
+    type === "url" ? "endpoint" : type === "technology" ? "technology" : type;
   if (n === 1) return label;
   if (type === "technology") return "technologies";
   return label + "s";
@@ -83,53 +98,95 @@ function plural(type: string, n: number): string {
 function maxSev(items: { severity?: string }[]): Severity {
   let best: Severity = "none";
   for (const it of items) {
-    if ((SEV_RANK[it.severity ?? "none"] ?? 0) > (SEV_RANK[best] ?? 0)) best = (it.severity as Severity) ?? "none";
+    if ((SEV_RANK[it.severity ?? "none"] ?? 0) > (SEV_RANK[best] ?? 0))
+      best = (it.severity as Severity) ?? "none";
   }
   return best;
 }
 
-export function processGraph(graph: CytoGraph): ProcessedGraph {
+export function processGraph(
+  graph: CytoGraph,
+  primaryTarget?: string,
+  options: { group?: boolean; expanded?: ReadonlySet<string> } = {},
+): ProcessedGraph {
   const nodeById = new Map(graph.nodes.map((n) => [n.data.id, n.data]));
   const degree = new Map<string, number>();
-  const incident = new Map<string, { edge: CytoGraph["edges"][number]; other: string }[]>();
+  const incident = new Map<
+    string,
+    { edge: CytoGraph["edges"][number]; other: string }[]
+  >();
   for (const e of graph.edges) {
     const { source, target } = e.data;
     if (!nodeById.has(source) || !nodeById.has(target)) continue;
     degree.set(source, (degree.get(source) ?? 0) + 1);
     degree.set(target, (degree.get(target) ?? 0) + 1);
-    (incident.get(source) ?? incident.set(source, []).get(source)!).push({ edge: e, other: target });
-    (incident.get(target) ?? incident.set(target, []).get(target)!).push({ edge: e, other: source });
+    (incident.get(source) ?? incident.set(source, []).get(source)!).push({
+      edge: e,
+      other: target,
+    });
+    (incident.get(target) ?? incident.set(target, []).get(target)!).push({
+      edge: e,
+      other: source,
+    });
   }
 
   // Group collapsible degree-1 leaves by (parent, type, edgeLabel).
-  const groups = new Map<string, { parentId: string; type: string; edgeLabel: string; members: string[] }>();
+  const groups = new Map<
+    string,
+    { parentId: string; type: string; edgeLabel: string; members: string[] }
+  >();
   const grouped = new Set<string>();
-  for (const [id, deg] of degree) {
-    if (deg !== 1) continue;
-    const data = nodeById.get(id)!;
+  for (const [id, data] of nodeById) {
+    if (options.group === false || options.expanded?.has(id)) continue;
+    if (primaryTarget && data.label.toLowerCase() === primaryTarget.toLowerCase()) continue;
     if (!COLLAPSE_TYPES.has(data.type)) continue;
+    if ((SEV_RANK[data.severity || "none"] || 0) >= 3) continue;
+    const neighbors = [
+      ...new Set(
+        (incident.get(id) || []).map(
+          (item) =>
+            `${item.edge.data.source === id ? "out" : "in"}:${item.other}:${item.edge.data.label}:${!!item.edge.data.hypothesis}`,
+        ),
+      ),
+    ].sort();
+    if (neighbors.length > 3) continue;
     const inc = incident.get(id)?.[0];
-    if (!inc) continue;
-    const key = `${inc.other}::${data.type}::${inc.edge.data.label}`;
-    const g = groups.get(key) ?? { parentId: inc.other, type: data.type, edgeLabel: inc.edge.data.label, members: [] };
+    const key = `${data.type}::${neighbors.join("|") || "unlinked"}`;
+    const g = groups.get(key) ?? {
+      parentId: inc?.other || "",
+      type: data.type,
+      edgeLabel: inc?.edge.data.label || "unlinked",
+      members: [],
+    };
     g.members.push(id);
     groups.set(key, g);
   }
 
   const clusters = new Map<string, Cluster>();
   const metaNodes: { data: GNodeData }[] = [];
-  const metaEdges: { data: GEdgeData }[] = [];
   let collapsedCount = 0;
   for (const [key, g] of groups) {
     if (g.members.length < COLLAPSE_MIN) continue;
     const members: ClusterMember[] = g.members.map((mid) => {
       grouped.add(mid);
       const d = nodeById.get(mid)!;
-      return { id: d.id, label: d.label, type: d.type, severity: (d.severity as Severity) ?? "none" };
+      return {
+        id: d.id,
+        label: d.label,
+        type: d.type,
+        severity: (d.severity as Severity) ?? "none",
+      };
     });
     const cid = `cluster::${key}`;
     const sev = maxSev(members);
-    clusters.set(cid, { id: cid, parentId: g.parentId, type: g.type, edgeLabel: g.edgeLabel, members, severity: sev });
+    clusters.set(cid, {
+      id: cid,
+      parentId: g.parentId,
+      type: g.type,
+      edgeLabel: g.edgeLabel,
+      members,
+      severity: sev,
+    });
     metaNodes.push({
       data: {
         id: cid,
@@ -142,16 +199,15 @@ export function processGraph(graph: CytoGraph): ProcessedGraph {
         count: g.members.length,
       },
     });
-    metaEdges.push({
-      data: { id: `e::${cid}`, source: g.parentId, target: cid, label: g.edgeLabel },
-    });
     collapsedCount += g.members.length;
   }
 
   // Primary targets: domains that are not the target of a subdomain_of/hosted_on
   // edge (i.e. roots). Fallback: all domains.
   const childDomains = new Set(
-    graph.edges.filter((e) => e.data.label === "subdomain_of").map((e) => e.data.source),
+    graph.edges
+      .filter((e) => e.data.label === "subdomain_of")
+      .map((e) => e.data.source),
   );
 
   const nodes: { data: GNodeData }[] = [];
@@ -166,26 +222,51 @@ export function processGraph(graph: CytoGraph): ProcessedGraph {
         type: d.type,
         severity: (d.severity as Severity) ?? "none",
         degree: deg,
-        primary: d.type === "domain" && !childDomains.has(d.id),
+        primary: primaryTarget
+          ? d.label.toLowerCase() === primaryTarget.toLowerCase()
+          : d.type === "domain" && !childDomains.has(d.id),
       },
     });
   }
   nodes.push(...metaNodes);
 
   const edges: { data: GEdgeData }[] = [];
-  for (const e of graph.edges) {
-    if (grouped.has(e.data.source) || grouped.has(e.data.target)) continue;
+  const groupedInto = new Map<string, string>();
+  for (const cluster of clusters.values())
+    for (const member of cluster.members)
+      groupedInto.set(member.id, cluster.id);
+  const edgeByKey = new Map<string, GEdgeData>();
+  for (const [index, e] of graph.edges.entries()) {
+    const source = groupedInto.get(e.data.source) || e.data.source;
+    const target = groupedInto.get(e.data.target) || e.data.target;
+    if (
+      !nodeById.has(e.data.source) ||
+      !nodeById.has(e.data.target) ||
+      (source === target && e.data.source !== e.data.target)
+    )
+      continue;
+    const key = JSON.stringify([
+      source,
+      e.data.label,
+      target,
+      !!e.data.hypothesis,
+    ]);
+    if (edgeByKey.has(key)) {
+      edgeByKey.get(key)!.records!.push(index);
+      continue;
+    }
     edges.push({
       data: {
-        id: `${e.data.source}__${e.data.label}__${e.data.target}`,
-        source: e.data.source,
-        target: e.data.target,
+        id: key,
+        source,
+        target,
         label: e.data.label,
         hypothesis: e.data.hypothesis,
+        records: [index],
       },
     });
+    edgeByKey.set(key, edges[edges.length - 1]!.data);
   }
-  edges.push(...metaEdges);
 
   return {
     nodes,
@@ -197,5 +278,39 @@ export function processGraph(graph: CytoGraph): ProcessedGraph {
       collapsed: collapsedCount,
       clusters: clusters.size,
     },
+  };
+}
+
+/** A direct (optionally two-hop) neighborhood, selected from the full raw graph so even a
+ * grouped member remains individually searchable and inspectable. */
+export function graphNeighborhood(
+  graph: CytoGraph,
+  id: string,
+  hops = 1,
+): CytoGraph {
+  const visible = new Set([id]);
+  const kinds = new Map(
+    graph.nodes.map((node) => [node.data.id, node.data.type]),
+  );
+  for (let hop = 0; hop < hops; hop++) {
+    const prior = new Set(visible);
+    for (const edge of graph.edges) {
+      if (
+        prior.has(edge.data.source) &&
+        (edge.data.source === id || kinds.get(edge.data.source) !== "domain")
+      )
+        visible.add(edge.data.target);
+      if (
+        prior.has(edge.data.target) &&
+        (edge.data.target === id || kinds.get(edge.data.target) !== "domain")
+      )
+        visible.add(edge.data.source);
+    }
+  }
+  return {
+    nodes: graph.nodes.filter((node) => visible.has(node.data.id)),
+    edges: graph.edges.filter(
+      (edge) => visible.has(edge.data.source) && visible.has(edge.data.target),
+    ),
   };
 }

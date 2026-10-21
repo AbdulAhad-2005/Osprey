@@ -1,19 +1,24 @@
 "use client";
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { MessageSquare, Radar, Share2, ShieldAlert, FileText, Copy, Check } from "lucide-react";
 import { useWorkspace } from "@/components/shell/WorkspaceProvider";
 import { ChatView } from "@/components/chat/ChatView";
+import { EvidenceTab } from "@/components/tabs/EvidenceTab";
 import { AttackSurfaceTab } from "@/components/tabs/AttackSurfaceTab";
-import { GraphTab } from "@/components/tabs/GraphTab";
 import { FindingsTab } from "@/components/tabs/FindingsTab";
 import { ReportTab } from "@/components/tabs/ReportTab";
 import { TabNav, type TabDef } from "@/components/ui/Tabs";
 import { cn } from "@/lib/cn";
 
-type TabKey = "chat" | "surface" | "graph" | "findings" | "report";
-const VALID: TabKey[] = ["chat", "surface", "graph", "findings", "report"];
+type TabKey = "chat" | "surface" | "graph" | "findings" | "evidence" | "report";
+const VALID: TabKey[] = ["chat", "surface", "graph", "findings", "evidence", "report"];
+// Keep the graph/layout engine out of the initial chat bundle.
+const GraphTab = dynamic(() => import("@/components/tabs/GraphTab").then((module) => module.GraphTab), {
+  loading: () => <p className="p-6 text-sm text-ink-faint">Loading relationship map…</p>,
+});
 
 export function EngagementWorkspace({ engagementId }: { engagementId: string }) {
   const { engagements } = useWorkspace();
@@ -23,11 +28,10 @@ export function EngagementWorkspace({ engagementId }: { engagementId: string }) 
   const initialPrompt = search.get("intent") ?? undefined;
 
   const urlTab = (search.get("tab") as TabKey) ?? "chat";
-  const [tab, setTab] = useState<TabKey>(VALID.includes(urlTab) ? urlTab : "chat");
+  const tab: TabKey = VALID.includes(urlTab) ? urlTab : "chat";
 
   function changeTab(key: string) {
     const k = key as TabKey;
-    setTab(k);
     const params = new URLSearchParams(search.toString());
     if (k === "chat") params.delete("tab");
     else params.set("tab", k);
@@ -42,14 +46,15 @@ export function EngagementWorkspace({ engagementId }: { engagementId: string }) 
     { key: "chat", label: "Chat", icon: MessageSquare },
     { key: "surface", label: "Attack Surface", icon: Radar },
     { key: "graph", label: "Graph", icon: Share2 },
-    { key: "findings", label: "Findings", icon: ShieldAlert, count: engagement?.findings_count },
+    { key: "findings", label: "Findings", icon: ShieldAlert },
+    { key: "evidence", label: "Evidence", icon: FileText },
     { key: "report", label: "Report", icon: FileText },
   ];
 
   return (
     <div className="flex h-full flex-col">
       {/* Workspace top bar */}
-      <header className="flex items-center gap-4 border-b border-border px-4 py-2 pl-14">
+      <header className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-2 pl-14">
         <TargetLabel target={engagement?.target ?? engagementId} id={engagementId} />
         {engagement && (
           <span className="hidden items-center gap-2 text-[12px] text-ink-faint md:flex">
@@ -57,7 +62,7 @@ export function EngagementWorkspace({ engagementId }: { engagementId: string }) 
             {engagement.tools_executed} tools
           </span>
         )}
-        <div className="ml-auto">
+        <div className="w-full overflow-x-auto pb-1 lg:ml-auto lg:w-auto">
           <TabNav tabs={tabs} active={tab} onChange={changeTab} />
         </div>
       </header>
@@ -65,7 +70,7 @@ export function EngagementWorkspace({ engagementId }: { engagementId: string }) 
       {/* Body — chat stays mounted so a live run survives tab switches */}
       <div className="relative min-h-0 flex-1">
         <div className={cn("absolute inset-0", tab === "chat" ? "block" : "hidden")}>
-          <ChatView engagementId={engagementId} initialPrompt={initialPrompt} />
+          <ChatView engagementId={engagementId} initialPrompt={initialPrompt} visible={tab === "chat"} />
         </div>
         {tab === "surface" && (
           <div className="absolute inset-0 overflow-y-auto">
@@ -74,7 +79,7 @@ export function EngagementWorkspace({ engagementId }: { engagementId: string }) 
         )}
         {tab === "graph" && (
           <div className="absolute inset-0">
-            <GraphTab engagementId={engagementId} />
+            <GraphTab key={engagementId} engagementId={engagementId} />
           </div>
         )}
         {tab === "findings" && (
@@ -87,6 +92,7 @@ export function EngagementWorkspace({ engagementId }: { engagementId: string }) 
             <ReportTab engagementId={engagementId} />
           </div>
         )}
+        {tab === "evidence" && <div className="absolute inset-0 overflow-y-auto"><EvidenceTab engagementId={engagementId}/></div>}
       </div>
     </div>
   );

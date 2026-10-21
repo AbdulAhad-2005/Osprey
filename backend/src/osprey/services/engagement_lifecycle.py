@@ -21,6 +21,9 @@ async def _quiesce(engagement_ids: list[str]) -> int:
     jobs = get_job_store()
     cancelled = 0
     for engagement_id in engagement_ids:
+        from osprey.services.foreground_chat import settle_session
+
+        await settle_session(engagement_id, forget=True)
         event_bus.publish(
             engagement_id,
             "engagement_deleting",

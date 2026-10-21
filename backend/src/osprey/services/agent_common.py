@@ -52,9 +52,10 @@ def resolve_model_config() -> "CLIModelConfig | None":
     settings = get_settings().llm
     model = (settings.model or "").strip()
     api_key = (settings.api_key or "").strip()
-    if not model or model == "<model-provider>/<model-name>" or not api_key:
+    local_model = model.startswith(("ollama/", "ollama_chat/"))
+    if not model or model == "<model-provider>/<model-name>" or (not api_key and not local_model):
         return None
-    return CLIModelConfig(model=model, api_key=api_key, api_base=(settings.api_base or "").strip())
+    return CLIModelConfig(model=model, api_key=api_key or "ollama", api_base=(settings.api_base or "").strip())
 
 _DOMAIN_RE = re.compile(
     r"(?:https?://)?(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}",

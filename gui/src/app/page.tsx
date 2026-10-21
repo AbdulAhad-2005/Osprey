@@ -18,10 +18,11 @@ function greeting(): string {
 }
 
 export default function HomePage() {
-  const { engagements } = useWorkspace();
+  const { engagements, refresh } = useWorkspace();
   const router = useRouter();
   const [target, setTarget] = useState("");
   const [intent, setIntent] = useState<string>("");
+  const [forceNew, setForceNew] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -31,7 +32,8 @@ export default function HomePage() {
     setBusy(true);
     setError(null);
     try {
-      const eng = await resolveEngagement(t);
+      const eng = await resolveEngagement(t, forceNew);
+      await refresh();
       const qp = intent ? `?intent=${encodeURIComponent(intent)}` : "";
       router.push(`/engagement/${encodeURIComponent(eng.id)}${qp}`);
     } catch (e) {
@@ -132,6 +134,7 @@ export default function HomePage() {
           <p className="mt-2 px-1 text-[11.5px] text-ink-faint">
             Authorized targets only. Osprey binds an engagement to this target and reuses prior
             findings unless you start fresh.
+            <label className="mt-2 flex items-center justify-center gap-2"><input type="checkbox" checked={forceNew} onChange={event=>setForceNew(event.target.checked)}/> Start a fresh engagement for this target (keep previous evidence separately)</label>
           </p>
         </motion.div>
 
@@ -158,7 +161,7 @@ export default function HomePage() {
                       {e.target || e.id}
                     </div>
                     <div className="mt-0.5 text-[11.5px] text-ink-faint">
-                      {e.findings_count} findings · {e.tools_executed} tools · {e.status}
+                      {e.findings_count} records · {e.tools_executed} tools · {e.status}
                     </div>
                   </div>
                 </button>

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from osprey.db.session import SessionLocal
 from osprey.models.attack_path import AttackPathRow
 from osprey.models.audit_entry import AuditEntryRow
+from osprey.models.chat_event import ChatEventRow
 from osprey.models.context_snapshot import ContextSnapshotRow
 from osprey.models.conversation import ConversationMessageRow
 from osprey.models.engagement import EngagementRow
@@ -302,6 +303,7 @@ class EngagementStore:
                 db.execute(sqlalchemy_delete(ContextSnapshotRow).where(ContextSnapshotRow.engagement_id == engagement_id))
                 db.execute(sqlalchemy_delete(TargetBanRow).where(TargetBanRow.engagement_id == engagement_id))
                 db.execute(sqlalchemy_delete(ConversationMessageRow).where(ConversationMessageRow.engagement_id == engagement_id))
+                db.execute(sqlalchemy_delete(ChatEventRow).where(ChatEventRow.engagement_id == engagement_id))
                 db.execute(sqlalchemy_delete(AuditEntryRow).where(AuditEntryRow.engagement_id == engagement_id))
                 db.execute(sqlalchemy_delete(ObservationOccurrenceRow).where(ObservationOccurrenceRow.engagement_id == engagement_id))
                 db.execute(sqlalchemy_delete(ObservationRow).where(ObservationRow.engagement_id == engagement_id))
@@ -352,6 +354,7 @@ class EngagementStore:
                 db.execute(sqlalchemy_delete(ContextSnapshotRow).where(ContextSnapshotRow.engagement_id.in_(engagement_ids)))
                 db.execute(sqlalchemy_delete(TargetBanRow).where(TargetBanRow.engagement_id.in_(engagement_ids)))
                 db.execute(sqlalchemy_delete(ConversationMessageRow).where(ConversationMessageRow.engagement_id.in_(engagement_ids)))
+                db.execute(sqlalchemy_delete(ChatEventRow).where(ChatEventRow.engagement_id.in_(engagement_ids)))
                 db.execute(sqlalchemy_delete(AuditEntryRow).where(AuditEntryRow.engagement_id.in_(engagement_ids)))
                 db.execute(sqlalchemy_delete(ObservationOccurrenceRow).where(ObservationOccurrenceRow.engagement_id.in_(engagement_ids)))
                 db.execute(sqlalchemy_delete(ObservationRow).where(ObservationRow.engagement_id.in_(engagement_ids)))

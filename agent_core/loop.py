@@ -567,7 +567,13 @@ class Runner:
                     sig = _call_signature(name, args)
                     seen = self._call_outcomes.get(sig)
                     if seen and seen[1] >= _STALL_THRESHOLD:
-                        return name, _stall_notice(name, seen[1]), time.monotonic() - started
+                        result = _stall_notice(name, seen[1])
+                        elapsed = time.monotonic() - started
+                        event_queue.put_nowait(Event("tool_end", {
+                            "tool_name": name, "result": result, "duration_seconds": elapsed,
+                            "tool_call_id": tc["id"], "success": not tool_result_failed(result),
+                        }))
+                        return name, result, elapsed
                     async with sem:
                         result = await self._dispatch_tool(name, args, event_queue=event_queue)
                     fp = _result_fingerprint(result)
@@ -585,7 +591,13 @@ class Runner:
                             result += _repeated_failure_notice(name, self._failure_counts[name])
                     else:
                         self._failure_counts[name] = 0
-                    return name, result, time.monotonic() - started
+                    elapsed = time.monotonic() - started
+                    event_queue.put_nowait(Event("tool_end", {
+                        "tool_name": name, "result": result,
+                        "duration_seconds": elapsed, "tool_call_id": tc["id"],
+                        "success": not tool_result_failed(result),
+                    }))
+                    return name, result, elapsed
 
                 for tc in tool_calls:
                     yield Event(
@@ -602,16 +614,21 @@ class Runner:
                 )
                 get_task: asyncio.Task[Event] = asyncio.ensure_future(event_queue.get())
                 pending = {gather_task, get_task}
-                while True:
-                    done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                    if get_task in done:
-                        yield get_task.result()
-                        get_task = asyncio.ensure_future(event_queue.get())
-                        pending.add(get_task)
-                    if gather_task in done:
-                        get_task.cancel()
-                        results = gather_task.result()
-                        break
+                try:
+                    while True:
+                        done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                        if get_task in done:
+                            yield get_task.result()
+                            get_task = asyncio.ensure_future(event_queue.get())
+                            pending.add(get_task)
+                        if gather_task in done:
+                            results = gather_task.result()
+                            break
+                finally:
+                    get_task.cancel()
+                    if not gather_task.done():
+                        gather_task.cancel()
+                    await asyncio.gather(get_task, gather_task, return_exceptions=True)
                 # A sub-event can land in the queue in the instant between the
                 # gather finishing and the cancel above taking effect.
                 while not event_queue.empty():
@@ -641,16 +658,6 @@ class Runner:
                 cap_history = self.config.tool_schema_budget_tokens > 0
                 engagement_id = self._engagement_id or self._tool_gateway.engagement_id
                 for tc, (name, result, elapsed) in zip(tool_calls, results):
-                    yield Event(
-                        "tool_end",
-                        {
-                            "tool_name": name,
-                            "result": result,
-                            "duration_seconds": elapsed,
-                            "tool_call_id": tc["id"],
-                            "success": not tool_result_failed(result),
-                        },
-                    )
                     # Non-budgeted providers keep the server's already-budgeted
                     # result verbatim (the backend's output_budget owns per-call
                     # size; cumulative growth is handled by _manage_context's
@@ -673,6 +680,15 @@ class Runner:
 
             yield Event("done", {"content": "(stopped: reached the turn limit for this prompt)"})
         except asyncio.CancelledError:
+            # Keep provider tool-call/result pairing valid for the next prompt.
+            # A stopped batch may have emitted visible results before the full
+            # batch could be appended to model history.
+            last_call = next((m for m in reversed(self.messages) if m.get("tool_calls")), None)
+            answered = {m.get("tool_call_id") for m in self.messages if m.get("role") == "tool"}
+            for call in (last_call or {}).get("tool_calls", []):
+                if call["id"] not in answered:
+                    self.messages.append({"role": "tool", "tool_call_id": call["id"],
+                        "content": "Operator stopped the run before the batch returned to model history. Consult the durable tool transcript/artifacts for any completed output."})
             findings_readback = await self._tool_gateway.call(
                 "platform_findings",
                 {"engagement_id": self._engagement_id or self._tool_gateway.engagement_id},
@@ -854,6 +870,9 @@ def _tag_worker_event(worker_num: int, event: Event) -> Event:
     the parent loop's own tool calls without changing what either renderer
     already keys off of (tool_name / content)."""
     data = dict(event.data)
+    data["source"] = f"worker-{worker_num}"
+    if data.get("tool_call_id"):
+        data["tool_call_id"] = f"worker-{worker_num}:{data['tool_call_id']}"
     if "tool_name" in data:
         data["tool_name"] = f"[Worker {worker_num}] {data['tool_name']}"
     if "content" in data:

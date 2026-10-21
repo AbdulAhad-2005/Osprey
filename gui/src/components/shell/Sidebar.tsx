@@ -168,7 +168,7 @@ function SidebarItem({ e, active }: { e: Engagement; active: boolean }) {
           <span className="min-w-0 flex-1 truncate font-medium">{e.target || e.name || e.id}</span>
         </Link>
         {e.findings_count > 0 && (
-          <span className="rounded-full bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-ink-dim group-hover:hidden">
+          <span title="Recorded rows, including legacy discovery facts" className="rounded-full bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-ink-dim group-hover:hidden">
             {e.findings_count}
           </span>
         )}

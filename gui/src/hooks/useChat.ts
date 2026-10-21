@@ -2,244 +2,167 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatEvent, ChatTurn } from "@/lib/types";
-import {
-  answerQuestion as apiAnswer,
-  attachChat,
-  getConversation,
-  getRunStatus,
-  stopRun,
-  streamChat,
-} from "@/lib/api";
-import { applyEvent, answerQuestionBlock, uid, userTurn } from "@/lib/chatReducer";
+import { ApiError, answerQuestion as apiAnswer, attachChat, clearConversation, getTranscript, stopRun, streamChat } from "@/lib/api";
+import { applyEvent, answerQuestionBlock, userTurn } from "@/lib/chatReducer";
 
 export type ChatActivity =
-  | { kind: "idle" }
+  | { kind: "idle" } | { kind: "thinking" } | { kind: "working" }
   | { kind: "preparing"; message: string }
-  | { kind: "thinking" }
-  | { kind: "waiting"; elapsed: number }
-  | { kind: "working" }
-  | { kind: "error"; message: string };
+  | { kind: "waiting"; elapsed: number } | { kind: "error"; message: string };
 
-export interface UseChat {
-  turns: ChatTurn[];
-  activity: ChatActivity;
-  streaming: boolean;
-  send: (prompt: string) => void;
-  answer: (questionId: string, value: string) => void;
-  stop: () => void;
-  clear: () => void;
-}
-
-export function useChat(engagementId: string, opts?: { mock?: boolean }): UseChat {
+export function useChat(engagementId: string, opts?: { mock?: boolean }) {
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [activity, setActivity] = useState<ChatActivity>({ kind: "idle" });
   const [streaming, setStreaming] = useState(false);
+  const [loading, setLoading] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
+  const cursor = useRef(0);
+  const generation = useRef(0);
+  const busy = useRef(false);
   const mock = opts?.mock ?? false;
 
-  // Load persisted conversation (text-only; live turns carry full tool detail).
-  const hydrate = useCallback(async () => {
-    const messages = await getConversation(engagementId);
-    setTurns(
-      messages
-        .filter((m) => m.role === "user" || m.role === "assistant")
-        .map((m) =>
-          m.role === "user"
-            ? userTurn(m.content)
-            : {
-                id: uid("a"),
-                role: "assistant" as const,
-                blocks: m.content.trim()
-                  ? [{ kind: "text" as const, id: uid("x"), content: m.content }]
-                  : [],
-              },
-        ),
-    );
+  const consume = useCallback((event: ChatEvent) => {
+    const id = Number((event.data as { event_id?: number }).event_id || 0);
+    if (id && id <= cursor.current) return;
+    if (id) cursor.current = id;
+    if (event.event === "tool_end" || event.event === "done") {
+      window.dispatchEvent(new CustomEvent("osprey:evidence-changed", {detail: engagementId}));
+    }
+    setTurns((prev) => applyEvent(prev, event));
+    switch (event.event) {
+      case "status": setActivity({ kind: "preparing", message: event.data.message }); break;
+      case "llm_call_start": setActivity({ kind: "thinking" }); break;
+      case "llm_still_waiting": setActivity({ kind: "waiting", elapsed: event.data.elapsed_seconds }); break;
+      case "tool_start": setActivity({ kind: "working" }); break;
+      case "done": setActivity({ kind: "idle" }); break;
+    }
   }, [engagementId]);
 
-  // Shared consumer for both a freshly-sent stream and a live re-attach.
-  const pump = useCallback(async (source: AsyncGenerator<ChatEvent>, onEnd?: () => void) => {
-    try {
-      for await (const ev of source) {
-        applyActivity(ev, setActivity);
-        if (foldsIntoTurns(ev)) setTurns((prev) => applyEvent(prev, ev));
-      }
-    } catch (e) {
-      if ((e as Error)?.name !== "AbortError") {
-        const raw = e instanceof Error ? e.message : "stream failed";
-        const message = /fetch|network|stream|load failed|Failed to fetch/i.test(raw)
-          ? "Connection to Osprey was interrupted. The run keeps going on the server — reopen this engagement to see it."
-          : raw;
-        setActivity({ kind: "error", message });
-        setTurns((prev) => applyEvent(prev, { event: "error", data: { message } }));
-      }
-    } finally {
-      setStreaming(false);
-      setActivity((a) => (a.kind === "error" ? a : { kind: "idle" }));
-      setTurns((prev) => applyEvent(prev, { event: "done", data: { content: "" } }));
-      abortRef.current = null;
-      onEnd?.();
-    }
+  const fail = useCallback((e: unknown) => {
+    setActivity({ kind: "error", message: e instanceof Error ? e.message : "Could not load the conversation." });
   }, []);
 
-  // On mount / engagement change: load history, then — if a run is still going
-  // on the server (a long assessment the user navigated away from, or a refresh
-  // mid-run) — re-attach to its live event stream instead of showing a dead chat.
-  useEffect(() => {
-    let cancelled = false;
-    if (!engagementId || mock) {
-      setTurns([]);
-      return;
+  const follow = useCallback(async (ctrl: AbortController, gen: number) => {
+    for await (const event of attachChat(engagementId, ctrl.signal, cursor.current)) {
+      if (gen !== generation.current) return;
+      consume(event);
     }
-    (async () => {
-      try {
-        await hydrate();
-      } catch {
-        /* no history / backend down — start clean */
-      }
-      if (cancelled) return;
-      const active = await getRunStatus(engagementId);
-      if (cancelled || !active) return;
-      const ctrl = new AbortController();
-      abortRef.current = ctrl;
-      setStreaming(true);
-      setActivity({ kind: "working" });
-      await pump(attachChat(engagementId, ctrl.signal), () => {
-        if (!cancelled) void hydrate().catch(() => {});
-      });
-    })();
-    return () => {
-      cancelled = true;
-      abortRef.current?.abort();
-    };
-  }, [engagementId, mock, hydrate, pump]);
+  }, [engagementId, consume]);
 
-  const runStream = useCallback(
-    async (prompt: string) => {
-      const ctrl = new AbortController();
-      abortRef.current = ctrl;
-      setStreaming(true);
-      setActivity({ kind: "thinking" });
-      const source = mock
-        ? mockStream(prompt)
-        : streamChat({ engagement_id: engagementId, prompt }, ctrl.signal);
-      await pump(source);
-    },
-    [engagementId, mock, pump],
-  );
-
-  const send = useCallback(
-    (prompt: string) => {
-      const p = prompt.trim();
-      if (!p || streaming) return;
-      setTurns((prev) => [...prev, userTurn(p)]);
-      void runStream(p);
-    },
-    [runStream, streaming],
-  );
-
-  const answer = useCallback(
-    (questionId: string, value: string) => {
-      setTurns((prev) => answerQuestionBlock(prev, questionId, value));
-      if (!mock) void apiAnswer(engagementId, questionId, value).catch(() => {});
-    },
-    [engagementId, mock],
-  );
-
-  const stop = useCallback(() => {
-    abortRef.current?.abort();
-    // The run lives on the server (background task); abort only drops our stream.
-    // Tell the backend to actually cancel it.
-    if (!mock) void stopRun(engagementId);
+  useEffect(() => {
+    const gen = ++generation.current;
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    cursor.current = 0;
+    busy.current = true;
+    setTurns([]);
+    setLoading(true);
     setStreaming(false);
     setActivity({ kind: "idle" });
-  }, [engagementId, mock]);
+    (async () => {
+      try {
+        if (mock) return;
+        const page = await getTranscript(engagementId, 0, 0, ctrl.signal);
+        if (gen !== generation.current) return;
+        for (const message of page.legacy_messages) {
+          if (message.role === "user") setTurns((prev) => [...prev, userTurn(message.content)]);
+          else {
+            consume({ event: "assistant", data: { content: message.content } });
+            consume({ event: "done", data: { content: "" } });
+          }
+        }
+        for (const record of page.events) {
+          consume({ event: record.event, data: { ...record.data, event_id: record.id } } as ChatEvent);
+        }
+        if (page.active || page.has_more) {
+          setLoading(false);
+          setStreaming(true);
+          setActivity({ kind: "working" });
+          await follow(ctrl, gen);
+        }
+        if (gen === generation.current) setTurns((prev) => applyEvent(prev, { event: "done", data: { content: "" } }));
+      } catch (e) {
+        if (!ctrl.signal.aborted && gen === generation.current) fail(e);
+      } finally {
+        if (gen === generation.current) {
+          busy.current = false;
+          setLoading(false);
+          setStreaming(false);
+        }
+      }
+    })();
+    return () => { ++generation.current; ctrl.abort(); };
+  }, [engagementId, mock, consume, follow, fail]);
 
-  const clear = useCallback(() => {
-    stop();
-    setTurns([]);
-  }, [stop]);
+  const send = useCallback((prompt: string) => {
+    const text = prompt.trim();
+    if (!text || busy.current) return;
+    const gen = generation.current;
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    busy.current = true;
+    setStreaming(true);
+    setTurns((prev) => [...prev, userTurn(text)]);
+    setActivity({ kind: "thinking" });
+    void (async () => {
+      try {
+        const source = mock ? demoStream() : streamChat({ engagement_id: engagementId, prompt: text }, ctrl.signal);
+        for await (const event of source) {
+          if (gen !== generation.current) return;
+          consume(event);
+        }
+        if (!mock && !ctrl.signal.aborted) await follow(ctrl, gen);
+      } catch (e) {
+        if (!ctrl.signal.aborted && gen === generation.current) {
+          if (e instanceof ApiError) { fail(e); return; }
+          try { await follow(ctrl, gen); }
+          catch (reconnectError) { if (!ctrl.signal.aborted) fail(reconnectError); }
+        }
+      } finally {
+        if (gen === generation.current) {
+          busy.current = false;
+          setStreaming(false);
+          setTurns((prev) => applyEvent(prev, { event: "done", data: { content: "" } }));
+        }
+      }
+    })();
+  }, [engagementId, mock, consume, follow, fail]);
 
-  return { turns, activity, streaming, send, answer, stop, clear };
+  const answer = useCallback((questionId: string, value: string) => {
+    void (async () => {
+      try {
+        if (!mock) await apiAnswer(engagementId, questionId, value);
+        setTurns((prev) => answerQuestionBlock(prev, questionId, value));
+      } catch (e) { fail(e); }
+    })();
+  }, [engagementId, mock, fail]);
+
+  const stop = useCallback(() => {
+    if (mock) abortRef.current?.abort();
+    else void stopRun(engagementId).catch(fail);
+  }, [engagementId, mock, fail]);
+
+  const clear = useCallback(async () => {
+    try {
+      if (!mock) await clearConversation(engagementId);
+      ++generation.current;
+      abortRef.current?.abort();
+      busy.current = false;
+      cursor.current = 0;
+      setStreaming(false);
+      setTurns([]);
+      setActivity({ kind: "idle" });
+    } catch (e) { fail(e); }
+  }, [engagementId, mock, fail]);
+
+  return { turns, activity, streaming, loading, send, answer, stop, clear };
 }
 
-function foldsIntoTurns(ev: ChatEvent): boolean {
-  return !["llm_call_start", "llm_still_waiting", "compaction", "message_start", "status", "run_start"].includes(
-    ev.event,
-  );
-}
-
-function applyActivity(ev: ChatEvent, set: (a: ChatActivity) => void) {
-  switch (ev.event) {
-    case "status":
-      set({ kind: "preparing", message: ev.data.message });
-      break;
-    case "llm_call_start":
-      set({ kind: "thinking" });
-      break;
-    case "llm_still_waiting":
-      set({ kind: "waiting", elapsed: ev.data.elapsed_seconds });
-      break;
-    case "tool_start":
-      set({ kind: "working" });
-      break;
-    case "assistant":
-    case "thinking":
-      set({ kind: "thinking" });
-      break;
-    case "done":
-    case "cancelled":
-      set({ kind: "idle" });
-      break;
-    default:
-      break;
-  }
-}
-
-/* --- Mock stream: a scripted run so the UI is fully demoable without an LLM
- * key or a live backend. Exercises every block type: thinking, parallel tools,
- * an interactive exploitation gate, and a final answer. ------------------- */
-async function* mockStream(prompt: string): AsyncGenerator<ChatEvent> {
-  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-  yield { event: "llm_call_start", data: {} };
-  await sleep(500);
-  yield {
-    event: "thinking",
-    data: { content: "Binding the engagement and widening the external surface first — subdomains from multiple sources, then resolve and probe what's live." },
-  };
-  await sleep(400);
-  yield { event: "tool_start", data: { tool_name: "subfinder_scan", tool_call_id: "t1", arguments: JSON.stringify({ domain: "example.com" }) } };
-  yield { event: "tool_start", data: { tool_name: "crt_sh_query", tool_call_id: "t2", arguments: JSON.stringify({ domain: "example.com" }) } };
-  await sleep(900);
-  yield {
-    event: "tool_end",
-    data: { tool_name: "subfinder_scan", tool_call_id: "t1", success: true, duration_seconds: 7.4, result: "success: true\nfound 23 subdomains\napi.example.com\napp.example.com\nstaging.example.com\nmail.example.com\nvpn.example.com\n…", finding_titles: ["23 subdomains"] },
-  };
-  await sleep(500);
-  yield {
-    event: "tool_end",
-    data: { tool_name: "crt_sh_query", tool_call_id: "t2", success: true, duration_seconds: 2.1, result: "success: true\n9 names from certificate transparency\ninternal.example.com\ndev-api.example.com\n…", finding_titles: ["2 new names"] },
-  };
-  await sleep(400);
-  yield { event: "assistant", data: { content: "Found **25 unique subdomains**. `dev-api.example.com` and `staging.example.com` look like non-production surface worth a closer look. Probing which are live now." } };
-  await sleep(500);
-  yield { event: "tool_start", data: { tool_name: "httpx_probe", tool_call_id: "t3", arguments: JSON.stringify({ hosts: "25 subdomains" }) } };
-  await sleep(1100);
-  yield { event: "tool_end", data: { tool_name: "httpx_probe", tool_call_id: "t3", success: true, duration_seconds: 11.2, result: "success: true\n14 live hosts\napp.example.com [200] nginx, React\napi.example.com [401] kong\ndev-api.example.com [200] Express, debug=true\n…", finding_titles: ["14 live hosts", "dev-api debug exposed"] } };
-  await sleep(500);
-  yield {
-    event: "question",
-    data: {
-      id: "gate1",
-      kind: "gate",
-      text: "Recon surfaced a likely-exploitable exposure (`dev-api.example.com` running with `debug=true`). Do you want to proceed into the exploitation phase, or stop at findings and generate a report?",
-      options: [
-        { value: "exploit", label: "Proceed to exploitation", detail: "Attempt validated exploitation of confirmed issues. Non-destructive only.", intent: "danger" },
-        { value: "stop", label: "Stop at findings", detail: "End recon/vuln here and produce the report.", intent: "default" },
-      ],
-      allow_freeform: true,
-    },
-  };
-  // The mock pauses here; QuestionPrompt's answer resumes with a final note.
-  void prompt;
+async function* demoStream(): AsyncGenerator<ChatEvent> {
+  yield { event: "assistant", data: { content: "This is a local interface demonstration. No scans are executed." } };
+  yield { event: "tool_start", data: { tool_call_id: "demo", tool_name: "httpx_probe", arguments: '{"target":"example.test"}' } };
+  await new Promise((r) => setTimeout(r, 500));
+  yield { event: "tool_end", data: { tool_call_id: "demo", tool_name: "httpx_probe", success: true, duration_seconds: 0.5, result: "Demonstration: example.test [200]" } };
+  yield { event: "assistant", data: { content: "Expand the tool card to inspect its arguments and result." } };
+  yield { event: "done", data: { content: "" } };
 }

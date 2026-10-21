@@ -13,6 +13,7 @@ from osprey.schemas.finding import (
     FileFindingResponse,
     FindingListResponse,
     FindingType,
+    Finding,
     GroupedFindingListResponse,
 )
 from osprey.schemas.fp_cache import FpPatternListResponse
@@ -33,6 +34,7 @@ def list_findings(
     tag: str | None = Query(default=None),
     q: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
     exclude_noise: bool = Query(
         default=True,
         description=(
@@ -69,9 +71,18 @@ def list_findings(
         tag=tag,
         q=q,
         limit=limit,
+        offset=offset,
         exclude_noise=exclude_noise,
     )
     return FindingListResponse(findings=findings, total=len(findings))
+
+
+@router.get("/record/{finding_id}", response_model=Finding)
+def get_finding_record(finding_id: str, engagement_id: str = Query(...)) -> Finding:
+    finding = get_findings_store().get(finding_id)
+    if finding is None or finding.engagement_id != engagement_id:
+        raise HTTPException(404, detail="Record not found in this engagement")
+    return finding
 
 
 @router.get("/grouped", response_model=GroupedFindingListResponse)

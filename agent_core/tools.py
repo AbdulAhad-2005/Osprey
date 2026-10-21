@@ -65,7 +65,10 @@ class EmbeddedToolGateway:
 
     async def call(self, name: str, arguments: dict[str, Any]) -> str:
         if not self._loaded:
-            self.activate()
+            # Binding performs synchronous HTTP back to the capability API.
+            # On the backend event loop it would block that same server from
+            # answering its own request (and freeze every dashboard stream).
+            await asyncio.to_thread(self.activate)
         return await call_tool(name, arguments)
 
 

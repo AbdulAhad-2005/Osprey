@@ -6,7 +6,9 @@ import type {
   FindingSummary,
   Observation,
   ReportData,
+  RecordReference,
 } from "./types";
+import { readEvents } from "./sse";
 
 /**
  * API base. In dev, next.config rewrites proxy `/api/*` to the Osprey backend
@@ -136,6 +138,23 @@ export async function getAgentStatus(): Promise<AgentStatus> {
   return getJSON("/api/v1/agent/status");
 }
 
+export interface BackgroundJob {
+  job_id:string; status:string; label:string; tool_name:string; command_preview:string;
+  progress:string; results_log:string[]; error:string;
+}
+
+export function getBackgroundJobs(engagementId: string, signal?:AbortSignal):Promise<BackgroundJob[]> {
+  return getJSON(`/api/v1/jobs?engagement_id=${encodeURIComponent(engagementId)}&limit=20`,{signal});
+}
+
+export function cancelBackgroundJob(id:string):Promise<BackgroundJob> {
+  return getJSON(`/api/v1/jobs/${encodeURIComponent(id)}/cancel`,{method:"POST"});
+}
+
+export function getBackgroundJobResult(id:string, signal?:AbortSignal):Promise<Record<string,unknown>> {
+  return getJSON(`/api/v1/jobs/${encodeURIComponent(id)}/result`,{signal});
+}
+
 /* --- Conversation history ------------------------------------------------ */
 
 export interface StoredMessage {
@@ -152,9 +171,21 @@ export async function getConversation(engagementId: string): Promise<StoredMessa
 }
 
 export async function clearConversation(engagementId: string): Promise<void> {
-  await fetch(url(`/api/v1/agent/conversation/${encodeURIComponent(engagementId)}`), {
+  await getJSON(`/api/v1/agent/conversation/${encodeURIComponent(engagementId)}`, {
     method: "DELETE",
   });
+}
+
+export interface TranscriptPage {
+  events: { id: number; run_id: string; event: ChatEvent["event"]; data: ChatEvent["data"] }[];
+  cursor: number;
+  active: boolean;
+  has_more: boolean;
+  legacy_messages: StoredMessage[];
+}
+
+export function getTranscript(engagementId: string, after = 0, wait = 0, signal?: AbortSignal): Promise<TranscriptPage> {
+  return getJSON(`/api/v1/agent/chat-events/${encodeURIComponent(engagementId)}?after=${after}&wait_seconds=${wait}`, { signal });
 }
 
 /* --- Findings (used by the chat sidebar glance + viz milestone) ---------- */
@@ -194,14 +225,30 @@ export async function listAssets(
 
 export async function getGraph(engagementId: string, signal?: AbortSignal): Promise<CytoGraph> {
   const data = await getJSON<{ data?: CytoGraph }>(
-    `/api/v1/engagements/${encodeURIComponent(engagementId)}/visualization?format=json&max_nodes=400`,
+    `/api/v1/engagements/${encodeURIComponent(engagementId)}/visualization?format=json&max_nodes=5000&max_edges=20000&exclude_urls=false&preserve_records=true`,
     { signal },
   );
   return data.data ?? { nodes: [], edges: [] };
 }
 
 export async function getReport(engagementId: string, signal?: AbortSignal): Promise<ReportData> {
-  return getJSON<ReportData>(`/api/v1/report/${encodeURIComponent(engagementId)}`, { signal });
+  const report = await getJSON<ReportData>(`/api/v1/report/${encodeURIComponent(engagementId)}`, { signal });
+  if (report.error) throw new ApiError(404, report.error);
+  return report;
+}
+
+export function getRecord(engagementId: string, record: RecordReference, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  const query = `engagement_id=${encodeURIComponent(engagementId)}`;
+  const path = record.kind === "asset" ? `/api/v1/reasoning/asset?${query}&asset_id=${encodeURIComponent(record.id)}` :
+    record.kind === "observation" ? `/api/v1/observations/${encodeURIComponent(record.id)}?${query}` :
+    `/api/v1/findings/record/${encodeURIComponent(record.id)}?${query}`;
+  return getJSON(path, {signal});
+}
+
+export async function browseEvidence(engagementId: string, kind: "observation" | "finding", page: number, query: string, signal?: AbortSignal): Promise<Record<string, unknown>[]> {
+  const params = new URLSearchParams({engagement_id:engagementId,limit:"40",offset:String(page*40),q:query,exclude_noise:"false"});
+  const result = await getJSON<{observations?: Record<string,unknown>[]; findings?:Record<string,unknown>[]}>(`/api/v1/${kind === "observation" ? "observations" : "findings"}/?${params}`,{signal});
+  return (kind === "observation" ? result.observations : result.findings) || [];
 }
 
 export function reportMarkdownUrl(engagementId: string): string {
@@ -227,49 +274,23 @@ export async function getRunStatus(engagementId: string): Promise<boolean> {
 }
 
 export async function stopRun(engagementId: string): Promise<void> {
-  await fetch(url(`/api/v1/agent/stop/${encodeURIComponent(engagementId)}`), { method: "POST" }).catch(
-    () => {},
-  );
+  await getJSON(`/api/v1/agent/stop/${encodeURIComponent(engagementId)}`, { method: "POST" });
 }
 
 /** Re-attach to an in-flight run's live events (read-only; no new prompt). */
 export async function* attachChat(
   engagementId: string,
   signal?: AbortSignal,
+  after = 0,
 ): AsyncGenerator<ChatEvent> {
-  // /stream/events is the Next streaming route handler over the backend event
-  // bus. replay=0 → only live events from the moment we attach (no stale
-  // terminal markers from a prior run).
-  const res = await fetch(`/stream/events/${encodeURIComponent(engagementId)}?replay=0`, {
-    headers: { accept: "text/event-stream" },
-    signal,
-  });
-  if (!res.ok || !res.body) return;
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let sep: number;
-      while ((sep = buffer.indexOf("\n\n")) !== -1) {
-        const frame = buffer.slice(0, sep);
-        buffer = buffer.slice(sep + 2);
-        const parsed = parseFrame(frame);
-        if (!parsed) continue;
-        yield parsed;
-        // The engagement event stream is persistent (it never closes on its own
-        // when a run ends), so stop consuming once this run hits a terminal
-        // event — otherwise the client would hang in a "running" state forever.
-        if (parsed.event === "done" || parsed.event === "error" || parsed.event === "cancelled") {
-          return;
-        }
-      }
+  let cursor = after;
+  while (!signal?.aborted) {
+    const page = await getTranscript(engagementId, cursor, 20, signal);
+    for (const record of page.events) {
+      yield { event: record.event, data: { ...record.data, event_id: record.id, run_id: record.run_id } } as ChatEvent;
     }
-  } finally {
-    reader.releaseLock();
+    cursor = page.cursor;
+    if (!page.active && !page.has_more) return;
   }
 }
 
@@ -278,10 +299,11 @@ export async function answerQuestion(
   questionId: string,
   answer: string,
 ): Promise<void> {
-  await getJSON(`/api/v1/agent/question/${encodeURIComponent(questionId)}/answer`, {
+  const res = await getJSON<{ok: boolean; reason?: string}>(`/api/v1/agent/question/${encodeURIComponent(questionId)}/answer`, {
     method: "POST",
     body: JSON.stringify({ engagement_id: engagementId, answer }),
   });
+  if (!res.ok) throw new Error(res.reason || "The answer was not accepted.");
 }
 
 /* --- Chat: POST + SSE streaming ------------------------------------------ *
@@ -301,9 +323,7 @@ export async function* streamChat(
   signal?: AbortSignal,
 ): AsyncGenerator<ChatEvent> {
   // Note: this hits the Next streaming Route Handler at /stream/chat (same
-  // origin, NOT the API_BASE-prefixed backend path) — the next.config rewrite
-  // proxy buffers SSE, so the chat stream is routed around it. See
-  // src/app/stream/chat/route.ts.
+  // origin). JSON and streaming handlers share lib/backendProxy.ts.
   const res = await fetch("/stream/chat", {
     method: "POST",
     headers: { "content-type": "application/json", accept: "text/event-stream" },
@@ -314,41 +334,8 @@ export async function* streamChat(
     const body = await res.text().catch(() => "");
     throw new ApiError(res.status, `chat stream failed: ${res.status} ${body.slice(0, 200)}`);
   }
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      // SSE frames are separated by a blank line.
-      let sep: number;
-      while ((sep = buffer.indexOf("\n\n")) !== -1) {
-        const frame = buffer.slice(0, sep);
-        buffer = buffer.slice(sep + 2);
-        const parsed = parseFrame(frame);
-        if (parsed) yield parsed;
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-}
-
-function parseFrame(frame: string): ChatEvent | null {
-  let eventName = "message";
-  const dataLines: string[] = [];
-  for (const line of frame.split("\n")) {
-    if (line.startsWith(":")) continue; // comment / keepalive
-    if (line.startsWith("event:")) eventName = line.slice(6).trim();
-    else if (line.startsWith("data:")) dataLines.push(line.slice(5).replace(/^ /, ""));
-  }
-  if (dataLines.length === 0) return null;
-  try {
-    const data = JSON.parse(dataLines.join("\n"));
-    return { event: eventName, data } as ChatEvent;
-  } catch {
-    return null;
+  for await (const event of readEvents(res.body)) {
+    yield event;
+    if (event.event === "done") return;
   }
 }

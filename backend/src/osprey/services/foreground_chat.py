@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -53,6 +54,7 @@ class ChatSession:
     runner: "Runner"
     gateway: "EmbeddedToolGateway"
     lock: asyncio.Lock
+    config: Any
 
 
 # One session per engagement, bounded so a long-lived backend doesn't accumulate
@@ -86,8 +88,15 @@ def _get_session(engagement_id: str, config, api_base: str) -> ChatSession:
     from osprey.services.engagement_store import get_engagement_store
 
     session = _sessions.get(engagement_id)
+    previous_messages = None
     if session is not None:
-        return session
+        # Apply Settings changes on the next turn, retaining conversation state.
+        # An in-flight turn keeps its original provider/key consistently.
+        if session.config != config and not session.lock.locked():
+            previous_messages = session.runner.messages
+            _sessions.pop(engagement_id, None)
+        else:
+            return session
 
     engagement = get_engagement_store().get(engagement_id) if engagement_id else None
     target = engagement.target if engagement else ""
@@ -136,10 +145,15 @@ def _get_session(engagement_id: str, config, api_base: str) -> ChatSession:
     history = get_history(engagement_id)
     if history:
         runner.messages = [{"role": m["role"], "content": m["content"]} for m in history]
+    if previous_messages is not None:
+        runner.messages = previous_messages
 
     if len(_sessions) >= _SESSION_CAP:
-        _sessions.pop(next(iter(_sessions)), None)  # evicts the session + its lock together
-    session = ChatSession(runner=runner, gateway=gateway, lock=asyncio.Lock())
+        for key, candidate in list(_sessions.items()):
+            if not candidate.lock.locked() and not run_active(key):
+                _sessions.pop(key, None)
+                break
+    session = ChatSession(runner=runner, gateway=gateway, lock=asyncio.Lock(), config=config)
     _sessions[engagement_id] = session
     return session
 
@@ -168,6 +182,16 @@ def stop_run(engagement_id: str) -> bool:
     return False
 
 
+async def settle_session(engagement_id: str, *, forget: bool = False) -> None:
+    """One lifecycle boundary for clearing chat or deleting an engagement."""
+    task = _active_runs.get(engagement_id)
+    stop_run(engagement_id)
+    if task is not None:
+        await asyncio.gather(task, return_exceptions=True)
+    if forget:
+        _sessions.pop(engagement_id, None)
+
+
 async def _drive_run(eid: str, prompt: str, config) -> None:
     """Drive the agent loop for one prompt, publishing every event to the shared
     event bus and persisting the assistant reply. Runs as a background task so it
@@ -176,17 +200,27 @@ async def _drive_run(eid: str, prompt: str, config) -> None:
     errors both become terminal bus events) so the task always cleans up."""
     from agent_core.context import build_system_prompt
     from osprey.services import event_bus
+    from osprey.services.chat_transcript import TRANSIENT_EVENTS, append_event
+
+    run_id = uuid.uuid4().hex
 
     def emit(name: str, data: dict[str, Any]) -> None:
+        data = dict(data)
+        data["run_id"] = run_id
+        if name not in TRANSIENT_EVENTS:
+            record = append_event(eid, run_id, name, data)
+            data["event_id"] = record["id"]
         event_bus.publish(eid, name, data, source="commander")
 
-    session = _get_session(eid, config, api_base_url())
-    await session.lock.acquire()
+    session = None
     final_text = ""
     persisted = False
+    prompt_task = None
     try:
-        append_message(eid, "user", prompt)
-        emit("run_start", {})
+        session = _get_session(eid, config, api_base_url())
+        await session.lock.acquire()
+        message_id = append_message(eid, "user", prompt)
+        emit("run_start", {"prompt": prompt, "message_id": message_id})
         emit("status", {"stage": "preparing", "message": "Preparing engagement context…"})
         prompt_task = asyncio.ensure_future(
             build_system_prompt(eid, tool_caller=session.gateway.call)
@@ -228,11 +262,22 @@ async def _drive_run(eid: str, prompt: str, config) -> None:
         if final_text and not persisted and not final_text.startswith("(stopped:"):
             append_message(eid, "assistant", final_text)
             persisted = True
-        emit("error", {"message": f"Chat loop error: {exc}"})
-        emit("done", {"content": ""})
+        try:
+            emit("error", {"message": f"Chat loop error: {exc}"})
+            emit("done", {"content": ""})
+        except Exception:
+            # A journal/database failure must not leave connected clients
+            # waiting forever for a terminal event that cannot be persisted.
+            logger.exception("Could not persist chat termination engagement=%s", eid)
+            event_bus.publish(eid, "error", {"message": "Chat stopped because its transcript could not be saved. Check backend storage before retrying."}, source="commander")
+            event_bus.publish(eid, "done", {"content": ""}, source="commander")
     finally:
+        if prompt_task is not None and not prompt_task.done():
+            prompt_task.cancel()
+            await asyncio.gather(prompt_task, return_exceptions=True)
         operator_prompts.cancel_for_engagement(eid, reason="(run ended)")
-        session.lock.release()
+        if session is not None and session.lock.locked():
+            session.lock.release()
         _active_runs.pop(eid, None)
 
 
@@ -287,9 +332,15 @@ async def stream_chat(engagement_id: str, prompt: str) -> AsyncIterator[tuple[st
         async for record in event_bus.subscribe(eid, replay=0):
             name = record["event"]
             if name == "run_start":
-                continue  # internal boundary marker; not a UI event
+                yield (name, record["data"])
+                continue
+            # Lower-level execution events share this bus. Only the translated
+            # runner events have chat call IDs; forwarding both duplicates calls
+            # and can mistake a worker's terminal event for the root's end.
+            if record.get("source") != "commander":
+                continue
             yield (name, record["data"])
-            if name in ("done", "error", "cancelled"):
+            if name == "done":
                 break
     except (asyncio.CancelledError, GeneratorExit):
         # Client went away. The background run keeps going; just stop streaming.
@@ -304,7 +355,9 @@ def _translate(ev) -> tuple[str | None, dict[str, Any]]:
     if t == "llm_still_waiting":
         return ("llm_still_waiting", {"elapsed_seconds": d.get("elapsed_seconds", 0)})
     if t == "thinking":
-        return ("thinking", {"content": d.get("content", "")})
+        # This is the model's public message accompanying tool calls, not its
+        # private reasoning. Render it as ordinary assistant narration.
+        return ("assistant", {"content": d.get("content", "")})
     if t == "assistant_text":
         return ("assistant", {"content": d.get("content", "")})
     if t == "tool_start":
@@ -314,7 +367,7 @@ def _translate(ev) -> tuple[str | None, dict[str, Any]]:
                 "tool_name": d.get("tool_name", ""),
                 "arguments": _arg_str(d.get("arguments")),
                 "tool_call_id": d.get("tool_call_id", ""),
-                "source": "commander",
+                "source": d.get("source", "commander"),
             },
         )
     if t == "tool_end":
@@ -333,6 +386,8 @@ def _translate(ev) -> tuple[str | None, dict[str, Any]]:
     if t == "compaction":
         return ("compaction", {"messages_after": d.get("messages_after")})
     if t == "error":
+        if d.get("source", "").startswith("worker-"):
+            return ("assistant", {"content": f"Worker error: {d.get('message', '')}"})
         return ("error", {"message": d.get("message", "")})
     if t == "done":
         return ("done", {"content": d.get("content", "")})

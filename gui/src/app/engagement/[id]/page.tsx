@@ -15,7 +15,7 @@ export default function EngagementPage() {
   // makes the route commit immediately to the skeleton, then swap in the content.
   return (
     <Suspense fallback={<WorkspaceSkeleton engagementId={id} />}>
-      <EngagementWorkspace engagementId={id} />
+      <EngagementWorkspace key={id} engagementId={id} />
     </Suspense>
   );
 }

@@ -36,7 +36,7 @@ export function TurnView({
           <div className="text-[13px] text-ink-faint">…</div>
         )}
         {turn.blocks.map((b) => (
-          <Block key={b.id} block={b} onAnswer={onAnswer} />
+          <Block key={b.id} block={b} onAnswer={onAnswer} inactive={!turn.streaming} />
         ))}
       </div>
     </div>
@@ -46,9 +46,11 @@ export function TurnView({
 function Block({
   block,
   onAnswer,
+  inactive,
 }: {
   block: TurnBlock;
   onAnswer: (questionId: string, value: string) => void;
+  inactive: boolean;
 }) {
   switch (block.kind) {
     case "text":
@@ -76,6 +78,7 @@ function Block({
         <QuestionPrompt
           question={block.question}
           answered={block.answered}
+          inactive={inactive}
           onAnswer={(v) => onAnswer(block.question.id, v)}
         />
       );

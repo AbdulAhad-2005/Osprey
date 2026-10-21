@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from pydantic import Field
@@ -14,6 +16,14 @@ _HERE = Path(__file__).resolve().parent
 
 def _find_dotenv() -> str:
     """Walk up from this file to find the project root .env."""
+    explicit = os.environ.get("OSPREY_ENV_FILE", "").strip()
+    if explicit:
+        return str(Path(explicit).resolve())
+    # Native development and Docker must agree on the project settings file.
+    # A stale backend/.env used to shadow the root file mounted by Compose.
+    for parent in _HERE.parents:
+        if (parent / "agent_core").is_dir() and (parent / "config").is_dir():
+            return str(parent / ".env")
     current = _HERE
     for _ in range(10):
         candidate = current / ".env"
@@ -24,6 +34,7 @@ def _find_dotenv() -> str:
 
 
 _DOTENV = _find_dotenv()
+_DOTENV_WRITE_LOCK = Lock()
 
 
 def set_dotenv_values(updates: dict[str, str]) -> str:
@@ -33,18 +44,27 @@ def set_dotenv_values(updates: dict[str, str]) -> str:
     key here (via the Settings surface). Returns the .env path written. Empty
     values are written as empty (explicit unset), not skipped.
     """
+    with _DOTENV_WRITE_LOCK:
+        return _write_dotenv_values(updates)
+
+
+def _write_dotenv_values(updates: dict[str, str]) -> str:
     path = Path(_DOTENV)
     lines: list[str] = []
     if path.is_file():
         lines = path.read_text(encoding="utf-8").splitlines()
-    remaining = dict(updates)
+    # Quote values so spaces, #, quotes and backslashes round-trip through
+    # python-dotenv. Replace duplicate definitions too: the last one wins.
+    encoded = {key: "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'" for key, value in updates.items()}
+    remaining = dict(encoded)
     out: list[str] = []
     for line in lines:
         stripped = line.strip()
         if stripped and not stripped.startswith("#") and "=" in stripped:
             key = stripped.split("=", 1)[0].strip()
-            if key in remaining:
-                out.append(f"{key}={remaining.pop(key)}")
+            if key in encoded:
+                out.append(f"{key}={encoded[key]}")
+                remaining.pop(key, None)
                 continue
         out.append(line)
     for key, value in remaining.items():
