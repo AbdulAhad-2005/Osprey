@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from osprey.core.config import get_settings, reload_settings, set_dotenv_values
 from osprey.services.llm_service import (
@@ -25,6 +25,20 @@ class LLMConfigUpdate(BaseModel):
     model: str | None = Field(default=None, description="LiteLLM model id, e.g. groq/llama-3.1-8b-instant")
     api_key: str | None = Field(default=None, description="Provider API key (omit/empty for local models)")
     api_base: str | None = Field(default=None, description="Custom base URL (proxies / local Ollama)")
+
+    @field_validator("model", "api_key", "api_base")
+    @classmethod
+    def single_line(cls, value: str | None) -> str | None:
+        if value is not None and any(c in value for c in ("\r", "\n", "\x00")):
+            raise ValueError("Settings must contain a single line")
+        return value
+
+    @field_validator("model")
+    @classmethod
+    def model_not_blank(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("A model id is required")
+        return value
 
 
 @router.get("/", summary="Show current LLM config")
@@ -49,6 +63,11 @@ def set_llm_config(update: LLMConfigUpdate) -> dict:
     key. Nothing here is multi-tenant — it configures the single local instance.
     """
     env_updates: dict[str, str] = {}
+    current = get_settings().llm
+    provider_changed = update.model is not None and update.model.split("/", 1)[0] != current.model.split("/", 1)[0]
+    # Never send one provider's saved credential to a different provider.
+    if provider_changed:
+        env_updates.update(LLM_API_KEY="", LLM_API_BASE="")
     if update.model is not None:
         env_updates["LLM_MODEL"] = update.model.strip()
     if update.api_key is not None:

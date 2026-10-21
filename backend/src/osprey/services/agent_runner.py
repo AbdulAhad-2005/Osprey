@@ -1,7 +1,7 @@
 """Scoped sub-agent runner — the executable body of a ``kind=agent`` job.
 
 A sub-agent is a headless instance of Osprey's ONE reasoning loop
-(``cli.agent.loop.Runner``) — the exact same ReAct loop the interactive CLI
+(``agent_core.loop.Runner``) — the exact same ReAct loop the interactive CLI
 and every CLI-spawned worker use, given no terminal to render into. There is
 no second, backend-native agent loop any more (the former ``PhaseAgent`` in
 ``services/phase_agent.py`` was deleted): two independently-coded loops meant
@@ -12,7 +12,7 @@ prompt instead of the CLI's AGENTS.md-driven one) simply because nobody kept
 it in sync. Importing the CLI's loop from the backend is an intentionally
 unusual dependency direction for a backend service — it is accepted here
 because the alternative (two loop implementations) is the actual bug class
-this module exists to close; a follow-up may extract ``cli/agent/`` into a
+this module exists to close; a follow-up may extract ``agent_core/`` into a
 transport-agnostic top-level package so neither side "owns" it, but that is
 a naming/packaging cleanup, not a behavior change, and isn't required for
 correctness.
@@ -25,7 +25,7 @@ driving over MCP — observes those findings through ``platform_findings`` /
 the inter-agent communication channel.
 
 Tool calls run through the CLI's embedded platform-mcp gateway
-(``cli.agent.tools.EmbeddedToolGateway``), the identical tool surface an
+(``agent_core.tools.EmbeddedToolGateway``), the identical tool surface an
 external MCP harness (OpenCode, Claude Code) already drives Osprey through —
 so a backend-spawned scoped agent, the interactive CLI, and an external
 harness all see the same tool names, the same schemas, and the same
@@ -35,17 +35,21 @@ one execution kernel (``tool_execution.execute_tool_request``).
 from __future__ import annotations
 
 import logging
-import os
 import time
 
-from osprey.core.config import get_settings
-from osprey.services.agent_common import AgentEventHandler, AgentResponse, AgentToolCall
+from osprey.services.agent_common import (
+    AgentEventHandler,
+    AgentResponse,
+    AgentToolCall,
+    api_base_url,
+    resolve_model_config,
+)
 from osprey.services.engagement_store import get_engagement_store
 
 logger = logging.getLogger(__name__)
 
 # Role → one-line framing injected into the shared system prompt (see
-# cli.agent.context.build_system_prompt's ``agent_prompt`` overlay). Roles
+# agent_core.context.build_system_prompt's ``agent_prompt`` overlay). Roles
 # exist so callers name intent ("exploit") rather than internal machinery;
 # "custom" is a free-form task with no extra framing beyond the task text.
 _ROLE_FRAMING: dict[str, str] = {
@@ -67,16 +71,6 @@ _ROLE_FRAMING: dict[str, str] = {
 }
 
 
-def _api_base_url() -> str:
-    """This backend's own reachable address — the CLI's embedded gateway
-    calls tools over real HTTP even when imported in-process (see
-    cli/agent/tools.py), so a backend-spawned agent loops back to itself over
-    the network the same way any other client reaches it. Same env var and
-    default the CLI itself uses (cli/main.py), so one already-correct setting
-    covers both."""
-    return os.getenv("API_BASE_URL", "http://localhost:9000")
-
-
 def _build_task_prompt(role: str, task: str, scope: str) -> str:
     parts: list[str] = []
     if scope.strip():
@@ -95,26 +89,6 @@ def _build_task_prompt(role: str, task: str, scope: str) -> str:
     return " ".join(parts)
 
 
-def _resolve_model_config() -> "CLIModelConfig | None":  # noqa: F821 - see import below
-    """Build a CLIModelConfig from the backend's OWN settings, not
-    ``CLIModelConfig.from_env()``. The two read the same env var names
-    (LLM_MODEL/LLM_API_KEY/LLM_API_BASE), but ``get_settings().llm`` prefers
-    the live .env FILE over the frozen process env (core/config.py's
-    ``settings_customise_sources``) precisely because this backend is a
-    long-running process — a plain ``os.getenv()`` read here would silently
-    keep serving whatever was baked in at container start, even after an
-    operator edits the project .env. Reusing the backend's own resolution
-    keeps both drivers reading one live LLM identity from one place."""
-    from cli.agent.llm import CLIModelConfig
-
-    settings = get_settings().llm
-    model = (settings.model or "").strip()
-    api_key = (settings.api_key or "").strip()
-    if not model or model == "<model-provider>/<model-name>" or not api_key:
-        return None
-    return CLIModelConfig(model=model, api_key=api_key, api_base=(settings.api_base or "").strip())
-
-
 async def run_scoped_agent(
     *,
     engagement_id: str,
@@ -126,9 +100,9 @@ async def run_scoped_agent(
     on_event: AgentEventHandler | None = None,
 ) -> AgentResponse:
     """Run one scoped, headless CLI-loop worker and return its AgentResponse."""
-    from cli.agent.context import build_system_prompt
-    from cli.agent.loop import Runner
-    from cli.agent.tools import EmbeddedToolGateway
+    from agent_core.context import build_system_prompt
+    from agent_core.loop import Runner
+    from agent_core.tools import EmbeddedToolGateway
     from osprey.schemas.jobs import AGENT_ROLES
 
     role = (role or "recon").strip().lower()
@@ -141,7 +115,7 @@ async def run_scoped_agent(
             if result is not None:
                 await result
 
-    config = _resolve_model_config()
+    config = resolve_model_config()
     if config is None:
         message = (
             "No driving model configured for this engagement's backend — set "
@@ -154,7 +128,7 @@ async def run_scoped_agent(
     engagement = get_engagement_store().get(engagement_id) if engagement_id else None
     target = engagement.target if engagement else ""
 
-    gateway = EmbeddedToolGateway(_api_base_url())
+    gateway = EmbeddedToolGateway(api_base_url())
     if engagement_id:
         gateway.bind(engagement_id=engagement_id, target=target)
 
@@ -164,7 +138,7 @@ async def run_scoped_agent(
         # own worker cap) — same rule, same reason, not reinvented here.
         return Runner(
             config=config,
-            api_base_url=_api_base_url(),
+            api_base_url=api_base_url(),
             engagement_id=engagement_id,
             target=target,
             allow_spawn=False,
@@ -177,7 +151,7 @@ async def run_scoped_agent(
     role_framing = _ROLE_FRAMING.get(role, "")
     runner = Runner(
         config=config,
-        api_base_url=_api_base_url(),
+        api_base_url=api_base_url(),
         engagement_id=engagement_id,
         target=target,
         agent_prompt=role_framing,
@@ -195,7 +169,7 @@ async def run_scoped_agent(
 
     # Skills ranked against THIS agent's own task+scope, on top of the base
     # prompt's engagement-wide skill ranking — mirrors Runner._worker_system_prompt
-    # (cli/agent/loop.py), the same treatment the interactive CLI already gives
+    # (agent_core/loop.py), the same treatment the interactive CLI already gives
     # every spawned worker, so a role like "exploit" isn't left with only
     # whatever ranked highest for the engagement as a whole.
     query = f"{role_framing} {task} {scope}".strip()

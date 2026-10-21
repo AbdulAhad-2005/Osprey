@@ -13,13 +13,12 @@ dependencies = [
     "httpx>=0.27,<1.0",
     "rich>=13.0,<14.0",
     "python-dotenv>=1.0,<2.0",
-    # Multi-provider LLM calling for the CLI's own local agent loop
-    # (cli/agent/) — the CLI supplies its own driving model/key now, the
-    # same library the backend uses, called independently (a shared
-    # third-party dependency, not shared application logic).
+    # The CLI drives the shared agent core (``agent_core/``), which brings
+    # litellm + mcp. These two are kept here as well so the CLI's own install
+    # stays self-describing; install ``agent_core`` alongside (scripts/setup.*).
     "litellm>=1.50,<2.0",
     # The mcp SDK's own FastMCP.tool() decorator is what platform-mcp/server.py
-    # uses to register tools — cli/agent/tools.py imports that module directly
+    # uses to register tools — agent_core/tools.py imports that module directly
     # and reads its tool schemas off the same registry. Exact-pinned — this
     # package previously drifted across 5 independent constraints in this repo
     # (see mcp-servers/requirements.txt's comment). Bump ALL FIVE together.

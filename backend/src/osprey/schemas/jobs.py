@@ -27,10 +27,10 @@ class JobKind(StrEnum):
 
 # Roles a spawned agent can take. Every phase agent gets the full tool catalog
 # and the full shared system-prompt assembly (services/agent_runner.py runs a
-# headless cli.agent.loop.Runner, same as the interactive CLI) — a role's real
+# headless agent_core.loop.Runner, same as the interactive CLI) — a role's real
 # effect is a one-line framing injected via that prompt's operator-defined-mode
 # overlay, plus which skills rank highest for its task/scope
-# (cli.agent.loop.Runner._worker_system_prompt's platform_skills query, reused
+# (agent_core.loop.Runner._worker_system_prompt's platform_skills query, reused
 # by agent_runner.run_scoped_agent). "custom" runs with a free-form task and no
 # role framing.
 AGENT_ROLES = (

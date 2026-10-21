@@ -21,6 +21,7 @@ from osprey.api.v1.endpoints import (
     pipeline,
     priority,
     reasoning,
+    report,
     tools,
 )
 
@@ -46,3 +47,4 @@ api_v1_router.include_router(reasoning.router, prefix="/reasoning", tags=["reaso
 api_v1_router.include_router(priority.router, prefix="/priority", tags=["priority"])
 api_v1_router.include_router(context.router, prefix="/context", tags=["context"])
 api_v1_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
+api_v1_router.include_router(report.router, prefix="/report", tags=["report"])

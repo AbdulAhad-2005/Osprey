@@ -31,10 +31,15 @@ COPY backend/src /app/src
 # prompt_toolkit identically to cli/requirements.txt for exactly this reason.
 COPY cli /app/cli
 COPY platform-mcp /app/platform-mcp
+# The shared ReAct loop lives in the top-level agent_core package (extracted
+# from cli/agent); both the backend and the CLI import it, so it must be present
+# and installed here — otherwise foreground_chat/agent_runner fail at import.
+COPY agent_core /app/agent_core
 
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt \
     && pip install --no-cache-dir -e . \
+    && pip install --no-cache-dir -e /app/agent_core \
     && pip install --no-cache-dir -e /app/cli
 
 # Keyless Python-tool runtime deps (the light set from mcp-servers/requirements.txt).

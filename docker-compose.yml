@@ -97,6 +97,12 @@ services:
       # container's next request, no rebuild needed.
       - ./cli:/app/cli
       - ./platform-mcp:/app/platform-mcp
+      # The shared agent loop was extracted from cli/agent into the top-level
+      # agent_core package; the backend (foreground_chat / agent_runner) imports
+      # it directly. Live-mounted like ./cli so the backend can actually import
+      # it (and pick up edits) — without this the chat loop fails at import with
+      # ModuleNotFoundError: No module named 'agent_core'.
+      - ./agent_core:/app/agent_core
       - /var/run/docker.sock:/var/run/docker.sock
       # Live-mounted (not just env_file/environment-baked): LLMSettings reads
       # this path directly on every request (core/config.py's

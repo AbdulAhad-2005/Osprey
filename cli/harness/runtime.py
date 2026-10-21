@@ -4,8 +4,8 @@ import asyncio
 import threading
 from typing import Any, Callable
 
-from cli.agent.loop import Event
-from cli.agent.tools import EmbeddedToolGateway
+from agent_core.loop import Event
+from agent_core.tools import EmbeddedToolGateway
 from cli.harness.drivers import (
     CapabilityJobDriver,
     DeterministicInvestigationDriver,

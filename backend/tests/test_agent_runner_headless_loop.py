@@ -1,4 +1,4 @@
-"""agent_runner.run_scoped_agent drives cli.agent.loop.Runner headlessly and
+"""agent_runner.run_scoped_agent drives agent_core.loop.Runner headlessly and
 translates its Event stream into the on_event vocabulary job_store.py already
 consumes (tool_start/tool_end/assistant/phase_done/error/done) — this is the
 one reasoning-loop implementation (no more backend-native PhaseAgent), so the
@@ -17,10 +17,10 @@ import pytest
 
 # Backend depends on the sibling cli package at runtime; skip cleanly if its
 # deps aren't installed in a backend-only venv (conftest puts repo root on path).
-Event = pytest.importorskip("cli.agent.loop").Event
-from osprey.core.config import LLMSettings
+Event = pytest.importorskip("agent_core.loop").Event
+from agent_core.llm import CLIModelConfig
 
-_CONFIGURED = LLMSettings(model="groq/compound-mini", api_key="sk-test-key")
+_CONFIG = CLIModelConfig(model="groq/compound-mini", api_key="sk-test-key")
 
 
 def _eid() -> str:
@@ -28,7 +28,7 @@ def _eid() -> str:
 
 
 class _FakeRunner:
-    """Stands in for cli.agent.loop.Runner: records what it was given, yields
+    """Stands in for agent_core.loop.Runner: records what it was given, yields
     a scripted event sequence from .run() with no LLM/HTTP call."""
 
     instances: list["_FakeRunner"] = []
@@ -61,11 +61,10 @@ def _run(role: str = "recon", **kwargs):
     async def on_event(event: str, data: dict) -> None:
         events.append((event, data))
 
-    with patch("osprey.services.agent_runner.get_settings") as mock_settings, \
-         patch("cli.agent.loop.Runner", _FakeRunner), \
-         patch("cli.agent.tools.EmbeddedToolGateway") as mock_gateway_cls, \
-         patch("cli.agent.context.build_system_prompt", return_value="SYSTEM"):
-        mock_settings.return_value.llm = _CONFIGURED
+    with patch("osprey.services.agent_runner.resolve_model_config", return_value=_CONFIG), \
+         patch("agent_core.loop.Runner", _FakeRunner), \
+         patch("agent_core.tools.EmbeddedToolGateway") as mock_gateway_cls, \
+         patch("agent_core.context.build_system_prompt", return_value="SYSTEM"):
         gateway = mock_gateway_cls.return_value
 
         async def _fake_call(name, args=None):

@@ -74,7 +74,7 @@ def history_result_cap() -> int:
     A distinct, smaller number than ``stdout_budget`` — that answers "how much
     to show right now", this answers "how much of an old turn is worth paying
     for again on every later turn." Only meant for token-budget-constrained
-    callers (see ``cli/agent/loop.py``); an unconstrained caller keeps the
+    callers (see ``agent_core/loop.py``); an unconstrained caller keeps the
     already-budgeted server result in full.
     """
     return int(load_output_budget()["history_cap_chars"])

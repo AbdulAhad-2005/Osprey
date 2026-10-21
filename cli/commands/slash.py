@@ -170,8 +170,8 @@ def handle_model(args: list[str], client: "APIClient") -> None:
 
 def _print_cli_model_status() -> None:
     """The model actually driving your prompts — independent of whatever the
-    backend's own .env has configured (see cli/agent/llm.py)."""
-    from cli.agent.llm import CLIModelConfig, LLMNotConfiguredError
+    backend's own .env has configured (see agent_core/llm.py)."""
+    from agent_core.llm import CLIModelConfig, LLMNotConfiguredError
 
     try:
         config = CLIModelConfig.from_env()
@@ -1532,7 +1532,7 @@ def handle_tool(args: list[str], client: "APIClient") -> None:
 
 def handle_chat(args: list[str], client: "APIClient") -> None:
     """Show this CLI session's own agent conversation. Lives entirely in the
-    CLI's own Runner (cli/agent/loop.py) now — there is no separate
+    CLI's own Runner (agent_core/loop.py) now — there is no separate
     server-side thread to fetch, so this reflects exactly what your next
     prompt will see as context, no more and no less."""
     from cli.harness import get_runtime
@@ -1713,7 +1713,7 @@ def handle_profile(args: list[str], client: "APIClient") -> None:
 def handle_agent(args: list[str], client: "APIClient") -> None:
     """Prompt-defined flows/modes (no code): /agent (list) · /agent <name> (switch) ·
     /agent default (reset to full catalog). Define agents in .osprey/agents/<name>.md."""
-    from cli.agent.flows import load_agents
+    from agent_core.flows import load_agents
     from cli.harness import get_runtime
 
     runtime = get_runtime(client)
@@ -1824,7 +1824,7 @@ def execute_command(command_line: str, client: "APIClient") -> bool:
 
     # Prompt-defined custom command? .osprey/commands/<name>.md — expand its
     # template with the args and drive it as a normal prompt. Zero code, no restart.
-    from cli.agent.flows import expand_command, load_commands
+    from agent_core.flows import expand_command, load_commands
 
     cmds = load_commands()
     name = cmd.lstrip("/")

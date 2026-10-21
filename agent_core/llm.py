@@ -47,7 +47,7 @@ class CLIModelConfig:
     # of them. Set LLM_TOOL_SCHEMA_BUDGET_TOKENS in .env only when a
     # SPECIFIC provider's free-tier token-per-minute cap is smaller than the
     # full tool catalog (Groq's 8K TPM on some models, for instance) — see
-    # cli/agent/tools.py's get_tool_schemas() for what actually changes:
+    # agent_core/tools.py's get_tool_schemas() for what actually changes:
     # fewer tools sent directly, none of them made unreachable.
     tool_schema_budget_tokens: int = 0
 

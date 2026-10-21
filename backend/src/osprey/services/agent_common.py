@@ -5,7 +5,7 @@ Everything tool-execution/system-prompt/message-hygiene related used to live
 here too (``execute_agent_tool``, ``build_engagement_context``,
 ``prune_message_history``, ...) but existed only to serve ``phase_agent.py``'s
 own ReAct loop. That loop was deleted — ``services/agent_runner.py`` now runs
-a headless ``cli.agent.loop.Runner`` instead, which already has its own
+a headless ``agent_core.loop.Runner`` instead, which already has its own
 tool-dispatch, system-prompt, and message-hygiene logic (the SAME logic the
 interactive CLI uses) — so those functions had zero remaining callers and
 were removed with it rather than kept as dead code. What's left is the two
@@ -16,12 +16,46 @@ builds its ``AgentResponse`` from, and the target-extraction helpers
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from agent_core.llm import CLIModelConfig
 
 AgentEventHandler = Callable[[str, dict[str, Any]], Awaitable[None] | None]
+
+
+def api_base_url() -> str:
+    """This backend's own reachable address. The agent loop's embedded gateway
+    calls tools over real HTTP even in-process (see agent_core/tools.py), so a
+    backend-driven agent loops back to itself over the network the same way any
+    other client reaches it. Same env var and default the CLI uses, so one
+    already-correct setting covers both the CLI and every backend driver
+    (scoped sub-agents and the GUI foreground chat)."""
+    return os.getenv("API_BASE_URL", "http://localhost:9000")
+
+
+def resolve_model_config() -> "CLIModelConfig | None":
+    """Build a CLIModelConfig from the backend's OWN settings, not
+    ``CLIModelConfig.from_env()``. Both read the same env var names, but
+    ``get_settings().llm`` prefers the live .env FILE over the frozen process
+    env (core/config.py) — this backend is long-running, and a plain
+    ``os.getenv`` read would keep serving whatever was baked in at start even
+    after an operator edits the project .env. One live LLM identity, one place,
+    shared by every backend driver. Returns None when no usable model is set."""
+    from agent_core.llm import CLIModelConfig
+    from osprey.core.config import get_settings
+
+    settings = get_settings().llm
+    model = (settings.model or "").strip()
+    api_key = (settings.api_key or "").strip()
+    local_model = model.startswith(("ollama/", "ollama_chat/"))
+    if not model or model == "<model-provider>/<model-name>" or (not api_key and not local_model):
+        return None
+    return CLIModelConfig(model=model, api_key=api_key or "ollama", api_base=(settings.api_base or "").strip())
 
 _DOMAIN_RE = re.compile(
     r"(?:https?://)?(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}",

@@ -995,6 +995,7 @@ class EngagementGraph:
         asset_type: AssetType | str | None = None,
         run_id: str = "",
         q: str | None = None,
+        node_id: str | None = None,
         limit: int = 5000,
     ) -> list[AssetNode]:
         type_val = asset_type.value if isinstance(asset_type, AssetType) else asset_type
@@ -1004,6 +1005,8 @@ class EngagementGraph:
                 stmt = select(AssetNodeRow)
                 if engagement_id:
                     stmt = stmt.where(AssetNodeRow.engagement_id == engagement_id)
+                if node_id is not None:
+                    stmt = stmt.where(AssetNodeRow.id == node_id)
                 if type_val:
                     stmt = stmt.where(AssetNodeRow.asset_type == type_val)
                 if run_id:

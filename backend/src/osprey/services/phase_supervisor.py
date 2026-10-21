@@ -160,9 +160,9 @@ def _reopen_signal(finding_type: str) -> str:
 def start_pipeline(engagement_id: str, run_id: str = "") -> dict[str, Any]:
     """Read the conductor's phase-readiness state — always read-only,
     regardless of backend LLM configuration. Every driver — an external
-    harness over MCP, or the CLI's own local agent loop (cli/agent/) —
+    harness over MCP, or the CLI's own local agent loop (agent_core/) —
     supplies its own brain and drives execution itself using this signal:
-    its own native subagents (the CLI: cli/agent/loop.py's spawn_subagents;
+    its own native subagents (the CLI: agent_core/loop.py's spawn_subagents;
     a harness: its own Task mechanism), or platform_spawn_agent for a
     one-off backend-driven agent. Nothing here ever spawns anything
     automatically — this function used to branch on llm_configured() alone,

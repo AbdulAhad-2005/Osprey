@@ -97,7 +97,24 @@ function Wait-ForBackend {
     }
     Write-Host ""
     Write-WarnItem "Backend did not respond within $MaxSeconds seconds. It may still be starting."
-    Write-WarnItem "Inspect logs using:  docker compose logs -f backend"
+    # Most common first-run failure: an existing Postgres volume was created with a
+    # different password than DATABASE_URL now uses (e.g. an old .env with the
+    # <db-password> placeholder). The volume's password can't be changed by env
+    # vars — the volume must be reset.
+    $dbAuth = $false
+    if (Get-Command docker -ErrorAction SilentlyContinue) {
+        try {
+            $logs = & docker compose logs backend 2>$null | Out-String
+            if ($logs -match "password authentication failed|PasswordError|OperationalError.*password") { $dbAuth = $true }
+        } catch { }
+    }
+    if ($dbAuth) {
+        Write-FailItem "Database password mismatch: the Postgres volume was created with a different password."
+        Write-Muted "Reset the database volume (this DELETES local DB data) and re-run the wizard:"
+        Write-Muted "    docker compose down -v ; powershell -ExecutionPolicy Bypass -File scripts\install.ps1"
+    } else {
+        Write-WarnItem "Inspect logs using:  docker compose logs -f backend"
+    }
     return $false
 }
 
@@ -110,6 +127,37 @@ function Resolve-PythonPath {
         if ($c) { return $c.Source }
     }
     return "python"
+}
+
+# The Osprey MCP server is a small local stdio bridge to the backend's HTTP API —
+# it needs its own Python deps (mcp, httpx) regardless of how the backend runs.
+# In Docker-only setups no .venv is ever created, so the MCP config would point at
+# a system Python without those deps and the harness launch dies with
+# "ModuleNotFoundError: No module named 'httpx'". Ensure a .venv that HAS the deps.
+function Resolve-McpPython {
+    $py = "$RootDir\.venv\Scripts\python.exe"
+    if (Test-Path $py) {
+        & $py -c "import httpx, mcp" 2>$null
+        if ($LASTEXITCODE -eq 0) { return }   # already usable
+    }
+    Write-Step "Preparing a local Python environment for the Osprey MCP bridge..."
+    if (-not (Test-Path $py)) {
+        $sys = $null
+        foreach ($cand in @("python.exe", "python3.exe", "py.exe")) {
+            $c = Get-Command $cand -ErrorAction SilentlyContinue
+            if ($c) { $sys = $c.Source; break }
+        }
+        if (-not $sys) { Write-WarnItem "Python not found - cannot prepare the MCP environment. Install Python 3, then re-run."; return }
+        & $sys -m venv "$RootDir\.venv"
+        if (-not (Test-Path $py)) { Write-WarnItem "Could not create .venv; MCP may fail to launch."; return }
+    }
+    & $py -m pip install --upgrade pip --quiet 2>$null | Out-Null
+    & $py -m pip install --quiet -r "$RootDir\platform-mcp\requirements.txt"
+    if ($LASTEXITCODE -eq 0) {
+        Write-Success "MCP bridge dependencies installed into .venv (mcp, httpx)."
+    } else {
+        Write-WarnItem "Failed to install MCP deps into .venv; the harness launch may fail."
+    }
 }
 
 # ── Banner ────────────────────────────────────────────────────────────────────
@@ -177,6 +225,10 @@ switch ($runtimeChoice) {
         if (-not $imgChoice) { $imgChoice = "1" }
 
         Set-EnvVar -Key "KALI_CONTAINER" -Value "osprey-kali"
+        # Keep the Postgres password and DATABASE_URL password in lock-step so a
+        # stale .env (still carrying the <db-password> placeholder) can't make the
+        # DB init with one password and the backend connect with another (503).
+        Set-EnvVar -Key "POSTGRES_PASSWORD" -Value "pentest"
         Set-EnvVar -Key "DATABASE_URL" -Value "postgresql+psycopg://pentest:pentest@postgres:5432/pentest"
 
         if ($imgChoice -eq "2") {
@@ -209,6 +261,7 @@ switch ($runtimeChoice) {
         if (-not $toolsCont) { Write-FailItem "Container name cannot be empty."; exit 1 }
 
         Set-EnvVar -Key "KALI_CONTAINER" -Value $toolsCont
+        Set-EnvVar -Key "POSTGRES_PASSWORD" -Value "pentest"
         Set-EnvVar -Key "DATABASE_URL" -Value "postgresql+psycopg://pentest:pentest@postgres:5432/pentest"
 
         Write-Step "Starting Postgres + Backend in Docker (targeting container $toolsCont)..."
@@ -220,6 +273,7 @@ switch ($runtimeChoice) {
 
     "3" {
         if (-not (Test-DockerReady)) { exit 1 }
+        Set-EnvVar -Key "POSTGRES_PASSWORD" -Value "pentest"
         Set-EnvVar -Key "DATABASE_URL" -Value "postgresql+psycopg://pentest:pentest@localhost:5432/pentest"
         Set-EnvVar -Key "KALI_CONTAINER" -Value ""
 
@@ -433,6 +487,8 @@ if ($optKeys -eq "y" -or $optKeys -eq "Y") {
 }
 
 # ── Generate standalone mcp-config.json ───────────────────────────────────────
+# Make sure the interpreter we hand the harness actually has the MCP deps.
+Resolve-McpPython
 $pythonExe = Resolve-PythonPath
 $serverScript = "$RootDir\platform-mcp\server.py"
 $batScript = "$RootDir\scripts\run-mcp-pentest.bat"

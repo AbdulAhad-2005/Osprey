@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "osprey-agent-core"
+version = "0.1.0"
+description = "Osprey's transport-agnostic ReAct agent core (the one reasoning loop, tool gateway, LLM client, context + compaction) shared by the CLI, the backend's scoped sub-agents, and the GUI foreground chat."
+license = {text = "AGPL-3.0-or-later"}
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27,<1.0",
+    "python-dotenv>=1.0,<2.0",
+    # Multi-provider LLM calling — the same third-party library the CLI and
+    # backend already use, called independently here (not shared app logic).
+    "litellm>=1.50,<2.0",
+    # FastMCP's tool registry: agent_core/tools.py imports platform-mcp/server.py
+    # and reads its tool schemas off the same registry. Exact-pinned — this pin
+    # is one of several across the repo that must move together (see
+    # mcp-servers/requirements.txt).
+    "mcp==1.28.1",
+]
+
+[tool.setuptools]
+# The importable ``agent_core`` package lives one level above this pyproject
+# (the repo root), mirroring how ``cli`` is packaged. ``pip install -e
+# ./agent_core`` registers the repo root on sys.path so ``import agent_core``
+# works for every driver (CLI, backend, GUI foreground chat).
+package-dir = {"" = ".."}
+
+[tool.setuptools.packages.find]
+where = [".."]
+include = ["agent_core*"]

@@ -1,0 +1,200 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Newsreader", ui-serif, Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* Rounded geometric display face for the "osprey" wordmark — echoes the
+     brand lockup's rounded lowercase type. */
+  --font-display: "Quicksand", "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html,
+  body {
+    @apply h-full bg-base text-ink antialiased;
+    font-feature-settings: "cv11", "ss01";
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    /* A faint aurora of amber + navy — barely there, gives the deep bg life */
+    background-image:
+      radial-gradient(900px 500px at 12% -8%, rgba(245, 166, 35, 0.05), transparent 60%),
+      radial-gradient(1100px 600px at 100% 0%, rgba(56, 189, 248, 0.045), transparent 55%);
+    background-attachment: fixed;
+  }
+  ::selection {
+    background: rgba(245, 166, 35, 0.26);
+  }
+}
+
+@layer components {
+  .glass {
+    @apply bg-surface/80 backdrop-blur-xl border border-border;
+  }
+  .panel {
+    @apply bg-surface border border-border rounded-xl shadow-card;
+  }
+  .hairline {
+    @apply border-b border-border;
+  }
+  /* A tactile, quiet button baseline */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium
+      transition-colors duration-150 select-none disabled:opacity-40 disabled:pointer-events-none;
+  }
+  .btn-ghost {
+    @apply btn text-ink-dim hover:text-ink hover:bg-white/5 px-2.5 py-1.5;
+  }
+  .btn-primary {
+    @apply btn bg-amber text-abyss hover:bg-amber-soft px-3.5 py-2 font-semibold;
+  }
+  .btn-outline {
+    @apply btn border border-border-strong text-ink hover:border-amber/60 hover:text-amber-soft px-3 py-1.5;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1
+      text-xs text-ink-dim;
+  }
+}
+
+/* Scrollbars — thin, unobtrusive, navy */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #233049 transparent;
+}
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #223049;
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #2d3d59;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Print / PDF export — render only the report, in the chosen theme. */
+@media print {
+  @page {
+    margin: 14mm;
+  }
+  body {
+    background: #0a1020 !important;
+  }
+  body:has(#osprey-report.report-light) {
+    background: #ffffff !important;
+  }
+  body * {
+    visibility: hidden !important;
+  }
+  #osprey-report,
+  #osprey-report * {
+    visibility: visible !important;
+  }
+  #osprey-report {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-width: none;
+    padding: 0 8mm;
+    background: #0a1020;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  #osprey-report.report-light {
+    background: #ffffff;
+  }
+  .no-print {
+    display: none !important;
+  }
+  *:has(#osprey-report) {
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+    position: static !important;
+  }
+  #osprey-report .report-evidence {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  #osprey-report details { display: block; }
+  #osprey-report table { table-layout: fixed; }
+  #osprey-report tr { break-inside: avoid; }
+  #osprey-report h2, #osprey-report h3 { break-after: avoid; }
+}
+
+/* Light (print-friendly) report theme — scoped overrides on screen + print.
+   Severity/accent colours are intentionally left intact; they read on white. */
+#osprey-report.report-light {
+  background: #ffffff;
+  color: #16202e;
+}
+#osprey-report.report-light .text-ink {
+  color: #121a28 !important;
+}
+#osprey-report.report-light .text-ink-dim {
+  color: #37435a !important;
+}
+#osprey-report.report-light .text-ink-faint {
+  color: #6b7a91 !important;
+}
+#osprey-report.report-light .bg-surface,
+#osprey-report.report-light .bg-surface-2,
+#osprey-report.report-light .bg-surface-3,
+#osprey-report.report-light .bg-surface\/50,
+#osprey-report.report-light .bg-surface\/60,
+#osprey-report.report-light .bg-surface\/70 {
+  background: #eef1f5 !important;
+}
+#osprey-report.report-light .bg-abyss {
+  background: #eef1f5 !important;
+}
+#osprey-report.report-light .border-border,
+#osprey-report.report-light .border-border\/60 {
+  border-color: #e1e5ec !important;
+}
+
+/* Prose tweaks for assistant markdown */
+.osprey-prose {
+  @apply text-[14.5px] leading-[1.7] text-ink;
+}
+.osprey-prose p {
+  @apply my-2.5;
+}
+.osprey-prose strong {
+  @apply text-ink font-semibold;
+}
+.osprey-prose code {
+  @apply font-mono text-[12.5px] bg-surface-3 text-amber-soft px-1.5 py-0.5 rounded;
+}
+.osprey-prose ul {
+  @apply my-2 pl-5 list-disc marker:text-ink-faint;
+}
+.osprey-prose ol {
+  @apply my-2 pl-5 list-decimal marker:text-ink-faint;
+}
+.osprey-prose li {
+  @apply my-1;
+}
+.osprey-prose a {
+  @apply text-signal hover:text-signal-soft underline underline-offset-2;
+}
+.osprey-prose h1,
+.osprey-prose h2,
+.osprey-prose h3 {
+  @apply font-semibold text-ink mt-4 mb-1.5;
+}

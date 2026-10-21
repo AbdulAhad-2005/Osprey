@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable
 
 import orjson
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.exc import IntegrityError
 
 from osprey.db.session import SessionLocal
@@ -191,17 +191,34 @@ class ObservationStore:
             existing.source_tool = obs.source_tool
         db.add(_occurrence_row(existing.id, obs, now))
 
-    def list_for_engagement(self, engagement_id: str, *, limit: int = 2000) -> list[Observation]:
+    def list_for_engagement(
+        self, engagement_id: str, *, limit: int = 2000, offset: int = 0,
+        q: str | None = None, obs_type: ObservationType | str | None = None,
+        target: str | None = None,
+    ) -> list[Observation]:
         eid = (engagement_id or "").strip()
         if not eid:
             return []
         with self._lock:
             db = SessionLocal()
             try:
+                stmt = select(ObservationRow).where(ObservationRow.engagement_id == eid)
+                if obs_type is not None:
+                    stmt = stmt.where(ObservationRow.type == getattr(obs_type, "value", obs_type))
+                if target is not None:
+                    stmt = stmt.where(ObservationRow.target == target.strip())
+                if q and q.strip():
+                    pattern = f"%{q.strip()}%"
+                    stmt = stmt.where(or_(
+                        ObservationRow.target.ilike(pattern),
+                        ObservationRow.details_json.ilike(pattern),
+                        ObservationRow.source_tool.ilike(pattern),
+                        ObservationRow.id.ilike(pattern),
+                        ObservationRow.type.ilike(pattern),
+                    ))
                 stmt = (
-                    select(ObservationRow)
-                    .where(ObservationRow.engagement_id == eid)
-                    .order_by(ObservationRow.last_seen_at.desc())
+                    stmt.order_by(ObservationRow.last_seen_at.desc(), ObservationRow.id.asc())
+                    .offset(max(0, offset))
                     .limit(max(1, min(int(limit), 10_000)))
                 )
                 rows = list(db.scalars(stmt).all())
@@ -212,48 +229,14 @@ class ObservationStore:
     def list_by_type(
         self, engagement_id: str, obs_type: ObservationType | str, *, limit: int = 2000
     ) -> list[Observation]:
-        eid = (engagement_id or "").strip()
-        if not eid:
-            return []
-        type_val = obs_type.value if isinstance(obs_type, ObservationType) else str(obs_type)
-        with self._lock:
-            db = SessionLocal()
-            try:
-                stmt = (
-                    select(ObservationRow)
-                    .where(
-                        ObservationRow.engagement_id == eid,
-                        ObservationRow.type == type_val,
-                    )
-                    .order_by(ObservationRow.last_seen_at.desc())
-                    .limit(max(1, min(int(limit), 10_000)))
-                )
-                rows = list(db.scalars(stmt).all())
-            finally:
-                db.close()
-        return [_row_to_observation(r) for r in rows]
+        return self.list_for_engagement(engagement_id, obs_type=obs_type, limit=limit)
 
     def list_by_target(self, engagement_id: str, target: str, *, limit: int = 2000) -> list[Observation]:
         eid = (engagement_id or "").strip()
         tgt = (target or "").strip()
         if not eid or not tgt:
             return []
-        with self._lock:
-            db = SessionLocal()
-            try:
-                stmt = (
-                    select(ObservationRow)
-                    .where(
-                        ObservationRow.engagement_id == eid,
-                        ObservationRow.target == tgt,
-                    )
-                    .order_by(ObservationRow.last_seen_at.desc())
-                    .limit(max(1, min(int(limit), 10_000)))
-                )
-                rows = list(db.scalars(stmt).all())
-            finally:
-                db.close()
-        return [_row_to_observation(r) for r in rows]
+        return self.list_for_engagement(eid, target=tgt, limit=limit)
 
     def distinct_source_tools(self, observation_id: str) -> list[str]:
         """Every distinct source_tool that has independently reported this

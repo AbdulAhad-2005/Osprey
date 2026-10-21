@@ -31,23 +31,9 @@ from osprey.services.phase_supervisor import phase_readiness_snapshot
 from osprey.services.visualization import generate_mermaid
 
 
-_REMEDIATION_HINTS = {
-    "xss": "Implement context-aware HTML entity encoding and enforce a strong Content Security Policy (CSP).",
-    "sqli": "Use parameterized queries / prepared statements for all database access.",
-    "cors": "Restrict Access-Control-Allow-Origin to trusted domains and avoid combining wildcard '*' with Allow-Credentials: true.",
-    "eol": "Upgrade software stack to an actively supported version to receive security patches.",
-    "jwt": "Enforce signature verification with strong algorithms and validate key expiration/claims.",
-    "subdomain_takeover": "Remove dangling CNAME / DNS records pointing to unallocated third-party resources.",
-    "exposure": "Restrict public access to sensitive endpoints/documents via authentication or IP whitelisting.",
-}
-
-
-def _remediation_hint(title: str, description: str) -> str:
-    combined = f"{title} {description}".lower()
-    for kw, hint in _REMEDIATION_HINTS.items():
-        if kw in combined:
-            return hint
-    return "Remediate by applying least-privilege access controls and updating affected components."
+# Free-text keywords cannot establish the root cause: e.g. account takeover is
+# not DNS takeover. Preserve authored remediation, and expose missing work.
+MISSING_REMEDIATION = "A finding-specific remediation has not been recorded. Validate the root cause, document the corrective action with the system owner, and retest the affected behavior."
 
 
 def build_report_data(engagement_id: str) -> dict[str, Any]:
@@ -135,8 +121,10 @@ def _build_findings_by_severity(findings: list) -> list[dict[str, Any]]:
             "confidence": str(getattr(f.confidence, "value", f.confidence) or ""),
             "source_tool": f.source_tool,
             "target": f.target,
-            "evidence_snippet": (f.evidence or "")[:1000],
-            "remediation_hint": _remediation_hint(f.title, f.description),
+            "evidence_snippet": f.evidence or "",
+            "remediation_hint": str((f.metadata or {}).get("remediation") or (f.extra or {}).get("remediation") or MISSING_REMEDIATION),
+            "remediation_recorded": bool((f.metadata or {}).get("remediation") or (f.extra or {}).get("remediation")),
+            "observation_ids": list(f.observation_ids or []),
         })
 
     return [

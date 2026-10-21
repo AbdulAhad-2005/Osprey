@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Callable
 
-from cli.agent.loop import Runner
+from agent_core.loop import Runner
 
 if TYPE_CHECKING:
     from cli.harness.runtime import HarnessRuntime

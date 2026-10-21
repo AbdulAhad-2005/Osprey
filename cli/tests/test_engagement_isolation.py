@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from cli.agent import tools as platform_tools
+from agent_core import tools as platform_tools
 from cli.api.client import APIClient
 from cli.harness import get_runtime
 

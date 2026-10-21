@@ -1,13 +1,13 @@
 """Unit tests for the CLI loop's cross-call failure/repeat guards.
 
 Covers the pure helpers behind the doom-loop guard and repeated-failure
-escalation. Importing cli.agent.loop must not require a running backend
+escalation. Importing agent_core.loop must not require a running backend
 (tools.load_server is lazy), which this suite also implicitly checks.
 """
 
 from __future__ import annotations
 
-from cli.agent import loop as L
+from agent_core import loop as L
 
 
 def test_call_signature_is_order_independent():

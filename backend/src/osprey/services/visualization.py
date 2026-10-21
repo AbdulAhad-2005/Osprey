@@ -137,30 +137,48 @@ def _build_severity_map(engagement_id: str) -> dict[str, str]:
 
     Keys are ANSI-stripped and lowercased so they match cleaned node IDs.
     """
+    return {nid: max((f["severity"] for f in refs), key=lambda sev: _SEV_RANK.get(sev, 0))
+            for nid, refs in _build_finding_map(engagement_id).items()}
+
+
+def _build_finding_map(engagement_id: str) -> dict[str, list[dict[str, str]]]:
+    """Explain risk badges using the same conclusion classification as reports.
+
+    Only explicit primary node, target, or host metadata associations are used.
+    Shared IPs, graph neighbors and parent domains do not inherit risk.
+    """
     findings = get_findings_store().list(
         engagement_id=engagement_id,
-        limit=2000,
+        limit=10000,
+        exclude_noise=False,
     )
-    worst: dict[str, str] = {}
+    references: dict[str, list[dict[str, str]]] = {}
+    from osprey.services.report_classification import is_security_finding
     for f in findings:
+        if not is_security_finding(f):
+            continue
         sev = str(getattr(f.claim_severity, "value", f.claim_severity) or "none").lower()
         targets = []
+        if f.node_id:
+            targets.append(_clean_node_id(f.node_id))
         if f.target:
             targets.append(_clean_node_id(f"host:{f.target}"))
             targets.append(_clean_node_id(f"subdomain:{f.target}"))
             targets.append(_clean_node_id(f"domain:{f.target}"))
             targets.append(_clean_node_id(f"url:{f.target}"))
+            targets.append(_clean_node_id(f"ip:{f.target}"))
         meta = f.metadata or {}
         for key in ("hostname", "ip", "host"):
             val = meta.get(key)
             if val:
                 targets.append(_clean_node_id(f"host:{val}"))
                 targets.append(_clean_node_id(f"ip:{val}"))
-        for nid in targets:
-            cur = worst.get(nid, "none")
-            if _SEV_RANK.get(sev, 0) > _SEV_RANK.get(cur, 0):
-                worst[nid] = sev
-    return worst
+        for nid in set(targets):
+            references.setdefault(nid, []).append({
+                "id": f.id, "title": f.title, "severity": sev,
+                "confidence": str(f.confidence), "target": f.target,
+            })
+    return references
 
 
 def _propagate_severity_down(
@@ -384,15 +402,18 @@ def generate_cytoscape_json(
     max_edges: int = _DEFAULT_MAX_EDGES,
     node_type: str = "",
     exclude_urls: bool = True,
+    preserve_records: bool = False,
 ) -> dict[str, Any]:
     """Return Cytoscape-compatible ``{ nodes, edges }`` with severity badges."""
     graph = get_engagement_graph()
     nodes = graph.list_nodes(engagement_id=engagement_id, limit=max_nodes)
     edges_raw = graph.list_edges(engagement_id=engagement_id, limit=max_edges)
-    edges = _dedupe_edges(edges_raw)
-    severity_map = _build_severity_map(engagement_id)
-    ip_dedup = _merge_host_ip_nodes(nodes)
-    type_dedup = _build_type_dedup(nodes)
+    edges = edges_raw if preserve_records else _dedupe_edges(edges_raw)
+    finding_map = _build_finding_map(engagement_id)
+    severity_map = {nid: max((f["severity"] for f in refs), key=lambda sev: _SEV_RANK.get(sev, 0))
+                    for nid, refs in finding_map.items()}
+    ip_dedup = {} if preserve_records else _merge_host_ip_nodes(nodes)
+    type_dedup = {} if preserve_records else _build_type_dedup(nodes)
 
     if node_type:
         nodes = [n for n in nodes if n.asset_type.value == node_type.lower()]
@@ -404,8 +425,8 @@ def generate_cytoscape_json(
         if exclude_urls and n.asset_type.value == "url" and _is_noise_url(n.label):
             continue
         sev = severity_map.get(_clean_node_id(n.id), "none")
-        display = _sanitize_label(n.label, max_len=80)
-        if not _is_valid_label(display):
+        display = _strip_ansi(n.label).strip() if preserve_records else _sanitize_label(n.label, max_len=512)
+        if not preserve_records and not _is_valid_label(display):
             continue
         cyto_nodes.append({
             "data": {
@@ -413,6 +434,11 @@ def generate_cytoscape_json(
                 "label": display,
                 "type": n.asset_type.value,
                 "severity": sev,
+                "confidence": n.confidence,
+                "source_tools": n.source_tools or ([n.source_tool] if n.source_tool else []),
+                "observation_ids": n.observation_ids,
+                "metadata": n.metadata,
+                "findings": finding_map.get(_clean_node_id(n.id), []),
             },
         })
 
@@ -431,10 +457,13 @@ def generate_cytoscape_json(
                 "target": tgt_id,
                 "label": rel,
                 "hypothesis": is_hypothesis,
+                "observation_ids": e.observation_ids,
             },
         })
 
-    return {"nodes": cyto_nodes, "edges": cyto_edges}
+    return {"nodes": cyto_nodes, "edges": cyto_edges,
+            "meta": {"truncated": len(nodes) >= max_nodes or len(edges_raw) >= max_edges,
+                     "node_limit": max_nodes, "edge_limit": max_edges}}
 
 
 # ── Hierarchical attack tree ───────────────────────────────────────────────
@@ -632,6 +661,7 @@ def get_visualization(
     max_edges: int = _DEFAULT_MAX_EDGES,
     node_type: str = "",
     exclude_urls: bool = True,
+    preserve_records: bool = False,
 ) -> dict[str, Any]:
     """Route to the requested format.
 
@@ -649,6 +679,7 @@ def get_visualization(
                 max_edges=max_edges,
                 node_type=node_type,
                 exclude_urls=exclude_urls,
+                preserve_records=preserve_records,
             ),
         }
     if fmt == "tree":

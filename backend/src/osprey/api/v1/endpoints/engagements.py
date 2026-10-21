@@ -263,10 +263,11 @@ async def action_fanout_assets(
 def engagement_visualization(
     engagement_id: str,
     format: str = Query(default="mermaid", description="mermaid | json | tree"),
-    max_nodes: int = Query(default=200, ge=10, le=1000),
-    max_edges: int = Query(default=400, ge=10, le=2000),
+    max_nodes: int = Query(default=200, ge=10, le=5000),
+    max_edges: int = Query(default=400, ge=10, le=20000),
     node_type: str = Query(default="", description="Filter to one asset type (e.g. host, subdomain)"),
     exclude_urls: bool = Query(default=True, description="Exclude static-asset URL noise"),
+    preserve_records: bool = Query(default=False, description="JSON: retain individual asset identities, labels and provenance without presentation deduplication"),
 ) -> dict[str, Any]:
     """Render the engagement graph as Mermaid syntax, Cytoscape JSON, or a hierarchical tree."""
     store = get_engagement_store()
@@ -279,6 +280,7 @@ def engagement_visualization(
         max_edges=max_edges,
         node_type=node_type,
         exclude_urls=exclude_urls,
+        preserve_records=preserve_records,
     )
 
 

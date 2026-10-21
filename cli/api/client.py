@@ -109,15 +109,22 @@ class APIClient:
             return []
 
     def get_report_markdown(self, engagement_id: str) -> str | None:
-        """Human-readable recon report (seed -> sister domains -> subdomains
-        -> IPs -> ports/services/tech, WHOIS/OSINT, vulnerabilities) as raw
-        Markdown text. None on any HTTP error (e.g. unknown engagement)."""
-        try:
-            resp = self._client.get(self._url(f"/api/v1/engagements/{engagement_id}/report.md"))
-            resp.raise_for_status()
-            return resp.text
-        except httpx.HTTPError:
-            return None
+        """Canonical penetration-test report as raw Markdown — the one report
+        the dashboard and chat also render (executive summary + overall risk,
+        scope/RoE, methodology, findings with evidence + remediation, and the
+        recon appendix), from the single report builder. Falls back to the
+        legacy recon report for older backends. None on any HTTP error."""
+        for path in (
+            f"/api/v1/report/{engagement_id}/markdown",
+            f"/api/v1/engagements/{engagement_id}/report.md",
+        ):
+            try:
+                resp = self._client.get(self._url(path))
+                resp.raise_for_status()
+                return resp.text
+            except httpx.HTTPError:
+                continue
+        return None
 
     def read_artifact(
         self,
@@ -731,7 +738,7 @@ class APIClient:
         ONCE and kept open for as long as the session cares about it, unlike
         a per-message request. Shows every backend job / spawned phase
         agent's tool calls as they happen (the CLI's own foreground
-        loop, cli/agent/loop.py, renders its own turn directly and doesn't
+        loop, agent_core/loop.py, renders its own turn directly and doesn't
         need this), tagged by `source` in each event's data — the
         fix for "background work is invisible": a harness has exactly one
         live activity feed, this is it. No read timeout — the connection is
