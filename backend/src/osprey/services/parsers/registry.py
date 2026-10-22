@@ -218,7 +218,7 @@ def digest_tool_output(tool_name: str, stdout: str, *, max_items: int = 12) -> s
     lines = [ln for ln in stdout.splitlines() if ln.strip()]
     if len(lines) <= 3:
         return ""
-    return f"{len(lines)} output lines; first: " + " | ".join(lines[:3])
+    return f"{len(lines)} output lines; first: " + " | ".join(ln[:240] + ("…" if len(ln) > 240 else "") for ln in lines[:3])
 
 
 def ensure_parsers_loaded() -> None:

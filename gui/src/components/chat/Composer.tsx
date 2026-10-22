@@ -1,18 +1,24 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, Square } from "lucide-react";
+import { ArrowUp, Pause, Play, Loader2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 export function Composer({
   onSend,
   onStop,
+  onResume,
+  resumable = false,
+  submitting = false,
   streaming,
   disabled,
   placeholder = "Message Osprey — ask it to recon, probe, or report…",
 }: {
-  onSend: (text: string) => void;
+  onSend: (text: string) => Promise<boolean>;
   onStop: () => void;
+  onResume: () => void;
+  resumable?: boolean;
+  submitting?: boolean;
   streaming: boolean;
   disabled?: boolean;
   placeholder?: string;
@@ -27,11 +33,11 @@ export function Composer({
     el.style.height = Math.min(el.scrollHeight, 200) + "px";
   }, [text]);
 
-  function submit() {
+  async function submit() {
     const t = text.trim();
-    if (!t || streaming || disabled) return;
-    onSend(t);
-    setText("");
+    if (!t || submitting || disabled) return;
+    const draft = text;
+    if (await onSend(t)) setText((current) => current === draft ? "" : current);
   }
 
   return (
@@ -50,7 +56,7 @@ export function Composer({
             disabled={disabled}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 submit();
               }
@@ -58,29 +64,30 @@ export function Composer({
             placeholder={disabled ? "Backend offline — start it to chat" : placeholder}
             className="max-h-[200px] w-full resize-none bg-transparent py-1 text-[14.5px] leading-relaxed text-ink placeholder:text-ink-faint focus:outline-none disabled:opacity-60"
           />
-          {streaming ? (
+          {!text.trim() && streaming ? (
             <button
               onClick={onStop}
               className="grid h-9 w-9 flex-none place-items-center rounded-lg border border-border-strong text-ink-dim transition-colors hover:text-ink"
-              title="Stop"
-              aria-label="Stop"
+              disabled={submitting || disabled}
+              title="Pause engagement"
+              aria-label="Pause engagement"
             >
-              <Square size={14} className="fill-current" />
+              {submitting ? <Loader2 size={14} className="animate-spin" /> : <Pause size={16} />}
             </button>
           ) : (
             <button
-              onClick={submit}
-              disabled={!text.trim() || disabled}
+              onClick={() => text.trim() ? void submit() : onResume()}
+              disabled={submitting || disabled || (!text.trim() && !resumable)}
               className="grid h-9 w-9 flex-none place-items-center rounded-lg bg-amber text-abyss transition-colors hover:bg-amber-soft disabled:bg-surface-3 disabled:text-ink-faint"
-              title="Send"
-              aria-label="Send"
+              title={text.trim() ? streaming ? "Send and redirect the current run" : "Send" : resumable ? "Resume engagement" : "Send"}
+              aria-label={text.trim() ? "Send" : resumable ? "Resume engagement" : "Send"}
             >
-              <ArrowUp size={16} strokeWidth={2.5} />
+              {submitting ? <Loader2 size={16} className="animate-spin" /> : !text.trim() && resumable ? <Play size={16} /> : <ArrowUp size={16} strokeWidth={2.5} />}
             </button>
           )}
         </div>
         <div className="mt-1.5 text-center text-[11px] text-ink-faint">
-          Osprey can run live tools against your target. Review actions on authorized scope only.
+          {streaming ? "Pause to keep your progress, or send a message to redirect the run." : resumable ? "Resume from saved progress, or send a new instruction." : "Osprey can run live tools against your target. Review actions on authorized scope only."}
         </div>
       </div>
     </div>

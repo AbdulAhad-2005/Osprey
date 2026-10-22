@@ -6,7 +6,7 @@ import asyncio
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from osprey.services.llm_service import get_llm_service, llm_configured
@@ -40,9 +40,10 @@ async def chat_events(
     engagement_id: str,
     after: int = Query(default=0, ge=0),
     wait_seconds: float = Query(default=0, ge=0, le=25),
+    include_legacy: bool = True,
 ) -> dict[str, Any]:
     from osprey.services.chat_transcript import page_events
-    from osprey.services.foreground_chat import run_active
+    from osprey.services.foreground_chat import run_active, run_state
 
     deadline = asyncio.get_running_loop().time() + wait_seconds
     while True:
@@ -55,9 +56,10 @@ async def chat_events(
                 "events": events, "active": active,
                 "cursor": events[-1]["id"] if events else after,
                 "has_more": len(events) == 500,
+                "run": run_state(engagement_id),
                 "legacy_messages": (
                     get_history(engagement_id, limit=100, before_id=events[0]["data"].get("message_id") if events else None)
-                    if after == 0 and (not events or events[0]["data"].get("message_id")) else []
+                    if include_legacy and after == 0 and (not events or events[0]["data"].get("message_id")) else []
                 ),
             }
         await asyncio.sleep(0.5)
@@ -124,6 +126,18 @@ def pipeline_activity(engagement_id: str) -> dict[str, Any]:
 class ChatRequest(BaseModel):
     engagement_id: str
     prompt: str
+    interrupt: bool = False
+    request_id: str = Field(default="", max_length=128)
+
+
+@router.post("/chat/start", status_code=202, summary="Accept a message and continue this engagement")
+async def start_chat(req: ChatRequest) -> dict[str, Any]:
+    from osprey.services.engagement_store import get_engagement_store
+    from osprey.services.foreground_chat import start_chat as admit
+
+    if get_engagement_store().get(req.engagement_id) is None:
+        raise HTTPException(404, "Engagement not found")
+    return await admit(req.engagement_id, req.prompt, interrupt=req.interrupt, request_id=req.request_id)
 
 
 @router.post("/chat", summary="Foreground operator chat — live SSE event stream")
@@ -159,18 +173,20 @@ class AnswerRequest(BaseModel):
 def run_status(engagement_id: str) -> dict[str, Any]:
     """Lets a (re)connecting client know a run is still going for this engagement
     so it can re-attach to the live stream instead of showing a dead chat."""
-    from osprey.services.foreground_chat import run_active
+    from osprey.services.foreground_chat import run_active, run_state
 
-    return {"engagement_id": engagement_id, "active": run_active(engagement_id)}
+    return {"engagement_id": engagement_id, "active": run_active(engagement_id), **run_state(engagement_id)}
 
 
 @router.post("/stop/{engagement_id}", summary="Stop the in-flight chat run")
 async def stop_run(engagement_id: str) -> dict[str, Any]:
     """Cancel the background run for this engagement (the Stop button). The run's
     cleanup publishes a terminal ``cancelled``/``done`` onto the event bus."""
-    from osprey.services.foreground_chat import stop_run as _stop
+    from osprey.services.foreground_chat import run_active, settle_session
 
-    return {"engagement_id": engagement_id, "stopped": _stop(engagement_id)}
+    was_active = run_active(engagement_id)
+    await settle_session(engagement_id)
+    return {"engagement_id": engagement_id, "stopped": was_active}
 
 
 @router.post("/question/{question_id}/answer", summary="Answer an interactive operator question")

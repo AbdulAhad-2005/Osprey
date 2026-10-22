@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 
 from osprey.services import operator_prompts
 from osprey.services.agent_common import api_base_url, resolve_model_config
-from osprey.services.conversation_store import append_message, get_history
+from osprey.services.conversation_store import append_message
 from osprey.services.llm_service import llm_configured, llm_configured_reason
 
 # System-prompt preparation (a context-packet tool call) runs before the ReAct
@@ -82,7 +82,7 @@ def _gate_grant(record: dict[str, Any]) -> tuple[str, list[str]]:
     return field, proceed
 
 
-def _get_session(engagement_id: str, config, api_base: str) -> ChatSession:
+def _get_session(engagement_id: str, config, api_base: str, exclude_run: str = "") -> ChatSession:
     from agent_core.loop import Runner
     from agent_core.tools import EmbeddedToolGateway
     from osprey.services.engagement_store import get_engagement_store
@@ -139,12 +139,12 @@ def _get_session(engagement_id: str, config, api_base: str) -> ChatSession:
         tool_gateway=gateway,
         worker_factory=worker_factory,
         ask_handler=ask_handler,
+        max_turns=0,  # Interactive work ends on model completion or operator pause.
     )
-    # Seed textual history so a backend restart still continues the thread
-    # (tool-call detail isn't persisted; findings are, and remain queryable).
-    history = get_history(engagement_id)
-    if history:
-        runner.messages = [{"role": m["role"], "content": m["content"]} for m in history]
+    # Restore root tool exchanges and narration from the same durable journal
+    # the dashboard reads, including after a process restart or session eviction.
+    from osprey.services.chat_transcript import restore_history
+    runner.messages = restore_history(engagement_id, exclude_run=exclude_run)
     if previous_messages is not None:
         runner.messages = previous_messages
 
@@ -162,8 +162,60 @@ def _get_session(engagement_id: str, config, api_base: str) -> ChatSession:
 # publishes every event to the shared event bus — NOT tied to the SSE client's
 # connection. So a refresh / navigate-away no longer kills a long assessment, and
 # any client (the original, or a reconnecting one) sees the run by subscribing to
-# the bus. One run per engagement; a second prompt attaches instead of blocking.
+# the journal. One run per engagement; redirect admission settles the old turn
+# before starting the next one.
 _active_runs: dict[str, "asyncio.Task[None]"] = {}
+_run_progress: dict[str, dict[str, Any]] = {}
+_admission_locks: dict[str, asyncio.Lock] = {}
+
+
+def run_state(engagement_id: str) -> dict[str, Any]:
+    from osprey.services.chat_transcript import latest_event
+
+    if run_active(engagement_id):
+        return {"state": "running", "resumable": False, **_run_progress.get(engagement_id, {})}
+    last = latest_event(engagement_id)
+    if not last:
+        return {"state": "idle", "resumable": False}
+    data = last["data"]
+    reason = data.get("reason", "")
+    content = data.get("content", "")
+    if last["event"] == "done" and not reason:
+        reason = ("turn_limit" if "turn limit" in content else
+                  "paused" if content == "(stopped)" else
+                  "empty_response" if not content.strip() else "completed")
+    state = "completed" if reason == "completed" else "paused" if reason in {"paused", "turn_limit"} else "interrupted"
+    from osprey.services.engagement_store import get_engagement_store
+    engagement = get_engagement_store().get(engagement_id)
+    still_open = engagement is not None and engagement.status not in {"completed", "complete"}
+    # Finishing one model response does not establish assessment completion.
+    return {"state": state, "reason": reason or "interrupted", "resumable": state != "completed" or still_open, "run_id": last["run_id"]}
+
+
+async def start_chat(engagement_id: str, prompt: str, *, interrupt: bool = False, request_id: str = "") -> dict[str, Any]:
+    """Admit input before returning HTTP success; execution outlives its client."""
+    from fastapi import HTTPException
+    from osprey.services.chat_transcript import admit_input, accepted_input
+
+    eid, prompt = engagement_id.strip(), prompt.strip()
+    if not eid or not prompt:
+        raise HTTPException(422, "engagement_id and prompt are required.")
+    async with _admission_locks.setdefault(eid, asyncio.Lock()):
+        previous = accepted_input(eid, request_id)
+        if previous is not None:
+            return {"accepted": True, "run_id": previous["run_id"], "event_id": previous["id"]}
+        config = resolve_model_config()
+        if config is None or not llm_configured():
+            raise HTTPException(400, "No usable model is configured. Open Settings and choose a model/provider. " + llm_configured_reason())
+        if run_active(eid):
+            if not interrupt:
+                raise HTTPException(409, "A run is already in progress.")
+            await settle_session(eid)
+        run_id = uuid.uuid4().hex
+        record = admit_input(eid, run_id, prompt, request_id)
+        _run_progress[eid] = {"stage": "preparing", "message": "Preparing engagement context…", "run_id": run_id}
+        _active_runs[eid] = asyncio.create_task(_drive_run(eid, prompt, config, run_id=run_id))
+        return {"accepted": True, "run_id": run_id, "event_id": record["id"]}
 
 
 def run_active(engagement_id: str) -> bool:
@@ -183,7 +235,7 @@ def stop_run(engagement_id: str) -> bool:
 
 
 async def settle_session(engagement_id: str, *, forget: bool = False) -> None:
-    """One lifecycle boundary for clearing chat or deleting an engagement."""
+    """Settle execution before pause, redirect, chat clearing or deletion."""
     task = _active_runs.get(engagement_id)
     stop_run(engagement_id)
     if task is not None:
@@ -192,7 +244,7 @@ async def settle_session(engagement_id: str, *, forget: bool = False) -> None:
         _sessions.pop(engagement_id, None)
 
 
-async def _drive_run(eid: str, prompt: str, config) -> None:
+async def _drive_run(eid: str, prompt: str, config, *, run_id: str = "") -> None:
     """Drive the agent loop for one prompt, publishing every event to the shared
     event bus and persisting the assistant reply. Runs as a background task so it
     survives the originating client's disconnect; clients view it by subscribing
@@ -202,11 +254,18 @@ async def _drive_run(eid: str, prompt: str, config) -> None:
     from osprey.services import event_bus
     from osprey.services.chat_transcript import TRANSIENT_EVENTS, append_event
 
-    run_id = uuid.uuid4().hex
+    admitted = bool(run_id)
+    run_id = run_id or uuid.uuid4().hex
 
     def emit(name: str, data: dict[str, Any]) -> None:
         data = dict(data)
         data["run_id"] = run_id
+        if name in TRANSIENT_EVENTS:
+            _run_progress[eid] = {"stage": name, **data}
+        elif name == "tool_start":
+            _run_progress[eid] = {"stage": "working", "run_id": run_id}
+        elif name == "question":
+            _run_progress[eid] = {"stage": "question", "message": "Waiting for your answer…", "run_id": run_id}
         if name not in TRANSIENT_EVENTS:
             record = append_event(eid, run_id, name, data)
             data["event_id"] = record["id"]
@@ -216,11 +275,13 @@ async def _drive_run(eid: str, prompt: str, config) -> None:
     final_text = ""
     persisted = False
     prompt_task = None
+    runner_started = False
     try:
-        session = _get_session(eid, config, api_base_url())
+        session = _get_session(eid, config, api_base_url(), run_id if admitted else "")
         await session.lock.acquire()
-        message_id = append_message(eid, "user", prompt)
-        emit("run_start", {"prompt": prompt, "message_id": message_id})
+        if not admitted:
+            message_id = append_message(eid, "user", prompt)
+            emit("run_start", {"prompt": prompt, "message_id": message_id})
         emit("status", {"stage": "preparing", "message": "Preparing engagement context…"})
         prompt_task = asyncio.ensure_future(
             build_system_prompt(eid, tool_caller=session.gateway.call)
@@ -240,6 +301,7 @@ async def _drive_run(eid: str, prompt: str, config) -> None:
             emit("status", {"stage": "preparing", "message": f"Preparing engagement context… ({int(waited)}s)"})
         system_prompt = prompt_task.result()
 
+        runner_started = True
         async for ev in session.runner.run(prompt, system_prompt=system_prompt):
             name, data = _translate(ev)
             if name is None:
@@ -256,15 +318,16 @@ async def _drive_run(eid: str, prompt: str, config) -> None:
             append_message(eid, "assistant", final_text)
             persisted = True
         emit("cancelled", {"findings": ""})
-        emit("done", {"content": "(stopped)"})
+        emit("done", {"content": "", "reason": "paused"})
     except Exception as exc:  # noqa: BLE001 — never let the task crash
         logger.exception("foreground chat error engagement=%s", eid)
+        _sessions.pop(eid, None)  # Rebuild any interrupted tool batch from the journal.
         if final_text and not persisted and not final_text.startswith("(stopped:"):
             append_message(eid, "assistant", final_text)
             persisted = True
         try:
             emit("error", {"message": f"Chat loop error: {exc}"})
-            emit("done", {"content": ""})
+            emit("done", {"content": "", "reason": "error"})
         except Exception:
             # A journal/database failure must not leave connected clients
             # waiting forever for a terminal event that cannot be persisted.
@@ -279,14 +342,19 @@ async def _drive_run(eid: str, prompt: str, config) -> None:
         if session is not None and session.lock.locked():
             session.lock.release()
         _active_runs.pop(eid, None)
+        _run_progress.pop(eid, None)
+        if not runner_started:
+            # A prompt accepted during preparation still belongs to history.
+            # Rebuild from the journal if preparation was interrupted or failed.
+            _sessions.pop(eid, None)
 
 
 async def stream_chat(engagement_id: str, prompt: str) -> AsyncIterator[tuple[str, dict[str, Any]]]:
-    """Yield (event_name, data) pairs for the SSE endpoint. Starts a background
-    run if none is active for this engagement (otherwise attaches to the one in
-    flight), then streams the engagement's event bus to this client. The client
-    disconnecting does NOT stop the run — it keeps going on the bus."""
-    from osprey.services import event_bus
+    """Compatibility SSE view over the same admitted run and durable journal.
+
+    Disconnecting stops observation only. Concurrent submissions are rejected
+    by admission; GUI redirects use the separate JSON admission endpoint.
+    """
 
     eid = (engagement_id or "").strip()
     prompt = (prompt or "").strip()
@@ -311,40 +379,37 @@ async def stream_chat(engagement_id: str, prompt: str) -> AsyncIterator[tuple[st
         yield ("done", {"content": ""})
         return
 
-    if run_active(eid):
-        # A run is already in flight — don't start a second one (that would block
-        # on the per-engagement lock, which is what made a follow-up message hang
-        # silently forever). Attach to the live activity instead.
-        yield (
-            "status",
-            {
-                "stage": "attached",
-                "message": "A run is already in progress for this engagement — showing its live activity. Your new message wasn't sent; wait for the run to finish or Stop it.",
-            },
-        )
-    else:
-        # ensure_future schedules the task but doesn't run it until we await below
-        # (inside subscribe) — by then the bus queue is registered, so the client
-        # misses none of the run's events even with replay=0.
-        _active_runs[eid] = asyncio.ensure_future(_drive_run(eid, prompt, config))
+    from fastapi import HTTPException
+    from osprey.services.chat_transcript import page_events
 
     try:
-        async for record in event_bus.subscribe(eid, replay=0):
-            name = record["event"]
-            if name == "run_start":
-                yield (name, record["data"])
+        accepted = await start_chat(eid, prompt)
+    except HTTPException as exc:
+        yield ("error", {"message": str(exc.detail)})
+        yield ("done", {"content": "", "reason": "error"})
+        return
+    cursor = accepted["event_id"] - 1
+    previous_progress = None
+    # Compatibility SSE clients use the same admission and journal as the GUI.
+    # Their disconnect cannot cancel execution or lose an accepted input.
+    while True:
+        records = await asyncio.to_thread(page_events, eid, cursor)
+        for record in records:
+            cursor = record["id"]
+            if record["run_id"] != accepted["run_id"]:
                 continue
-            # Lower-level execution events share this bus. Only the translated
-            # runner events have chat call IDs; forwarding both duplicates calls
-            # and can mistake a worker's terminal event for the root's end.
-            if record.get("source") != "commander":
-                continue
-            yield (name, record["data"])
-            if name == "done":
-                break
-    except (asyncio.CancelledError, GeneratorExit):
-        # Client went away. The background run keeps going; just stop streaming.
-        raise
+            yield (record["event"], {**record["data"], "event_id": record["id"]})
+            if record["event"] == "done":
+                return
+        progress = _run_progress.get(eid)
+        if progress and progress != previous_progress:
+            stage = progress.get("stage", "")
+            event = stage if stage in {"llm_call_start", "llm_still_waiting"} else "status"
+            yield (event, progress)
+            previous_progress = dict(progress)
+        if not run_active(eid) and not records:
+            return
+        await asyncio.sleep(0.25)
 
 
 def _translate(ev) -> tuple[str | None, dict[str, Any]]:
@@ -357,7 +422,7 @@ def _translate(ev) -> tuple[str | None, dict[str, Any]]:
     if t == "thinking":
         # This is the model's public message accompanying tool calls, not its
         # private reasoning. Render it as ordinary assistant narration.
-        return ("assistant", {"content": d.get("content", "")})
+        return ("assistant", {"content": d.get("content", ""), "source": d.get("source", "commander")})
     if t == "assistant_text":
         return ("assistant", {"content": d.get("content", "")})
     if t == "tool_start":
@@ -390,7 +455,9 @@ def _translate(ev) -> tuple[str | None, dict[str, Any]]:
             return ("assistant", {"content": f"Worker error: {d.get('message', '')}"})
         return ("error", {"message": d.get("message", "")})
     if t == "done":
-        return ("done", {"content": d.get("content", "")})
+        return ("done", {"content": d.get("content", ""), "reason": d.get("reason", "completed"), "finish_reason": d.get("finish_reason", "")})
+    if t == "status":
+        return ("status", d)
     if t == "cancelled":
         return ("cancelled", {})
     return (None, {})

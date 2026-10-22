@@ -83,6 +83,19 @@ def test_plan_compaction_noop_when_single_turn():
     assert not plan.has_head  # nothing old enough to summarize
 
 
+def test_one_long_user_request_compacts_on_completed_tool_exchanges():
+    messages = [{"role": "user", "content": "Keep the original objective"}]
+    for i in range(8):
+        messages += [{"role": "assistant", "content": "Inspect", "tool_calls": [{"id": str(i)}]},
+                     {"role": "tool", "tool_call_id": str(i), "content": "proof " * 100}]
+    budget = c.ContextBudget(context_limit=10000, reserve=1000, compact_at=500, keep_recent_tokens=100)
+    plan = c.plan_compaction("unknown", messages, budget)
+    assert plan.has_head
+    assert plan.head[0]["content"] == "Keep the original objective"
+    assert plan.tail[0]["role"] == "assistant"
+    assert plan.tail[0]["tool_calls"][0]["id"] == plan.tail[1]["tool_call_id"]
+
+
 def test_summary_request_and_checkpoint_framing():
     head = [{"role": "user", "content": "u1"}, {"role": "assistant", "content": "a1"}]
     req = c.build_summary_request(head, previous_summary="prev-checkpoint")

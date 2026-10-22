@@ -4,8 +4,8 @@ This is the same tool surface an external MCP harness (OpenCode, Claude
 Desktop) already drives Osprey through. Reusing it here means the CLI's
 local agent loop has zero second tool-definition surface, zero second
 context/skills/conductor-signal assembly, and — as a side effect — the
-"shared MCP subprocess across chats" bug documented in that module doesn't
-apply: one CLI process is one operator's own session by construction.
+session bindings are passed on every invocation, including when several GUI
+sessions share this embedded adapter in one backend process.
 
 FastMCP-private access is contained behind the platform adapter's public
 embedding API. Calls run via ``asyncio.to_thread`` because the embedded
@@ -69,7 +69,7 @@ class EmbeddedToolGateway:
             # On the backend event loop it would block that same server from
             # answering its own request (and freeze every dashboard stream).
             await asyncio.to_thread(self.activate)
-        return await call_tool(name, arguments)
+        return await call_tool(name, arguments, engagement_id=self.engagement_id)
 
 
 def _platform_mcp_dir() -> Path:
@@ -263,7 +263,7 @@ def get_tool_schemas(*, budget_tokens: int = 0) -> list[dict[str, Any]]:
     return schemas
 
 
-async def call_tool(name: str, arguments: dict[str, Any]) -> str:
+async def call_tool(name: str, arguments: dict[str, Any], *, engagement_id: str = "") -> str:
     """Execute one tool call by name, off the event loop (these are blocking
     HTTP calls under the hood — same cost model as the MCP path)."""
     server = _SERVER_MODULE
@@ -271,7 +271,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> str:
         raise RuntimeError("load_server() must be called before call_tool()")
 
     try:
-        result = await asyncio.to_thread(server.embedded_invoke_tool, name, arguments or {})
+        result = await asyncio.to_thread(server.embedded_invoke_tool, name, arguments or {}, engagement_id=engagement_id)
     except KeyError:
         return f"ERROR: no such tool '{name}'."
     except Exception as exc:  # noqa: BLE001 — surface as a tool result, not a crash

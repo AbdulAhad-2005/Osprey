@@ -196,15 +196,24 @@ def split_into_turns(messages: list[dict[str, Any]]) -> list[list[dict[str, Any]
     """Group non-system messages into whole turns. A turn starts at a ``user``
     message and runs up to (but not including) the next ``user`` message — so an
     assistant message carrying tool_calls always stays with the ``tool`` result
-    messages that answer it. Splitting on any other boundary produces an invalid
-    request on every OpenAI-compatible API."""
+    messages that answer it. Completed assistant/tool exchanges within a long
+    user request are also safe boundaries; otherwise a single long engagement
+    can never be compacted."""
     turns: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
+    pending: set[str] = set()
     for msg in messages:
-        if msg.get("role") == "user" and current:
+        role = msg.get("role")
+        if current and not pending and (
+            role == "user" or (role == "assistant" and current[-1].get("role") in {"assistant", "tool"})
+        ):
             turns.append(current)
             current = []
         current.append(msg)
+        if role == "assistant":
+            pending.update(call["id"] for call in msg.get("tool_calls", []))
+        elif role == "tool":
+            pending.discard(msg.get("tool_call_id", ""))
     if current:
         turns.append(current)
     return turns

@@ -136,6 +136,13 @@ def normalize_agent_tool_args(tool_name: str, args: dict[str, Any]) -> tuple[dic
     out = dict(args)
     notes: list[str] = []
 
+    # Explicit bulk input takes precedence over an engagement seed or a scalar
+    # target accompanying it. These tools advertise input_data as a host list.
+    if tool_name in {"dnsx_resolve", "dnsx_reverse", "httpx_probe"} and out.get("input_data"):
+        primary = primary_param_for_tool(tool_name) or "target"
+        out[primary] = str(out["input_data"]).strip()
+        notes.append("Using the explicit bulk input as the target list")
+
     for key in list(out.keys()):
         if key in _BOOL_PARAMS:
             coerced = _coerce_bool(out[key])

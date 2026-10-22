@@ -69,3 +69,5 @@ def test_transcript_without_journal_returns_legacy_messages(client):
     response = client.get(f"/api/v1/agent/chat-events/{engagement.id}")
     assert response.status_code == 200
     assert [m["content"] for m in response.json()["legacy_messages"]] == ["old prompt", "old answer"]
+    poll = client.get(f"/api/v1/agent/chat-events/{engagement.id}?include_legacy=false")
+    assert poll.json()["legacy_messages"] == []

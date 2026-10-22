@@ -32,7 +32,7 @@ def _load_agents_md() -> str:
     """AGENTS.md's content, read once per process. Missing file (e.g. the
     CLI package installed standalone, without the repo) degrades to an empty
     string rather than crashing the loop over an optional doc."""
-    path = Path(__file__).resolve().parents[2] / "AGENTS.md"
+    path = Path(__file__).resolve().parents[1] / "AGENTS.md"
     try:
         return path.read_text(encoding="utf-8").strip()
     except OSError:
@@ -44,8 +44,8 @@ You are Osprey's own CLI operator loop — an autonomous pentest assistant with
 direct tool access. You are not a chat client relaying to another agent; you
 call tools yourself, in this loop, right now. The operator methodology below
 (AGENTS.md) is the same doc an external harness gets automatically; follow it
-exactly as written, including its guidance to drive the visible investigation loop
-first for recon/vuln breadth work. What follows here is CLI-loop-specific,
+exactly as written. Drive typed tools directly, with platform_context and
+platform_pipeline as advisory state. What follows here is CLI-loop-specific,
 on top of that shared methodology — not a restatement of it.
 
 Spawn `spawn_subagents` ONLY for 2+ genuinely independent, parallelizable

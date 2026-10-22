@@ -858,6 +858,26 @@ def _app_digest(stdout: str) -> str:
     )
 
 
+def _tech_stack_digest(stdout: str) -> str:
+    latest = None
+    for line in (stdout or "").splitlines():
+        try:
+            data = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(data, dict) and "unified_stack" in data:
+            latest = data
+    if latest is None:
+        return ""
+    stack = latest.get("unified_stack") or []
+    names = [f"{tech.get('name', '?')} {tech.get('version', '')}".strip() for tech in stack if isinstance(tech, dict)]
+    failures = [f"{name}: {str(method['error'])[:160]}" for name, method in (latest.get("methods") or {}).items()
+                if isinstance(method, dict) and method.get("error")]
+    return (f"tech_stack_analyze: {len(stack)} technologies — " + ", ".join(names[:12])
+            + (f" (+{len(names) - 12} more)" if len(names) > 12 else "")
+            + (". Partial coverage: " + "; ".join(failures) if failures else ""))
+
+
 def _register() -> None:
     from osprey.services.parsers.registry import (
         register_output_digester,
@@ -881,6 +901,7 @@ def _register() -> None:
     register_output_parser("email_security_probe", parse_email_security)
     register_output_parser("well_known_probe", parse_well_known)
     register_output_parser("tech_stack_analyze", parse_tech_stack)
+    register_output_digester("tech_stack_analyze", _tech_stack_digest)
     register_output_parser("wafw00f_scan", parse_wafw00f)
 
 

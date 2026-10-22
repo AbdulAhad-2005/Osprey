@@ -1,5 +1,121 @@
 # GUI architecture and evidence review — October 2026
 
+## Fresh geo.tv audit and continuation — 21 October
+
+Reviewed `geo1` in Chat, Attack Surface, Graph, Findings, Evidence and Report,
+and inspected the initial transcript's 62 tool returns (54 execution records).
+Large URL lists were inspected through their summaries and representative
+records; this does not claim manual validation of every archived URL.
+
+The first root run began at 13:00:45 UTC and stopped at 13:42:43 UTC on the
+shared Runner's hard 30-step limit. The later `continue` input produced an
+empty assistant event and empty `done`, with no tool call. Its provider finish
+reason was not recorded, so the precise provider-side cause cannot be recovered.
+The final preceding investigation result contained 618 opportunities and
+1,032,496 characters. That volume and the compaction gap below were verified;
+they are not proof of the cause of the provider's empty response.
+
+Implemented:
+
+- Interactive GUI and CLI root runs continue until the model ends its turn or
+  the operator pauses. Explicit worker budgets remain bounded. Empty model
+  responses retry once and then report a resumable error; new terminal events
+  include the stop reason and provider finish reason.
+- The existing append-only chat journal is the recovery source for model tool
+  calls, results, public narration and original user instructions. Restart/session
+  eviction restores provider-valid root exchanges, excludes worker conversations,
+  and explicitly marks missing results as unknown. Replay never executes tools.
+  Large restored results have real, engagement-scoped `chat-event:<id>` artifact
+  references, rather than claiming that arbitrary tool output exists in a Kali file.
+- Compaction can divide a long user request at completed assistant/tool exchanges.
+  The earlier implementation only split at another user prompt, making a single
+  long assessment impossible to compact. A failed/empty summary now retains the
+  original history instead of silently dropping the original objective/evidence.
+- Message admission is separate from observation. The JSON admission endpoint
+  atomically records the prompt/run marker, acknowledges it, and owns execution
+  independently of browser connections. Request identities make retry after a
+  lost response idempotent. The compatibility SSE route uses the same admission
+  and journal. Reconnecting readers page from a cursor, retry broken connections,
+  and also notice runs started by another tab while they were idle.
+- Pause waits for the current loop to settle. Completed sibling-tool results
+  remain in model history when a parallel batch is interrupted. Sending a message
+  during execution settles the previous turn before admitting the next instruction.
+  Empty input displays Pause while active, Resume while recoverable/open, and
+  typing displays Send. Completing a model turn does not mark an engagement complete.
+  Background jobs and already-submitted remote commands may continue after a pause;
+  their outcomes must be checked before repeating them.
+  Switching engagements resets chat-local draft/initial-prompt state, so another
+  engagement cannot inherit the previous composer's text or kickoff flag.
+- The local operator methodology was never loaded: `context.py` looked one
+  directory above the repository. Corrected the path and conflicting bind guidance
+  that recommended the deterministic investigation baseline to a model driver.
+- Concurrent browser verification exposed a second shared-state issue: an
+  omitted `engagement_id` on two geo.tv calls used the verification chat's ambient
+  binding. The first-party gateway now supplies its binding on every invocation;
+  the adapter uses invocation-local context for ambient-only tools as well.
+  Threaded tests verify isolation without serializing tools or removing explicit
+  pins. Embedded bindings also receive distinct, stable run IDs; previously
+  binding another engagement reused the process run ID. Those two historical misrouted records remain in the verification
+  engagement for inspection; the operator's agent noticed and re-ran its probes
+  with explicit geo1 pins. This routing fix needs the next backend restart.
+- The deterministic investigation tool's rendered response is paged, with total
+  counts and compact evidence references; its underlying API and executable IDs
+  remain intact. This removes the megabyte dump without removing opportunities.
+- A `dnsx_resolve(input_data=...)` request was rejected; adding a scalar target
+  made it run but silently ignored the host list. Central argument normalization
+  now preserves explicit bulk input for the DNS/httpx wrappers.
+- The Nikto transport timeout was displayed as successful because its error
+  followed a mirror heading. Corrected status detection for new and historical
+  cards, and removed the unsupported claim that the backend had probably finished.
+  Absence from the job list does not prove a synchronous command stopped.
+- Tool cards separate stdout, stderr, summary, guidance and complete recorded
+  output. Large output expands in chunks and can be downloaded verbatim. Technology
+  digests use the latest consolidated snapshot and expose partial-method errors;
+  generic digests no longer duplicate arbitrarily large JSON lines.
+- Related-domain inventory rows retain the hunter's method and affiliation
+  confidence. Low-confidence web-search leads are not displayed with empty context.
+
+Failure review: crt.sh returned an upstream HTTP 502; no local fix was warranted.
+Wappalyzer was an absent optional Python module; the other five fingerprinting
+methods still returned data, so installing a new dependency was not necessary to
+repair continuity. Four empty Naabu results fell back to Rustscan, which emitted
+its own timeout/batch-size advice; the model's statement that the hosts had no
+open ports was not established by those outputs. Nuclei's empty initial output
+triggered a fallback; later signals in durable memory demonstrate why an empty
+foreground card is not a definitive negative. Default httpx output only requested
+probe status (`SUCCESS`); the existing bracket heuristic can mislabel that marker
+as technology. Parser confidence/interpretation and policy enforcement were left
+unchanged as requested; historical records were not rewritten.
+
+Research informed the design: [OpenCode's session API](https://dev.opencode.ai/v2/docs/api)
+separates durable session input, interrupts and event observation; Anthropic's
+[long-running harness guidance](https://www.anthropic.com/research/effective-harnesses-for-long-running-agents)
+emphasizes recovering the objective and recorded progress between contexts. We
+reuse Osprey's journal and shared Runner rather than introducing another agent engine.
+[httpx's own flag reference](https://docs.projectdiscovery.io/opensource/httpx/usage)
+distinguishes probe status from HTTP status/title/technology display flags.
+
+Validation includes journal reconstruction, scoped output retrieval, pause/redirect,
+idempotent input, long single-prompt compaction, empty provider replies, failed
+summary retention and root execution beyond thirty steps. A live browser check on
+the reserved `gui-resume-verification.test` engagement used only saved context:
+Pause, reload, Resume and typing/sending during execution all worked, and the
+redirected turn returned a visible response. The test engagement is retained for
+review. No additional external scan was launched for this verification.
+
+The operator resumed geo.tv during verification, and it began issuing new tools.
+The running process was left undisturbed. Later refinements (including binding isolation, atomic
+admission, finished-but-open Resume handling and legacy-poll payload suppression)
+are in the local diff and load on the next backend restart; they were tested in
+isolation. No commit, push or deployment was performed.
+
+Final checks: 66 focused backend/Runner/gateway tests and 29 frontend tests
+passed, as did type checking and the production build. The running dashboard
+returned HTTP 200 after the build. Reloading the active geo.tv conversation
+restored its worker activity and Pause control; no new browser errors appeared
+after that reload. The browser control layer's first lookup exceeded its short
+interaction deadline during restore, then the populated conversation was verified.
+
 ## Large-engagement graph redesign — 21 October
 
 The previous all-record diagram was still a poor starting point: on the NADRA

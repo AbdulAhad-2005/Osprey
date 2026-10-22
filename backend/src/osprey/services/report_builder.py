@@ -287,7 +287,7 @@ def _recon_appendix(observations: list[Observation], legacy=(), nodes=()) -> lis
             if t not in types:
                 continue
             _merge_inventory_item(unique, (t, node.label.lower()), {"type": t, "value": node.label,
-                "target": node.label, "detail": "", "source_tool": ", ".join(node.source_tools or []), "asset_id": node.id})
+                "target": node.label, "detail": _related_domain_detail(node.metadata or {}), "source_tool": ", ".join(node.source_tools or []), "asset_id": node.id})
         raw_items.extend(unique.values())
 
     normalized: dict[tuple[str, str], dict[str, Any]] = {}
@@ -416,6 +416,9 @@ def _obs_value(o: Observation) -> str:
 
 def _obs_detail(o: Observation) -> str:
     d = o.details or {}
+    related = _related_domain_detail(d)
+    if related:
+        return related
     t = o.type.value
     if t in ("subdomain", "host"):
         return str(d.get("ip") or d.get("status_code") or d.get("status") or "")
@@ -428,6 +431,17 @@ def _obs_detail(o: Observation) -> str:
     if t == "credential":
         return str(d.get("source") or d.get("breach") or "")
     return ""
+
+
+def _related_domain_detail(metadata: dict[str, Any]) -> str:
+    if metadata.get("role") != "sister_domain":
+        return ""
+    parts = ["Related-domain lead"]
+    if metadata.get("hunter_confidence"):
+        parts.append(f"affiliation confidence: {metadata['hunter_confidence']}")
+    if metadata.get("method"):
+        parts.append(f"method: {metadata['method']}")
+    return " · ".join(parts)
 
 
 # --------------------------------------------------------------------------- #

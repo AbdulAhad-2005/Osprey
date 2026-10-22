@@ -15,6 +15,7 @@ import re
 import sys
 import uuid
 from dataclasses import dataclass
+from contextvars import ContextVar
 from typing import Any
 
 import httpx
@@ -84,6 +85,7 @@ class _EngagementContext:
 _ENGAGEMENT_CACHE: dict[str, dict[str, str]] = {}
 _ENGAGEMENT_RUN_IDS: dict[str, str] = {}
 _REGISTERED_RUNS: set[tuple[str, str]] = set()
+_INVOCATION_ENGAGEMENT: ContextVar[str] = ContextVar("osprey_invocation_engagement", default="")
 
 
 def _persist_session() -> None:
@@ -420,7 +422,7 @@ def _resolve_engagement(engagement_id_override: str = "") -> _EngagementContext:
     regardless of what the shared ambient session currently holds. Empty
     override = existing single-chat behavior (unchanged).
     """
-    requested = (engagement_id_override or "").strip()
+    requested = (engagement_id_override or "").strip() or _INVOCATION_ENGAGEMENT.get()
     # "Pinned" means something ACTIONABLE happened — the explicit id actually
     # differs from what the ambient session currently holds. A CLI (or any
     # single-focused-session driver) passes engagement_id= on every call by
@@ -514,16 +516,16 @@ def _safe(callable_fn) -> str:
     except httpx.TimeoutException:
         return (
             "### OPERATOR MIRROR — TIMEOUT\n"
+            "success: False\n"
             f"ERROR: Platform request timed out on {API_BASE}.\n"
-            "The backend likely FINISHED the run server-side — the result is recorded "
-            "durably. Do NOT assume failure or re-run blindly:\n"
-            "- Call platform_jobs to find the recorded run (it lists durable scan-runs "
-            "even for a synchronous call that timed out from your side), then "
-            "platform_job_result / platform_artifact to read its output.\n"
+            "The execution outcome is unknown from this connection. Check durable "
+            "run history before repeating the action:\n"
+            "- Check platform_jobs for tracked jobs/runs and platform_artifact for "
+            "any saved output. A synchronous action may still be running; absence "
+            "from the job list does not prove it stopped.\n"
             "- For genuinely long work, start it with platform_job_start instead of a "
             "synchronous call, or retry with a SMALLER scope (one IP, top ports only, "
-            "timeout_seconds≤90; never -p0-65535 in one MCP call).\n"
-            "Keep expanding; don't dump platform_findings yet."
+            "timeout_seconds≤90)."
         )
     except httpx.HTTPStatusError as exc:
         code = exc.response.status_code if exc.response else "?"
@@ -586,8 +588,8 @@ def _analyze_or_bind(raw: str, *, force_new: bool = False) -> str:
             "engagement. Use platform_context for the NEW target only."
         )
     parts.append(
-        "Next: call platform_investigation_step() to inspect ranked, evidence-backed "
-        "work. Execute one opportunity, watch its job, then re-read state and replan."
+        "Next: read platform_context and platform_pipeline, then call the typed tools "
+        "you choose directly. platform_investigation_step/execute is the no-LLM baseline."
     )
     # No auto-fire: platform_set_target only binds. The connecting LLM (this
     # session) decides what runs next — call typed tools directly, or opt
@@ -635,10 +637,12 @@ def platform_set_target(target: str, force_new: bool = False, pick: str = "") ->
 
 
 @mcp.tool()
-def platform_investigation_step(engagement_id: str = "") -> str:
+def platform_investigation_step(engagement_id: str = "", offset: int = 0, limit: int = 10) -> str:
     """Read the current harness state and ranked investigation opportunities.
 
-    This call is read-only. Choose deliberately from the returned typed graph
+    This is the no-LLM deterministic baseline. Model-driven operators should
+    drive typed tools directly using platform_context/platform_pipeline advice.
+    This call is read-only and paged. Choose deliberately from the returned typed graph
     opportunities, then pass the opaque id and revision unchanged to
     ``platform_investigation_execute``.
     """
@@ -648,6 +652,19 @@ def platform_investigation_step(engagement_id: str = "") -> str:
             "/api/v1/investigation/step",
             params={"engagement_id": ctx.engagement_id, "run_id": ctx.run_id},
         )
+        opportunities = step.get("opportunities") or []
+        start_offset, page_size = max(0, int(offset)), max(1, min(100, int(limit)))
+        page = []
+        for item in opportunities[start_offset:start_offset + page_size]:
+            subjects = item.get("subjects") or []
+            page.append({**{key: item.get(key) for key in ("id", "capability", "reason", "priority", "cost", "risk", "tool", "params", "additional_args", "timeout")},
+                         "subject_count": len(subjects), "subjects": [
+                             {"asset_id": subject.get("asset_id"), "label": subject.get("label"),
+                              "evidence_count": len(subject.get("evidence_ids") or []),
+                              "evidence_ids": (subject.get("evidence_ids") or [])[:5]}
+                             for subject in subjects[:10]]})
+        step = {**step, "opportunities": page, "total_opportunities": len(opportunities),
+                "offset": start_offset, "next_offset": start_offset + page_size if start_offset + page_size < len(opportunities) else None}
         return "\n\n".join([_session_header(ctx), _block("INVESTIGATION STATE", step)])
 
     return _safe(_run)
@@ -1090,7 +1107,7 @@ def platform_artifact(
     path: str = "", offset: int = 0, limit: int = 80000, engagement_id: str = ""
 ) -> str:
     """
-    Read a slice of a Kali artifact (full tool stdout that didn't fit the card).
+    Read a slice of a Kali artifact or a durable chat tool result (path='chat-event:<id>').
     Empty path → list recent index + workdir listing.
     path = basename or /tmp/pentest/<engagement>/….stdout.txt
     """
@@ -3869,18 +3886,24 @@ def embedded_tool_specs() -> list[dict[str, Any]]:
     ]
 
 
-def embedded_invoke_tool(name: str, arguments: dict[str, Any]) -> Any:
+def embedded_invoke_tool(name: str, arguments: dict[str, Any], *, engagement_id: str = "") -> Any:
     tool = mcp._tool_manager.get_tool(name)
     if tool is None:
         raise KeyError(name)
     allowed = set((tool.parameters or {}).get("properties", {}).keys())
     clean_args = {key: value for key, value in (arguments or {}).items() if key in allowed}
-    return tool.fn(**clean_args)
+    if engagement_id and "engagement_id" in allowed and not str(clean_args.get("engagement_id") or "").strip():
+        clean_args["engagement_id"] = engagement_id
+    token = _INVOCATION_ENGAGEMENT.set(engagement_id)
+    try:
+        return tool.fn(**clean_args)
+    finally:
+        _INVOCATION_ENGAGEMENT.reset(token)
 
 
 def embedded_bind_session(*, engagement_id: str, target: str = "") -> None:
     global _SESSION_ENGAGEMENT_ID, _SESSION_TARGET, _SESSION_SWITCH_NOTICE
-    global _SESSION_TARGET_KIND, _SESSION_SCOPE
+    global _SESSION_TARGET_KIND, _SESSION_SCOPE, SESSION_RUN_ID
     _SESSION_ENGAGEMENT_ID = (engagement_id or "").strip()
     _SESSION_TARGET = (target or "").strip()
     # The CLI has an already-resolved engagement but does not own a target
@@ -3895,7 +3918,7 @@ def embedded_bind_session(*, engagement_id: str, target: str = "") -> None:
             "kind": _SESSION_TARGET_KIND,
             "scope": "",
         }
-        _ENGAGEMENT_RUN_IDS[_SESSION_ENGAGEMENT_ID] = SESSION_RUN_ID
+        SESSION_RUN_ID = _ENGAGEMENT_RUN_IDS.setdefault(_SESSION_ENGAGEMENT_ID, uuid.uuid4().hex[:12])
         _ensure_run_registered(_SESSION_ENGAGEMENT_ID, SESSION_RUN_ID)
     _persist_session()
 

@@ -70,7 +70,7 @@ export function EngagementWorkspace({ engagementId }: { engagementId: string }) 
       {/* Body — chat stays mounted so a live run survives tab switches */}
       <div className="relative min-h-0 flex-1">
         <div className={cn("absolute inset-0", tab === "chat" ? "block" : "hidden")}>
-          <ChatView engagementId={engagementId} initialPrompt={initialPrompt} visible={tab === "chat"} />
+          <ChatView key={engagementId} engagementId={engagementId} initialPrompt={initialPrompt} visible={tab === "chat"} />
         </div>
         {tab === "surface" && (
           <div className="absolute inset-0 overflow-y-auto">

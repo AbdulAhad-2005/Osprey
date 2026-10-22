@@ -182,10 +182,31 @@ export interface TranscriptPage {
   active: boolean;
   has_more: boolean;
   legacy_messages: StoredMessage[];
+  run: ChatRunState;
 }
 
-export function getTranscript(engagementId: string, after = 0, wait = 0, signal?: AbortSignal): Promise<TranscriptPage> {
-  return getJSON(`/api/v1/agent/chat-events/${encodeURIComponent(engagementId)}?after=${after}&wait_seconds=${wait}`, { signal });
+export interface ChatRunState {
+  state: "idle" | "running" | "paused" | "interrupted" | "completed";
+  resumable: boolean;
+  reason?: string;
+  run_id?: string;
+  stage?: string;
+  message?: string;
+  elapsed_seconds?: number;
+}
+
+export async function startChat(engagementId: string, prompt: string): Promise<{accepted: boolean; run_id: string}> {
+  const options = {method: "POST", body: JSON.stringify({engagement_id: engagementId, prompt, interrupt: true, request_id: crypto.randomUUID()})};
+  try { return await getJSON("/api/v1/agent/chat/start", options); }
+  catch (error) {
+    if (error instanceof ApiError) throw error;
+    // If the response was lost after admission, retry the same input identity.
+    return getJSON("/api/v1/agent/chat/start", options);
+  }
+}
+
+export function getTranscript(engagementId: string, after = 0, wait = 0, signal?: AbortSignal, includeLegacy = true): Promise<TranscriptPage> {
+  return getJSON(`/api/v1/agent/chat-events/${encodeURIComponent(engagementId)}?after=${after}&wait_seconds=${wait}&include_legacy=${includeLegacy}`, { signal });
 }
 
 /* --- Findings (used by the chat sidebar glance + viz milestone) ---------- */
