@@ -22,6 +22,7 @@ import {
 import type { ToolCallView } from "@/lib/types";
 import { toolCategory, toolLabel, workerTag, formatDuration, type ToolCategory } from "@/lib/format";
 import { cn } from "@/lib/cn";
+import { outputFailed, toolOutput } from "@/lib/toolOutput";
 
 const CAT_META: Record<ToolCategory, { icon: LucideIcon; color: string; ring: string }> = {
   recon: { icon: Radar, color: "text-signal", ring: "bg-signal/12" },
@@ -43,12 +44,13 @@ export function ToolCallCard({ call }: { call: ToolCallView }) {
   const Icon = meta.icon;
   const worker = workerTag(call.name);
   const prettyArgs = formatArgs(call.args);
+  const status = call.status === "ok" && outputFailed(call.result) ? "fail" : call.status;
 
   return (
     <div
       className={cn(
         "overflow-hidden rounded-lg border bg-surface/70 transition-colors",
-        call.status === "fail" ? "border-sev-critical/35" : "border-border hover:border-border-strong",
+        status === "fail" ? "border-sev-critical/35" : "border-border hover:border-border-strong",
       )}
     >
       <button
@@ -85,7 +87,7 @@ export function ToolCallCard({ call }: { call: ToolCallView }) {
           {call.status !== "running" && call.durationSeconds != null && (
             <span className="font-mono tabular-nums">{formatDuration(call.durationSeconds)}</span>
           )}
-          <StatusIcon status={call.status} />
+          <StatusIcon status={status} />
           <ChevronRight
             size={13}
             className={cn("transition-transform", open && "rotate-90")}
@@ -122,9 +124,7 @@ export function ToolCallCard({ call }: { call: ToolCallView }) {
                   <Loader2 size={12} className="animate-spin" /> running…
                 </div>
               ) : (
-                <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap break-words font-mono text-[11.5px] leading-relaxed text-ink-dim">
-                  {call.result?.trim() || "(no output)"}
-                </pre>
+                <ToolOutput result={call.result || ""} name={call.name} />
               )}
               {call.findingTitles && call.findingTitles.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
@@ -146,12 +146,44 @@ export function ToolCallCard({ call }: { call: ToolCallView }) {
   );
 }
 
+function OutputText({text}: {text: string}) {
+  const [limit, setLimit] = useState(16000);
+  return <>
+    <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap break-words font-mono text-[11.5px] leading-relaxed text-ink-dim">{text.slice(0, limit) || "(no output)"}</pre>
+    {text.length > limit && <button className="mt-2 text-xs text-amber" onClick={() => setLimit((n) => n + 16000)}>Show more · {Math.min(limit, text.length).toLocaleString()} / {text.length.toLocaleString()} characters</button>}
+  </>;
+}
+
+function ToolOutput({result, name}: {result: string; name: string}) {
+  const parsed = toolOutput(result);
+  function download() {
+    const url = URL.createObjectURL(new Blob([result], {type: "text/plain;charset=utf-8"}));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${name.replace(/[^a-z0-9_-]/gi, "_")}-output.txt`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  return <div className="space-y-3">
+    {parsed.summary && <p className="break-words text-xs text-ink">{parsed.summary.slice(0, 1000)}{parsed.summary.length > 1000 ? "…" : ""}</p>}
+    {parsed.error && <p className="break-words text-xs text-sev-high">{parsed.error}</p>}
+    {parsed.sections.length ? parsed.sections.map((section) => section.label === "Diagnostics" ?
+      <details key={section.label}><summary className="cursor-pointer text-xs text-ink-faint">Diagnostics · stderr</summary><OutputText text={section.content}/></details> :
+      <OutputText key={section.label} text={section.content}/>) : <OutputText text={result}/>}
+    {parsed.guidance && <details><summary className="cursor-pointer text-xs text-ink-faint">Tool guidance</summary><p className="whitespace-pre-wrap break-words pt-2 text-xs text-ink-dim">{parsed.guidance}</p></details>}
+    <div className="flex items-start gap-3 border-t border-border pt-2">
+      {parsed.sections.length > 0 && <details className="min-w-0 flex-1"><summary className="cursor-pointer text-xs text-ink-faint">Complete recorded result · command, metadata and evidence references</summary><OutputText text={result}/></details>}
+      <button onClick={download} className="flex-none text-xs text-amber">Download output</button>
+    </div>
+  </div>;
+}
+
 function StatusIcon({ status }: { status: ToolCallView["status"] }) {
   if (status === "running")
-    return <Loader2 size={13} className="animate-spin text-signal" />;
-  if (status === "ok") return <Check size={13} className="text-ok" />;
+    return <Loader2 aria-label="Running" size={13} className="animate-spin text-signal" />;
+  if (status === "ok") return <Check aria-label="Completed" size={13} className="text-ok" />;
   if (status === "stopped") return <span className="text-ink-faint">interrupted</span>;
-  return <X size={13} className="text-sev-critical" />;
+  return <X aria-label="Failed" size={13} className="text-sev-critical" />;
 }
 
 function formatArgs(args?: string): string | null {

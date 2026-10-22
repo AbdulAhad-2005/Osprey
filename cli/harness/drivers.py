@@ -68,6 +68,7 @@ class LLMDriver:
             agent_prompt=(agent.prompt if agent is not None else ""),
             tool_gateway=self.runtime.tool_gateway,
             worker_factory=self.runtime.workers.create,
+            max_turns=0,
         )
         return self.runner
 

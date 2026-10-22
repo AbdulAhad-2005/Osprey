@@ -109,7 +109,12 @@ def tool_result_failed(result: str) -> bool:
     import re
 
     m = re.search(r"(?im)^success:\s*(true|false)\b", result)
-    return bool(m) and m.group(1).lower() == "false"
+    if m:
+        return m.group(1).lower() == "false"
+    # Dispatch errors can have an operator-mirror heading. Inspect the header,
+    # not stdout (which may legitimately contain an error string as evidence).
+    header = result.split("```", 1)[0]
+    return bool(re.search(r"(?m)^ERROR:", header))
 
 
 def refresh_system_message(messages: list[dict[str, Any]], system_prompt: str) -> list[dict[str, Any]]:
@@ -288,10 +293,9 @@ class Runner:
         self.config = config
         self.messages: list[dict[str, Any]] = []
         self._allow_spawn = allow_spawn
-        # Per-instance turn cap (e.g. a job's requested max_turns). None/0 keeps
-        # the module default — every existing caller (interactive CLI, workers)
-        # is unaffected since none of them pass this.
-        self._max_turns = max_turns or _MAX_TURNS
+        # Explicit jobs keep a bounded budget. None uses the default; zero lets
+        # an interactive session run until completion or operator cancellation.
+        self._max_turns = _MAX_TURNS if max_turns is None else max_turns
         # Optional active-mode tool scope (from a prompt-defined agent/flow). None
         # = full catalog. Applied to what the model SEES and enforced on dispatch,
         # and inherited by spawned workers so a mode is consistent end to end.
@@ -401,6 +405,7 @@ class Runner:
         if prompt_tokens < budget.compact_at:
             return
         before = len(self.messages)
+        yield Event("status", {"stage": "compacting", "message": "Refreshing conversation context from earlier progress…"})
         if await self._compact_now():
             yield Event(
                 "compaction",
@@ -416,9 +421,8 @@ class Runner:
         """Summarize the oldest whole-turns into the rolling checkpoint and drop
         them from the live window. Returns True if history was actually compacted.
 
-        If the summarization call itself fails, still drop the old turns but keep
-        the prior checkpoint — the session survives a provider hiccup, and findings
-        stay durable regardless. Never splits a tool-call/result pair (plan_compaction
+        If summarization fails, retain the original history so objectives and
+        evidence are never silently discarded. Never splits a tool-call/result pair (plan_compaction
         cuts only on whole-turn boundaries) and never touches the system prompt."""
         budget = self._ensure_budget()
         plan = plan_compaction(self.config.model, self.messages, budget)
@@ -439,6 +443,8 @@ class Runner:
             summary = ""
         if summary:
             self._running_summary = summary
+        else:
+            return False
         checkpoint = [checkpoint_message(self._running_summary)] if self._running_summary else []
         self.messages = plan.system + checkpoint + plan.tail
         return True
@@ -463,9 +469,13 @@ class Runner:
         self.messages.append({"role": "user", "content": prompt})
 
         tool_schemas = self._tool_schemas()
+        batch_results: dict[str, str] = {}
 
         try:
-            for _turn in range(self._max_turns):
+            _turn = 0
+            empty_responses = 0
+            while self._max_turns <= 0 or _turn < self._max_turns:
+                _turn += 1
                 # History grows every turn as tool results accumulate and rides
                 # in every request alongside the tool schema list. Keep it under
                 # the model's real context window before each call — summarizing
@@ -516,16 +526,28 @@ class Runner:
                     if response is None:
                         msg = friendly_llm_error(exc)
                         yield Event("error", {"message": msg})
-                        yield Event("done", {"content": f"(stopped: {msg})"})
+                        yield Event("done", {"content": f"(stopped: {msg})", "reason": "error"})
                         return
                 message = response["choices"][0]["message"]
+                finish_reason = response["choices"][0].get("finish_reason", "")
                 tool_calls = message.get("tool_calls") or []
 
                 if not tool_calls:
                     content = message.get("content") or ""
+                    if not content.strip():
+                        empty_responses += 1
+                        if empty_responses == 1:
+                            yield Event("status", {"stage": "retrying", "message": "The model returned an empty response. Retrying once…"})
+                            continue
+                        msg = ("The model exhausted its response limit without producing text or tool calls. "
+                               if finish_reason == "length" else "The model returned no text or tool calls after a retry. ")
+                        msg += "Resume to try again, or choose another model in Settings."
+                        yield Event("error", {"message": msg})
+                        yield Event("done", {"content": "", "reason": "empty_response", "finish_reason": finish_reason})
+                        return
                     self.messages.append({"role": "assistant", "content": content})
                     yield Event("assistant_text", {"content": content})
-                    yield Event("done", {"content": content})
+                    yield Event("done", {"content": content, "reason": "completed", "finish_reason": finish_reason})
                     return
 
                 inline_text = (message.get("content") or "").strip()
@@ -551,6 +573,7 @@ class Runner:
                 # pair that blocks for minutes with zero visibility into what
                 # its workers are actually doing. See _spawn_subagents.
                 event_queue: asyncio.Queue[Event] = asyncio.Queue()
+                batch_results = {}
 
                 async def _run_one(tc: dict[str, Any]) -> tuple[str, str, float]:
                     name = tc["function"]["name"]
@@ -568,6 +591,7 @@ class Runner:
                     seen = self._call_outcomes.get(sig)
                     if seen and seen[1] >= _STALL_THRESHOLD:
                         result = _stall_notice(name, seen[1])
+                        batch_results[tc["id"]] = result
                         elapsed = time.monotonic() - started
                         event_queue.put_nowait(Event("tool_end", {
                             "tool_name": name, "result": result, "duration_seconds": elapsed,
@@ -597,6 +621,7 @@ class Runner:
                         "duration_seconds": elapsed, "tool_call_id": tc["id"],
                         "success": not tool_result_failed(result),
                     }))
+                    batch_results[tc["id"]] = result
                     return name, result, elapsed
 
                 for tc in tool_calls:
@@ -678,7 +703,7 @@ class Runner:
                         }
                     )
 
-            yield Event("done", {"content": "(stopped: reached the turn limit for this prompt)"})
+            yield Event("done", {"content": "(paused: reached the turn limit for this prompt)", "reason": "turn_limit"})
         except asyncio.CancelledError:
             # Keep provider tool-call/result pairing valid for the next prompt.
             # A stopped batch may have emitted visible results before the full
@@ -688,11 +713,13 @@ class Runner:
             for call in (last_call or {}).get("tool_calls", []):
                 if call["id"] not in answered:
                     self.messages.append({"role": "tool", "tool_call_id": call["id"],
-                        "content": "Operator stopped the run before the batch returned to model history. Consult the durable tool transcript/artifacts for any completed output."})
-            findings_readback = await self._tool_gateway.call(
-                "platform_findings",
-                {"engagement_id": self._engagement_id or self._tool_gateway.engagement_id},
-            )
+                        "content": batch_results.get(call["id"], "Operator paused before this result returned. Check durable jobs/artifacts before repeating the action.")})
+            try:
+                findings_readback = await asyncio.wait_for(self._tool_gateway.call(
+                    "platform_findings", {"engagement_id": self._engagement_id or self._tool_gateway.engagement_id},
+                ), timeout=5)
+            except Exception:
+                findings_readback = "Recorded evidence is retained in engagement memory."
             yield Event("cancelled", {"findings": findings_readback})
             raise
 

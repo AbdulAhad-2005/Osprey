@@ -158,6 +158,7 @@ def test_finding_body_uses_the_resolved_context_not_ambient_globals(server, monk
         context=context,
         title="Reasoned relationship",
         evidence="shared certificate fingerprint",
+        finding_type="vulnerability",
     )
 
     assert isinstance(result, dict)
@@ -166,6 +167,76 @@ def test_finding_body_uses_the_resolved_context_not_ambient_globals(server, monk
         assert body["engagement_id"] == "eng-pinned"
         assert body["run_id"] == "run-pinned"
         assert body["target"] == "pinned.example"
+
+
+def test_investigation_output_is_paged_without_dumping_every_evidence_id(server, monkeypatch):
+    context = server._EngagementContext(engagement_id="paged", target="example.test", run_id="run", pinned=True)
+    monkeypatch.setattr(server, "_resolve_engagement", lambda *_: context)
+    step = {"revision": "revision-kept", "opportunities": [
+        {"id": name, "tool": "httpx_probe", "params": {"target": "example.test"},
+         "subjects": [{"asset_id": "host:example.test", "label": "example.test", "evidence_ids": [str(i) for i in range(10000)]}]}
+        for name in ("first-opportunity", "second-opportunity")]}
+    monkeypatch.setattr(server, "_get", lambda *args, **kwargs: step)
+    handler = getattr(server.platform_investigation_step, "fn", server.platform_investigation_step)
+    first = handler("paged", limit=1)
+    assert len(first) < 3000
+    assert "revision-kept" in first and '"evidence_count": 10000' in first
+    assert "first-opportunity" in first and "second-opportunity" not in first
+    assert "second-opportunity" in handler("paged", offset=1, limit=1)
+
+
+def test_transport_timeout_reports_unknown_execution_outcome(server):
+    import httpx
+
+    def timeout():
+        raise httpx.ReadTimeout("timed out")
+    result = server._safe(timeout)
+    assert "success: False" in result
+    assert "outcome is unknown" in result
+    assert "likely FINISHED" not in result
+
+
+def test_embedded_concurrent_calls_use_each_gateways_binding_even_without_tool_parameter(server, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from types import SimpleNamespace
+
+    barrier = Barrier(2)
+    monkeypatch.setattr(server, "_SESSION_ENGAGEMENT_ID", "unrelated-ambient")
+    monkeypatch.setattr(server, "_ensure_run_registered", lambda *_: None)
+    for eid in ("chat-a", "chat-b"):
+        server._ENGAGEMENT_CACHE[eid] = {"target": f"{eid}.test", "kind": "domain", "scope": ""}
+    def handler():
+        barrier.wait(timeout=5)
+        return server._resolve_engagement().engagement_id
+    # Even ambient-only tools, without an engagement_id schema field, inherit
+    # invocation context without serializing independent tool calls.
+    monkeypatch.setattr(server.mcp._tool_manager, "get_tool", lambda _: SimpleNamespace(parameters={}, fn=handler))
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        a = executor.submit(server.embedded_invoke_tool, "test", {}, engagement_id="chat-a")
+        b = executor.submit(server.embedded_invoke_tool, "test", {}, engagement_id="chat-b")
+        assert a.result(timeout=5) == "chat-a"
+        assert b.result(timeout=5) == "chat-b"
+    assert server._INVOCATION_ENGAGEMENT.get() == ""
+
+
+def test_embedded_binding_fills_omitted_id_and_preserves_explicit_tool_pin(server, monkeypatch):
+    from types import SimpleNamespace
+    tool = SimpleNamespace(parameters={"properties": {"engagement_id": {}}}, fn=lambda engagement_id: engagement_id)
+    monkeypatch.setattr(server.mcp._tool_manager, "get_tool", lambda _: tool)
+    assert server.embedded_invoke_tool("test", {}, engagement_id="bound") == "bound"
+    assert server.embedded_invoke_tool("test", {"engagement_id": "explicit"}, engagement_id="bound") == "explicit"
+
+
+def test_embedded_bindings_have_distinct_stable_run_ids(server, monkeypatch):
+    monkeypatch.setattr(server, "_ensure_run_registered", lambda *_: None)
+    monkeypatch.setattr(server, "_persist_session", lambda: None)
+    server.embedded_bind_session(engagement_id="embedded-run-a", target="a.test")
+    first = server.SESSION_RUN_ID
+    server.embedded_bind_session(engagement_id="embedded-run-b", target="b.test")
+    assert server.SESSION_RUN_ID != first
+    server.embedded_bind_session(engagement_id="embedded-run-a", target="a.test")
+    assert server.SESSION_RUN_ID == first
 
 
 def test_unpinned_call_is_rejected_once_multiple_engagements_are_bound(server, monkeypatch) -> None:

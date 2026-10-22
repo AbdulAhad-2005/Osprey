@@ -78,6 +78,26 @@ async def read_artifact_slice(
     offset: int = 0,
     limit: int = 80000,
 ) -> dict[str, Any]:
+    if path.startswith("chat-event:"):
+        from osprey.db.session import SessionLocal
+        from osprey.models.chat_event import ChatEventRow
+        import json
+
+        try:
+            event_id = int(path.split(":", 1)[1])
+        except ValueError:
+            return {"ok": False, "error": "Invalid chat event reference"}
+        with SessionLocal() as db:
+            row = db.get(ChatEventRow, event_id)
+            if row is None or row.engagement_id != engagement_id or row.event != "tool_end":
+                return {"ok": False, "error": "Tool result not found in this engagement"}
+            raw = json.loads(row.data_json).get("result", "").encode("utf-8")
+        start = max(0, int(offset))
+        end = min(len(raw), start + max(1, min(int(limit), 500_000)))
+        return {"ok": True, "path": path, "content": raw[start:end].decode("utf-8", errors="replace"),
+                "offset": start, "returned_bytes": len(raw[start:end]), "total_bytes": len(raw),
+                "truncated": end < len(raw), "next_offset": end}
+
     from osprey.services.mcp_client import get_mcp_client
 
     full = _resolve_path(engagement_id, path)

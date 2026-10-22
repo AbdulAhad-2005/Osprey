@@ -87,12 +87,13 @@ export function ChatView({
         <div className="mx-auto max-w-3xl px-4 py-6">
           {!mock && <BackgroundJobs engagementId={engagementId} visible={visible}/>}
           {chat.loading && <p className="py-8 text-sm text-ink-faint">Restoring conversation…</p>}
+          {chat.error && <p role="alert" className="my-3 rounded-lg border border-sev-high/30 p-3 text-sm text-sev-high">{chat.error}</p>}
           {chat.activity.kind === "error" && <p role="alert" className="my-3 rounded-lg border border-sev-high/30 p-3 text-sm text-sev-high">{chat.activity.message}</p>}
           {chat.turns.length === 0 ? (
             <ChatLanding
               mock={mock}
               target={target}
-              disabled={chat.loading || (!mock && backendUp === false)}
+              disabled={chat.loading || chat.submitting || chat.streaming || (!mock && backendUp === false)}
               onSend={chat.send}
             />
           ) : (
@@ -105,6 +106,10 @@ export function ChatView({
                   <ActivityIndicator activity={chat.activity} />
                 </div>
               )}
+              {chat.run.resumable && <p role="status" className="rounded-lg border border-amber/25 bg-amber/5 px-3 py-2 text-sm text-ink-dim">
+                {chat.run.reason === "turn_limit" ? "The previous run reached its step limit." : chat.run.reason === "empty_response" ? "The model ended the previous run without a response." : chat.run.state === "completed" ? "This turn finished. The engagement is still open." : chat.run.state === "paused" ? "Engagement paused." : "The previous run was interrupted."}
+                {" "}Your conversation and recorded evidence are saved. Resume below to continue.
+              </p>}
             </div>
           )}
           <div ref={bottomRef} />
@@ -114,6 +119,9 @@ export function ChatView({
       <Composer
         onSend={chat.send}
         onStop={chat.stop}
+        onResume={() => { void chat.send("Continue this existing engagement from its saved progress. Review recent tool results and outstanding work, preserve the original objective and scope, and avoid repeating completed actions without a reason."); }}
+        resumable={chat.run.resumable}
+        submitting={chat.submitting}
         streaming={chat.streaming}
         disabled={chat.loading || (!mock && backendUp === false)}
       />

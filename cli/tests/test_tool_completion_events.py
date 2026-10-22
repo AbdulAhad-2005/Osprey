@@ -58,6 +58,7 @@ def test_tool_end_arrives_before_slow_sibling_and_cancellation_cleans_up():
         await asyncio.gather(task, return_exceptions=True)
         assert cancelled.is_set()
         assert {m.get("tool_call_id") for m in runner.messages if m["role"] == "tool"} == {"fast", "slow"}
+        assert next(m["content"] for m in runner.messages if m.get("tool_call_id") == "fast") == "ok"
 
     asyncio.run(scenario())
 
