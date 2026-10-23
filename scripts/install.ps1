@@ -3,7 +3,7 @@
 # ==============================================================================
 #
 # Walks through:
-#   [1/5] Tool execution & infrastructure mode (Full Docker / Lean / Hybrid / Local)
+#   [1/5] Tool execution & infrastructure mode (Full Docker / Lean Docker / Fully Local)
 #   [2/5] Tool environment initialization & health checks
 #   [3/5] Usage mode selection (Built-in CLI, AI Harness via MCP, or Both)
 #   [4/5] Model configuration (LiteLLM provider presets & API key)
@@ -101,17 +101,21 @@ function Wait-ForBackend {
     # different password than DATABASE_URL now uses (e.g. an old .env with the
     # <db-password> placeholder). The volume's password can't be changed by env
     # vars — the volume must be reset.
-    $dbAuth = $false
+    $logs = ""
     if (Get-Command docker -ErrorAction SilentlyContinue) {
-        try {
-            $logs = & docker compose logs backend 2>$null | Out-String
-            if ($logs -match "password authentication failed|PasswordError|OperationalError.*password") { $dbAuth = $true }
-        } catch { }
+        try { $logs = & docker compose logs backend 2>$null | Out-String } catch { }
     }
-    if ($dbAuth) {
+    if ($logs -match "password authentication failed|PasswordError|OperationalError.*password") {
         Write-FailItem "Database password mismatch: the Postgres volume was created with a different password."
         Write-Muted "Reset the database volume (this DELETES local DB data) and re-run the wizard:"
         Write-Muted "    docker compose down -v ; powershell -ExecutionPolicy Bypass -File scripts\install.ps1"
+    } elseif ($logs -match "could not connect to server|connection refused|could not translate host name|OperationalError") {
+        # A stale .env from an earlier manual edit (wrong host/port in
+        # DATABASE_URL) is the other common cause — this wizard always writes a
+        # consistent DATABASE_URL for Docker modes.
+        Write-FailItem "The backend can't reach Postgres - DATABASE_URL in .env looks stale or wrong."
+        Write-Muted "Fix: let the wizard rewrite it - re-run install.ps1 and pick option 1 or 2 again"
+        Write-Muted "(it always sets a consistent, working DATABASE_URL)."
     } else {
         Write-WarnItem "Inspect logs using:  docker compose logs -f backend"
     }
@@ -194,11 +198,8 @@ Write-Muted "Zero tool installation required on your host system."
 Write-Host "  2) Lean Docker (Custom Tools Container)" -ForegroundColor White
 Write-Muted "Postgres & Backend in Docker; tools executed via your own existing container."
 
-Write-Host "  3) Hybrid (Docker Postgres + Local Scanners)" -ForegroundColor White
-Write-Muted "Postgres runs in Docker; Backend and security scanners run on this machine."
-
-Write-Host "  4) Fully Local, No Docker (Self-contained / SQLite)" -ForegroundColor White
-Write-Muted "Backend and tools run on this machine with local SQLite database (no Docker required)."
+Write-Host "  3) Fully Local, No Docker (Self-contained / SQLite)" -ForegroundColor White
+Write-Muted "Backend and tools run on this machine with a local SQLite database - no Docker, no Postgres."
 
 Write-Host "  0) Manual Setup" -ForegroundColor White
 Write-Muted "Keep .env as-is; I will start services manually."
@@ -272,25 +273,10 @@ switch ($runtimeChoice) {
     }
 
     "3" {
-        if (-not (Test-DockerReady)) { exit 1 }
-        Set-EnvVar -Key "POSTGRES_PASSWORD" -Value "pentest"
-        Set-EnvVar -Key "DATABASE_URL" -Value "postgresql+psycopg://pentest:pentest@localhost:5432/pentest"
-        Set-EnvVar -Key "KALI_CONTAINER" -Value ""
-
-        Write-Step "Starting Postgres database container..."
-        docker compose up -d postgres
-        if ($LASTEXITCODE -ne 0) { Write-FailItem "Failed to start Postgres container."; exit 1 }
-        Write-Success "Postgres container is active on localhost:5432"
-
-        Write-Step "Setting up local Python virtual environment for backend & tools..."
-        & "$ScriptDir\setup.ps1"
-    }
-
-    "4" {
         Set-EnvVar -Key "DATABASE_URL" -Value "sqlite:///./pentest.db"
         Set-EnvVar -Key "KALI_CONTAINER" -Value ""
 
-        Write-Step "Configured SQLite local database (pentest.db)."
+        Write-Step "Configured SQLite local database (pentest.db) - nothing else to connect."
         Write-Step "Setting up local Python virtual environment..."
         & "$ScriptDir\setup.ps1"
     }
@@ -306,9 +292,9 @@ switch ($runtimeChoice) {
 }
 
 # ==============================================================================
-# [2/5] Tool Environment Detection (For Local/Hybrid Modes)
+# [2/5] Tool Environment Detection (For the Fully Local mode)
 # ==============================================================================
-if ($runtimeChoice -in @("3", "4")) {
+if ($runtimeChoice -eq "3") {
     Write-Header "[2/5] Host Tool Availability & Scanner Detection"
     Write-Host "Scanning for native security tools on your PATH..." -ForegroundColor Cyan
 
@@ -662,10 +648,11 @@ Write-Header "Setup Complete! Next Steps"
 if ($runtimeChoice -in @("1", "2")) {
     Write-Host "  * Backend Status: Running inside Docker at http://localhost:9000" -ForegroundColor Green
     Write-Host "    Inspect logs anytime : docker compose logs -f backend" -ForegroundColor DarkGray
-} elseif ($runtimeChoice -in @("3", "4")) {
-    Write-Host "  * Backend Status: Configured for local execution" -ForegroundColor Yellow
-    Write-Host "    Start backend       : .\.venv\Scripts\Activate.ps1" -ForegroundColor White
-    Write-Host "                          uvicorn osprey.main:app --host 0.0.0.0 --port 9000" -ForegroundColor White
+    Write-Host "    Stop it              : docker compose down" -ForegroundColor DarkGray
+} elseif ($runtimeChoice -eq "3") {
+    Write-Host "  * Backend Status: Configured for local execution (not started yet)" -ForegroundColor Yellow
+    Write-Host "    Start it now        : powershell -ExecutionPolicy Bypass -File scripts\serve.ps1" -ForegroundColor White
+    Write-Host "    (leave that running; open a new terminal for the CLI/GUI)" -ForegroundColor DarkGray
 }
 
 if ($needsCliLlm) {

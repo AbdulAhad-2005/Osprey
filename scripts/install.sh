@@ -4,7 +4,7 @@
 # ==============================================================================
 #
 # Walks through:
-#   [1/5] Tool execution & infrastructure mode (Full Docker / Lean / Hybrid / Local)
+#   [1/5] Tool execution & infrastructure mode (Full Docker / Lean Docker / Fully Local)
 #   [2/5] Tool environment initialization & scanner checks
 #   [3/5] Usage mode selection (Built-in CLI, AI Harness via MCP, or Both)
 #   [4/5] Model configuration (LiteLLM provider presets & API key)
@@ -92,14 +92,26 @@ wait_for_backend() {
   done
   printf '\n'
   warn "Backend did not respond within ${tries}s. It may still be starting."
-  # Most common first-run failure: an existing Postgres volume was initialized
-  # with a different password than DATABASE_URL now uses (e.g. an old .env that
-  # still had the <db-password> placeholder). The password baked into the volume
-  # can't be changed by env vars — the volume must be reset.
-  if command -v docker >/dev/null 2>&1 && docker compose logs backend 2>/dev/null | grep -qiE "password authentication failed|PasswordError|OperationalError.*password"; then
+  local backend_log=""
+  if command -v docker >/dev/null 2>&1; then
+    backend_log="$(docker compose logs backend 2>/dev/null | tail -n 80)"
+  fi
+  if printf '%s' "$backend_log" | grep -qiE "password authentication failed|PasswordError|OperationalError.*password"; then
+    # Most common first-run failure: an existing Postgres volume was initialized
+    # with a different password than DATABASE_URL now uses (e.g. an old .env that
+    # still had the <db-password> placeholder). The password baked into the volume
+    # can't be changed by env vars — the volume must be reset.
     fail "Database password mismatch: the Postgres volume was created with a different password."
     muted "Reset the database volume (this DELETES local DB data) and re-run the wizard:"
     muted "    docker compose down -v  &&  bash scripts/install.sh"
+  elif printf '%s' "$backend_log" | grep -qiE "could not connect to server|connection refused|could not translate host name|OperationalError"; then
+    # A stale .env from an earlier manual edit (wrong host/port in DATABASE_URL)
+    # is the other common cause — this wizard always writes a consistent
+    # DATABASE_URL for Docker modes, so this means something outside the wizard
+    # edited it since.
+    fail "The backend can't reach Postgres — DATABASE_URL in .env looks stale or wrong."
+    muted "Fix: let the wizard rewrite it — re-run  bash scripts/install.sh  and pick"
+    muted "option 1 or 2 again (it always sets a consistent, working DATABASE_URL)."
   else
     warn "Inspect logs with:  docker compose logs -f backend"
   fi
@@ -180,11 +192,8 @@ muted "Zero tool installation required on your host system."
 printf '%s  2) Lean Docker (Custom Tools Container)%s\n' "${C_BOLD}" "${C_RESET}"
 muted "Postgres & Backend in Docker; tools executed via your own existing container."
 
-printf '%s  3) Hybrid (Docker Postgres + Local Scanners)%s\n' "${C_BOLD}" "${C_RESET}"
-muted "Postgres runs in Docker; Backend and security scanners run on this machine."
-
-printf '%s  4) Fully Local, No Docker (Self-contained / SQLite)%s\n' "${C_BOLD}" "${C_RESET}"
-muted "Backend and tools run on this machine with local SQLite database (no Docker required)."
+printf '%s  3) Fully Local, No Docker (Self-contained / SQLite)%s\n' "${C_BOLD}" "${C_RESET}"
+muted "Backend and tools run on this machine with a local SQLite database — no Docker, no Postgres."
 
 printf '%s  0) Manual Setup%s\n' "${C_BOLD}" "${C_RESET}"
 muted "Keep .env as-is; I will start services manually."
@@ -256,27 +265,10 @@ case "$runtime_choice" in
     ;;
 
   3)
-    require_docker || exit 1
-    env_set "POSTGRES_PASSWORD" "pentest"
-    env_set "DATABASE_URL" "postgresql+psycopg://pentest:pentest@localhost:5432/pentest"
-    env_set "KALI_CONTAINER" ""
-
-    info "Starting Postgres database container..."
-    if docker compose up -d postgres; then
-      ok "Postgres container is active on localhost:5432"
-    else
-      fail "Failed to start Postgres container."; exit 1
-    fi
-
-    info "Setting up local Python virtual environment for backend & tools..."
-    bash "$SCRIPT_DIR/setup.sh"
-    ;;
-
-  4)
     env_set "DATABASE_URL" "sqlite:///./pentest.db"
     env_set "KALI_CONTAINER" ""
 
-    info "Configured SQLite local database (pentest.db)."
+    info "Configured SQLite local database (pentest.db) — nothing else to connect."
     info "Setting up local Python virtual environment..."
     bash "$SCRIPT_DIR/setup.sh"
     ;;
@@ -292,9 +284,9 @@ case "$runtime_choice" in
 esac
 
 # ==============================================================================
-# [2/5] Tool Environment Detection (For Local/Hybrid Modes)
+# [2/5] Tool Environment Detection (For the Fully Local mode)
 # ==============================================================================
-if [ "$runtime_choice" = "3" ] || [ "$runtime_choice" = "4" ]; then
+if [ "$runtime_choice" = "3" ]; then
   write_header "[2/5] Host Tool Availability & Scanner Detection"
   printf '%sScanning for native security tools on your PATH...%s\n' "${C_CYAN}" "${C_RESET}"
 
@@ -634,11 +626,12 @@ case "$runtime_choice" in
   1|2)
     printf '%s  * Backend Status: Running inside Docker at http://localhost:9000%s\n' "${C_GREEN}" "${C_RESET}"
     muted "Inspect logs anytime : docker compose logs -f backend"
+    muted "Stop it              : docker compose down"
     ;;
-  3|4)
-    printf '%s  * Backend Status: Configured for local execution%s\n' "${C_YELLOW}" "${C_RESET}"
-    echo "    Start backend       : source .venv/bin/activate"
-    echo "                          uvicorn osprey.main:app --host 0.0.0.0 --port 9000"
+  3)
+    printf '%s  * Backend Status: Configured for local execution (not started yet)%s\n' "${C_YELLOW}" "${C_RESET}"
+    echo "    Start it now        : bash scripts/serve.sh"
+    muted "(leave that running; open a new terminal for the CLI/GUI)"
     ;;
 esac
 

@@ -310,13 +310,50 @@ def _run_benchmark_noninteractive(args: argparse.Namespace) -> int:
         client.close()
 
 
+def _run_serve(forwarded_args: list[str]) -> int:
+    """`osprey serve [--host H] [--port P] [--reload]` — start the backend
+    without needing to remember the uvicorn invocation. Only works when the
+    `osprey-backend` package (the backend) is installed in THIS same
+    environment (true for `scripts/setup.*` installs, which put backend + CLI
+    in one venv) — a CLI-only install (e.g. MCP-only, backend running via
+    Docker) has nothing to serve here.
+
+    Deliberately NOT modeled as a normal argparse subparser: `nargs=REMAINDER`
+    does not reliably capture a leading ``--flag`` token (a documented
+    argparse quirk — https://bugs.python.org/issue17050), which silently ate
+    ``--port`` here. ``forwarded_args`` is the raw tail of sys.argv instead,
+    and backend_serve() parses it with its own argparser."""
+    try:
+        from osprey.cli import serve as backend_serve
+    except ModuleNotFoundError:
+        print_error(
+            "The backend isn't installed in this environment, so there's nothing "
+            "for `osprey serve` to start here.\n"
+            "  - If you used scripts/setup.sh or setup.ps1, this should have installed "
+            "it — try `pip install -e ./backend` from the repo root.\n"
+            "  - If you're running the backend via Docker, start/stop it with "
+            "`docker compose up -d` / `docker compose down` instead."
+        )
+        return 1
+    sys.argv = [sys.argv[0], *forwarded_args]
+    backend_serve()
+    return 0
+
+
 def main() -> None:
-    # Load .env so API_BASE_URL / LLM_MODEL / LLM_API_KEY are available.
-    # override=True so an edited .env wins over a stale value already exported in
-    # the shell environment — without it, changing LLM_MODEL/LLM_API_KEY in .env
-    # and relaunching kept the old model (the value inherited from the environment
-    # shadowed the file), which forced a full container rebuild to change models.
+    # Load .env so API_BASE_URL / LLM_MODEL / LLM_API_KEY (and OSPREY_HOST/
+    # OSPREY_PORT for `serve`, below) are available. override=True so an edited
+    # .env wins over a stale value already exported in the shell environment —
+    # without it, changing LLM_MODEL/LLM_API_KEY in .env and relaunching kept
+    # the old model (the value inherited from the environment shadowed the
+    # file), which forced a full container rebuild to change models.
     load_dotenv(override=True)
+
+    # `osprey serve [--host H] [--port P] [--reload]` is intercepted here, before
+    # argparse ever sees it — see _run_serve()'s docstring for why (argparse's
+    # REMAINDER silently drops a leading `--flag` token).
+    if len(sys.argv) > 1 and sys.argv[1] == "serve":
+        sys.exit(_run_serve(sys.argv[2:]))
 
     parser = argparse.ArgumentParser(
         prog=CLI_COMMAND,
@@ -339,6 +376,15 @@ def main() -> None:
     run_parser.add_argument("--target", help="Bind or reuse an engagement before sending the prompt")
     run_parser.add_argument("--force-new", action="store_true", help="Force a new engagement for --target")
 
+    # No arguments registered here on purpose — `osprey serve --port 9001` is
+    # intercepted and forwarded before parse_args() runs (see main()), because
+    # argparse's REMAINDER doesn't reliably capture a leading `--flag` token.
+    # This entry exists only so `osprey --help` lists `serve` with its blurb.
+    subparsers.add_parser(
+        "serve", help="Start the Osprey backend (local/no-Docker setups) — the short way",
+        add_help=False,
+    )
+
     bench_parser = subparsers.add_parser(
         "benchmark", help="Replay & benchmark harness (plans/harness/01-...) — record/run/diff fixtures"
     )
@@ -360,6 +406,8 @@ def main() -> None:
         sys.exit(_run_scan_noninteractive(args))
     if args.command == "run":
         sys.exit(_run_prompt_noninteractive(args))
+    if args.command == "serve":
+        sys.exit(_run_serve(args))
     if args.command == "benchmark":
         sys.exit(_run_benchmark_noninteractive(args))
 
