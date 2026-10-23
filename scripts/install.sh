@@ -66,16 +66,45 @@ env_get() {
   printf '%s' "${val:-$default}"
 }
 
+# Every docker/docker-compose call in this script goes through $DOCKER_CMD so
+# it's set in exactly one place. require_docker() fills it in: plain "docker"
+# normally, or "sudo docker" on Linux boxes where the current user isn't in
+# the `docker` group yet (the daemon then needs root) — the #1 reason people
+# end up manually prefixing every docker command, including ones THIS script
+# prints for them to copy-paste later (the password-mismatch fix command,
+# "inspect logs", etc.), with sudo themselves.
+DOCKER_CMD="docker"
 require_docker() {
   if ! command -v docker >/dev/null 2>&1; then
     fail "docker is not installed or not in PATH. Please install Docker Engine / Desktop first."
     return 1
   fi
-  if ! docker info >/dev/null 2>&1; then
-    fail "docker is installed but the daemon is unreachable (is Docker running?)."
-    return 1
+  if docker info >/dev/null 2>&1; then
+    DOCKER_CMD="docker"
+    return 0
   fi
-  return 0
+  # The "needs sudo because you're not in the docker group" situation is a
+  # Linux-only concept (Docker Desktop on macOS/Windows has no such group, and
+  # manages its own permissions) — gate the sudo retry on that, so this never
+  # fires on Windows under Git Bash/MSYS, where `sudo` may exist as Windows
+  # 11's own (unrelated, UAC-based) sudo.exe and could hang or misbehave.
+  if [ "$(uname -s 2>/dev/null)" = "Linux" ] && command -v sudo >/dev/null 2>&1; then
+    if sudo -n docker info >/dev/null 2>&1; then
+      DOCKER_CMD="sudo docker"
+      return 0
+    fi
+    warn "docker needs sudo on this system (you're not in the 'docker' group yet)."
+    muted "Checking with sudo — you may be prompted for your password..."
+    if sudo docker info >/dev/null 2>&1; then
+      DOCKER_CMD="sudo docker"
+      muted "Using 'sudo docker' for the rest of this run."
+      muted "Fix this permanently (no more sudo needed) with:"
+      muted "    sudo usermod -aG docker \$USER   # then log out and back in"
+      return 0
+    fi
+  fi
+  fail "docker is installed but the daemon is unreachable (is Docker running? do you need sudo?)."
+  return 1
 }
 
 wait_for_backend() {
@@ -94,7 +123,7 @@ wait_for_backend() {
   warn "Backend did not respond within ${tries}s. It may still be starting."
   local backend_log=""
   if command -v docker >/dev/null 2>&1; then
-    backend_log="$(docker compose logs backend 2>/dev/null | tail -n 80)"
+    backend_log="$($DOCKER_CMD compose logs backend 2>/dev/null | tail -n 80)"
   fi
   if printf '%s' "$backend_log" | grep -qiE "password authentication failed|PasswordError|OperationalError.*password"; then
     # Most common first-run failure: an existing Postgres volume was initialized
@@ -103,7 +132,7 @@ wait_for_backend() {
     # can't be changed by env vars — the volume must be reset.
     fail "Database password mismatch: the Postgres volume was created with a different password."
     muted "Reset the database volume (this DELETES local DB data) and re-run the wizard:"
-    muted "    docker compose down -v  &&  bash scripts/install.sh"
+    muted "    $DOCKER_CMD compose down -v  &&  bash scripts/install.sh"
   elif printf '%s' "$backend_log" | grep -qiE "could not connect to server|connection refused|could not translate host name|OperationalError"; then
     # A stale .env from an earlier manual edit (wrong host/port in DATABASE_URL)
     # is the other common cause — this wizard always writes a consistent
@@ -113,14 +142,31 @@ wait_for_backend() {
     muted "Fix: let the wizard rewrite it — re-run  bash scripts/install.sh  and pick"
     muted "option 1 or 2 again (it always sets a consistent, working DATABASE_URL)."
   else
-    warn "Inspect logs with:  docker compose logs -f backend"
+    warn "Inspect logs with:  $DOCKER_CMD compose logs -f backend"
   fi
   return 1
 }
 
-resolve_python_path() {
+# A venv's python lives at .venv/bin/python on Linux/macOS/WSL, but at
+# .venv/Scripts/python.exe when it was created by a native Windows Python —
+# which happens even when THIS script runs under Git Bash on Windows, since
+# `python -m venv` lays itself out by OS, not by which shell ran it. Checking
+# only the Unix path here used to make the generated mcp-config.json (and the
+# MCP deps install below) silently fall back to a bare system `python3` that
+# never has mcp/httpx installed — the exact ModuleNotFoundError this exists
+# to prevent.
+venv_python_path() {
   if [ -f "$ROOT_DIR/.venv/bin/python" ]; then
     printf '%s' "$ROOT_DIR/.venv/bin/python"
+  elif [ -f "$ROOT_DIR/.venv/Scripts/python.exe" ]; then
+    printf '%s' "$ROOT_DIR/.venv/Scripts/python.exe"
+  fi
+}
+
+resolve_python_path() {
+  local vp; vp="$(venv_python_path)"
+  if [ -n "$vp" ]; then
+    printf '%s' "$vp"
   elif command -v python3 >/dev/null 2>&1; then
     command -v python3
   else
@@ -134,25 +180,43 @@ resolve_python_path() {
 # a system Python without those deps and the harness launch dies with
 # "ModuleNotFoundError: No module named 'httpx'". Ensure a .venv that HAS the deps
 # so resolve_python_path returns a usable interpreter for the MCP command.
+# Set by ensure_mcp_python() so the final "Setup Complete!" summary can call
+# this out prominently instead of a warning scrolling off 100+ lines earlier —
+# a setup that silently can't actually launch MCP should never just say
+# "Setup Complete!" without a flag the operator will actually see.
+MCP_DEPS_OK=1
+
 ensure_mcp_python() {
-  local py="$ROOT_DIR/.venv/bin/python"
-  if [ -f "$py" ] && "$py" -c "import httpx, mcp" >/dev/null 2>&1; then
+  local py; py="$(venv_python_path)"
+  if [ -n "$py" ] && "$py" -c "import httpx, mcp" >/dev/null 2>&1; then
     return 0  # already usable
   fi
   info "Preparing a local Python environment for the Osprey MCP bridge..."
-  if [ ! -f "$py" ]; then
+  if [ -z "$py" ]; then
     if command -v python3 >/dev/null 2>&1; then
-      python3 -m venv "$ROOT_DIR/.venv" || { warn "Could not create .venv; MCP may fail to launch."; return 1; }
+      python3 -m venv "$ROOT_DIR/.venv" || { warn "Could not create .venv; MCP may fail to launch."; MCP_DEPS_OK=0; return 1; }
+      py="$(venv_python_path)"
     else
       warn "python3 not found — cannot prepare the MCP environment. Install Python 3, then re-run."
+      MCP_DEPS_OK=0
       return 1
     fi
   fi
   "$py" -m pip install --upgrade pip --quiet >/dev/null 2>&1 || true
-  if "$py" -m pip install --quiet -r "$ROOT_DIR/platform-mcp/requirements.txt"; then
+  local pip_err=""
+  if pip_err="$("$py" -m pip install --quiet -r "$ROOT_DIR/platform-mcp/requirements.txt" 2>&1)"; then
     ok "MCP bridge dependencies installed into .venv (mcp, httpx)."
+  elif printf '%s' "$pip_err" | grep -qiE "NameResolutionError|Failed to resolve|Temporary failure in name resolution|Network is unreachable"; then
+    # Not a bug to chase — no DNS/network reachable from here right now. Say
+    # that plainly instead of dumping pip's retry/traceback noise, and give
+    # the one command to run once connectivity is back.
+    warn "No internet connection from here — couldn't download MCP deps (mcp, httpx)."
+    muted "Once you're back online, run:  \"$py\" -m pip install -r platform-mcp/requirements.txt"
+    MCP_DEPS_OK=0
   else
     warn "Failed to install MCP deps into .venv; the harness launch may fail."
+    muted "Retry:  \"$py\" -m pip install -r platform-mcp/requirements.txt"
+    MCP_DEPS_OK=0
   fi
 }
 
@@ -224,7 +288,7 @@ case "$runtime_choice" in
     if [ "$img_choice" = "2" ]; then
       info "Building Kali image from source and starting stack..."
       warn "This build compiles heavy tools and may take 40-60 minutes on cold runs."
-      if docker compose --profile kali -f docker-compose.yml -f docker-compose.build.yml up -d --build; then
+      if $DOCKER_CMD compose --profile kali -f docker-compose.yml -f docker-compose.build.yml up -d --build; then
         ok "Docker stack started (built from source)."
         wait_for_backend || true
       else
@@ -234,7 +298,7 @@ case "$runtime_choice" in
     else
       env_set "OSPREY_KALI_IMAGE" "ospreytools/osprey-kali:latest"
       info "Pulling prebuilt image (ospreytools/osprey-kali:latest) & launching stack..."
-      if docker compose --profile kali up -d; then
+      if $DOCKER_CMD compose --profile kali up -d; then
         ok "Docker stack started."
         wait_for_backend || true
       else
@@ -256,7 +320,7 @@ case "$runtime_choice" in
     env_set "DATABASE_URL" "postgresql+psycopg://pentest:pentest@postgres:5432/pentest"
 
     info "Starting Postgres + Backend in Docker (targeting container '$tools_cont')..."
-    if docker compose up -d; then
+    if $DOCKER_CMD compose up -d; then
       ok "Stack started. Tools will be executed into '$tools_cont'."
       wait_for_backend || true
     else
@@ -378,6 +442,10 @@ needs_cli_llm=0
 if [ "$usage_choice" = "1" ] || [ "$usage_choice" = "2" ]; then
   needs_cli_llm=1
 fi
+wants_mcp=0
+if [ "$usage_choice" = "1" ] || [ "$usage_choice" = "3" ]; then
+  wants_mcp=1
+fi
 
 # ==============================================================================
 # [4/5] LLM Configuration
@@ -451,7 +519,12 @@ fi
 # ── Generate reference mcp-config.json ────────────────────────────────────────
 # Make sure the interpreter we're about to hand the harness actually has the MCP
 # deps (mcp, httpx) — otherwise the harness shows "Osprey MCP failed to start".
-ensure_mcp_python
+# Only bother (network calls, time) if the operator actually said they want MCP;
+# the config file itself is still generated either way, as a free reference for
+# later — it just isn't backed by an installed environment yet in that case.
+if [ "$wants_mcp" -eq 1 ]; then
+  ensure_mcp_python
+fi
 python_exe="$(resolve_python_path)"
 server_script="$ROOT_DIR/platform-mcp/server.py"
 
@@ -625,8 +698,8 @@ write_header "Setup Complete! Next Steps"
 case "$runtime_choice" in
   1|2)
     printf '%s  * Backend Status: Running inside Docker at http://localhost:9000%s\n' "${C_GREEN}" "${C_RESET}"
-    muted "Inspect logs anytime : docker compose logs -f backend"
-    muted "Stop it              : docker compose down"
+    muted "Inspect logs anytime : $DOCKER_CMD compose logs -f backend"
+    muted "Stop it              : $DOCKER_CMD compose down"
     ;;
   3)
     printf '%s  * Backend Status: Configured for local execution (not started yet)%s\n' "${C_YELLOW}" "${C_RESET}"
@@ -642,9 +715,22 @@ if [ "$needs_cli_llm" -eq 1 ]; then
   echo "    osprey scan example.com         # Direct scan entry point"
 fi
 
-printf '\n%s  * AI Harness (MCP):%s\n' "${C_CYAN}" "${C_RESET}"
-echo "    Osprey MCP is ready to be launched via:"
-muted "$python_exe $server_script"
-muted "See mcp-config.json for copy-pasteable JSON configs."
+if [ "$wants_mcp" -eq 1 ]; then
+  printf '\n%s  * AI Harness (MCP):%s\n' "${C_CYAN}" "${C_RESET}"
+  if [ "$MCP_DEPS_OK" -eq 1 ]; then
+    echo "    Osprey MCP is ready to be launched via:"
+    muted "$python_exe $server_script"
+    muted "See mcp-config.json for copy-pasteable JSON configs."
+  else
+    fail "MCP bridge dependencies did NOT install — your AI harness (Claude/Cursor/"
+    fail "OpenCode/etc.) will NOT be able to launch Osprey's MCP server until you fix this."
+    muted "mcp-config.json was still generated and is otherwise correct — once you"
+    muted "have internet access, finish the install with:"
+    muted "    \"$python_exe\" -m pip install -r platform-mcp/requirements.txt"
+  fi
+else
+  printf '\n%s  * AI Harness (MCP):%s not configured (you chose CLI only). A reference\n' "${C_CYAN}" "${C_RESET}"
+  muted "mcp-config.json was still generated if you want it later."
+fi
 
 printf '\n%sHappy hunting!%s\n\n' "${C_GREEN}" "${C_RESET}"

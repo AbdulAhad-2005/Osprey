@@ -111,7 +111,7 @@ RECON_TOOLS: list[ToolDefinition] = [
        {"input_data": _p("", "Input data"), "output_file": _p("", "Output file"),
         **_COMMON_PARAMS}),
     _t("domain_hunter", ToolCategory.RECON, "python3", ToolSafetyLevel.PASSIVE,
-       "Discover ALL sister/affiliated domains (12-module OSINT): cert transparency, DNS/ASN, WHOIS, "
+       "Discover ALL sister/affiliated domains (10-module OSINT): cert transparency, DNS/ASN, WHOIS, "
        "Wikidata corporate hierarchy (parent/subsidiary), email pivoting, SPF/DMARC, org certs, "
        "reverse NS, ASN expansion, TLD variants (.pk, .com.pk, etc).",
        ["sister-domains", "affiliated-domains", "osint", "asset-discovery", "corporate-intel"],

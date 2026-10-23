@@ -170,7 +170,6 @@ _POINTS_ASN_EXPAND = 26
 _POINTS_MULTI_SOURCE = 22
 _POINTS_REVERSE_WHOIS = 40
 _POINTS_TRACKER_PIVOT = 28
-_POINTS_AI_HUNT = 35  # LLM hypothesis — high value when verified
 _POINTS_FAVICON_HASH = 30  # identical favicon MD5 to seed
 _POINTS_PATTERN_GEN = 15  # generated label variant (weaker signal)
 
@@ -1407,48 +1406,6 @@ class Candidate:
             self.evidence.append(evidence)
 
 
-# ---------------------------------------------------------------------------
-# .env loader + AI Hunt (LLM-powered hypothesis generation)
-# ---------------------------------------------------------------------------
-
-def _load_env_file() -> dict[str, str]:
-    """Load .env file from project root or current directory."""
-    env_vars = {}
-    # Check multiple possible .env locations
-    for candidate in [
-        Path(__file__).resolve().parents[3] / ".env",  # global project root
-        Path(__file__).resolve().parent / ".env",  # same dir as script (fallback)
-        Path(__file__).resolve().parents[2] / ".env",  # mcp-servers/ (fallback)
-        Path.cwd() / ".env",
-    ]:
-        if candidate.exists():
-            with open(candidate, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith("#"):
-                        continue
-                    if "=" in line:
-                        key, _, value = line.partition("=")
-                        key = key.strip()
-                        value = value.strip().strip("'\"")
-                        if key and value:
-                            env_vars[key] = value
-            break
-    return env_vars
-
-
-_ENV_CACHE: dict[str, str] = {}
-
-
-def _get_env(key: str, default: str = "") -> str:
-    """Get env var with .env file fallback."""
-    global _ENV_CACHE
-    if not _ENV_CACHE:
-        _ENV_CACHE = _load_env_file()
-    import os
-    return os.environ.get(key, _ENV_CACHE.get(key, default))
-
-
 def _web_search_sister_domains(
     session: Any,
     seed_root: str,
@@ -1543,190 +1500,6 @@ def _web_search_sister_domains(
     # DNS-verify, keep the context evidence attached for the caller.
     verified = [rd for rd in found if _domain_resolves(rd)]
     return verified, {rd: contexts.get(rd, []) for rd in verified}
-
-
-_AI_HUNT_PROMPT = """You are assisting an OSINT domain-discovery tool. Given a seed \
-organization, propose plausible ADDITIONAL domains that might be owned or operated by \
-the same organization, across these categories:
-- TLD/spelling variants of the seed's own name
-- Wholly-owned subsidiaries, brands, or products
-- Joint ventures with partial or shared ownership
-- Affiliated organizations (alumni associations, foundations, hosted projects, \
-training/research arms)
-- Language-specific versions (e.g. urdu.seed.tv for a Pakistani news org)
-- Vertical-specific domains (e.g. seedmoney.com, seedsport.com)
-
-Some entities genuinely have no standalone domain — if so, leave the domain empty \
-rather than inventing one you're not confident exists.
-
-Seed domain: {domain}
-Organization name (if known): {org_name}
-Already-known associated domains: {known_domains}
-
-Respond with ONLY a JSON object, no markdown, no commentary:
-{{
-  "tld_variants": ["<domain>", ...],
-  "subsidiaries_brands_products": [
-    {{"name": "<entity>", "domain": "<domain or empty>", "relationship": "<description>"}}
-  ],
-  "joint_ventures": [
-    {{"name": "<entity>", "domain": "<domain or empty>", "partners": "<ownership split>"}}
-  ],
-  "affiliated_orgs": [
-    {{"name": "<entity>", "domain": "<domain or empty>", "category": "<category>"}}
-  ]
-}}"""
-
-_DEFAULT_LLM_MODELS = {
-    "anthropic": "claude-sonnet-5",
-    "openai": "gpt-4o-mini",
-    "gemini": "gemini-3.6-flash",
-}
-
-
-def _call_llm_hunt(
-    session: Any,
-    domain: str,
-    org_name: str = "",
-    known_domains: list[str] | None = None,
-    *,
-    timeout: int = 60,
-) -> list[str]:
-    """LLM-powered hypothesis generation via Gemini/Anthropic/OpenAI.
-
-    Returns a list of candidate domains suggested by the LLM.
-    API key read from .env: dom_hunter_gemini_key, dom_hunter_anthropic_key,
-    dom_hunter_openai_key, or generic DOM_HUNTER_LLM_KEY.
-    """
-    # Find API key from .env
-    provider = ""
-    api_key = ""
-    model = ""
-
-    for prov, env_key, default_model in [
-        ("gemini", "dom_hunter_gemini_key", "gemini-3.6-flash"),
-        ("anthropic", "dom_hunter_anthropic_key", "claude-sonnet-5"),
-        ("openai", "dom_hunter_openai_key", "gpt-4o-mini"),
-    ]:
-        key = _get_env(env_key)
-        if key:
-            provider = prov
-            api_key = key
-            model = _get_env("dom_hunter_llm_model", default_model)
-            break
-
-    if not provider:
-        logger.info("ai_hunt: SKIPPED — no dom_hunter_*_key in .env")
-        return []
-
-    known_domains = known_domains or []
-    prompt = _AI_HUNT_PROMPT.format(
-        domain=domain,
-        org_name=org_name or "unknown",
-        known_domains=", ".join(known_domains[:20]) if known_domains else "none yet",
-    )
-
-    try:
-        if provider == "gemini":
-            raw = _call_gemini(api_key, model, prompt, timeout=timeout)
-        elif provider == "anthropic":
-            raw = _call_anthropic(api_key, model, prompt, timeout=timeout)
-        elif provider == "openai":
-            raw = _call_openai(api_key, model, prompt, timeout=timeout)
-        else:
-            return []
-    except Exception as exc:
-        logger.warning("ai_hunt: LLM call failed: %s", exc)
-        return []
-
-    return _parse_llm_proposals(raw)
-
-
-def _call_gemini(api_key: str, model: str, prompt: str, *, timeout: int = 60) -> str:
-    """Call Google Gemini API."""
-    import requests as _req
-    resp = _req.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        params={"key": api_key},
-        json={
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"responseMimeType": "application/json"},
-        },
-        timeout=timeout,
-    )
-    resp.raise_for_status()
-    return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-
-
-def _call_anthropic(api_key: str, model: str, prompt: str, *, timeout: int = 60) -> str:
-    """Call Anthropic API."""
-    import requests as _req
-    resp = _req.post(
-        "https://api.anthropic.com/v1/messages",
-        headers={
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        },
-        json={"model": model, "max_tokens": 1024, "messages": [{"role": "user", "content": prompt}]},
-        timeout=timeout,
-    )
-    resp.raise_for_status()
-    return resp.json()["content"][0]["text"]
-
-
-def _call_openai(api_key: str, model: str, prompt: str, *, timeout: int = 60) -> str:
-    """Call OpenAI API."""
-    import requests as _req
-    resp = _req.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}", "content-type": "application/json"},
-        json={
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "response_format": {"type": "json_object"},
-        },
-        timeout=timeout,
-    )
-    resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"]
-
-
-def _parse_llm_proposals(raw: str) -> list[str]:
-    """Parse LLM JSON response into a list of candidate domains."""
-    import json as _json
-    text = raw.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        if "\n" in text:
-            first_line, rest = text.split("\n", 1)
-            text = rest if first_line.strip().lower() in ("json", "") else text
-
-    try:
-        data, _ = _json.JSONDecoder().raw_decode(text.strip())
-    except (ValueError, _json.JSONDecodeError) as exc:
-        logger.warning("ai_hunt: failed to parse LLM JSON: %s", exc)
-        return []
-
-    candidates = []
-    seen = set()
-
-    # Collect all domains from the response
-    for key in ("tld_variants",):
-        for item in (data.get(key) or []):
-            if isinstance(item, str) and item and item not in seen:
-                candidates.append(item.lower().strip("."))
-                seen.add(item)
-
-    for key in ("subsidiaries_brands_products", "joint_ventures", "affiliated_orgs"):
-        for item in (data.get(key) or []):
-            if isinstance(item, dict):
-                domain = (item.get("domain") or "").strip().lower().strip(".")
-                if domain and domain not in seen and _DOMAIN_RE.match(domain):
-                    candidates.append(domain)
-                    seen.add(domain)
-
-    return candidates
 
 
 def _site_scrape_relationship_pages(
@@ -1826,7 +1599,7 @@ class DomainHunter:
             return {
                 "dns", "whois", "site_scrape",
                 "email_pivot", "spf_dmarc",
-                "reverse_ns", "reverse_whois", "tracker_pivot", "ai_hunt",
+                "reverse_ns", "reverse_whois", "tracker_pivot",
                 "favicon", "web_search",
             }
         normalized = {part.strip().lower() for part in modules.split(",") if part.strip()}
@@ -1844,10 +1617,6 @@ class DomainHunter:
             "whoxy": "reverse_whois",
             "trackers": "tracker_pivot",
             "ga_pivot": "tracker_pivot",
-            "llm": "ai_hunt",
-            "gemini": "ai_hunt",
-            "gpt": "ai_hunt",
-            "anthropic": "ai_hunt",
             "icon": "favicon",
             "favicon_hash": "favicon",
         }
@@ -1895,9 +1664,6 @@ class DomainHunter:
         if "tracker_pivot" in self.modules:
             self._collect_tracker_pivot_signals()
             self._emit_progress("tracker_pivot")
-        if "ai_hunt" in self.modules:
-            self._collect_ai_hunt_signals()
-            self._emit_progress("ai_hunt")
         if "favicon" in self.modules:
             self._collect_favicon_signals()
             self._emit_progress("favicon")
@@ -2245,48 +2011,6 @@ class DomainHunter:
                     method="tracker_pivot",
                     points=_POINTS_TRACKER_PIVOT,
                     evidence=f"shared tracker ID with {self.seed_root}",
-                )
-
-    def _collect_ai_hunt_signals(self) -> None:
-        """AI-powered hypothesis generation via LLM (Gemini/Anthropic/OpenAI).
-
-        The LLM proposes plausible sister domains based on organizational
-        knowledge, then each suggestion is verified via DNS before recording.
-        API key read from .env: dom_hunter_gemini_key, dom_hunter_anthropic_key,
-        or dom_hunter_openai_key.
-        """
-        # Gather context from other modules
-        known_domains = list(self.candidates.keys())
-        org_name = ""
-        # Try to get org name from Wikidata or WHOIS
-        if "knowledge_recon" in self.modules:
-            for c in self.candidates.values():
-                if "wikidata" in c.methods:
-                    # Extract org name from evidence
-                    for ev in c.evidence:
-                        if "organization" in ev.lower() or "company" in ev.lower():
-                            org_name = ev.split(":")[-1].strip() if ":" in ev else ""
-                            break
-                    if org_name:
-                        break
-
-        # Call LLM
-        candidates = _call_llm_hunt(
-            self.session,
-            self.seed_root,
-            org_name=org_name,
-            known_domains=known_domains,
-        )
-
-        # Add verified candidates
-        for domain in candidates:
-            rd = root_domain(domain)
-            if rd and rd != self.seed_root and not _at_psl_private_apex(rd):
-                self._add_candidate(
-                    rd,
-                    method="ai_hunt",
-                    points=_POINTS_AI_HUNT,
-                    evidence=f"LLM hypothesis: {domain}",
                 )
 
     def _collect_web_search_signals(self) -> None:
