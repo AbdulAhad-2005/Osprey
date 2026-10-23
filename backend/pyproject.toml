@@ -31,6 +31,12 @@ dependencies = [
     "dnspython>=2.7,<3.0",
 ]
 
+[project.scripts]
+# `osprey-backend` — the short way to start the backend locally (wraps uvicorn
+# with sane defaults). The main `osprey` CLI's `serve` subcommand calls into
+# this same function when both packages are installed in one environment.
+osprey-backend = "osprey.cli:serve"
+
 [project.optional-dependencies]
 dev = [
     "httpx>=0.27,<1.0",

@@ -32,7 +32,14 @@ if (-not (Test-Path ".venv")) {
 
 $venvPython = ".\.venv\Scripts\python.exe"
 if (-not (Test-Path $venvPython)) {
-    Write-Error "Virtual environment creation failed (.venv\Scripts\python.exe not found)."
+    Write-Host ""
+    Write-Host "Virtual environment creation failed (.venv\Scripts\python.exe not found)." -ForegroundColor Red
+    Write-Host "This usually means:" -ForegroundColor Yellow
+    Write-Host "  - the Python you have is the Microsoft Store app (its venv support is" -ForegroundColor Yellow
+    Write-Host "    sandboxed/unreliable) - install the real one from python.org or:" -ForegroundColor Yellow
+    Write-Host "    winget install Python.Python.3.12" -ForegroundColor White
+    Write-Host "  - or a prior failed run left a broken .venv\ - delete it and re-run:" -ForegroundColor Yellow
+    Write-Host "    Remove-Item -Recurse -Force .venv" -ForegroundColor White
     exit 1
 }
 
@@ -61,7 +68,7 @@ if ($Gui) {
 }
 
 Write-Host ""
-Write-Host "Setup complete. Activate the environment with:" -ForegroundColor Green
-Write-Host "    .\.venv\Scripts\Activate.ps1" -ForegroundColor White
-Write-Host "Then run the backend (uvicorn osprey.main:app --port 9000) or Osprey CLI (osprey)." -ForegroundColor White
+Write-Host "Setup complete." -ForegroundColor Green
+Write-Host "Start the backend  : powershell -ExecutionPolicy Bypass -File scripts\serve.ps1" -ForegroundColor White
+Write-Host "Run the Osprey CLI : .\.venv\Scripts\Activate.ps1 ; osprey" -ForegroundColor White
 if ($Gui) { Write-Host "The Operator Console (web GUI) runs from gui/ - see above." -ForegroundColor White }
