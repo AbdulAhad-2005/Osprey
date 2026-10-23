@@ -2,11 +2,12 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { WorkspaceProvider } from "@/components/shell/WorkspaceProvider";
 import { AppShell } from "@/components/shell/AppShell";
+import { BRAND } from "@/lib/brand";
 
 export const metadata: Metadata = {
-  title: "Osprey — Operator Console",
+  title: `${BRAND} — Operator Console`,
   description:
-    "Osprey operator console: an evidence-driven penetration-testing harness with live tool execution, attack-surface intelligence, and reporting.",
+    `${BRAND} operator console: an evidence-driven penetration-testing harness with live tool execution, attack-surface intelligence, and reporting.`,
   icons: {
     icon: "/osprey-mark.svg",
   },

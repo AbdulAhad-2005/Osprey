@@ -1,5 +1,6 @@
 import { clsx } from "clsx";
 import { OspreyMark } from "./OspreyMark";
+import { BRAND_LOWER } from "@/lib/brand";
 
 /**
  * The "osprey" wordmark — set in the display serif, tight and lowercase, to
@@ -22,7 +23,7 @@ export function OspreyWordmark({
         className,
       )}
     >
-      osprey
+      {BRAND_LOWER}
     </span>
   );
 }

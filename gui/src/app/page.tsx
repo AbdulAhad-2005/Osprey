@@ -8,6 +8,8 @@ import { useWorkspace } from "@/components/shell/WorkspaceProvider";
 import { resolveEngagement } from "@/lib/api";
 import { QUICK_INTENTS as QUICK } from "@/lib/intents";
 import { cn } from "@/lib/cn";
+import { BRAND, IS_DEFAULT_BRAND } from "@/lib/brand";
+import { OspreyWordmark } from "@/components/brand/OspreyLogo";
 
 function greeting(): string {
   const h = new Date().getHours();
@@ -54,16 +56,20 @@ export default function HomePage() {
           transition={{ duration: 0.5 }}
           className="mb-6 flex justify-center"
         >
-          <motion.img
-            src="/osprey-lockup-light.png"
-            alt="Osprey"
-            width={248}
-            height={99}
-            animate={{ y: [0, -5, 0] }}
-            transition={{ duration: 4.5, repeat: Infinity, ease: "easeInOut" }}
-            className="h-auto w-[248px] select-none"
-            draggable={false}
-          />
+          {IS_DEFAULT_BRAND ? (
+            <motion.img
+              src="/osprey-lockup-light.png"
+              alt={BRAND}
+              width={248}
+              height={99}
+              animate={{ y: [0, -5, 0] }}
+              transition={{ duration: 4.5, repeat: Infinity, ease: "easeInOut" }}
+              className="h-auto w-[248px] select-none"
+              draggable={false}
+            />
+          ) : (
+            <OspreyWordmark size="lg" className="text-[44px]" />
+          )}
         </motion.div>
 
         <motion.h1
@@ -75,7 +81,7 @@ export default function HomePage() {
           {greeting()}, operator
         </motion.h1>
         <p className="mt-2 text-center text-[15px] text-ink-dim">
-          Point Osprey at a target and start the hunt.
+          Point {BRAND} at a target and start the hunt.
         </p>
 
         {/* Target composer */}
