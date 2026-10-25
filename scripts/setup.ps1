@@ -20,7 +20,7 @@ foreach ($cand in @("python", "py", "python3")) {
 }
 
 if (-not $pyExe) {
-    Write-Error "Python 3 is not installed or not on PATH. Please install Python 3.11+."
+    Write-Error "Python 3.12 is not installed or not on PATH. Please install Python 3.12+."
     exit 1
 }
 

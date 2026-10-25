@@ -138,6 +138,7 @@ function Resolve-PythonPath {
 # In Docker-only setups no .venv is ever created, so the MCP config would point at
 # a system Python without those deps and the harness launch dies with
 # "ModuleNotFoundError: No module named 'httpx'". Ensure a .venv that HAS the deps.
+$mcpDepsOk = $true
 function Resolve-McpPython {
     $py = "$RootDir\.venv\Scripts\python.exe"
     if (Test-Path $py) {
@@ -151,9 +152,9 @@ function Resolve-McpPython {
             $c = Get-Command $cand -ErrorAction SilentlyContinue
             if ($c) { $sys = $c.Source; break }
         }
-        if (-not $sys) { Write-WarnItem "Python not found - cannot prepare the MCP environment. Install Python 3, then re-run."; return }
+        if (-not $sys) { Write-WarnItem "Python not found - cannot prepare the MCP environment. Install Python 3, then re-run."; $script:mcpDepsOk = $false; return }
         & $sys -m venv "$RootDir\.venv"
-        if (-not (Test-Path $py)) { Write-WarnItem "Could not create .venv; MCP may fail to launch."; return }
+        if (-not (Test-Path $py)) { Write-WarnItem "Could not create .venv; MCP may fail to launch."; $script:mcpDepsOk = $false; return }
     }
     & $py -m pip install --upgrade pip --quiet 2>$null | Out-Null
     & $py -m pip install --quiet -r "$RootDir\platform-mcp\requirements.txt"
@@ -161,6 +162,41 @@ function Resolve-McpPython {
         Write-Success "MCP bridge dependencies installed into .venv (mcp, httpx)."
     } else {
         Write-WarnItem "Failed to install MCP deps into .venv; the harness launch may fail."
+        $script:mcpDepsOk = $false
+    }
+}
+
+$cliDepsOk = $true
+$guiDepsOk = $true
+
+function Ensure-CliPython {
+    $py = "$RootDir\.venv\Scripts\python.exe"
+    if (-not (Test-Path $py)) {
+        $sys = $null
+        foreach ($cand in @("python.exe", "python3.exe", "py.exe")) {
+            $c = Get-Command $cand -ErrorAction SilentlyContinue
+            if ($c) { $sys = $c.Source; break }
+        }
+        if (-not $sys) {
+            Write-WarnItem "Python 3.12+ not found - cannot install the Osprey CLI."
+            $script:cliDepsOk = $false
+            return
+        }
+        Write-Step "Preparing a local Python environment for the Osprey CLI..."
+        & $sys -m venv "$RootDir\.venv"
+        if (-not (Test-Path $py)) {
+            Write-WarnItem "Could not create .venv; the CLI is not installed."
+            $script:cliDepsOk = $false
+            return
+        }
+    }
+    & $py -m pip install --upgrade pip --quiet 2>$null | Out-Null
+    & $py -m pip install --quiet -e "$RootDir\agent_core" -e "$RootDir\cli"
+    if ($LASTEXITCODE -eq 0) {
+        Write-Success "Osprey CLI installed into .venv (osprey command ready after activation)."
+    } else {
+        Write-WarnItem "Failed to install the Osprey CLI. Retry: $py -m pip install -e .\agent_core -e .\cli"
+        $script:cliDepsOk = $false
     }
 }
 
@@ -389,6 +425,10 @@ Write-Muted "Control Osprey exclusively from Claude Desktop, Cursor, OpenCode, W
 
 $usageChoice = Read-Host "`nSelect usage mode [1]"
 if (-not $usageChoice) { $usageChoice = "1" }
+if ($usageChoice -notin @("1", "2", "3")) {
+    Write-FailItem "Unrecognized option: $usageChoice"
+    exit 1
+}
 
 $needsCliLlm = ($usageChoice -eq "1" -or $usageChoice -eq "2")
 
@@ -472,9 +512,40 @@ if ($optKeys -eq "y" -or $optKeys -eq "Y") {
     if ($intelxKey) { Set-EnvVar -Key "INTELX_API_KEY" -Value $intelxKey; Write-Success "Saved INTELX_API_KEY" }
 }
 
-# ── Generate standalone mcp-config.json ───────────────────────────────────────
+# ── Install selected local interfaces and generate standalone mcp-config.json ─
+if ($needsCliLlm) {
+    Ensure-CliPython
+} elseif ($usageChoice -eq "3") {
+    Resolve-McpPython
+}
+
+$installGui = Read-Host "Install the Operator Console GUI dependencies? [y/N]"
+$wantsGui = $installGui -eq "y" -or $installGui -eq "Y"
+if ($wantsGui) {
+    $node = Get-Command node -ErrorAction SilentlyContinue
+    $npm = Get-Command npm -ErrorAction SilentlyContinue
+    $nodeVersion = if ($node) { (& node -p "process.versions.node" 2>$null) } else { "" }
+    $nodeParts = if ($nodeVersion) { $nodeVersion.Trim().Split(".") } else { @() }
+    $nodeSupported = $nodeParts.Count -ge 2 -and
+        (([int]$nodeParts[0] -gt 18) -or
+         (([int]$nodeParts[0] -eq 18) -and ([int]$nodeParts[1] -ge 18)))
+    if ($node -and $npm -and $nodeSupported) {
+        Write-Step "Installing Operator Console dependencies..."
+        Push-Location "$RootDir\gui"
+        try { & npm install } finally { Pop-Location }
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "Operator Console dependencies installed."
+        } else {
+            Write-WarnItem "GUI dependency installation failed. Retry with: cd gui; npm install"
+            $guiDepsOk = $false
+        }
+    } else {
+        Write-WarnItem "Node.js/npm is missing or Node.js $nodeVersion is too old. Install Node.js 18.18+, then run: cd gui; npm install"
+        $guiDepsOk = $false
+    }
+}
+
 # Make sure the interpreter we hand the harness actually has the MCP deps.
-Resolve-McpPython
 $pythonExe = Resolve-PythonPath
 $serverScript = "$RootDir\platform-mcp\server.py"
 $batScript = "$RootDir\scripts\run-mcp-pentest.bat"
@@ -543,6 +614,7 @@ Set-Content -Path "$RootDir\mcp-config.json" -Value $mcpJsonStr -Encoding utf8
 Write-Success "Generated reference MCP config: mcp-config.json"
 
 # ── Check and configure detected harnesses ───────────────────────────────────
+if ($usageChoice -eq "1" -or $usageChoice -eq "3") {
 Write-Host "`nScanning for installed AI harnesses on your system..." -ForegroundColor Cyan
 
 $detectedHarnesses = @()
@@ -639,6 +711,9 @@ if ($detectedHarnesses.Count -gt 0) {
     Write-Host "No pre-existing harness config directories detected automatically." -ForegroundColor DarkGray
     Write-Host "Reference mcp-config.json was created for quick manual setup." -ForegroundColor DarkGray
 }
+} else {
+    Write-Host "Skipped AI harness auto-configuration (MCP was not selected)." -ForegroundColor DarkGray
+}
 
 # ==============================================================================
 # Setup Complete - Summary & Next Steps
@@ -657,14 +732,34 @@ if ($runtimeChoice -in @("1", "2")) {
 
 if ($needsCliLlm) {
     Write-Host "`n  * Running the Osprey CLI:" -ForegroundColor Cyan
-    Write-Host "    .\.venv\Scripts\Activate.ps1" -ForegroundColor White
-    Write-Host "    osprey                          # Interactive Commander CLI" -ForegroundColor White
-    Write-Host "    osprey scan example.com         # Direct scan entry point" -ForegroundColor White
+    if ($cliDepsOk) {
+        Write-Host "    .\.venv\Scripts\Activate.ps1  # optional; makes the 'osprey' command available" -ForegroundColor White
+        Write-Host "    osprey                          # Interactive Commander CLI" -ForegroundColor White
+        Write-Host "    osprey scan example.com         # Direct scan entry point" -ForegroundColor White
+        Write-Host "    Or run directly: $pythonExe -m cli" -ForegroundColor DarkGray
+    } else {
+        Write-Host "    CLI installation did NOT complete - the 'osprey' command is not ready." -ForegroundColor Red
+    }
 }
 
-Write-Host "`n  * AI Harness (MCP):" -ForegroundColor Cyan
-Write-Host "    Osprey MCP is ready to be launched via:" -ForegroundColor White
-Write-Host "    $pythonExe $serverScript" -ForegroundColor DarkGray
-Write-Host "    See mcp-config.json for copy-pasteable JSON configs." -ForegroundColor DarkGray
+if ($usageChoice -eq "1" -or $usageChoice -eq "3") {
+    Write-Host "`n  * AI Harness (MCP):" -ForegroundColor Cyan
+    if ($mcpDepsOk) {
+        Write-Host "    Osprey MCP is ready to be launched via:" -ForegroundColor White
+        Write-Host "    $pythonExe $serverScript" -ForegroundColor DarkGray
+        Write-Host "    See mcp-config.json for copy-pasteable JSON configs." -ForegroundColor DarkGray
+    } else {
+        Write-Host "    MCP dependencies did NOT install - the harness cannot launch Osprey yet." -ForegroundColor Red
+    }
+}
+
+if ($wantsGui) {
+    Write-Host "`n  * Operator Console GUI:" -ForegroundColor Cyan
+    if ($guiDepsOk) {
+        Write-Host "    cd gui; npm run dev             # http://localhost:3100" -ForegroundColor White
+    } else {
+        Write-Host "    GUI dependencies did NOT install. Install Node.js 18.18+ and run: cd gui; npm install" -ForegroundColor Red
+    }
+}
 
 Write-Host "`nHappy hunting!`n" -ForegroundColor Green

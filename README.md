@@ -46,10 +46,6 @@ docker compose up -d                                          # Docker modes —
 docker compose down                                           # Docker modes — down
 ```
 
-No venv activation, no uvicorn flags to remember — `scripts/serve.*` finds
-your venv and starts it. (Once the venv's activated, `osprey serve` does the
-same thing.)
-
 ## What you get
 
 - `backend/` — FastAPI control plane: API, database models, the conductor that tracks recon/vuln/exploit phase readiness from evidence
@@ -291,8 +287,8 @@ report with Markdown/PDF export.
 cd gui && npm install && npm run dev      # http://localhost:3100
 ```
 
-(`scripts/setup.sh --gui` / `setup.ps1 -Gui` installs these deps for you as
-part of the main wizard.)
+The main installer asks whether to install these dependencies. For manual
+setup, `scripts/setup.sh --gui` / `scripts/setup.ps1 -Gui` installs them too.
 
 - Set your model from **Settings** (⚙ in the sidebar) — no `.env` editing.
 - No prompt required — bind a target, click **Start autonomous recon**.

@@ -185,6 +185,36 @@ resolve_python_path() {
 # a setup that silently can't actually launch MCP should never just say
 # "Setup Complete!" without a flag the operator will actually see.
 MCP_DEPS_OK=1
+CLI_DEPS_OK=1
+GUI_DEPS_OK=1
+
+ensure_cli_python() {
+  local py; py="$(venv_python_path)"
+  if [ -z "$py" ]; then
+    if ! command -v python3 >/dev/null 2>&1; then
+      warn "python3 not found — cannot install the Osprey CLI. Install Python 3.12+, then re-run."
+      CLI_DEPS_OK=0
+      return 1
+    fi
+    info "Preparing a local Python environment for the Osprey CLI..."
+    python3 -m venv "$ROOT_DIR/.venv" || {
+      warn "Could not create .venv; the CLI is not installed."
+      CLI_DEPS_OK=0
+      return 1
+    }
+    py="$(venv_python_path)"
+  fi
+  "$py" -m pip install --upgrade pip --quiet >/dev/null 2>&1 || true
+  local pip_err=""
+  if pip_err="$("$py" -m pip install --quiet -e "$ROOT_DIR/agent_core" -e "$ROOT_DIR/cli" 2>&1)"; then
+    ok "Osprey CLI installed into .venv (osprey command ready after activation)."
+  else
+    warn "Failed to install the Osprey CLI."
+    muted "$pip_err"
+    muted "Retry:  \"$py\" -m pip install -e ./agent_core -e ./cli"
+    CLI_DEPS_OK=0
+  fi
+}
 
 ensure_mcp_python() {
   local py; py="$(venv_python_path)"
@@ -437,6 +467,10 @@ muted "Control Osprey exclusively from Claude Desktop, Cursor, OpenCode, Windsur
 
 ask "Select usage mode [1]:"; read -r usage_choice
 usage_choice="${usage_choice:-1}"
+case "$usage_choice" in
+  1|2|3) ;;
+  *) fail "Unrecognized option '$usage_choice'."; exit 1 ;;
+esac
 
 needs_cli_llm=0
 if [ "$usage_choice" = "1" ] || [ "$usage_choice" = "2" ]; then
@@ -523,7 +557,42 @@ fi
 # the config file itself is still generated either way, as a free reference for
 # later — it just isn't backed by an installed environment yet in that case.
 if [ "$wants_mcp" -eq 1 ]; then
-  ensure_mcp_python
+  if [ "$needs_cli_llm" -eq 1 ]; then
+    ensure_cli_python
+  else
+    ensure_mcp_python
+  fi
+fi
+
+if [ "$needs_cli_llm" -eq 1 ] && [ "$wants_mcp" -eq 0 ]; then
+  ensure_cli_python
+fi
+
+read -r -p "Install the Operator Console GUI dependencies? [y/N]: " install_gui
+install_gui="${install_gui:-n}"
+wants_gui=0
+if [ "$install_gui" = "y" ] || [ "$install_gui" = "Y" ]; then
+  wants_gui=1
+  if command -v npm >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
+    gui_node_version="$(node -p 'process.versions.node' 2>/dev/null || true)"
+    gui_node_major="${gui_node_version%%.*}"
+    gui_node_minor="${gui_node_version#*.}"; gui_node_minor="${gui_node_minor%%.*}"
+    if [ -n "$gui_node_version" ] && { [ "$gui_node_major" -gt 18 ] || { [ "$gui_node_major" -eq 18 ] && [ "$gui_node_minor" -ge 18 ]; }; }; then
+      info "Installing Operator Console dependencies..."
+      if (cd "$ROOT_DIR/gui" && npm install); then
+        ok "Operator Console dependencies installed."
+      else
+        warn "GUI dependency installation failed. Retry with: cd gui && npm install"
+        GUI_DEPS_OK=0
+      fi
+    else
+      warn "Node.js $gui_node_version is too old. Install Node.js 18.18+ and retry: cd gui && npm install"
+      GUI_DEPS_OK=0
+    fi
+  else
+    warn "Node.js/npm not found. Install Node.js 18.18+, then run: cd gui && npm install"
+    GUI_DEPS_OK=0
+  fi
 fi
 python_exe="$(resolve_python_path)"
 server_script="$ROOT_DIR/platform-mcp/server.py"
@@ -577,6 +646,7 @@ EOF
 ok "Generated reference MCP config: mcp-config.json"
 
 # ── Detect and configure AI harnesses ─────────────────────────────────────────
+if [ "$wants_mcp" -eq 1 ]; then
 info "Scanning for installed AI harnesses on your system..."
 
 detected_configs=()
@@ -689,6 +759,9 @@ else
   muted "No pre-existing harness config directories detected automatically."
   muted "Reference mcp-config.json was created for quick manual setup."
 fi
+else
+  muted "Skipped AI harness auto-configuration (MCP was not selected)."
+fi
 
 # ==============================================================================
 # Setup Complete - Summary & Next Steps
@@ -710,9 +783,14 @@ esac
 
 if [ "$needs_cli_llm" -eq 1 ]; then
   printf '\n%s  * Running the Osprey CLI:%s\n' "${C_CYAN}" "${C_RESET}"
-  echo "    source .venv/bin/activate"
-  echo "    osprey                          # Interactive Commander CLI"
-  echo "    osprey scan example.com         # Direct scan entry point"
+  if [ "$CLI_DEPS_OK" -eq 1 ]; then
+    echo "    source .venv/bin/activate     # optional; makes the 'osprey' command available"
+    echo "    osprey                          # Interactive Commander CLI"
+    echo "    osprey scan example.com         # Direct scan entry point"
+    muted "Or run directly without activation:  \"$python_exe\" -m cli"
+  else
+    fail "CLI installation did NOT complete — the 'osprey' command is not ready."
+  fi
 fi
 
 if [ "$wants_mcp" -eq 1 ]; then
@@ -727,6 +805,15 @@ if [ "$wants_mcp" -eq 1 ]; then
     muted "mcp-config.json was still generated and is otherwise correct — once you"
     muted "have internet access, finish the install with:"
     muted "    \"$python_exe\" -m pip install -r platform-mcp/requirements.txt"
+  fi
+
+  if [ "$wants_gui" -eq 1 ]; then
+    printf '\n%s  * Operator Console GUI:%s\n' "${C_CYAN}" "${C_RESET}"
+    if [ "$GUI_DEPS_OK" -eq 1 ]; then
+      echo "    cd gui && npm run dev             # http://localhost:3100"
+    else
+      fail "GUI dependencies did NOT install. Install Node.js 18.18+ and run: cd gui && npm install"
+    fi
   fi
 else
   printf '\n%s  * AI Harness (MCP):%s not configured (you chose CLI only). A reference\n' "${C_CYAN}" "${C_RESET}"
