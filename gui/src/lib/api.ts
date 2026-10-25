@@ -195,8 +195,15 @@ export interface ChatRunState {
   elapsed_seconds?: number;
 }
 
+function makeRequestId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 export async function startChat(engagementId: string, prompt: string): Promise<{accepted: boolean; run_id: string}> {
-  const options = {method: "POST", body: JSON.stringify({engagement_id: engagementId, prompt, interrupt: true, request_id: crypto.randomUUID()})};
+  const options = {method: "POST", body: JSON.stringify({engagement_id: engagementId, prompt, interrupt: true, request_id: makeRequestId()})};
   try { return await getJSON("/api/v1/agent/chat/start", options); }
   catch (error) {
     if (error instanceof ApiError) throw error;
