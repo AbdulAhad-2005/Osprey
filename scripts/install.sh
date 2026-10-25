@@ -445,7 +445,10 @@ if [ "$runtime_choice" = "3" ]; then
           export PATH="$go_bin:$PATH"
           path_marker="# Osprey: Go-installed security tools"
           path_export="export PATH=\"$go_bin:\$PATH\""
-          for shell_profile in "$HOME/.profile" "$HOME/.bashrc"; do
+          # Kali commonly starts zsh for interactive terminals; bash's
+          # profiles are not read there. Keep all supported user shells in
+          # sync so a new terminal can resolve the binaries.
+          for shell_profile in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
             if { [ -f "$shell_profile" ] || touch "$shell_profile" 2>/dev/null; } &&
                [ -w "$shell_profile" ] && ! grep -Fq "$path_marker" "$shell_profile"; then
               printf '\n%s\n%s\n' "$path_marker" "$path_export" >> "$shell_profile"
