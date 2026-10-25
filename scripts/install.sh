@@ -419,6 +419,32 @@ if [ "$runtime_choice" = "3" ]; then
     install_ans="${install_ans:-y}"
 
     if [ "$install_ans" = "y" ] || [ "$install_ans" = "Y" ]; then
+      if printf '%s\n' "${missing_tools[@]}" | grep -qE '^(subfinder|httpx|naabu|dnsx|tlsx|katana|nuclei)$' &&
+         ! command -v go >/dev/null 2>&1 && ! command -v brew >/dev/null 2>&1; then
+        if command -v apt-get >/dev/null 2>&1; then
+          info "Installing Go, required for ProjectDiscovery tools..."
+          if $SUDO apt-get update -qq && $SUDO apt-get install -y golang-go; then
+            hash -r 2>/dev/null || true
+          else
+            warn "Could not install Go; ProjectDiscovery tools cannot be installed automatically."
+          fi
+        else
+          warn "Go is not installed and no supported package manager was found."
+          muted "Install Go manually, then re-run this wizard to install ProjectDiscovery tools."
+        fi
+      fi
+
+      go_bin=""
+      if command -v go >/dev/null 2>&1; then
+        go_bin="$(go env GOBIN 2>/dev/null || true)"
+        if [ -z "$go_bin" ]; then
+          go_bin="$(go env GOPATH 2>/dev/null || true)/bin"
+        fi
+        if [ -d "$go_bin" ]; then
+          export PATH="$go_bin:$PATH"
+        fi
+      fi
+
       for mt in "${missing_tools[@]}"; do
         info "Installing $mt..."
         case "$mt" in
@@ -427,15 +453,33 @@ if [ "$runtime_choice" = "3" ]; then
               $SUDO apt-get update -qq && $SUDO apt-get install -y "$mt" || warn "apt-get install $mt failed"
             elif command -v brew >/dev/null 2>&1; then
               brew install "$mt" || warn "brew install $mt failed"
+            else
+              warn "No supported package manager found for $mt; it was not installed."
             fi
             ;;
           subfinder|httpx|naabu|dnsx|tlsx|katana|nuclei)
             if command -v go >/dev/null 2>&1; then
-              go install "github.com/projectdiscovery/${mt}/cmd/${mt}@latest" 2>/dev/null || \
-              go install "github.com/projectdiscovery/${mt}/v2/cmd/${mt}@latest" 2>/dev/null || \
-              go install "github.com/projectdiscovery/${mt}/v3/cmd/${mt}@latest" 2>/dev/null || warn "go install $mt failed"
+              if go install "github.com/projectdiscovery/${mt}/cmd/${mt}@latest" 2>/dev/null ||
+                 go install "github.com/projectdiscovery/${mt}/v2/cmd/${mt}@latest" 2>/dev/null ||
+                 go install "github.com/projectdiscovery/${mt}/v3/cmd/${mt}@latest" 2>/dev/null; then
+                if command -v "$mt" >/dev/null 2>&1; then
+                  ok "$mt installed and available on PATH."
+                else
+                  warn "$mt was downloaded, but its Go bin directory is not on PATH."
+                  muted "Add $go_bin to PATH, then re-run the tool check."
+                fi
+              else
+                warn "go install $mt failed; it was not installed."
+              fi
             elif command -v brew >/dev/null 2>&1; then
-              brew install "projectdiscovery/tap/$mt" 2>/dev/null || brew install "$mt" || warn "brew install $mt failed"
+              if brew install "projectdiscovery/tap/$mt" 2>/dev/null || brew install "$mt" 2>/dev/null; then
+                command -v "$mt" >/dev/null 2>&1 && ok "$mt installed and available on PATH." ||
+                  warn "$mt installation finished, but it is not available on PATH."
+              else
+                warn "brew install $mt failed; it was not installed."
+              fi
+            else
+              warn "Go/Homebrew is unavailable; $mt was not installed."
             fi
             ;;
           searchsploit)
@@ -443,10 +487,25 @@ if [ "$runtime_choice" = "3" ]; then
               $SUDO apt-get update -qq && $SUDO apt-get install -y exploitdb || warn "apt-get install exploitdb failed"
             elif command -v brew >/dev/null 2>&1; then
               brew install exploitdb || warn "brew install exploitdb failed"
+            else
+              warn "No supported package manager found for searchsploit; it was not installed."
             fi
             ;;
         esac
       done
+
+      remaining_tools=()
+      for mt in "${missing_tools[@]}"; do
+        if ! tool_present "$mt"; then
+          remaining_tools+=("$mt")
+        fi
+      done
+      if [ "${#remaining_tools[@]}" -eq 0 ]; then
+        ok "All requested host tools are now available on PATH."
+      else
+        warn "Still unavailable after installation attempt: ${remaining_tools[*]}"
+        muted "Re-run the wizard after fixing the package manager, Go, or PATH."
+      fi
     fi
   fi
 fi
@@ -465,10 +524,13 @@ muted "Drive tests directly via the interactive terminal interface (osprey / pyt
 printf '%s  3) AI Harness via MCP only%s\n' "${C_BOLD}" "${C_RESET}"
 muted "Control Osprey exclusively from Claude Desktop, Cursor, OpenCode, Windsurf, or ChatGPT."
 
+printf '%s  4) Operator Console GUI only%s\n' "${C_BOLD}" "${C_RESET}"
+muted "Use the web dashboard at http://localhost:3100 (requires Node.js 18.18+)."
+
 ask "Select usage mode [1]:"; read -r usage_choice
 usage_choice="${usage_choice:-1}"
 case "$usage_choice" in
-  1|2|3) ;;
+  1|2|3|4) ;;
   *) fail "Unrecognized option '$usage_choice'."; exit 1 ;;
 esac
 
@@ -479,6 +541,10 @@ fi
 wants_mcp=0
 if [ "$usage_choice" = "1" ] || [ "$usage_choice" = "3" ]; then
   wants_mcp=1
+fi
+wants_gui=0
+if [ "$usage_choice" = "4" ]; then
+  wants_gui=1
 fi
 
 # ==============================================================================
@@ -568,11 +634,7 @@ if [ "$needs_cli_llm" -eq 1 ] && [ "$wants_mcp" -eq 0 ]; then
   ensure_cli_python
 fi
 
-read -r -p "Install the Operator Console GUI dependencies? [y/N]: " install_gui
-install_gui="${install_gui:-n}"
-wants_gui=0
-if [ "$install_gui" = "y" ] || [ "$install_gui" = "Y" ]; then
-  wants_gui=1
+if [ "$wants_gui" -eq 1 ]; then
   if command -v npm >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
     gui_node_version="$(node -p 'process.versions.node' 2>/dev/null || true)"
     gui_node_major="${gui_node_version%%.*}"

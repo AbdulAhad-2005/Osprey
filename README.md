@@ -287,8 +287,9 @@ report with Markdown/PDF export.
 cd gui && npm install && npm run dev      # http://localhost:3100
 ```
 
-The main installer asks whether to install these dependencies. For manual
-setup, `scripts/setup.sh --gui` / `scripts/setup.ps1 -Gui` installs them too.
+Select **Operator Console GUI only** in the main installer to install these
+dependencies. For manual setup, `scripts/setup.sh --gui` /
+`scripts/setup.ps1 -Gui` installs them too.
 
 - Set your model from **Settings** (⚙ in the sidebar) — no `.env` editing.
 - No prompt required — bind a target, click **Start autonomous recon**.

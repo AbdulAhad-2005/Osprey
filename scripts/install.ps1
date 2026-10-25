@@ -370,6 +370,21 @@ if ($runtimeChoice -eq "3") {
 
         $attemptInstall = Read-Host "`nAttempt automatic installation of missing tools? [Y/n]"
         if ($attemptInstall -ne "n" -and $attemptInstall -ne "N") {
+            $goToolsMissing = @("subfinder", "httpx", "naabu", "dnsx", "tlsx", "katana", "nuclei")
+            if (($missingTools.Name | Where-Object { $_ -in $goToolsMissing }) -and -not $hasGo) {
+                if ($hasWinget) {
+                    Write-Host "  Installing Go, required for ProjectDiscovery tools..." -ForegroundColor Cyan
+                    winget install --id GoLang.Go -e --silent --accept-source-agreements --accept-package-agreements
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-WarnItem "Go installation completed. Restart PowerShell and re-run the wizard to install ProjectDiscovery tools."
+                    } else {
+                        Write-WarnItem "Could not install Go; ProjectDiscovery tools were not installed."
+                    }
+                } else {
+                    Write-WarnItem "Go is not installed and winget is unavailable; ProjectDiscovery tools were not installed."
+                }
+            }
+
             if ($hasGo) {
                 $goMap = @{
                     "subfinder" = "github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"
@@ -383,24 +398,47 @@ if ($runtimeChoice -eq "3") {
                 foreach ($m in $missingTools) {
                     if ($goMap.ContainsKey($m.Name)) {
                         Write-Host "  Installing $($m.Name) via go install..." -ForegroundColor Cyan
-                        try {
-                            go install $goMap[$m.Name]
-                            Write-Success "$($m.Name) installed successfully."
-                        } catch {
-                            Write-WarnItem "Failed to install $($m.Name): $_"
+                        & go install $goMap[$m.Name]
+                        if ($LASTEXITCODE -eq 0) {
+                            $goBin = (& go env GOBIN 2>$null)
+                            if (-not $goBin) { $goBin = Join-Path (& go env GOPATH 2>$null) "bin" }
+                            if (Test-Path (Join-Path $goBin "$($m.Name).exe")) {
+                                $env:Path = "$goBin;$env:Path"
+                            }
+                            if (Get-Command $m.Name -ErrorAction SilentlyContinue) {
+                                Write-Success "$($m.Name) installed and available on PATH."
+                            } else {
+                                Write-WarnItem "$($m.Name) was downloaded, but its Go bin directory is not on PATH."
+                                Write-Muted "Add $goBin to PATH, then re-run the tool check."
+                            }
+                        } else {
+                            Write-WarnItem "go install $($m.Name) failed; it was not installed."
                         }
                     }
                 }
             }
+            if (-not $hasGo -and -not $hasWinget) {
+                Write-WarnItem "No supported installer was available for the missing tools."
+            }
 
             if ($hasWinget -and ($missingTools | Where-Object { $_.Name -eq "nmap" })) {
                 Write-Host "  Installing Nmap via winget..." -ForegroundColor Cyan
-                try {
-                    winget install --id Insecure.Nmap -e --silent --accept-source-agreements --accept-package-agreements
+                winget install --id Insecure.Nmap -e --silent --accept-source-agreements --accept-package-agreements
+                if ($LASTEXITCODE -eq 0) {
                     Write-Success "Nmap installation invoked."
-                } catch {
+                } else {
                     Write-WarnItem "Winget install failed. Download Nmap manually: https://nmap.org/download.html"
                 }
+            }
+
+            $remainingTools = @($missingTools | Where-Object {
+                -not (Get-Command $_.Cmd -ErrorAction SilentlyContinue)
+            })
+            if ($remainingTools.Count -eq 0) {
+                Write-Success "All requested host tools are now available on PATH."
+            } else {
+                Write-WarnItem "Still unavailable after installation attempt: $($remainingTools.Name -join ', ')"
+                Write-Muted "Re-run the wizard after fixing the package manager, Go, or PATH."
             }
         }
         Write-Host ""
@@ -423,14 +461,18 @@ Write-Muted "Drive tests directly via the interactive terminal interface (osprey
 Write-Host "  3) AI Harness via MCP only" -ForegroundColor White
 Write-Muted "Control Osprey exclusively from Claude Desktop, Cursor, OpenCode, Windsurf, or ChatGPT."
 
+Write-Host "  4) Operator Console GUI only" -ForegroundColor White
+Write-Muted "Use the web dashboard at http://localhost:3100 (requires Node.js 18.18+)."
+
 $usageChoice = Read-Host "`nSelect usage mode [1]"
 if (-not $usageChoice) { $usageChoice = "1" }
-if ($usageChoice -notin @("1", "2", "3")) {
+if ($usageChoice -notin @("1", "2", "3", "4")) {
     Write-FailItem "Unrecognized option: $usageChoice"
     exit 1
 }
 
 $needsCliLlm = ($usageChoice -eq "1" -or $usageChoice -eq "2")
+$wantsGui = $usageChoice -eq "4"
 
 # ==============================================================================
 # [4/5] LLM Configuration
@@ -519,8 +561,6 @@ if ($needsCliLlm) {
     Resolve-McpPython
 }
 
-$installGui = Read-Host "Install the Operator Console GUI dependencies? [y/N]"
-$wantsGui = $installGui -eq "y" -or $installGui -eq "Y"
 if ($wantsGui) {
     $node = Get-Command node -ErrorAction SilentlyContinue
     $npm = Get-Command npm -ErrorAction SilentlyContinue
