@@ -105,12 +105,12 @@ services:
       - ./agent_core:/app/agent_core
       - /var/run/docker.sock:/var/run/docker.sock
       # Live-mounted (not just env_file/environment-baked): LLMSettings reads
-      # this path directly on every request (core/config.py's
-      # settings_customise_sources prefers it over the frozen-at-start
-      # env vars above), so editing the project .env takes effect on the
-      # next call — no container restart needed, matching the CLI (a plain
-      # process, no baked env) which already behaves this way.
-      - ./.env:/app/.env:ro
+      # and the Settings endpoint updates this path directly on every request
+      # (core/config.py's settings_customise_sources prefers it over the
+      # frozen-at-start env vars above). Keep this mount writable so saving
+      # provider settings from the GUI persists to the project .env without a
+      # container restart, matching the CLI (a plain process) behavior.
+      - ./.env:/app/.env
     ports:
       - "9000:9000"
     extra_hosts:
