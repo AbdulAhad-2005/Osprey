@@ -440,8 +440,18 @@ if [ "$runtime_choice" = "3" ]; then
         if [ -z "$go_bin" ]; then
           go_bin="$(go env GOPATH 2>/dev/null || true)/bin"
         fi
-        if [ -d "$go_bin" ]; then
+        if [ -n "$go_bin" ]; then
+          mkdir -p "$go_bin"
           export PATH="$go_bin:$PATH"
+          path_marker="# Osprey: Go-installed security tools"
+          path_export="export PATH=\"$go_bin:\$PATH\""
+          for shell_profile in "$HOME/.profile" "$HOME/.bashrc"; do
+            if { [ -f "$shell_profile" ] || touch "$shell_profile" 2>/dev/null; } &&
+               [ -w "$shell_profile" ] && ! grep -Fq "$path_marker" "$shell_profile"; then
+              printf '\n%s\n%s\n' "$path_marker" "$path_export" >> "$shell_profile"
+              muted "Added $go_bin to PATH in $shell_profile"
+            fi
+          done
         fi
       fi
 
@@ -465,8 +475,8 @@ if [ "$runtime_choice" = "3" ]; then
                 if command -v "$mt" >/dev/null 2>&1; then
                   ok "$mt installed and available on PATH."
                 else
-                  warn "$mt was downloaded, but its Go bin directory is not on PATH."
-                  muted "Add $go_bin to PATH, then re-run the tool check."
+                  warn "$mt was downloaded, but its Go bin directory is not available in this shell."
+                  muted "Open a new shell (or run: export PATH=\"$go_bin:\$PATH\") and re-run the tool check."
                 fi
               else
                 warn "go install $mt failed; it was not installed."

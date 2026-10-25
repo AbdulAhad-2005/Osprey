@@ -402,14 +402,23 @@ if ($runtimeChoice -eq "3") {
                         if ($LASTEXITCODE -eq 0) {
                             $goBin = (& go env GOBIN 2>$null)
                             if (-not $goBin) { $goBin = Join-Path (& go env GOPATH 2>$null) "bin" }
+                            $goBin = $goBin.Trim()
                             if (Test-Path (Join-Path $goBin "$($m.Name).exe")) {
                                 $env:Path = "$goBin;$env:Path"
+                                $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+                                $userPathParts = @()
+                                if ($userPath) { $userPathParts = $userPath -split ";" | Where-Object { $_ } }
+                                if ($userPathParts -notcontains $goBin) {
+                                    $newUserPath = (($userPathParts + $goBin) -join ";")
+                                    [Environment]::SetEnvironmentVariable("Path", $newUserPath, "User")
+                                    Write-Muted "Added $goBin to your user PATH for future shells."
+                                }
                             }
                             if (Get-Command $m.Name -ErrorAction SilentlyContinue) {
                                 Write-Success "$($m.Name) installed and available on PATH."
                             } else {
-                                Write-WarnItem "$($m.Name) was downloaded, but its Go bin directory is not on PATH."
-                                Write-Muted "Add $goBin to PATH, then re-run the tool check."
+                                Write-WarnItem "$($m.Name) was downloaded, but its Go bin directory is not available in this shell."
+                                Write-Muted "Open a new PowerShell (or add $goBin to PATH) and re-run the tool check."
                             }
                         } else {
                             Write-WarnItem "go install $($m.Name) failed; it was not installed."
