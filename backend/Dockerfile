@@ -5,18 +5,25 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Install system deps + Docker CLI for kali-tools communication
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-       gcc libpq-dev curl \
-       apt-transport-https ca-certificates gnupg lsb-release \
-    && install -m 0755 -d /etc/apt/keyrings \
-    && curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-       https://download.docker.com/linux/debian $(lsb_release -cs) stable" \
-       > /etc/apt/sources.list.d/docker.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin \
+# Install system deps + the `docker` CLI for kali-tools communication (the
+# backend shells out to `docker exec`/`docker container inspect` — see
+# services/mcp_client.py — it never runs `docker compose` itself, so no
+# compose plugin is needed here). Debian's own repo ships a `docker-cli`
+# package, so this skips Docker's external apt repo entirely. The
+# client being a version or two behind the daemon is fine: `docker exec`/
+# `docker container inspect` are long-stable across the Engine API.
+# Retries the whole update+install sequence on a transient mirror/network
+# blip (a fresh `apt-get update` re-picks mirrors) instead of failing the
+# build outright — same pattern as kali-tools/Dockerfile's apt-install-retry.
+RUN n=0; \
+    until apt-get update \
+       && apt-get install -y --no-install-recommends \
+          gcc libpq-dev curl ca-certificates docker-cli; do \
+      n=$((n + 1)); \
+      [ "$n" -ge 3 ] && exit 1; \
+      echo "apt-get failed, retry $n/3 in $((n * 5))s..." >&2; \
+      sleep $((n * 5)); \
+    done \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/pyproject.toml backend/requirements.txt /app/

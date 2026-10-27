@@ -257,9 +257,12 @@ RUN command -v subfinder && command -v httpx && command -v katana \
 # ─── Stage: cargo-tools ───────────────────────────────────────────────────────
 ################################################################################
 FROM runtime-base AS cargo-tools
+# libssl-dev: x8's openssl-sys crate below needs the OpenSSL headers/pkg-config
+# file to link against (-lssl/-lcrypto) — without it the build silently fails
+# (tolerated by its own `|| echo WARN`, so this was going unnoticed).
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-cache-cargo \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked,id=apt-lists-cargo \
-    apt-install-retry.sh 5 build-essential cargo pkg-config
+    apt-install-retry.sh 5 build-essential cargo pkg-config libssl-dev
 
 RUN mkdir -p /opt/release-bin
 # x8 (hidden-parameter brute-forcer). Best-effort — degrades to "not found".

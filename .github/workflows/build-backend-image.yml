@@ -1,0 +1,62 @@
+name: Build backend image
+
+# Builds backend/Dockerfile on every PR/push touching it (or anything it COPYs
+# in: cli/, platform-mcp/, agent_core/, backend/requirements.txt). Build-only —
+# no push, no registry, no secrets. The point is catching a broken
+# Dockerfile (a bad apt/pip step, a missing COPY source) in CI before a user
+# hits it on first run.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/Dockerfile"
+      - "backend/requirements.txt"
+      - "backend/pyproject.toml"
+      - "cli/**"
+      - "platform-mcp/**"
+      - "agent_core/**"
+      - ".github/workflows/build-backend-image.yml"
+  pull_request:
+    paths:
+      - "backend/Dockerfile"
+      - "backend/requirements.txt"
+      - "backend/pyproject.toml"
+      - "cli/**"
+      - "platform-mcp/**"
+      - "agent_core/**"
+      - ".github/workflows/build-backend-image.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build (no push — local-only image)
+        uses: docker/build-push-action@v6
+        with:
+          # Repo root, not ./backend: the image also COPYs cli/, platform-mcp/,
+          # agent_core/ — see backend/Dockerfile's own comment on why.
+          context: .
+          file: backend/Dockerfile
+          push: false
+          load: true
+          tags: osprey-backend:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke-test the image
+        # Catches an image that builds but can't actually import the app
+        # (missing COPY, a broken editable install) before a user hits it.
+        run: |
+          docker run --rm osprey-backend:ci python -c "import osprey.main; print('OK: osprey.main imports')"
+          docker run --rm osprey-backend:ci docker --version
