@@ -47,13 +47,14 @@ ENV PATH="/opt/osprey-python/bin:/home/mcpuser/.local/bin:/opt/pipx/bin:${GOPATH
 ENV CFLAGS="-std=gnu17 -D_DEFAULT_SOURCE"
 ENV CXXFLAGS="-std=gnu++17 -D_DEFAULT_SOURCE"
 
-# kali-rolling's default source (kali.sources) points at plain
-# http://http.kali.org — some corporate/ISP networks allow HTTPS but block or
-# mangle unencrypted HTTP egress, failing every apt-install-retry.sh call here
-# with no useful error. https://http.kali.org serves the same mirror set
-# (redirects to a geo-local HTTPS mirror) and costs nothing where HTTP already
-# worked, so switch unconditionally.
-RUN sed -i 's|http://http\.kali\.org|https://http.kali.org|g' /etc/apt/sources.list.d/kali.sources
+# Deliberately NOT switching kali.sources to https:// the way
+# backend/Dockerfile's debian.sources was: http.kali.org geo-redirects across
+# many independently-run mirrors, and at least one (hit live, IP
+# 54.39.128.230) fails TLS verification outright ("SSL routines::certificate
+# verify failed"), which would turn an intermittent-HTTP-blocked-network
+# problem into an every-build-on-that-mirror problem. Kali's own docs default
+# to http:// for this exact reason. Stays http:// + the Acquire::Retries
+# below for resilience.
 
 COPY <<'EOF' /etc/apt/apt.conf.d/99retries
 Acquire::Retries "5";
@@ -349,11 +350,14 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && "$OSPREY_PYTHON/bin/python" -m playwright install --with-deps chromium \
     && chmod -R a+rX /opt/pw-browsers
 
-# ScoutSuite (cloud). Tolerant — heavier/pinned deps, own layer for caching.
-RUN --mount=type=cache,target=/root/.cache/pip \
-    retry-cmd 5 "$OSPREY_PYTHON/bin/python" -m pip install --no-build-isolation \
-       git+https://github.com/nccgroup/ScoutSuite.git \
-    || true
+# ScoutSuite moved to the pipx-tools stage (own isolated venv) — it was here
+# before and pinned this shared venv's protobuf down to 3.20.3, which broke
+# `import angr` outright (angr needs protobuf>=6.33.0: ImportError: cannot
+# import name 'runtime_version' from 'google.protobuf'). scout_suite_
+# assessment.py only ever shells out to the `scout` CLI binary, never imports
+# ScoutSuite as a library, so it belongs with the other CLI-only tools
+# (checkov/kube-hunter/mitmproxy/...) that already use pipx for exactly this
+# cross-tool dependency isolation.
 
 # MCP servers must run under /opt/osprey-python/bin/python — this package
 # isn't on system python3 anymore. Version pin is duplicated in
@@ -392,6 +396,13 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     pipx install prowler || true
+
+# ScoutSuite (cloud) — isolated here (not the shared osprey-python venv) so
+# its pinned protobuf<4 requirement can't collide with angr's protobuf>=6.33
+# in python-venv. Tolerant: heavier/pinned deps, own layer.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    retry-cmd 5 pipx install git+https://github.com/nccgroup/ScoutSuite.git \
+    || true
 
 # apkid — Android compiler/packer/obfuscator fingerprinting, a deeper pass the
 # operator can run via platform_shell. Best-effort; app_recon does not need it.
