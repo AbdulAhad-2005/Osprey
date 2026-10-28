@@ -671,12 +671,16 @@ if [ "$wants_gui" -eq 1 ]; then
 fi
 python_exe="$(resolve_python_path)"
 server_script="$ROOT_DIR/platform-mcp/server.py"
+# White-label hook (default "osprey" is a no-op): a downstream build sets
+# OSPREY_MCP_SERVER_NAME to rebrand the generated/auto-written MCP config
+# key name — matches platform-mcp/server.py's own FastMCP(...) name.
+mcp_server_name="${OSPREY_MCP_SERVER_NAME:-osprey}"
 
 cat > "$ROOT_DIR/mcp-config.json" << EOF
 {
   "claude_desktop": {
     "mcpServers": {
-      "osprey": {
+      "$mcp_server_name": {
         "command": "$python_exe",
         "args": ["$server_script"],
         "cwd": "$ROOT_DIR",
@@ -690,7 +694,7 @@ cat > "$ROOT_DIR/mcp-config.json" << EOF
   },
   "cursor": {
     "mcpServers": {
-      "osprey": {
+      "$mcp_server_name": {
         "command": "$python_exe",
         "args": ["$server_script"],
         "env": {
@@ -703,7 +707,7 @@ cat > "$ROOT_DIR/mcp-config.json" << EOF
   },
   "opencode": {
     "mcp": {
-      "osprey": {
+      "$mcp_server_name": {
         "type": "local",
         "command": ["$python_exe", "$server_script"],
         "cwd": "$ROOT_DIR",
@@ -786,6 +790,7 @@ h_type = '$h_type'
 py_exe = '$python_exe'
 srv = '$server_script'
 root = '$ROOT_DIR'
+mcp_name = '$mcp_server_name'
 
 data = {}
 if os.path.exists(path):
@@ -799,7 +804,7 @@ if os.path.exists(path):
 if h_type == 'opencode':
     if 'mcp' not in data or not isinstance(data['mcp'], dict):
         data['mcp'] = {}
-    data['mcp']['osprey'] = {
+    data['mcp'][mcp_name] = {
         'type': 'local',
         'command': [py_exe, srv],
         'cwd': root,
@@ -810,7 +815,7 @@ if h_type == 'opencode':
 elif h_type == 'cursor':
     if 'mcpServers' not in data or not isinstance(data['mcpServers'], dict):
         data['mcpServers'] = {}
-    data['mcpServers']['osprey'] = {
+    data['mcpServers'][mcp_name] = {
         'command': py_exe,
         'args': [srv],
         'env': {'PENTEST_API_BASE': 'http://localhost:9000', 'PENTEST_QUICK_TIMEOUT': '60', 'PENTEST_HTTP_TIMEOUT': '900'}
@@ -818,7 +823,7 @@ elif h_type == 'cursor':
 else:
     if 'mcpServers' not in data or not isinstance(data['mcpServers'], dict):
         data['mcpServers'] = {}
-    data['mcpServers']['osprey'] = {
+    data['mcpServers'][mcp_name] = {
         'command': py_exe,
         'args': [srv],
         'cwd': root,

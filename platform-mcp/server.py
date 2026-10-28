@@ -213,10 +213,17 @@ _DOMAIN_RE = re.compile(
     r"^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$"
 )
 
-mcp = FastMCP("osprey")
+# White-label hook (default "osprey" is a no-op): a downstream build like the
+# private Ababeel overlay sets OSPREY_MCP_SERVER_NAME to rebrand the server's
+# self-reported MCP identity without forking this module — same pattern as
+# cli/branding.py and gui/src/lib/brand.ts.
+mcp = FastMCP(os.environ.get("OSPREY_MCP_SERVER_NAME", "osprey"))
 
 
 _QUIET = os.environ.get("PENTEST_MCP_QUIET", "").strip().lower() in ("1", "true", "yes")
+
+
+_LOG_PREFIX = os.environ.get("OSPREY_MCP_SERVER_NAME", "osprey") + "-mcp"
 
 
 def _log(msg: str) -> None:
@@ -225,7 +232,7 @@ def _log(msg: str) -> None:
     PENTEST_MCP_QUIET so this doesn't also land in a live terminal."""
     if _QUIET:
         return
-    print(f"[osprey-mcp] {msg}", file=sys.stderr, flush=True)
+    print(f"[{_LOG_PREFIX}] {msg}", file=sys.stderr, flush=True)
 
 
 def _normalize_target(raw: str) -> str:

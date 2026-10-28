@@ -599,6 +599,11 @@ $pythonExe = Resolve-PythonPath
 $serverScript = "$RootDir\platform-mcp\server.py"
 $batScript = "$RootDir\scripts\run-mcp-pentest.bat"
 
+# White-label hook (default "osprey" is a no-op): a downstream build sets
+# $env:OSPREY_MCP_SERVER_NAME to rebrand the generated/auto-written MCP
+# config key name -- matches platform-mcp/server.py's own FastMCP(...) name.
+$McpServerName = if ($env:OSPREY_MCP_SERVER_NAME) { $env:OSPREY_MCP_SERVER_NAME } else { "osprey" }
+
 # Obtain 8.3 short paths if available to prevent space-splitting bugs across Windows IDEs
 $shortRoot = $RootDir
 $shortBat = $batScript
@@ -616,7 +621,7 @@ try {
 $mcpConfigContent = @{
     "claude_desktop" = @{
         "mcpServers" = @{
-            "osprey" = @{
+            "$McpServerName" = @{
                 "command" = $shortPython
                 "args"    = @($shortServer)
                 "cwd"     = $shortRoot
@@ -630,7 +635,7 @@ $mcpConfigContent = @{
     }
     "cursor" = @{
         "mcpServers" = @{
-            "osprey" = @{
+            "$McpServerName" = @{
                 "command" = "cmd.exe"
                 "args"    = @("/c", $shortBat)
                 "env"     = @{
@@ -643,7 +648,7 @@ $mcpConfigContent = @{
     }
     "opencode" = @{
         "mcp" = @{
-            "osprey" = @{
+            "$McpServerName" = @{
                 "type"        = "local"
                 "command"     = @($shortBat)
                 "cwd"         = $shortRoot
@@ -739,13 +744,13 @@ if ($detectedHarnesses.Count -gt 0) {
 
                 if ($h.Type -eq "opencode") {
                     if (-not $jsonObj.ContainsKey("mcp")) { $jsonObj["mcp"] = @{} }
-                    $jsonObj["mcp"]["osprey"] = $mcpConfigContent["opencode"]["mcp"]["osprey"]
+                    $jsonObj["mcp"][$McpServerName] = $mcpConfigContent["opencode"]["mcp"][$McpServerName]
                 } elseif ($h.Type -eq "cursor") {
                     if (-not $jsonObj.ContainsKey("mcpServers")) { $jsonObj["mcpServers"] = @{} }
-                    $jsonObj["mcpServers"]["osprey"] = $mcpConfigContent["cursor"]["mcpServers"]["osprey"]
+                    $jsonObj["mcpServers"][$McpServerName] = $mcpConfigContent["cursor"]["mcpServers"][$McpServerName]
                 } else {
                     if (-not $jsonObj.ContainsKey("mcpServers")) { $jsonObj["mcpServers"] = @{} }
-                    $jsonObj["mcpServers"]["osprey"] = $mcpConfigContent["claude_desktop"]["mcpServers"]["osprey"]
+                    $jsonObj["mcpServers"][$McpServerName] = $mcpConfigContent["claude_desktop"]["mcpServers"][$McpServerName]
                 }
 
                 $outStr = $jsonObj | ConvertTo-Json -Depth 10
