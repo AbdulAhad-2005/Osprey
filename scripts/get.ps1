@@ -1,4 +1,4 @@
-# Osprey one-line bootstrap installer (Windows PowerShell).
+﻿# Osprey one-line bootstrap installer (Windows PowerShell).
 #
 #   powershell -c "irm https://raw.githubusercontent.com/AbdulAhad-2005/osprey/main/scripts/get.ps1 | iex"
 #
