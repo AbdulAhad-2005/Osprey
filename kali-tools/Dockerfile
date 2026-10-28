@@ -303,15 +303,19 @@ RUN rm -rf "$OSPREY_PYTHON" \
        "setuptools>=78,<81" \
        wheel
 
+# retry-cmd re-invokes pip fresh on failure (not just pip's own built-in
+# per-download retry) — a transient index hiccup ("no versions found" for a
+# package that genuinely exists, seen live on pipx-tools' holehe install) can
+# return empty from one bad edge/cache hit; a fresh pip call re-queries it.
 RUN --mount=type=cache,target=/root/.cache/pip \
-    "$OSPREY_PYTHON/bin/python" -m pip install \
+    retry-cmd 5 "$OSPREY_PYTHON/bin/python" -m pip install \
        pwntools \
        angr \
        volatility3
 
 # domain-hunter deps (mcp-servers/recon/tools/domain-hunter)
 RUN --mount=type=cache,target=/root/.cache/pip \
-    "$OSPREY_PYTHON/bin/python" -m pip install \
+    retry-cmd 5 "$OSPREY_PYTHON/bin/python" -m pip install \
        requests pyyaml openpyxl dnspython tldextract beautifulsoup4
 
 # wappalyzer_scan.py / tech_stack_analyze.py import this via a bare
@@ -319,7 +323,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # /opt/osprey-python/bin is first on PATH, that resolves into this venv
 # automatically — verify with: docker exec <container> which python3
 RUN --mount=type=cache,target=/root/.cache/pip \
-    "$OSPREY_PYTHON/bin/python" -m pip install python-Wappalyzer
+    retry-cmd 5 "$OSPREY_PYTHON/bin/python" -m pip install python-Wappalyzer
 
 RUN mkdir -p /opt/release-bin
 
@@ -346,7 +350,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # bundles its own driver. If `--with-deps` ever errors on a missing
 # /usr/bin/node, add `apt-install-retry.sh 5 nodejs` above this.
 RUN --mount=type=cache,target=/root/.cache/pip \
-    "$OSPREY_PYTHON/bin/python" -m pip install playwright \
+    retry-cmd 5 "$OSPREY_PYTHON/bin/python" -m pip install playwright \
     && "$OSPREY_PYTHON/bin/python" -m playwright install --with-deps chromium \
     && chmod -R a+rX /opt/pw-browsers
 
@@ -364,7 +368,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # backend/requirements.txt, mcp-servers/requirements.txt,
 # platform-mcp/requirements.txt, cli/pyproject.toml — bump together.
 RUN --mount=type=cache,target=/root/.cache/pip \
-    "$OSPREY_PYTHON/bin/python" -m pip install "mcp==1.28.1" \
+    retry-cmd 5 "$OSPREY_PYTHON/bin/python" -m pip install "mcp==1.28.1" \
     && "$OSPREY_PYTHON/bin/python" -c "import mcp; print('MCP import: OK')" \
     && "$OSPREY_PYTHON/bin/python" -m pip show mcp
 
@@ -381,21 +385,23 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-cache-pipx \
 
 # theHarvester/dnstwist/sherlock/metagoofil are real apt packages already
 # (runtime-base) — these four aren't packaged, or the PyPI package is a
-# dummy/placeholder.
+# dummy/placeholder. retry-cmd on every PyPI install, not just the git ones —
+# a transient PyPI index hiccup ("no versions found" on a package that
+# genuinely exists) was failing this whole RUN with no retry at all.
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pipx install maigret \
-    && pipx install holehe \
-    && pipx install social-analyzer \
+    retry-cmd 5 pipx install maigret \
+    && retry-cmd 5 pipx install holehe \
+    && retry-cmd 5 pipx install social-analyzer \
     && retry-cmd 5 pipx install git+https://github.com/Tib3rius/AutoRecon.git
 
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pipx install sslyze
+    retry-cmd 5 pipx install sslyze
 
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pipx install mitmproxy
+    retry-cmd 5 pipx install mitmproxy
 
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pipx install prowler || true
+    retry-cmd 5 pipx install prowler || true
 
 # ScoutSuite (cloud) — isolated here (not the shared osprey-python venv) so
 # its pinned protobuf<4 requirement can't collide with angr's protobuf>=6.33
@@ -407,18 +413,18 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # apkid — Android compiler/packer/obfuscator fingerprinting, a deeper pass the
 # operator can run via platform_shell. Best-effort; app_recon does not need it.
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pipx install apkid || true
+    retry-cmd 5 pipx install apkid || true
 
 # checkov/kube-hunter/arjun: invoked as subprocess CLIs elsewhere in this
 # project, not imported as libraries, so pipx isolation is safe here (same
 # as mitmproxy/sslyze/prowler above). Kept as separate RUNs so one failing
 # doesn't block or hide the others.
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pipx install checkov
+    retry-cmd 5 pipx install checkov
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pipx install kube-hunter
+    retry-cmd 5 pipx install kube-hunter
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pipx install arjun
+    retry-cmd 5 pipx install arjun
 
 ################################################################################
 # ─── Stage: release-tools — prebuilt GitHub release binaries ────────────────
