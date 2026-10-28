@@ -1,3 +1,6 @@
+
+<img width="1983" height="793" alt="osprey-lockup-whitetext-on-navy" src="https://github.com/user-attachments/assets/25ac0e6d-0d8a-45af-a3f2-d1151c00e3f1" />
+
 <div align="center">
 
 # Osprey
