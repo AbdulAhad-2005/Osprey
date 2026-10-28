@@ -12,6 +12,15 @@ WORKDIR /app
 # package, so this skips Docker's external apt repo entirely. The
 # client being a version or two behind the daemon is fine: `docker exec`/
 # `docker container inspect` are long-stable across the Engine API.
+#
+# python:3.12-slim's default sources (/etc/apt/sources.list.d/debian.sources)
+# point at plain http://deb.debian.org — many corporate/ISP networks allow
+# HTTPS but block or mangle unencrypted HTTP egress, which fails every apt-get
+# here with no useful error (the retry loop below just exhausts and exits 1).
+# Switching to https:// (apt >=1.5 / this image's apt 3.x supports it natively,
+# no apt-transport-https package needed) costs nothing on a network where plain
+# HTTP already worked and fixes it on one where it didn't.
+RUN sed -i 's|http://deb\.debian\.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources
 # Retries the whole update+install sequence on a transient mirror/network
 # blip (a fresh `apt-get update` re-picks mirrors) instead of failing the
 # build outright — same pattern as kali-tools/Dockerfile's apt-install-retry.

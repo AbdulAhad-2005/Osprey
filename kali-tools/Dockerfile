@@ -47,6 +47,14 @@ ENV PATH="/opt/osprey-python/bin:/home/mcpuser/.local/bin:/opt/pipx/bin:${GOPATH
 ENV CFLAGS="-std=gnu17 -D_DEFAULT_SOURCE"
 ENV CXXFLAGS="-std=gnu++17 -D_DEFAULT_SOURCE"
 
+# kali-rolling's default source (kali.sources) points at plain
+# http://http.kali.org — some corporate/ISP networks allow HTTPS but block or
+# mangle unencrypted HTTP egress, failing every apt-install-retry.sh call here
+# with no useful error. https://http.kali.org serves the same mirror set
+# (redirects to a geo-local HTTPS mirror) and costs nothing where HTTP already
+# worked, so switch unconditionally.
+RUN sed -i 's|http://http\.kali\.org|https://http.kali.org|g' /etc/apt/sources.list.d/kali.sources
+
 COPY <<'EOF' /etc/apt/apt.conf.d/99retries
 Acquire::Retries "5";
 EOF
