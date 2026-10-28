@@ -685,6 +685,7 @@ cat > "$ROOT_DIR/mcp-config.json" << EOF
         "args": ["$server_script"],
         "cwd": "$ROOT_DIR",
         "env": {
+          "OSPREY_MCP_SERVER_NAME": "$mcp_server_name",
           "PENTEST_API_BASE": "http://localhost:9000",
           "PENTEST_QUICK_TIMEOUT": "30",
           "PENTEST_HTTP_TIMEOUT": "900"
@@ -698,6 +699,7 @@ cat > "$ROOT_DIR/mcp-config.json" << EOF
         "command": "$python_exe",
         "args": ["$server_script"],
         "env": {
+          "OSPREY_MCP_SERVER_NAME": "$mcp_server_name",
           "PENTEST_API_BASE": "http://localhost:9000",
           "PENTEST_QUICK_TIMEOUT": "60",
           "PENTEST_HTTP_TIMEOUT": "900"
@@ -712,6 +714,7 @@ cat > "$ROOT_DIR/mcp-config.json" << EOF
         "command": ["$python_exe", "$server_script"],
         "cwd": "$ROOT_DIR",
         "environment": {
+          "OSPREY_MCP_SERVER_NAME": "$mcp_server_name",
           "PENTEST_API_BASE": "http://localhost:9000",
           "PENTEST_QUICK_TIMEOUT": "60"
         },
@@ -808,7 +811,7 @@ if h_type == 'opencode':
         'type': 'local',
         'command': [py_exe, srv],
         'cwd': root,
-        'environment': {'PENTEST_API_BASE': 'http://localhost:9000', 'PENTEST_QUICK_TIMEOUT': '60'},
+        'environment': {'OSPREY_MCP_SERVER_NAME': mcp_name, 'PENTEST_API_BASE': 'http://localhost:9000', 'PENTEST_QUICK_TIMEOUT': '60'},
         'enabled': True,
         'timeout': 960000
     }
@@ -818,7 +821,7 @@ elif h_type == 'cursor':
     data['mcpServers'][mcp_name] = {
         'command': py_exe,
         'args': [srv],
-        'env': {'PENTEST_API_BASE': 'http://localhost:9000', 'PENTEST_QUICK_TIMEOUT': '60', 'PENTEST_HTTP_TIMEOUT': '900'}
+        'env': {'OSPREY_MCP_SERVER_NAME': mcp_name, 'PENTEST_API_BASE': 'http://localhost:9000', 'PENTEST_QUICK_TIMEOUT': '60', 'PENTEST_HTTP_TIMEOUT': '900'}
     }
 else:
     if 'mcpServers' not in data or not isinstance(data['mcpServers'], dict):
@@ -827,7 +830,7 @@ else:
         'command': py_exe,
         'args': [srv],
         'cwd': root,
-        'env': {'PENTEST_API_BASE': 'http://localhost:9000', 'PENTEST_QUICK_TIMEOUT': '60', 'PENTEST_HTTP_TIMEOUT': '900'}
+        'env': {'OSPREY_MCP_SERVER_NAME': mcp_name, 'PENTEST_API_BASE': 'http://localhost:9000', 'PENTEST_QUICK_TIMEOUT': '60', 'PENTEST_HTTP_TIMEOUT': '900'}
     }
 
 with open(path, 'w', encoding='utf-8') as f:
