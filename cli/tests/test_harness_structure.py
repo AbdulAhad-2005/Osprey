@@ -24,7 +24,13 @@ def test_http_client_contains_no_harness_state() -> None:
 
 
 def test_runner_does_not_own_gateway_or_worker_construction() -> None:
-    source = (ROOT / "agent_core" / "loop.py").read_text(encoding="utf-8")
+    # loop.py was split into the agent_core/loop/ package (setup/run mixins +
+    # helpers); scan the whole package so the guard tracks the code wherever
+    # it lives.
+    loop_dir = ROOT / "agent_core" / "loop"
+    source = "\n".join(
+        p.read_text(encoding="utf-8") for p in sorted(loop_dir.glob("*.py"))
+    )
     assert "platform_tools.load_server" not in source
     assert "platform_tools.bind_session" not in source
     assert "platform_tools.current_engagement_id" not in source

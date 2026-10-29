@@ -43,8 +43,8 @@ def test_fast_success_yields_no_waiting_events(monkeypatch):
     async def _fast_complete(**kwargs):
         return {"choices": [{"message": {"content": "hi"}}]}
 
-    monkeypatch.setattr(L, "complete", _fast_complete)
-    monkeypatch.setattr(L, "_STILL_WAITING_INTERVAL", 10.0)
+    monkeypatch.setattr(L._setup, "complete", _fast_complete)
+    monkeypatch.setattr(L._setup, "_STILL_WAITING_INTERVAL", 10.0)
     runner = _runner()
 
     events = _run(_collect(runner, []))
@@ -57,8 +57,8 @@ def test_slow_call_yields_periodic_waiting_events_then_result(monkeypatch):
         await asyncio.sleep(0.09)
         return {"choices": [{"message": {"content": "done"}}]}
 
-    monkeypatch.setattr(L, "complete", _slow_complete)
-    monkeypatch.setattr(L, "_STILL_WAITING_INTERVAL", 0.03)  # tiny, for a fast test
+    monkeypatch.setattr(L._setup, "complete", _slow_complete)
+    monkeypatch.setattr(L._setup, "_STILL_WAITING_INTERVAL", 0.03)  # tiny, for a fast test
     runner = _runner()
 
     events = _run(_collect(runner, []))
@@ -75,8 +75,8 @@ def test_failure_is_reported_as_error_not_raised(monkeypatch):
     async def _failing_complete(**kwargs):
         raise RuntimeError("provider exploded")
 
-    monkeypatch.setattr(L, "complete", _failing_complete)
-    monkeypatch.setattr(L, "_STILL_WAITING_INTERVAL", 10.0)
+    monkeypatch.setattr(L._setup, "complete", _failing_complete)
+    monkeypatch.setattr(L._setup, "_STILL_WAITING_INTERVAL", 10.0)
     runner = _runner()
 
     events = _run(_collect(runner, []))
@@ -91,8 +91,8 @@ def test_cancellation_during_wait_propagates_and_cancels_task(monkeypatch):
         started.set()
         await asyncio.sleep(3600)
 
-    monkeypatch.setattr(L, "complete", _never_completes)
-    monkeypatch.setattr(L, "_STILL_WAITING_INTERVAL", 0.02)
+    monkeypatch.setattr(L._setup, "complete", _never_completes)
+    monkeypatch.setattr(L._setup, "_STILL_WAITING_INTERVAL", 0.02)
     runner = _runner()
 
     async def _scenario():

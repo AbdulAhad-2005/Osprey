@@ -86,8 +86,8 @@ def test_ask_operator_surfaces_question_and_feeds_answer_back(monkeypatch):
         assert any("operator answered" in (m.get("content") or "").lower() for m in messages)
         return {"choices": [{"message": {"content": "Understood — proceeding.", "tool_calls": []}}]}
 
-    monkeypatch.setattr(loop_mod, "complete", fake_complete)
-    monkeypatch.setattr(loop_mod, "build_budget", _fake_budget)
+    monkeypatch.setattr(loop_mod._setup, "complete", fake_complete)
+    monkeypatch.setattr(loop_mod._setup, "build_budget", _fake_budget)
 
     answered = {"record": None}
 
@@ -126,8 +126,8 @@ def test_ask_operator_not_advertised_without_handler(monkeypatch):
         assert "ask_operator" not in names
         return {"choices": [{"message": {"content": "done", "tool_calls": []}}]}
 
-    monkeypatch.setattr(loop_mod, "complete", fake_complete)
-    monkeypatch.setattr(loop_mod, "build_budget", _fake_budget)
+    monkeypatch.setattr(loop_mod._setup, "complete", fake_complete)
+    monkeypatch.setattr(loop_mod._setup, "build_budget", _fake_budget)
 
     runner = Runner(
         config=CLIModelConfig(model="fake/model", api_key="k"),

@@ -74,6 +74,6 @@ def test_failed_compaction_does_not_discard_original_objective_or_tool_history(m
     runner._budget = ContextBudget(context_limit=10000, reserve=1000, compact_at=100, keep_recent_tokens=1)
     async def empty_summary(**kwargs):
         return {"choices": [{"message": {"content": ""}}]}
-    monkeypatch.setattr(loop, "complete", empty_summary)
+    monkeypatch.setattr(loop._setup, "complete", empty_summary)
     assert asyncio.run(runner._compact_now()) is False
     assert runner.messages == original
