@@ -1,8 +1,9 @@
 """MCP server client, split into lifecycle/exec mixins + helpers.
 
-MCPClient composes _LifecycleMixin and _ExecMixin; the public surface
-(MCPClient, get_mcp_client, MCPClientError, MCPServerNotRunning, and the
-module helpers) is unchanged for callers of osprey.services.mcp_client."""
+MCPClient composes _LifecycleMixin, _DockerExecMixin and _RunMixin; the public
+surface (MCPClient, get_mcp_client, MCPClientError, MCPServerNotRunning) is
+unchanged for callers of osprey.services.mcp_client. Other module helpers live
+in ._helpers and are imported directly by the mixins, not re-exported here."""
 
 from __future__ import annotations
 import asyncio
@@ -11,17 +12,7 @@ from pathlib import Path
 from osprey.schemas.tools import MCPServerCategory
 
 from osprey.services.mcp_client._helpers import (
-    logger,
     _MCP_SERVERS_DIR,
-    _STDIO_LIMIT,
-    _KALI_ENV_FORWARD_BASE,
-    _KALI_ENV_FORWARD,
-    _KALI_EXEC_PATH,
-    _CORE_ENGINE_TOOLS,
-    _truncate_stdout,
-    _kill_and_reap,
-    _drain_partial,
-    _parse_tool_output,
     MCPServerNotRunning,
     MCPClientError,
 )
@@ -77,17 +68,6 @@ def get_mcp_client() -> MCPClient:
 __all__ = [
     "MCPClient",
     "get_mcp_client",
-    "logger",
-    "_MCP_SERVERS_DIR",
-    "_STDIO_LIMIT",
-    "_KALI_ENV_FORWARD_BASE",
-    "_KALI_ENV_FORWARD",
-    "_KALI_EXEC_PATH",
-    "_CORE_ENGINE_TOOLS",
-    "_truncate_stdout",
-    "_kill_and_reap",
-    "_drain_partial",
-    "_parse_tool_output",
-    "MCPServerNotRunning",
     "MCPClientError",
+    "MCPServerNotRunning",
 ]
