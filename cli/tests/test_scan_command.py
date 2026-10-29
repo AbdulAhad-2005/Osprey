@@ -17,8 +17,8 @@ class _FakeClient:
 
 
 def _patch_runtime(monkeypatch):
-    monkeypatch.setattr("cli.commands.slash._run_engine_scan", lambda client, target, **kw: True)
-    monkeypatch.setattr("cli.commands.slash._bind_engagement", lambda client, data: None)
+    monkeypatch.setattr("cli.commands.slash._scan._run_engine_scan", lambda client, target, **kw: True)
+    monkeypatch.setattr("cli.commands.slash._scan._bind_engagement", lambda client, data: None)
 
 
 def test_scan_without_fresh_reuses_by_default(monkeypatch):
@@ -53,7 +53,7 @@ def test_scan_supervised_with_fresh(monkeypatch):
     client = _FakeClient()
     engine_calls: list[tuple[str, bool]] = []
     monkeypatch.setattr(
-        "cli.commands.slash._run_engine_scan",
+        "cli.commands.slash._scan._run_engine_scan",
         lambda client, target, **kw: engine_calls.append((target, kw.get("supervised", False))) or True,
     )
 
