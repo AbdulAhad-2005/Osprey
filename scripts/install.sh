@@ -14,6 +14,8 @@
 # ==============================================================================
 set -uo pipefail
 
+BRAND="${OSPREY_APP_NAME:-${BRAND}}"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
@@ -192,11 +194,11 @@ ensure_cli_python() {
   local py; py="$(venv_python_path)"
   if [ -z "$py" ]; then
     if ! command -v python3 >/dev/null 2>&1; then
-      warn "python3 not found — cannot install the Osprey CLI. Install Python 3.12+, then re-run."
+      warn "python3 not found — cannot install the ${BRAND} CLI. Install Python 3.12+, then re-run."
       CLI_DEPS_OK=0
       return 1
     fi
-    info "Preparing a local Python environment for the Osprey CLI..."
+    info "Preparing a local Python environment for the ${BRAND} CLI..."
     python3 -m venv "$ROOT_DIR/.venv" || {
       warn "Could not create .venv; the CLI is not installed."
       CLI_DEPS_OK=0
@@ -207,9 +209,9 @@ ensure_cli_python() {
   "$py" -m pip install --upgrade pip --quiet >/dev/null 2>&1 || true
   local pip_err=""
   if pip_err="$("$py" -m pip install --quiet -e "$ROOT_DIR/agent_core" -e "$ROOT_DIR/cli" 2>&1)"; then
-    ok "Osprey CLI installed into .venv (osprey command ready after activation)."
+    ok "${BRAND} CLI installed into .venv (osprey command ready after activation)."
   else
-    warn "Failed to install the Osprey CLI."
+    warn "Failed to install the ${BRAND} CLI."
     muted "$pip_err"
     muted "Retry:  \"$py\" -m pip install -e ./agent_core -e ./cli"
     CLI_DEPS_OK=0
@@ -221,7 +223,7 @@ ensure_mcp_python() {
   if [ -n "$py" ] && "$py" -c "import httpx, mcp" >/dev/null 2>&1; then
     return 0  # already usable
   fi
-  info "Preparing a local Python environment for the Osprey MCP bridge..."
+  info "Preparing a local Python environment for the ${BRAND} MCP bridge..."
   if [ -z "$py" ]; then
     if command -v python3 >/dev/null 2>&1; then
       python3 -m venv "$ROOT_DIR/.venv" || { warn "Could not create .venv; MCP may fail to launch."; MCP_DEPS_OK=0; return 1; }
@@ -263,7 +265,7 @@ Autonomous AI Offensive Security Platform
 BANNER
 printf '%s\n' "${C_RESET}"
 
-muted "Welcome to the Osprey setup wizard. Press Ctrl+C anytime to exit."
+muted "Welcome to the ${BRAND} setup wizard. Press Ctrl+C anytime to exit."
 muted "Re-running this wizard is always safe and preserves existing work."
 
 # ── Ensure .env exists ────────────────────────────────────────────────────────
@@ -277,7 +279,7 @@ fi
 # ==============================================================================
 # [1/5] Execution & Tool Runtime Selection
 # ==============================================================================
-write_header "[1/5] How should Osprey & security tools run?"
+write_header "[1/5] How should ${BRAND} & security tools run?"
 
 printf '%s  1) Full Docker (Recommended)%s\n' "${C_BOLD}" "${C_RESET}"
 muted "All-in-one: Postgres DB, Backend API & 90+ Kali tools in Docker."
@@ -408,7 +410,7 @@ if [ "$runtime_choice" = "3" ]; then
   else
     printf '\n'
     warn "${#missing_tools[@]} tool(s) are missing on your host machine."
-    muted "Osprey will gracefully adapt and use whichever tools are installed."
+    muted "${BRAND} will gracefully adapt and use whichever tools are installed."
 
     SUDO=""
     if [ "$(id -u 2>/dev/null || echo 1000)" != "0" ] && command -v sudo >/dev/null 2>&1; then
@@ -526,7 +528,7 @@ fi
 # ==============================================================================
 # [3/5] Usage Mode Selection
 # ==============================================================================
-write_header "[3/5] How do you plan to use Osprey?"
+write_header "[3/5] How do you plan to use ${BRAND}?"
 
 printf '%s  1) Both Built-in CLI & AI Harness (MCP) (Recommended - complete access)%s\n' "${C_BOLD}" "${C_RESET}"
 muted "Use our native CLI (osprey) AND connect AI clients like Claude, Cursor, OpenCode."
@@ -535,7 +537,7 @@ printf '%s  2) Built-in CLI only%s\n' "${C_BOLD}" "${C_RESET}"
 muted "Drive tests directly via the interactive terminal interface (osprey / python -m cli)."
 
 printf '%s  3) AI Harness via MCP only%s\n' "${C_BOLD}" "${C_RESET}"
-muted "Control Osprey exclusively from Claude Desktop, Cursor, OpenCode, Windsurf, or ChatGPT."
+muted "Control ${BRAND} exclusively from Claude Desktop, Cursor, OpenCode, Windsurf, or ChatGPT."
 
 printf '%s  4) Operator Console GUI only%s\n' "${C_BOLD}" "${C_RESET}"
 muted "Use the web dashboard at http://localhost:3100 (requires Node.js 18.18+)."
@@ -566,7 +568,7 @@ fi
 write_header "[4/5] LLM Provider Configuration"
 
 if [ "$needs_cli_llm" -eq 1 ]; then
-  printf '%sThe Osprey CLI uses LiteLLM to drive its autonomous agent loop.%s\n' "${C_BOLD}" "${C_RESET}"
+  printf "%sThe ${BRAND} CLI uses LiteLLM to drive its autonomous agent loop.%s\n" "${C_BOLD}" "${C_RESET}"
   printf '%sSelect your LLM provider preset or enter a custom identifier:%s\n' "${C_CYAN}" "${C_RESET}"
   echo "  1) Anthropic    : anthropic/claude-sonnet-5"
   echo "  2) OpenAI       : openai/gpt-4o"
@@ -611,7 +613,7 @@ if [ "$needs_cli_llm" -eq 1 ]; then
   fi
 else
   printf '%sIn MCP mode, your AI harness (Claude, Cursor, OpenCode, etc.) supplies its own LLM.%s\n' "${C_GREEN}" "${C_RESET}"
-  muted "Osprey CLI agent config is not required for MCP operation."
+  muted "${BRAND} CLI agent config is not required for MCP operation."
 fi
 
 # ==============================================================================
@@ -768,7 +770,7 @@ if [ "${#detected_configs[@]}" -gt 0 ]; then
     echo "  - $h_name at $h_path"
   done
 
-  ask "Automatically configure Osprey MCP in detected harnesses? [Y/n]:"; read -r auto_mcp
+  ask "Automatically configure ${BRAND} MCP in detected harnesses? [Y/n]:"; read -r auto_mcp
   auto_mcp="${auto_mcp:-y}"
 
   if [ "$auto_mcp" = "y" ] || [ "$auto_mcp" = "Y" ]; then
@@ -835,7 +837,7 @@ else:
 
 with open(path, 'w', encoding='utf-8') as f:
     json.dump(data, f, indent=2)
-" 2>/dev/null && ok "Configured Osprey MCP in $h_name" || warn "Could not write $h_name config. See mcp-config.json for manual setup."
+" 2>/dev/null && ok "Configured ${BRAND} MCP in $h_name" || warn "Could not write $h_name config. See mcp-config.json for manual setup."
     done
   fi
 else
@@ -865,7 +867,7 @@ case "$runtime_choice" in
 esac
 
 if [ "$needs_cli_llm" -eq 1 ]; then
-  printf '\n%s  * Running the Osprey CLI:%s\n' "${C_CYAN}" "${C_RESET}"
+  printf "\n%s  * Running the ${BRAND} CLI:%s\n" "${C_CYAN}" "${C_RESET}"
   if [ "$CLI_DEPS_OK" -eq 1 ]; then
     echo "    source .venv/bin/activate     # optional; makes the 'osprey' command available"
     echo "    osprey                          # Interactive Commander CLI"
@@ -879,12 +881,12 @@ fi
 if [ "$wants_mcp" -eq 1 ]; then
   printf '\n%s  * AI Harness (MCP):%s\n' "${C_CYAN}" "${C_RESET}"
   if [ "$MCP_DEPS_OK" -eq 1 ]; then
-    echo "    Osprey MCP is ready to be launched via:"
+    echo "    ${BRAND} MCP is ready to be launched via:"
     muted "$python_exe $server_script"
     muted "See mcp-config.json for copy-pasteable JSON configs."
   else
     fail "MCP bridge dependencies did NOT install — your AI harness (Claude/Cursor/"
-    fail "OpenCode/etc.) will NOT be able to launch Osprey's MCP server until you fix this."
+    fail "OpenCode/etc.) will NOT be able to launch ${BRAND}'s MCP server until you fix this."
     muted "mcp-config.json was still generated and is otherwise correct — once you"
     muted "have internet access, finish the install with:"
     muted "    \"$python_exe\" -m pip install -r platform-mcp/requirements.txt"

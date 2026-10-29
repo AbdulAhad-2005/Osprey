@@ -18,6 +18,8 @@ $ScriptDir = $PSScriptRoot
 $RootDir = Split-Path $ScriptDir -Parent
 Set-Location $RootDir
 
+$Brand = if ($env:OSPREY_APP_NAME) { $env:OSPREY_APP_NAME } else { "Osprey" }
+
 # ── Styling & output helpers ──────────────────────────────────────────────────
 function Write-Header {
     param([string]$Title)
@@ -145,7 +147,7 @@ function Resolve-McpPython {
         & $py -c "import httpx, mcp" 2>$null
         if ($LASTEXITCODE -eq 0) { return }   # already usable
     }
-    Write-Step "Preparing a local Python environment for the Osprey MCP bridge..."
+    Write-Step "Preparing a local Python environment for the $($Brand) MCP bridge..."
     if (-not (Test-Path $py)) {
         $sys = $null
         foreach ($cand in @("python.exe", "python3.exe", "py.exe")) {
@@ -178,11 +180,11 @@ function Ensure-CliPython {
             if ($c) { $sys = $c.Source; break }
         }
         if (-not $sys) {
-            Write-WarnItem "Python 3.12+ not found - cannot install the Osprey CLI."
+            Write-WarnItem "Python 3.12+ not found - cannot install the $($Brand) CLI."
             $script:cliDepsOk = $false
             return
         }
-        Write-Step "Preparing a local Python environment for the Osprey CLI..."
+        Write-Step "Preparing a local Python environment for the $($Brand) CLI..."
         & $sys -m venv "$RootDir\.venv"
         if (-not (Test-Path $py)) {
             Write-WarnItem "Could not create .venv; the CLI is not installed."
@@ -193,9 +195,9 @@ function Ensure-CliPython {
     & $py -m pip install --upgrade pip --quiet 2>$null | Out-Null
     & $py -m pip install --quiet -e "$RootDir\agent_core" -e "$RootDir\cli"
     if ($LASTEXITCODE -eq 0) {
-        Write-Success "Osprey CLI installed into .venv (osprey command ready after activation)."
+        Write-Success "$($Brand) CLI installed into .venv (osprey command ready after activation)."
     } else {
-        Write-WarnItem "Failed to install the Osprey CLI. Retry: $py -m pip install -e .\agent_core -e .\cli"
+        Write-WarnItem "Failed to install the $($Brand) CLI. Retry: $py -m pip install -e .\agent_core -e .\cli"
         $script:cliDepsOk = $false
     }
 }
@@ -211,7 +213,7 @@ Write-Host @"
 Autonomous AI Offensive Security Platform
 "@ -ForegroundColor Red
 
-Write-Host "Welcome to the Osprey setup wizard. Press Ctrl+C anytime to exit." -ForegroundColor DarkGray
+Write-Host "Welcome to the $($Brand) setup wizard. Press Ctrl+C anytime to exit." -ForegroundColor DarkGray
 Write-Host "Re-running this wizard is always safe and preserves existing work.`n" -ForegroundColor DarkGray
 
 # ── Ensure .env exists ────────────────────────────────────────────────────────
@@ -225,7 +227,7 @@ if (-not (Test-Path ".env")) {
 # ==============================================================================
 # [1/5] Execution & Tool Runtime Selection
 # ==============================================================================
-Write-Header "[1/5] How should Osprey & security tools run?"
+Write-Header "[1/5] How should $($Brand) & security tools run?"
 
 Write-Host "  1) Full Docker (Recommended)" -ForegroundColor White
 Write-Muted "All-in-one: Postgres DB, Backend API & 90+ Kali tools in Docker."
@@ -363,7 +365,7 @@ if ($runtimeChoice -eq "3") {
     } else {
         Write-Host ""
         Write-WarnItem "$($missingTools.Count) tool(s) are missing on your host machine."
-        Write-Muted "Osprey will gracefully adapt and use whichever tools are installed."
+        Write-Muted "$($Brand) will gracefully adapt and use whichever tools are installed."
         
         $hasWinget = [bool](Get-Command winget -ErrorAction SilentlyContinue)
         $hasGo = [bool](Get-Command go -ErrorAction SilentlyContinue)
@@ -459,7 +461,7 @@ if ($runtimeChoice -eq "3") {
 # ==============================================================================
 # [3/5] Usage Mode Selection
 # ==============================================================================
-Write-Header "[3/5] How do you plan to use Osprey?"
+Write-Header "[3/5] How do you plan to use $($Brand)?"
 
 Write-Host "  1) Both Built-in CLI & AI Harness (MCP) (Recommended - complete access)" -ForegroundColor White
 Write-Muted "Use our native CLI (osprey) AND connect AI clients like Claude, Cursor, OpenCode."
@@ -468,7 +470,7 @@ Write-Host "  2) Built-in CLI only" -ForegroundColor White
 Write-Muted "Drive tests directly via the interactive terminal interface (osprey / python -m cli)."
 
 Write-Host "  3) AI Harness via MCP only" -ForegroundColor White
-Write-Muted "Control Osprey exclusively from Claude Desktop, Cursor, OpenCode, Windsurf, or ChatGPT."
+Write-Muted "Control $($Brand) exclusively from Claude Desktop, Cursor, OpenCode, Windsurf, or ChatGPT."
 
 Write-Host "  4) Operator Console GUI only" -ForegroundColor White
 Write-Muted "Use the web dashboard at http://localhost:3100 (requires Node.js 18.18+)."
@@ -489,7 +491,7 @@ $wantsGui = $usageChoice -eq "4"
 Write-Header "[4/5] LLM Provider Configuration"
 
 if ($needsCliLlm) {
-    Write-Host "The Osprey CLI uses LiteLLM to drive its autonomous agent loop." -ForegroundColor White
+    Write-Host "The $($Brand) CLI uses LiteLLM to drive its autonomous agent loop." -ForegroundColor White
     Write-Host "Select your LLM provider preset or enter a custom identifier:" -ForegroundColor Cyan
     Write-Host "  1) Anthropic    : anthropic/claude-sonnet-5"
     Write-Host "  2) OpenAI       : openai/gpt-4o"
@@ -546,7 +548,7 @@ if ($needsCliLlm) {
     }
 } else {
     Write-Host "In MCP mode, your AI harness (Claude, Cursor, OpenCode, etc.) supplies its own LLM." -ForegroundColor Green
-    Write-Host "Osprey CLI agent config is not required for MCP operation." -ForegroundColor DarkGray
+    Write-Host "$($Brand) CLI agent config is not required for MCP operation." -ForegroundColor DarkGray
 }
 
 # ==============================================================================
@@ -712,7 +714,7 @@ if ($detectedHarnesses.Count -gt 0) {
         Write-Host "  - $($h.Name) at $($h.Path)" -ForegroundColor White
     }
 
-    $autoConfig = Read-Host "`nAutomatically configure Osprey MCP in detected harnesses? [Y/n]"
+    $autoConfig = Read-Host "`nAutomatically configure $($Brand) MCP in detected harnesses? [Y/n]"
     if ($autoConfig -ne "n" -and $autoConfig -ne "N") {
         foreach ($h in $detectedHarnesses) {
             $cfgPath = $h.Path
@@ -758,7 +760,7 @@ if ($detectedHarnesses.Count -gt 0) {
 
                 $outStr = $jsonObj | ConvertTo-Json -Depth 10
                 Set-Content -Path $cfgPath -Value $outStr -Encoding utf8
-                Write-Success "Configured Osprey MCP in $($h.Name)"
+                Write-Success "Configured $($Brand) MCP in $($h.Name)"
             } catch {
                 Write-WarnItem "Could not automatically write $($h.Name): $_. See mcp-config.json for manual config."
             }
@@ -788,7 +790,7 @@ if ($runtimeChoice -in @("1", "2")) {
 }
 
 if ($needsCliLlm) {
-    Write-Host "`n  * Running the Osprey CLI:" -ForegroundColor Cyan
+    Write-Host "`n  * Running the $($Brand) CLI:" -ForegroundColor Cyan
     if ($cliDepsOk) {
         Write-Host "    .\.venv\Scripts\Activate.ps1  # optional; makes the 'osprey' command available" -ForegroundColor White
         Write-Host "    osprey                          # Interactive Commander CLI" -ForegroundColor White
@@ -802,11 +804,11 @@ if ($needsCliLlm) {
 if ($usageChoice -eq "1" -or $usageChoice -eq "3") {
     Write-Host "`n  * AI Harness (MCP):" -ForegroundColor Cyan
     if ($mcpDepsOk) {
-        Write-Host "    Osprey MCP is ready to be launched via:" -ForegroundColor White
+        Write-Host "    $($Brand) MCP is ready to be launched via:" -ForegroundColor White
         Write-Host "    $pythonExe $serverScript" -ForegroundColor DarkGray
         Write-Host "    See mcp-config.json for copy-pasteable JSON configs." -ForegroundColor DarkGray
     } else {
-        Write-Host "    MCP dependencies did NOT install - the harness cannot launch Osprey yet." -ForegroundColor Red
+        Write-Host "    MCP dependencies did NOT install - the harness cannot launch $($Brand) yet." -ForegroundColor Red
     }
 }
 
