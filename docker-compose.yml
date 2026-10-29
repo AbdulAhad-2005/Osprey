@@ -112,7 +112,7 @@ services:
       # container restart, matching the CLI (a plain process) behavior.
       - ./.env:/app/.env
     ports:
-      - "9000:9000"
+      - "${BACKEND_PORT:-9000}:9000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command: ["uvicorn", "osprey.main:app", "--host", "0.0.0.0", "--port", "9000"]

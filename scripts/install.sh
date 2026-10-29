@@ -110,12 +110,14 @@ require_docker() {
 }
 
 wait_for_backend() {
-  local url="http://localhost:9000/health" tries=60
+  local bport="$(get_env_var BACKEND_PORT 9000)"
+  local base_url="$(get_env_var API_BASE_URL "http://localhost:${bport}")"
+  local url="${base_url}/health" tries=60
   printf '%s  Waiting for backend at %s ' "${C_CYAN}" "$url"
   for _ in $(seq 1 "$tries"); do
     if curl -fsS "$url" >/dev/null 2>&1; then
       printf '\n'
-      ok "Backend is healthy and listening on http://localhost:9000"
+      ok "Backend is healthy and listening on ${base_url}"
       return 0
     fi
     printf '%s.' "${C_DARK}"
@@ -677,6 +679,8 @@ server_script="$ROOT_DIR/platform-mcp/server.py"
 # OSPREY_MCP_SERVER_NAME to rebrand the generated/auto-written MCP config
 # key name — matches platform-mcp/server.py's own FastMCP(...) name.
 mcp_server_name="${OSPREY_MCP_SERVER_NAME:-osprey}"
+cfg_port="$(get_env_var BACKEND_PORT 9000)"
+mcp_api_base="$(get_env_var API_BASE_URL "http://localhost:${cfg_port}")"
 
 cat > "$ROOT_DIR/mcp-config.json" << EOF
 {
@@ -688,7 +692,7 @@ cat > "$ROOT_DIR/mcp-config.json" << EOF
         "cwd": "$ROOT_DIR",
         "env": {
           "OSPREY_MCP_SERVER_NAME": "$mcp_server_name",
-          "PENTEST_API_BASE": "http://localhost:9000",
+          "PENTEST_API_BASE": "$mcp_api_base",
           "PENTEST_QUICK_TIMEOUT": "30",
           "PENTEST_HTTP_TIMEOUT": "900"
         }
@@ -702,7 +706,7 @@ cat > "$ROOT_DIR/mcp-config.json" << EOF
         "args": ["$server_script"],
         "env": {
           "OSPREY_MCP_SERVER_NAME": "$mcp_server_name",
-          "PENTEST_API_BASE": "http://localhost:9000",
+          "PENTEST_API_BASE": "$mcp_api_base",
           "PENTEST_QUICK_TIMEOUT": "60",
           "PENTEST_HTTP_TIMEOUT": "900"
         }
@@ -717,7 +721,7 @@ cat > "$ROOT_DIR/mcp-config.json" << EOF
         "cwd": "$ROOT_DIR",
         "environment": {
           "OSPREY_MCP_SERVER_NAME": "$mcp_server_name",
-          "PENTEST_API_BASE": "http://localhost:9000",
+          "PENTEST_API_BASE": "$mcp_api_base",
           "PENTEST_QUICK_TIMEOUT": "60"
         },
         "enabled": true,
@@ -796,6 +800,7 @@ py_exe = '$python_exe'
 srv = '$server_script'
 root = '$ROOT_DIR'
 mcp_name = '$mcp_server_name'
+api_base = '$mcp_api_base'
 
 data = {}
 if os.path.exists(path):
@@ -813,7 +818,7 @@ if h_type == 'opencode':
         'type': 'local',
         'command': [py_exe, srv],
         'cwd': root,
-        'environment': {'OSPREY_MCP_SERVER_NAME': mcp_name, 'PENTEST_API_BASE': 'http://localhost:9000', 'PENTEST_QUICK_TIMEOUT': '60'},
+        'environment': {'OSPREY_MCP_SERVER_NAME': mcp_name, 'PENTEST_API_BASE': api_base, 'PENTEST_QUICK_TIMEOUT': '60'},
         'enabled': True,
         'timeout': 960000
     }
@@ -823,7 +828,7 @@ elif h_type == 'cursor':
     data['mcpServers'][mcp_name] = {
         'command': py_exe,
         'args': [srv],
-        'env': {'OSPREY_MCP_SERVER_NAME': mcp_name, 'PENTEST_API_BASE': 'http://localhost:9000', 'PENTEST_QUICK_TIMEOUT': '60', 'PENTEST_HTTP_TIMEOUT': '900'}
+        'env': {'OSPREY_MCP_SERVER_NAME': mcp_name, 'PENTEST_API_BASE': api_base, 'PENTEST_QUICK_TIMEOUT': '60', 'PENTEST_HTTP_TIMEOUT': '900'}
     }
 else:
     if 'mcpServers' not in data or not isinstance(data['mcpServers'], dict):
@@ -832,7 +837,7 @@ else:
         'command': py_exe,
         'args': [srv],
         'cwd': root,
-        'env': {'OSPREY_MCP_SERVER_NAME': mcp_name, 'PENTEST_API_BASE': 'http://localhost:9000', 'PENTEST_QUICK_TIMEOUT': '60', 'PENTEST_HTTP_TIMEOUT': '900'}
+        'env': {'OSPREY_MCP_SERVER_NAME': mcp_name, 'PENTEST_API_BASE': api_base, 'PENTEST_QUICK_TIMEOUT': '60', 'PENTEST_HTTP_TIMEOUT': '900'}
     }
 
 with open(path, 'w', encoding='utf-8') as f:
@@ -855,7 +860,7 @@ write_header "Setup Complete! Next Steps"
 
 case "$runtime_choice" in
   1|2)
-    printf '%s  * Backend Status: Running inside Docker at http://localhost:9000%s\n' "${C_GREEN}" "${C_RESET}"
+    printf '%s  * Backend Status: Running inside Docker at %s%s\n' "${C_GREEN}" "$mcp_api_base" "${C_RESET}"
     muted "Inspect logs anytime : $DOCKER_CMD compose logs -f backend"
     muted "Stop it              : $DOCKER_CMD compose down"
     ;;

@@ -19,7 +19,11 @@ from typing import Any
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-API_BASE = os.environ.get("PENTEST_API_BASE", "http://localhost:9000").rstrip("/")
+API_BASE = (
+    os.environ.get("PENTEST_API_BASE")
+    or os.environ.get("API_BASE_URL")
+    or f"http://localhost:{os.environ.get('BACKEND_PORT', '9000')}"
+).rstrip("/")
 QUICK_TIMEOUT = float(os.environ.get("PENTEST_QUICK_TIMEOUT", "60"))
 # Long exec/script posts — keep ≥ OpenCode mcp.timeout (ms) / 1000
 HTTP_TIMEOUT = float(os.environ.get("PENTEST_HTTP_TIMEOUT", "900"))

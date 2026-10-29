@@ -84,13 +84,16 @@ function Test-DockerReady {
 
 function Wait-ForBackend {
     param([int]$MaxSeconds = 60)
-    Write-Host -NoNewline "  Waiting for backend at http://localhost:9000/health " -ForegroundColor Cyan
+    $bPort = Get-EnvVar "BACKEND_PORT" "9000"
+    $bUrl = Get-EnvVar "API_BASE_URL" "http://localhost:$bPort"
+    $healthUrl = "$bUrl/health"
+    Write-Host -NoNewline "  Waiting for backend at $healthUrl " -ForegroundColor Cyan
     for ($i = 0; $i -lt $MaxSeconds; $i++) {
         try {
-            $r = Invoke-WebRequest -Uri "http://localhost:9000/health" -UseBasicParsing -TimeoutSec 2 -ErrorAction SilentlyContinue
+            $r = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 2 -ErrorAction SilentlyContinue
             if ($r.StatusCode -eq 200) {
                 Write-Host ""
-                Write-Success "Backend is healthy and listening on http://localhost:9000"
+                Write-Success "Backend is healthy and listening on $bUrl"
                 return $true
             }
         } catch { }
@@ -620,6 +623,9 @@ try {
     if (Test-Path $serverScript) { $shortServer = $fso.GetFile($serverScript).ShortPath }
 } catch {}
 
+$cfgPort = Get-EnvVar "BACKEND_PORT" "9000"
+$mcpApiBase = Get-EnvVar "API_BASE_URL" "http://localhost:$cfgPort"
+
 $mcpConfigContent = @{
     "claude_desktop" = @{
         "mcpServers" = @{
@@ -629,7 +635,7 @@ $mcpConfigContent = @{
                 "cwd"     = $shortRoot
                 "env"     = @{
                     "OSPREY_MCP_SERVER_NAME"       = $McpServerName
-                    "PENTEST_API_BASE"      = "http://localhost:9000"
+                    "PENTEST_API_BASE"      = $mcpApiBase
                     "PENTEST_QUICK_TIMEOUT" = "60"
                     "PENTEST_HTTP_TIMEOUT"  = "900"
                 }
@@ -643,7 +649,7 @@ $mcpConfigContent = @{
                 "args"    = @("/c", $shortBat)
                 "env"     = @{
                     "OSPREY_MCP_SERVER_NAME"       = $McpServerName
-                    "PENTEST_API_BASE"      = "http://localhost:9000"
+                    "PENTEST_API_BASE"      = $mcpApiBase
                     "PENTEST_QUICK_TIMEOUT" = "60"
                     "PENTEST_HTTP_TIMEOUT"  = "900"
                 }
@@ -658,7 +664,7 @@ $mcpConfigContent = @{
                 "cwd"         = $shortRoot
                 "environment" = @{
                     "OSPREY_MCP_SERVER_NAME"       = $McpServerName
-                    "PENTEST_API_BASE"      = "http://localhost:9000"
+                    "PENTEST_API_BASE"      = $mcpApiBase
                     "PENTEST_QUICK_TIMEOUT" = "60"
                 }
                 "enabled"     = $true
@@ -780,7 +786,9 @@ if ($detectedHarnesses.Count -gt 0) {
 Write-Header "Setup Complete! Next Steps"
 
 if ($runtimeChoice -in @("1", "2")) {
-    Write-Host "  * Backend Status: Running inside Docker at http://localhost:9000" -ForegroundColor Green
+    $statPort = Get-EnvVar "BACKEND_PORT" "9000"
+    $statUrl = Get-EnvVar "API_BASE_URL" "http://localhost:$statPort"
+    Write-Host "  * Backend Status: Running inside Docker at $statUrl" -ForegroundColor Green
     Write-Host "    Inspect logs anytime : docker compose logs -f backend" -ForegroundColor DarkGray
     Write-Host "    Stop it              : docker compose down" -ForegroundColor DarkGray
 } elseif ($runtimeChoice -eq "3") {
