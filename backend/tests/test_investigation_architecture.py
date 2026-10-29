@@ -8,6 +8,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def _gateway_source() -> str:
+    """Concatenated text of the platform-mcp gateway package.
+
+    The gateway was split from a single server.py into server.py plus
+    _gateway_*.py tool modules; the guards below check the protocol exists
+    somewhere in that package, not in one particular file.
+    """
+    return "\n".join(
+        p.read_text(encoding="utf-8")
+        for p in sorted((ROOT / "platform-mcp").glob("*.py"))
+    )
+
+
 def test_old_autonomous_expansion_roots_are_deleted() -> None:
     assert not (ROOT / "backend/src/osprey/services/investigation_director.py").exists()
     assert not (ROOT / "backend/src/osprey/services/planner.py").exists()
@@ -15,7 +28,7 @@ def test_old_autonomous_expansion_roots_are_deleted() -> None:
     assert not (ROOT / "backend/src/osprey/api/v1/endpoints/surface.py").exists()
 
     jobs = (ROOT / "backend/src/osprey/schemas/jobs.py").read_text(encoding="utf-8")
-    mcp = (ROOT / "platform-mcp/server.py").read_text(encoding="utf-8")
+    mcp = _gateway_source()
     assert 'EXPANSION = "expansion"' not in jobs
     assert "def platform_expand(" not in mcp
 
@@ -38,7 +51,7 @@ def test_step_contract_is_revisioned_and_uses_typed_subject_ids() -> None:
 
 def test_cli_and_external_harness_share_the_same_step_api() -> None:
     client = (ROOT / "cli/api/client.py").read_text(encoding="utf-8")
-    mcp = (ROOT / "platform-mcp/server.py").read_text(encoding="utf-8")
+    mcp = _gateway_source()
 
     assert '"/api/v1/investigation/step"' in client
     assert '"/api/v1/investigation/step"' in mcp
