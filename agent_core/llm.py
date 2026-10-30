@@ -34,11 +34,7 @@ os.environ.setdefault("LITELLM_LOG", "WARNING")
 
 
 def ensure_mcp_compatibility() -> None:
-    """Ensure backward-compatibility between mcp 1.x and newer third-party libraries (e.g. litellm).
-
-    LiteLLM experimental MCP integrations import CacheableResult from mcp.types, which was
-    only introduced in mcp 2.x. Providing a compatible dummy class on mcp.types allows
-    these imports to succeed cleanly without requiring an invasive library fork or breaking mcp 1.x pins.
+    """Ensure backward-compatibility between mcp 1.x and newer third-party libraries (e.g. litellm, pydantic-settings).
     """
     try:
         import mcp.types as _mcp_types
@@ -48,6 +44,22 @@ def ensure_mcp_compatibility() -> None:
                 """Backward compatibility shim for mcp < 2.0 when newer litellm expects CacheableResult."""
 
             _mcp_types.CacheableResult = CacheableResult
+    except (ImportError, AttributeError):
+        pass
+
+    try:
+        import mcp.server.fastmcp.server as _fastmcp_server
+
+        _fastmcp_server.Settings.model_rebuild(_types_namespace={"FastMCP": _fastmcp_server.FastMCP})
+    except (ImportError, AttributeError):
+        pass
+
+    try:
+        import warnings
+
+        from pydantic_settings import IncompleteFieldDefinitionWarning
+
+        warnings.filterwarnings("ignore", category=IncompleteFieldDefinitionWarning, message=r".*lifespan.*")
     except (ImportError, AttributeError):
         pass
 

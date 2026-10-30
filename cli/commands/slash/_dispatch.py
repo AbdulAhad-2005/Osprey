@@ -10,21 +10,63 @@ if TYPE_CHECKING:
 from cli.commands.scan_shared import (
     _api_error_text,
 )
+from cli.commands.slash._findings import (
+    handle_anomalies,
+    handle_attackpath,
+    handle_context,
+    handle_file,
+    handle_finding,
+    handle_findings,
+    handle_fp,
+    handle_hypothesis,
+    handle_link,
+    handle_observations,
+    handle_priority,
+    handle_question,
+    handle_record,
+    handle_report,
+    handle_skill,
+    handle_skills,
+    handle_world,
+)
+from cli.commands.slash._meta import (
+    handle_agent,
+    handle_chat,
+    handle_clear,
+    handle_config,
+    handle_details,
+    handle_engagements,
+    handle_exit,
+    handle_health,
+    handle_help,
+    handle_model,
+    handle_models,
+    handle_profile,
+    handle_reconnect,
+    handle_reset,
+    handle_status,
+    handle_tool,
+    handle_tools,
+)
+from cli.commands.slash._scan import (
+    handle_cancel,
+    handle_fast_scan,
+    handle_job,
+    handle_jobs,
+    handle_pause,
+    handle_resume,
+    handle_scan,
+)
 from cli.ui.display import (
     print_error,
 )
-from cli.commands.slash._findings import handle_anomalies, handle_attackpath, handle_context, handle_file, handle_finding, handle_findings, handle_fp, handle_hypothesis, handle_link, handle_observations, handle_priority, handle_question, handle_record, handle_report, handle_skill, handle_skills, handle_world
-from cli.commands.slash._meta import handle_agent, handle_chat, handle_clear, handle_config, handle_details, handle_engagements, handle_exit, handle_health, handle_help, handle_model, handle_models, handle_profile, handle_reconnect, handle_reset, handle_status, handle_tool, handle_tools
-from cli.commands.slash._scan import handle_cancel, handle_fast_scan, handle_job, handle_jobs, handle_pause, handle_resume, handle_scan
 
-
-
-SLASH_COMMANDS: dict[str, tuple[str, "callable"]] = {
+SLASH_COMMANDS: dict[str, tuple[str, callable]] = {
     "/help": ("Show help", handle_help),
     "/health": ("Check backend health", handle_health),
     "/tools": ("List MCP tools", handle_tools),
-    "/models": ("List LLM models", handle_models),
-    "/model": ("Show active model, or `/model reload` to re-read .env in place", handle_model),
+    "/models": ("List supported LLM models or filter (/models <provider>)", handle_models),
+    "/model": ("Show or configure active model (/model set, /model reload)", handle_model),
     "/scan": ("Bind target + run full agent scan", handle_scan),
     "/fast-scan": ("Deterministic no-LLM scan: whois+subs+SANs+IPs+CDN-classify+httpx+nmap+takeover", handle_fast_scan),
     "/jobs": ("List durable jobs for the active engagement", handle_jobs),
@@ -57,7 +99,7 @@ SLASH_COMMANDS: dict[str, tuple[str, "callable"]] = {
     "/skill": ("Review/approve LLM-proposed learned skills", handle_skill),
     "/profile": ("Your operator profile — add prefs or approve LLM-inferred ones", handle_profile),
     "/agent": ("Switch prompt-defined flow/mode (.osprey/agents/*.md)", handle_agent),
-    "/config": ("Show configuration", handle_config),
+    "/config": ("Show platform configuration (/config reload)", handle_config),
     "/reconnect": ("Re-read .env and reconnect to backend", handle_reconnect),
     "/reset": ("Clear agent conversation", handle_reset),
     "/clear": ("Clear screen", handle_clear),
@@ -67,7 +109,7 @@ SLASH_COMMANDS: dict[str, tuple[str, "callable"]] = {
 }
 
 
-def execute_command(command_line: str, client: "APIClient") -> bool:
+def execute_command(command_line: str, client: APIClient) -> bool:
     """Execute a slash command. Returns False if the user wants to exit."""
     parts = command_line.strip().split()
     cmd = parts[0].lower()

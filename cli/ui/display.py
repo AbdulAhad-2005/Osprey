@@ -298,24 +298,73 @@ def _print_missing_tools_table(missing: list[dict[str, Any]]) -> None:
     console.print(table)
 
 
-def print_models(models: list[dict[str, Any]]) -> None:
-    if not models:
-        print_info("No models configured. Set LLM_API_KEY in .env to enable models.")
-        return
-    table = Table(title="Available Models", show_header=True, header_style="bold cyan")
-    table.add_column("Name", style="bold")
-    table.add_column("Provider")
-    table.add_column("Description")
-    table.add_column("Status")
-    for model in models:
-        status = Text("active", style="green") if model.get("active") else Text("inactive", style="dim")
-        table.add_row(
-            model.get("name", "unknown"),
-            model.get("provider", "-"),
-            model.get("description", "-"),
-            status,
+def print_models(
+    models: list[dict[str, Any]],
+    *,
+    active_model: str = "",
+    filter_provider: str = "",
+    local_ollama_models: list[str] | None = None,
+) -> None:
+    if active_model:
+        console.print(f"[bold cyan]Active Model:[/] [bold green]{escape(active_model)}[/]\n")
+
+    console.print("[bold]LiteLLM Provider Guide:[/bold]")
+    console.print("  Format:  [cyan]<provider>/<model-name>[/]")
+    console.print("  Set:     [yellow]/model set <provider>/<model-name> [api_key] [--base <url>][/]")
+    console.print("  Filter:  [dim]/models <provider>[/] (e.g. /models groq, /models openrouter, /models ollama)\n")
+
+    if local_ollama_models:
+        ollama_table = Table(
+            title="Local Ollama Models Detected (localhost:11434)",
+            show_header=True,
+            header_style="bold green",
+            box=box.ROUNDED,
         )
-    console.print(table)
+        ollama_table.add_column("Model Identifier", style="bold")
+        ollama_table.add_column("Provider")
+        ollama_table.add_column("Status")
+        for tag in local_ollama_models:
+            full_name = f"ollama/{tag}"
+            is_active = full_name == active_model
+            status = Text("active", style="bold green") if is_active else Text("available locally", style="cyan")
+            ollama_table.add_row(full_name, "ollama", status)
+        console.print(ollama_table)
+        console.print("")
+
+    # Curated popular / recommended models
+    if filter_provider:
+        filtered = [
+            m for m in models
+            if filter_provider in m.get("provider", "").lower() or filter_provider in m.get("name", "").lower()
+        ]
+        title = f"Supported Models ({filter_provider})"
+    else:
+        filtered = models
+        title = "Popular & Recommended Models"
+
+    if filtered:
+        table = Table(title=title, show_header=True, header_style="bold cyan", box=box.ROUNDED)
+        table.add_column("Model Identifier", style="bold")
+        table.add_column("Provider")
+        table.add_column("Description / Notes")
+        table.add_column("Status")
+        for model in filtered:
+            is_active = model.get("name") == active_model or model.get("active")
+            status = Text("active", style="bold green") if is_active else Text("supported", style="dim")
+            table.add_row(
+                model.get("name", "unknown"),
+                model.get("provider", "-"),
+                model.get("description", "-"),
+                status,
+            )
+        console.print(table)
+    elif filter_provider:
+        console.print(f"[yellow]No pre-cataloged models for provider '{escape(filter_provider)}'.[/yellow]")
+        console.print(
+            f"[dim]Any model supported by LiteLLM can be used directly with: /model set {escape(filter_provider)}/<model-name> [api_key][/dim]"
+        )
+
+    console.print("\n[dim]Note: LiteLLM supports 100+ providers. Any valid provider model can be set via /model set.[/dim]")
 
 
 def print_engagements(engagements: list[dict[str, Any]]) -> None:

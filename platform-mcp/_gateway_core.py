@@ -17,6 +17,19 @@ from contextvars import ContextVar
 from typing import Any
 
 import httpx
+
+try:
+    from agent_core.llm import ensure_mcp_compatibility
+
+    ensure_mcp_compatibility()
+except ImportError:
+    try:
+        import mcp.server.fastmcp.server as _fastmcp_server
+
+        _fastmcp_server.Settings.model_rebuild(_types_namespace={'FastMCP': _fastmcp_server.FastMCP})
+    except (ImportError, AttributeError):
+        pass
+
 from mcp.server.fastmcp import FastMCP
 
 API_BASE = (

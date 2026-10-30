@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from osprey.core.config import get_settings, reload_settings, set_dotenv_values
 from osprey.services.llm_service import (
+    _provider_of,
     llm_configured,
     llm_configured_reason,
     reload_llm_service,
@@ -41,17 +42,39 @@ class LLMConfigUpdate(BaseModel):
         return value
 
 
-@router.get("/", summary="Show current LLM config")
+@router.get("/", summary="Show current platform & LLM config")
 def get_config() -> dict:
-    """Return the current LLM configuration (safe, no API key shown)."""
-    settings = get_settings().llm
+    """Return platform and LLM configuration (safe, credentials redacted)."""
+    settings = get_settings()
+    llm = settings.llm
+
+    # Redact sensitive credentials in database URL
+    db_repr = settings.database_url
+    if "@" in db_repr and "://" in db_repr:
+        prefix, rest = db_repr.split("://", 1)
+        user_pass, host_part = rest.split("@", 1)
+        user = user_pass.split(":", 1)[0]
+        db_repr = f"{prefix}://{user}:***@{host_part}"
+
     return {
-        "model": settings.model,
-        "has_api_key": bool(settings.api_key),
-        "has_custom_base": bool(settings.api_base),
-        "max_tokens": settings.max_tokens,
-        "temperature": settings.temperature,
-        "max_agent_turns": settings.max_agent_turns,
+        "environment": settings.environment,
+        "database": db_repr,
+        "model": llm.model,
+        "has_api_key": bool(llm.api_key),
+        "has_custom_base": bool(llm.api_base),
+        "max_tokens": llm.max_tokens,
+        "temperature": llm.temperature,
+        "request_timeout": llm.request_timeout,
+        "max_agent_turns": llm.max_agent_turns,
+        "tool_timeout": llm.tool_timeout,
+        "features": {
+            "unrestricted_shell": settings.enable_unrestricted_shell,
+            "platform_script": settings.enable_platform_script,
+            "learned_skills": settings.enable_learned_skills,
+            "pip_install": settings.enable_script_pip_install,
+            "apt_install": settings.enable_script_apt_install,
+            "slim_skills": settings.slim_context_skills,
+        },
     }
 
 
@@ -64,7 +87,9 @@ def set_llm_config(update: LLMConfigUpdate) -> dict:
     """
     env_updates: dict[str, str] = {}
     current = get_settings().llm
-    provider_changed = update.model is not None and update.model.split("/", 1)[0] != current.model.split("/", 1)[0]
+    current_provider = _provider_of(current.model)
+    new_provider = _provider_of(update.model) if update.model is not None else current_provider
+    provider_changed = update.model is not None and bool(new_provider) and (new_provider != current_provider)
     # Never send one provider's saved credential to a different provider.
     if provider_changed:
         env_updates.update(LLM_API_KEY="", LLM_API_BASE="")

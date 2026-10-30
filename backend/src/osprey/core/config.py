@@ -3,11 +3,13 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from threading import Lock
-from typing import Any
 
 from pydantic import Field
-from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
-
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
 # Resolve .env relative to this file (config.py), not CWD, so it works
 # regardless of where the backend process is started from.
@@ -45,7 +47,10 @@ def set_dotenv_values(updates: dict[str, str]) -> str:
     values are written as empty (explicit unset), not skipped.
     """
     with _DOTENV_WRITE_LOCK:
-        return _write_dotenv_values(updates)
+        path = _write_dotenv_values(updates)
+        for key, value in updates.items():
+            os.environ[key] = value
+        return path
 
 
 def _write_dotenv_values(updates: dict[str, str]) -> str:

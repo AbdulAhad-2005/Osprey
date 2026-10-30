@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import os
+from typing import TYPE_CHECKING, Any
 
+import httpx
 
 if TYPE_CHECKING:
     from cli.api.client import APIClient
@@ -24,7 +26,8 @@ from cli.ui.display import (
     print_tools,
 )
 
-def handle_help(args: list[str], client: "APIClient") -> None:
+
+def handle_help(args: list[str], client: APIClient) -> None:
     commands = {
         "/help": "Show this help message",
         "/health": "Check backend service health",
@@ -32,8 +35,10 @@ def handle_help(args: list[str], client: "APIClient") -> None:
             "Show missing tools + how to install each (default), or every "
             "registered tool with --all"
         ),
-        "/models": "List supported LLM models",
-        "/model [reload]": "Show active LLM model; `reload` re-reads .env model/key in place (keeps engagement)",
+        "/models [provider]": "List supported LLM models or filter by provider (e.g. /models groq)",
+        "/model [set <model> [key]] | [reload]": (
+            "Show active model, switch model/key (/model set ...), or reload .env in place"
+        ),
         "/scan [target] [--engine|--supervised] [--fresh]": (
             "Bind target + run a full pentest. Default: the model drives every "
             "tool itself (full LLM judgment/cost). --engine: deterministic, "
@@ -64,6 +69,9 @@ def handle_help(args: list[str], client: "APIClient") -> None:
         "/anomalies [--engagement <id>]": "Peer-comparison outliers (timing/version drift) — feeds priority's unexplained_behavior",
         "/context": "Show the context packet (world model, priorities, coverage, questions, attack paths, RoE)",
         '/skills find "<query>" [--phase ..] [--mitre ..] [--asset-type ..]': "Ranked skill retrieval (replaces flat browsing at scale)",
+        "/skill [list|approve|reject]": "Review/approve LLM-proposed learned skills",
+        "/profile [add <pref>|list|approve|reject]": "Operator profile — set preferences or approve learned ones",
+        "/agent [list|switch <name>|default]": "Switch prompt-defined flow/mode (.osprey/agents/*.md)",
         '/link <source> <relation> <target> "<evidence>" [--confidence ..]': "Create an operator-named graph edge",
         '/record <type> "<title>" "<evidence>" [--severity ..] [--desc ..]': "Record a reasoned conclusion (evidence -> attestation; confidence computed)",
         '/attackpath propose "<title>" <kind> <ref_id> ["<why>"]': "Start an attack-path chain",
@@ -74,8 +82,7 @@ def handle_help(args: list[str], client: "APIClient") -> None:
         "/report [--engagement <id>]": (
             "Write a Markdown recon report (seed -> sisters -> subdomains -> IPs -> ports/services/tech, WHOIS/OSINT, vulns) to ./reports/"
         ),
-        "/tool [id]": "List recent tool calls, or open one full command/output transcript",
-        "/output [id]": "Alias for /tool [id]",
+        "/tool [id]": "List recent tool calls, or open one full command/output transcript (alias: /output)",
         "/chat": "Show this CLI session's conversation",
         "/details [compact|preview|verbose]": "Cycle or set live tool output detail level",
         "/pause": "Pause deterministic investigation scheduling; active job keeps running",
@@ -84,9 +91,7 @@ def handle_help(args: list[str], client: "APIClient") -> None:
         "/status": "Show current session status (auto-refreshes config)",
         "/jobs [status]": "List durable jobs for the active engagement",
         "/job <id>": "Show current state and recent log lines for one job",
-        "/cancel <id>": "Cancel a job; evidence gathered so far remains saved",
-        "/config": "Show config (auto-refreshes from .env)",
-        "/config reload": "Force backend to re-read .env",
+        "/config [reload]": "Show platform config (database, timeouts, security flags) or reload .env",
         "/reconnect": "Re-read .env and reconnect to changed API_BASE_URL",
         "/reset": "Clear agent conversation memory for this CLI session",
         "/clear": "Clear the terminal screen",
@@ -95,16 +100,16 @@ def handle_help(args: list[str], client: "APIClient") -> None:
     print_command_help(commands)
     print_info("")
     print_info("LLM Setup:")
-    print_info("  Set LLM_MODEL and LLM_API_KEY in your .env file to enable the agent.")
+    print_info("  Set or switch models dynamically with '/model set <provider>/<model> [api_key]'.")
     print_info("  Examples:")
-    print_info("    LLM_MODEL=deepseek/deepseek-chat  LLM_API_KEY=sk-...")
-    print_info("    LLM_MODEL=openai/gpt-4o            LLM_API_KEY=sk-...")
-    print_info("    LLM_MODEL=anthropic/claude-sonnet-4-20250514  LLM_API_KEY=sk-ant-...")
-    print_info("    LLM_MODEL=groq/llama-3.1-70b       LLM_API_KEY=gsk_...")
-    print_info("    LLM_MODEL=ollama/llama3.1           (no key needed)")
+    print_info("    /model set groq/llama-3.3-70b-versatile gsk_...")
+    print_info("    /model set openrouter/openrouter/free sk-or-v1-...")
+    print_info("    /model set openai/gpt-4o sk-proj-...")
+    print_info("    /model set anthropic/claude-sonnet-4-20250514 sk-ant-...")
+    print_info("    /model set ollama/llama3.1")
 
 
-def handle_health(args: list[str], client: "APIClient") -> None:
+def handle_health(args: list[str], client: APIClient) -> None:
     try:
         data = client.health()
         print_health(data)
@@ -112,68 +117,189 @@ def handle_health(args: list[str], client: "APIClient") -> None:
         print_error(str(exc))
 
 
-def handle_tools(args: list[str], client: "APIClient") -> None:
+def handle_tools(args: list[str], client: APIClient) -> None:
     show_all = any(a in ("--all", "all") for a in args)
     tools = client.list_tools()
     print_tools(tools, show_all=show_all)
 
 
-def handle_models(args: list[str], client: "APIClient") -> None:
+def handle_models(args: list[str], client: APIClient) -> None:
+    filter_provider = args[0].strip().lower() if args else ""
     models = client.list_models()
-    print_models(models)
+
+    ollama_models: list[str] = []
+    if filter_provider in ("", "ollama"):
+        try:
+            api_base = os.getenv("LLM_API_BASE") or "http://localhost:11434"
+            tags_url = f"{api_base.rstrip('/')}/api/tags"
+            r = httpx.get(tags_url, timeout=1.0)
+            if r.status_code == 200:
+                tags_data = r.json()
+                ollama_models = [m.get("name", "") for m in tags_data.get("models", []) if m.get("name")]
+        except Exception:
+            pass
+
+    active_model = (os.getenv("LLM_MODEL") or "").strip()
+    print_models(
+        models,
+        active_model=active_model,
+        filter_provider=filter_provider,
+        local_ollama_models=ollama_models,
+    )
 
 
-def handle_model(args: list[str], client: "APIClient") -> None:
-    """Show both models in play: the CLI's own driving model (what runs your
-    prompts, in this process) and the backend's (what the deterministic
-    `--engine` path's dynamic-fallback ingestion classifier uses, if
-    configured — a separate, optional concern from what's driving you).
+def handle_model(args: list[str], client: APIClient) -> None:
+    """Show or configure the Osprey LLM model.
 
-    `/model reload` re-reads .env and rebuilds the driving model in place —
-    without dropping the engagement — so you can switch provider/model after a
-    rate limit and keep going (unlike /reconnect, which clears the session)."""
+    Usage:
+      /model                                Show current active model and status
+      /model set <model> [key] [--base URL] Update model and key in .env and hot-reload
+      /model reload                         Re-read .env and reload in place (keeps engagement)
+    """
     if args and args[0].lower() in ("reload", "refresh"):
-        import os
+        from dotenv import find_dotenv, load_dotenv
 
-        from dotenv import load_dotenv
+        env_file = os.getenv("OSPREY_ENV_FILE") or find_dotenv(usecwd=True)
+        if not env_file:
+            try:
+                from osprey.core.config import _find_dotenv
+                env_file = _find_dotenv()
+            except Exception:
+                pass
+        if env_file:
+            load_dotenv(env_file, override=True)
+        else:
+            load_dotenv(override=True)
 
-        load_dotenv(override=True)  # edited .env wins over the stale process env
         from cli.harness import get_runtime
 
         get_runtime(client).reload_model()
+        _reload_backend_config(client)
         model = (os.getenv("LLM_MODEL") or "").strip() or "NOT CONFIGURED"
-        print_success(f"Reloaded driving model from .env: {model} (engagement kept).")
+        print_success(f"Reloaded model from .env: {model} (engagement kept).")
         return
-    _print_cli_model_status()
-    print_info("")
+
+    if args and args[0].lower() == "set":
+        rest = args[1:]
+        custom_base, rest = _take_flag(rest, "--base")
+        if not rest:
+            print_info("Usage: /model set <model_name> [api_key] [--base <custom_url>]")
+            print_info("Examples:")
+            print_info("  /model set openrouter/openrouter/free sk-or-v1-...")
+            print_info("  /model set groq/llama-3.3-70b-versatile gsk_...")
+            print_info("  /model set openai/gpt-4o sk-proj-...")
+            print_info("  /model set ollama/llama3.1")
+            return
+
+        new_model = rest[0].strip()
+        new_key = rest[1].strip() if len(rest) > 1 else None
+
+        # 1. Persist directly to project .env so the live file is always updated
+        updates: dict[str, str] = {"LLM_MODEL": new_model}
+        if new_key is not None:
+            updates["LLM_API_KEY"] = new_key
+        if custom_base is not None:
+            updates["LLM_API_BASE"] = custom_base
+        try:
+            from osprey.core.config import set_dotenv_values
+
+            set_dotenv_values(updates)
+        except Exception as exc:
+            print_error(f"Failed to update .env: {exc}")
+            return
+
+        # 2. Notify backend if running
+        payload: dict[str, Any] = {"model": new_model}
+        if new_key is not None:
+            payload["api_key"] = new_key
+        if custom_base is not None:
+            payload["api_base"] = custom_base
+        try:
+            client._client.post(f"{client.base_url}/api/v1/config/llm", json=payload)
+        except Exception:
+            pass
+
+        # 3. Synchronize in-memory process environment
+        os.environ["LLM_MODEL"] = new_model
+        if new_key is not None:
+            os.environ["LLM_API_KEY"] = new_key
+        if custom_base is not None:
+            os.environ["LLM_API_BASE"] = custom_base
+
+        from cli.harness import get_runtime
+
+        get_runtime(client).reload_model()
+        _reload_backend_config(client)
+
+        print_success(f"Model updated to: {new_model}")
+        has_key = bool(new_key or os.getenv("LLM_API_KEY"))
+        print_info(f"API Key:  {'configured' if has_key else 'none (not required for local models)'}")
+        if custom_base or os.getenv("LLM_API_BASE"):
+            print_info(f"API Base: {custom_base or os.getenv('LLM_API_BASE')}")
+        return
+
+    _print_unified_model_status(client)
+
+
+def _print_unified_model_status(client: APIClient) -> None:
+    """Display a clean, unified status of the active model and configuration."""
     _reload_backend_config(client)
+
+    cli_model = (os.getenv("LLM_MODEL") or "").strip()
+    cli_has_key = bool((os.getenv("LLM_API_KEY") or "").strip())
+    cli_base = (os.getenv("LLM_API_BASE") or "").strip()
+
+    backend_model = ""
+    backend_has_key = False
+    backend_has_base = False
+    backend_max_tokens = 4096
+    backend_temp = 0.1
+
     try:
         resp = client._client.get(f"{client.base_url}/api/v1/models/active")
-        resp.raise_for_status()
-        data = resp.json()
-        print_info(f"Backend model:       {data.get('model', '?')}")
-        print_info(f"Backend API Key:     {'configured' if data.get('has_api_key') else 'NOT SET'}")
-        print_info(f"Backend Custom Base: {data.get('has_custom_base', False)}")
-        print_info(f"Backend Max Tokens:  {data.get('max_tokens', '?')}")
-        print_info(f"Backend Temperature: {data.get('temperature', '?')}")
-    except Exception as exc:
-        print_error(str(exc))
+        if resp.status_code == 200:
+            data = resp.json()
+            backend_model = data.get("model", "")
+            backend_has_key = data.get("has_api_key", False)
+            backend_has_base = data.get("has_custom_base", False)
+            backend_max_tokens = data.get("max_tokens", 4096)
+            backend_temp = data.get("temperature", 0.1)
+    except Exception:
+        pass
+
+    active_model = cli_model or backend_model or "NOT CONFIGURED"
+    has_key = cli_has_key or backend_has_key
+    has_custom_base = bool(cli_base) or backend_has_base
+
+    provider = active_model.split("/", 1)[0] if "/" in active_model else "custom"
+    is_ready = bool(active_model != "NOT CONFIGURED" and (has_key or provider == "ollama"))
+
+    print_info(f"Model:        {active_model} ({provider})")
+    print_info(f"API Key:      {'configured' if has_key else 'NOT SET'}")
+    print_info(f"API Base:     {cli_base if cli_base else ('custom' if has_custom_base else 'default')}")
+    print_info(f"Status:       {'ready' if is_ready else 'NOT READY — run /model set <model> [api_key]'}")
+    print_info(f"Parameters:   max_tokens={backend_max_tokens}, temperature={backend_temp}")
+
+    if cli_model and backend_model and cli_model != backend_model:
+        print_info(
+            f"\nNotice: CLI process is using '{cli_model}' while backend is using '{backend_model}'.\n"
+            "Run '/model reload' to sync both to the current .env."
+        )
 
 
 def _print_cli_model_status() -> None:
-    """The model actually driving your prompts — independent of whatever the
-    backend's own .env has configured (see agent_core/llm.py)."""
+    """Backwards compatibility wrapper for internal callers."""
     from agent_core.llm import CLIModelConfig, LLMNotConfiguredError
 
     try:
         config = CLIModelConfig.from_env()
-        print_info(f"CLI driving model:   {config.model}")
-        print_info("CLI API Key:         configured")
+        print_info(f"Model:        {config.model}")
+        print_info("API Key:      configured")
     except LLMNotConfiguredError:
-        print_info("CLI driving model:   NOT CONFIGURED — set LLM_MODEL and LLM_API_KEY in your own .env")
+        print_info("Model:        NOT CONFIGURED — set with /model set <model> [api_key]")
 
 
-def handle_engagements(args: list[str], client: "APIClient") -> None:
+def handle_engagements(args: list[str], client: APIClient) -> None:
     if not args or args[0] == "list":
         engagements = client.list_engagements()
         print_engagements(engagements)
@@ -211,7 +337,7 @@ def _require_engagement(engagement_id: str | None) -> bool:
     return False
 
 
-def _reload_backend_config(client: "APIClient") -> bool:
+def _reload_backend_config(client: APIClient) -> bool:
     """Trigger backend config reload from .env. Returns True on success."""
     try:
         client._client.post(f"{client.base_url}/api/v1/config/reload")
@@ -220,7 +346,7 @@ def _reload_backend_config(client: "APIClient") -> bool:
         return False
 
 
-def handle_status(args: list[str], client: "APIClient") -> None:
+def handle_status(args: list[str], client: APIClient) -> None:
     from cli.harness import get_runtime
 
     runtime = get_runtime(client)
@@ -237,7 +363,7 @@ def handle_status(args: list[str], client: "APIClient") -> None:
     print_info(f"API URL:  {client.base_url}")
     print_info(f"Details:  {runtime.transcript.detail_mode}")
 
-    active = client.active_engagement_id
+    active = getattr(client, "active_engagement_id", None) or getattr(runtime, "active_engagement_id", None)
     if active:
         print_info(f"Engagement: {active}")
         activity = client.get_pipeline_activity(active)
@@ -253,17 +379,32 @@ def handle_status(args: list[str], client: "APIClient") -> None:
     else:
         print_info("Engagement: none — run /scan <target> or /engage new <target>")
 
-    _print_cli_model_status()
+    model_name = (os.getenv("LLM_MODEL") or "").strip()
+    has_key = bool((os.getenv("LLM_API_KEY") or "").strip())
+    if not model_name:
+        try:
+            resp = client._client.get(f"{client.base_url}/api/v1/models/active")
+            if resp.status_code == 200:
+                mdata = resp.json()
+                model_name = mdata.get("model", "")
+                has_key = mdata.get("has_api_key", False)
+        except Exception:
+            pass
 
-    # Backend model — a separate, optional concern (drives the deterministic
-    # --engine path's dynamic-fallback ingestion classifier, if configured).
+    is_ready = bool(model_name and (has_key or "ollama" in model_name))
+    if model_name:
+        status_tag = "ready" if is_ready else "key missing"
+        print_info(f"Model:      {model_name} ({status_tag})")
+    else:
+        print_info("Model:      NOT CONFIGURED — run /model set <model> [key]")
+
     try:
         resp = client._client.get(f"{client.base_url}/api/v1/agent/status")
-        resp.raise_for_status()
-        data = resp.json()
-        print_info(f"Backend model: {data.get('model', '?')}")
-        print_info(f"Backend OK:    {'yes' if data.get('model_active') else 'no — not configured'}")
-        print_info(f"Tools:         {data.get('tools_available', 0)} available")
+        if resp.status_code == 200:
+            data = resp.json()
+            tools_avail = data.get("tools_available", 0)
+            if tools_avail:
+                print_info(f"Tools:      {tools_avail} available")
     except Exception:
         pass
     recent = runtime.transcript.recent(1)
@@ -272,38 +413,56 @@ def handle_status(args: list[str], client: "APIClient") -> None:
         print_info(f"Last tool: #{last.id} {last.tool_name} ({last.status_text})")
 
 
-def handle_config(args: list[str], client: "APIClient") -> None:
-    """Show BACKEND config and optionally reload its .env — the deterministic
-    --engine path's own settings. Your own driving model is separate; see
-    /model or /status."""
-    if args and args[0] == "reload":
+def handle_config(args: list[str], client: APIClient) -> None:
+    """Show platform configuration (database, environment, execution flags, timeouts)
+    and optionally reload its .env."""
+    if args and args[0].lower() in ("reload", "refresh"):
         try:
             resp = client._client.post(f"{client.base_url}/api/v1/config/reload")
             resp.raise_for_status()
-            data = resp.json()
-            print_success(f"Config reloaded: model={data['model']}, api_key={'set' if data['has_api_key'] else 'NOT SET'}")
+            print_success("Configuration reloaded from .env")
         except Exception as exc:
             print_error(f"Failed to reload config: {exc}")
         return
 
-    # Auto-reload before showing so info is always fresh
     _reload_backend_config(client)
 
     try:
         resp = client._client.get(f"{client.base_url}/api/v1/config")
         resp.raise_for_status()
         data = resp.json()
-        print_info(f"Backend Model:        {data.get('model', '?')}")
-        print_info(f"Backend API Key:      {'configured' if data.get('has_api_key') else 'NOT SET'}")
-        print_info(f"Backend Custom Base:  {data.get('has_custom_base', False)}")
-        print_info(f"Backend Max Tokens:   {data.get('max_tokens', '?')}")
-        print_info(f"Backend Temperature:  {data.get('temperature', '?')}")
-        print_info(f"Backend Max Turns:    {data.get('max_agent_turns', '?')}")
-    except Exception as exc:
-        print_error(str(exc))
+
+        print_info("Platform Configuration:")
+        print_info(f"  Backend URL:        {client.base_url}")
+        print_info(f"  Environment:        {data.get('environment', 'development')}")
+        print_info(f"  Database:           {data.get('database', '-')}")
+        print_info(f"  Tool Timeout:       {data.get('tool_timeout', 900)}s")
+        print_info(f"  Request Timeout:    {data.get('request_timeout', 300)}s")
+        print_info(f"  Max Agent Turns:    {data.get('max_agent_turns', 30)}")
+
+        features = data.get("features", {})
+        if features:
+            print_info("Features & Capabilities:")
+            print_info(f"  Unrestricted Shell: {'enabled' if features.get('unrestricted_shell') else 'disabled'}")
+            print_info(f"  Platform Scripts:   {'enabled' if features.get('platform_script') else 'disabled'}")
+            print_info(f"  Learned Skills:     {'enabled' if features.get('learned_skills') else 'disabled'}")
+            print_info(f"  Pip Install:        {'enabled' if features.get('pip_install') else 'disabled'}")
+            print_info(f"  Apt Install:        {'enabled' if features.get('apt_install') else 'disabled'}")
+
+        print_info("")
+        model_name = data.get("model") or os.getenv("LLM_MODEL") or "NOT CONFIGURED"
+        has_key = data.get("has_api_key") or bool(os.getenv("LLM_API_KEY"))
+        status_txt = "ready" if has_key or "ollama" in model_name else "not configured"
+        print_info(f"Active Model:         {model_name} ({status_txt})")
+        print_info("                      (Run '/model' to view details or '/model set' to configure)")
+    except Exception:
+        print_info(f"Backend URL:          {client.base_url} (offline or unreachable)")
+        model_name = os.getenv("LLM_MODEL", "NOT CONFIGURED")
+        has_key = bool(os.getenv("LLM_API_KEY"))
+        print_info(f"Active Model:         {model_name} ({'ready' if has_key else 'not configured'})")
 
 
-def handle_reset(args: list[str], client: "APIClient") -> None:
+def handle_reset(args: list[str], client: APIClient) -> None:
     from cli.harness import get_runtime
 
     runtime = get_runtime(client)
@@ -311,18 +470,18 @@ def handle_reset(args: list[str], client: "APIClient") -> None:
     print_success("Conversation cleared. Next prompt starts a fresh agent thread.")
 
 
-def handle_clear(args: list[str], client: "APIClient") -> None:
+def handle_clear(args: list[str], client: APIClient) -> None:
     import os
     os.system("cls" if os.name == "nt" else "clear")
 
 
-def handle_exit(args: list[str], client: "APIClient") -> None:
+def handle_exit(args: list[str], client: APIClient) -> None:
     """Placeholder so /exit shows in autocomplete. The actual exit is handled in
     execute_command (which intercepts /exit and returns False before dispatch)."""
-    return None
+    return
 
 
-def handle_details(args: list[str], client: "APIClient") -> None:
+def handle_details(args: list[str], client: APIClient) -> None:
     from cli.harness import get_runtime
 
     transcript = get_runtime(client).transcript
@@ -337,7 +496,7 @@ def handle_details(args: list[str], client: "APIClient") -> None:
     print_success(f"Tool detail mode: {mode}")
 
 
-def _read_artifact_text(client: "APIClient", engagement_id: str, path: str) -> str | None:
+def _read_artifact_text(client: APIClient, engagement_id: str, path: str) -> str | None:
     data = client.read_artifact(engagement_id, path, limit=200_000)
     if not data:
         return None
@@ -348,10 +507,11 @@ def _read_artifact_text(client: "APIClient", engagement_id: str, path: str) -> s
     return str(data)
 
 
-def handle_tool(args: list[str], client: "APIClient") -> None:
+def handle_tool(args: list[str], client: APIClient) -> None:
     from cli.harness import get_runtime
 
-    transcript = get_runtime(client).transcript
+    runtime = get_runtime(client)
+    transcript = runtime.transcript
     if not args:
         print_tool_history(transcript)
         return
@@ -362,7 +522,7 @@ def handle_tool(args: list[str], client: "APIClient") -> None:
         print_tool_history(transcript)
         return
 
-    engagement_id = client.active_engagement_id
+    engagement_id = getattr(client, "active_engagement_id", None) or getattr(runtime, "active_engagement_id", None)
     stdout_text = None
     stderr_text = None
     if engagement_id and rec.stdout_path:
@@ -373,7 +533,7 @@ def handle_tool(args: list[str], client: "APIClient") -> None:
     print_tool_detail(rec, stdout_text=stdout_text, stderr_text=stderr_text)
 
 
-def handle_chat(args: list[str], client: "APIClient") -> None:
+def handle_chat(args: list[str], client: APIClient) -> None:
     """Show this CLI session's own agent conversation. Lives entirely in the
     CLI's own Runner (agent_core/loop.py) now — there is no separate
     server-side thread to fetch, so this reflects exactly what your next
@@ -395,7 +555,7 @@ def handle_chat(args: list[str], client: "APIClient") -> None:
     print_chat_history(shown, limit=limit)
 
 
-def handle_reconnect(args: list[str], client: "APIClient") -> None:
+def handle_reconnect(args: list[str], client: APIClient) -> None:
     """Re-read .env and reconnect to a (possibly changed) backend URL."""
     import os
 
@@ -411,7 +571,7 @@ def handle_reconnect(args: list[str], client: "APIClient") -> None:
     print_info("Engagement and agent context cleared; bind a target before the next tool run.")
 
 
-def handle_profile(args: list[str], client: "APIClient") -> None:
+def handle_profile(args: list[str], client: APIClient) -> None:
     """Operator profile — your preferences the harness adapts to. Add your own,
     or review/approve preferences the LLM inferred from how you work."""
     sub = (args[0].lower() if args else "list")
@@ -455,7 +615,7 @@ def handle_profile(args: list[str], client: "APIClient") -> None:
         print_error(_api_error_text(exc))
 
 
-def handle_agent(args: list[str], client: "APIClient") -> None:
+def handle_agent(args: list[str], client: APIClient) -> None:
     """Prompt-defined flows/modes (no code): /agent (list) · /agent <name> (switch) ·
     /agent default (reset to full catalog). Define agents in .osprey/agents/<name>.md."""
     from agent_core.flows import load_agents
