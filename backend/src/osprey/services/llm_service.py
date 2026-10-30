@@ -25,7 +25,10 @@ from typing import Any
 import litellm
 from litellm import acompletion
 
+from agent_core.llm import ensure_mcp_compatibility
 from osprey.core.config import LLMSettings, get_settings
+
+ensure_mcp_compatibility()
 
 logger = logging.getLogger(__name__)
 
@@ -356,6 +359,7 @@ class LLMService:
             "temperature": temperature if temperature is not None else self._settings.temperature,
             "max_tokens": max_tokens or self._settings.max_tokens,
             "timeout": self._settings.request_timeout,
+            "_skip_mcp_handler": True,
         }
 
         if tools:

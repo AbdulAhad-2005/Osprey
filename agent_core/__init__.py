@@ -17,3 +17,9 @@ It used to live under ``cli/agent/``; the backend importing a loop out of the
 *client* package was an inverted dependency, so it was lifted here where no
 side "owns" it.
 """
+
+from agent_core.llm import ensure_mcp_compatibility
+
+# Ensure compatibility between mcp 1.x and newer third-party libraries (e.g. litellm)
+ensure_mcp_compatibility()
+

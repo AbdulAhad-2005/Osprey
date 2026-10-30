@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from rich import box
@@ -165,7 +166,8 @@ def _friendly_stream_error(message: str) -> str:
     if "timeout" in lowered and ("litellm" in lowered or "openrouter" in lowered):
         return "LLM request timed out; Osprey will continue if the pipeline still has work."
     if "llm completion failed" in lowered:
-        return "LLM completion failed; check /status for model/provider configuration."
+        clean = re.sub(r"^(?:llm completion failed:\s*)+", "", message.strip(), flags=re.IGNORECASE).strip()
+        return f"LLM completion failed: {clean} (check /status for model/provider configuration)"
     return message[:240]
 
 
