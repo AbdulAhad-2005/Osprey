@@ -152,10 +152,9 @@ def _legacy_revision(connection: Connection) -> str | None:
 def _alembic_config(connection: Connection) -> Config:
     cfg = Config(str(_BACKEND_ROOT / "alembic.ini"))
     cfg.set_main_option("script_location", str(_BACKEND_ROOT / "alembic"))
-    cfg.set_main_option(
-        "sqlalchemy.url",
-        connection.engine.url.render_as_string(hide_password=False),
-    )
+    # Escape % for configparser's interpolation syntax.
+    db_url = connection.engine.url.render_as_string(hide_password=False)
+    cfg.set_main_option("sqlalchemy.url", db_url.replace("%", "%%"))
     # Reuse the already-configured application connection.  This avoids a
     # second engine with subtly different SQLite connection semantics and
     # makes migration behavior deterministic in tests.
