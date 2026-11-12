@@ -8,6 +8,7 @@ import httpx
 if TYPE_CHECKING:
     from cli.api.client import APIClient
 
+from agent_core.llm import clean_env_value
 from cli.commands.scan_shared import (
     _api_error_text,
     _bind_engagement,
@@ -139,7 +140,7 @@ def handle_models(args: list[str], client: APIClient) -> None:
         except Exception:
             pass
 
-    active_model = (os.getenv("LLM_MODEL") or "").strip()
+    active_model = clean_env_value("LLM_MODEL")
     print_models(
         models,
         active_model=active_model,
@@ -175,7 +176,7 @@ def handle_model(args: list[str], client: APIClient) -> None:
 
         get_runtime(client).reload_model()
         _reload_backend_config(client)
-        model = (os.getenv("LLM_MODEL") or "").strip() or "NOT CONFIGURED"
+        model = clean_env_value("LLM_MODEL") or "NOT CONFIGURED"
         print_success(f"Reloaded model from .env: {model} (engagement kept).")
         return
 
@@ -245,9 +246,9 @@ def _print_unified_model_status(client: APIClient) -> None:
     """Display a clean, unified status of the active model and configuration."""
     _reload_backend_config(client)
 
-    cli_model = (os.getenv("LLM_MODEL") or "").strip()
-    cli_has_key = bool((os.getenv("LLM_API_KEY") or "").strip())
-    cli_base = (os.getenv("LLM_API_BASE") or "").strip()
+    cli_model = clean_env_value("LLM_MODEL")
+    cli_has_key = bool(clean_env_value("LLM_API_KEY"))
+    cli_base = clean_env_value("LLM_API_BASE")
 
     backend_model = ""
     backend_has_key = False
@@ -379,8 +380,8 @@ def handle_status(args: list[str], client: APIClient) -> None:
     else:
         print_info("Engagement: none — run /scan <target> or /engage new <target>")
 
-    model_name = (os.getenv("LLM_MODEL") or "").strip()
-    has_key = bool((os.getenv("LLM_API_KEY") or "").strip())
+    model_name = clean_env_value("LLM_MODEL")
+    has_key = bool(clean_env_value("LLM_API_KEY"))
     if not model_name:
         try:
             resp = client._client.get(f"{client.base_url}/api/v1/models/active")
@@ -450,15 +451,15 @@ def handle_config(args: list[str], client: APIClient) -> None:
             print_info(f"  Apt Install:        {'enabled' if features.get('apt_install') else 'disabled'}")
 
         print_info("")
-        model_name = data.get("model") or os.getenv("LLM_MODEL") or "NOT CONFIGURED"
-        has_key = data.get("has_api_key") or bool(os.getenv("LLM_API_KEY"))
+        model_name = data.get("model") or clean_env_value("LLM_MODEL") or "NOT CONFIGURED"
+        has_key = data.get("has_api_key") or bool(clean_env_value("LLM_API_KEY"))
         status_txt = "ready" if has_key or "ollama" in model_name else "not configured"
         print_info(f"Active Model:         {model_name} ({status_txt})")
         print_info("                      (Run '/model' to view details or '/model set' to configure)")
     except Exception:
         print_info(f"Backend URL:          {client.base_url} (offline or unreachable)")
-        model_name = os.getenv("LLM_MODEL", "NOT CONFIGURED")
-        has_key = bool(os.getenv("LLM_API_KEY"))
+        model_name = clean_env_value("LLM_MODEL") or "NOT CONFIGURED"
+        has_key = bool(clean_env_value("LLM_API_KEY"))
         print_info(f"Active Model:         {model_name} ({'ready' if has_key else 'not configured'})")
 
 

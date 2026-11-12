@@ -147,7 +147,8 @@ $mcpDepsOk = $true
 function Resolve-McpPython {
     $py = "$RootDir\.venv\Scripts\python.exe"
     if (Test-Path $py) {
-        & $py -c "import httpx, mcp" 2>$null
+        # try/catch: PS5.1 promotes native stderr to a terminating error under EAP=Stop.
+        try { & $py -c "import httpx, mcp" 2>$null } catch { }
         if ($LASTEXITCODE -eq 0) { return }   # already usable
     }
     Write-Step "Preparing a local Python environment for the $($Brand) MCP bridge..."
@@ -161,7 +162,7 @@ function Resolve-McpPython {
         & $sys -m venv "$RootDir\.venv"
         if (-not (Test-Path $py)) { Write-WarnItem "Could not create .venv; MCP may fail to launch."; $script:mcpDepsOk = $false; return }
     }
-    & $py -m pip install --upgrade pip --quiet 2>$null | Out-Null
+    try { & $py -m pip install --upgrade pip --quiet 2>$null | Out-Null } catch { }
     & $py -m pip install --quiet -r "$RootDir\platform-mcp\requirements.txt"
     if ($LASTEXITCODE -eq 0) {
         Write-Success "MCP bridge dependencies installed into .venv (mcp, httpx)."
@@ -195,7 +196,7 @@ function Ensure-CliPython {
             return
         }
     }
-    & $py -m pip install --upgrade pip --quiet 2>$null | Out-Null
+    try { & $py -m pip install --upgrade pip --quiet 2>$null | Out-Null } catch { }
     & $py -m pip install --quiet -e "$RootDir\agent_core" -e "$RootDir\cli"
     if ($LASTEXITCODE -eq 0) {
         Write-Success "$($Brand) CLI installed into .venv (osprey command ready after activation)."
@@ -206,15 +207,25 @@ function Ensure-CliPython {
 }
 
 # ── Banner ────────────────────────────────────────────────────────────────────
+# The ASCII art literally spells "OSPREY" — it's art, not text, so it can't be
+# parametrized with $Brand. Show it only for the default brand; a white-labeled
+# build gets a plain name banner instead.
 Clear-Host
-Write-Host @"
+if ($Brand -eq "Osprey") {
+    Write-Host @"
    ____  _____ _____  _____  ________   __
   / __ \/ ___// __ \/ __ \/ ____/\ \ / /
- / / / /\__ \/ /_/ / /_/ / __/    \ V /  
-/ /_/ /___/ / ____/ _, _/ /___     / /   
-\____//____/_/   /_/ |_/_____/    /_/    
+ / / / /\__ \/ /_/ / /_/ / __/    \ V /
+/ /_/ /___/ / ____/ _, _/ /___     / /
+\____//____/_/   /_/ |_/_____/    /_/
 Autonomous AI Offensive Security Platform
 "@ -ForegroundColor Red
+} else {
+    Write-Host ""
+    Write-Host "  $($Brand.ToUpper())" -ForegroundColor Red
+    Write-Host "  Autonomous AI Offensive Security Platform" -ForegroundColor Red
+    Write-Host ""
+}
 
 Write-Host "Welcome to the $($Brand) setup wizard. Press Ctrl+C anytime to exit." -ForegroundColor DarkGray
 Write-Host "Re-running this wizard is always safe and preserves existing work.`n" -ForegroundColor DarkGray
@@ -405,8 +416,14 @@ if ($runtimeChoice -eq "3") {
                         Write-Host "  Installing $($m.Name) via go install..." -ForegroundColor Cyan
                         & go install $goMap[$m.Name]
                         if ($LASTEXITCODE -eq 0) {
-                            $goBin = (& go env GOBIN 2>$null)
-                            if (-not $goBin) { $goBin = Join-Path (& go env GOPATH 2>$null) "bin" }
+                            # try/catch: PS5.1 promotes native stderr to a terminating error under EAP=Stop.
+                            $goBin = $null
+                            try { $goBin = (& go env GOBIN 2>$null) } catch { }
+                            if (-not $goBin) {
+                                $goPath = $null
+                                try { $goPath = (& go env GOPATH 2>$null) } catch { }
+                                $goBin = Join-Path $goPath "bin"
+                            }
                             $goBin = $goBin.Trim()
                             if (Test-Path (Join-Path $goBin "$($m.Name).exe")) {
                                 $env:Path = "$goBin;$env:Path"
@@ -578,7 +595,11 @@ if ($needsCliLlm) {
 if ($wantsGui) {
     $node = Get-Command node -ErrorAction SilentlyContinue
     $npm = Get-Command npm -ErrorAction SilentlyContinue
-    $nodeVersion = if ($node) { (& node -p "process.versions.node" 2>$null) } else { "" }
+    $nodeVersion = ""
+    if ($node) {
+        # try/catch: PS5.1 promotes native stderr to a terminating error under EAP=Stop.
+        try { $nodeVersion = (& node -p "process.versions.node" 2>$null) } catch { }
+    }
     $nodeParts = if ($nodeVersion) { $nodeVersion.Trim().Split(".") } else { @() }
     $nodeSupported = $nodeParts.Count -ge 2 -and
         (([int]$nodeParts[0] -gt 18) -or

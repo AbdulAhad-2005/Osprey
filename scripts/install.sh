@@ -255,16 +255,23 @@ ensure_mcp_python() {
 }
 
 # ── Banner ────────────────────────────────────────────────────────────────────
+# The ASCII art literally spells "OSPREY" — it's art, not text, so it can't be
+# parametrized with $BRAND. Show it only for the default brand; a white-labeled
+# build gets a plain name banner instead.
 clear 2>/dev/null || true
 printf '%s' "${C_RED}"
+if [ "$BRAND" = "Osprey" ]; then
 cat << 'BANNER'
    ____  _____ _____  _____  ________   __
   / __ \/ ___// __ \/ __ \/ ____/\ \ / /
- / / / /\__ \/ /_/ / /_/ / __/    \ V /  
-/ /_/ /___/ / ____/ _, _/ /___     / /   
-\____//____/_/   /_/ |_/_____/    /_/    
+ / / / /\__ \/ /_/ / /_/ / __/    \ V /
+/ /_/ /___/ / ____/ _, _/ /___     / /
+\____//____/_/   /_/ |_/_____/    /_/
 Autonomous AI Offensive Security Platform
 BANNER
+else
+  printf '\n  %s\n  Autonomous AI Offensive Security Platform\n\n' "$(printf '%s' "$BRAND" | tr '[:lower:]' '[:upper:]')"
+fi
 printf '%s\n' "${C_RESET}"
 
 muted "Welcome to the ${BRAND} setup wizard. Press Ctrl+C anytime to exit."

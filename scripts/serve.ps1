@@ -15,7 +15,8 @@ if (-not (Test-Path $venvPython)) {
     exit 1
 }
 
-& $venvPython -c "import osprey" 2>$null
+# try/catch: PS5.1 promotes native stderr to a terminating error under EAP=Stop.
+try { & $venvPython -c "import osprey" 2>$null } catch { }
 if ($LASTEXITCODE -ne 0) {
     Write-Host "The backend isn't installed in .venv. Run:  pip install -e .\backend" -ForegroundColor Red
     Write-Host "(or re-run  powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 )" -ForegroundColor White

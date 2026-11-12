@@ -72,6 +72,18 @@ class LLMNotConfiguredError(RuntimeError):
     pass
 
 
+# Treat an unfilled <...> placeholder (e.g. .env.example's LLM_MODEL=<llm-model-name>) as unset.
+_PLACEHOLDER_RE = re.compile(r"^<[^<>]+>$")
+
+
+def clean_env_value(name: str) -> str:
+    """os.getenv(name), stripped, with an unfilled <...> placeholder treated as unset."""
+    value = (os.getenv(name) or "").strip()
+    if _PLACEHOLDER_RE.match(value):
+        return ""
+    return value
+
+
 @dataclass
 class CLIModelConfig:
     model: str
@@ -89,9 +101,9 @@ class CLIModelConfig:
 
     @classmethod
     def from_env(cls) -> CLIModelConfig:
-        model = (os.getenv("LLM_MODEL") or "").strip()
-        api_key = (os.getenv("LLM_API_KEY") or "").strip()
-        api_base = (os.getenv("LLM_API_BASE") or "").strip()
+        model = clean_env_value("LLM_MODEL")
+        api_key = clean_env_value("LLM_API_KEY")
+        api_base = clean_env_value("LLM_API_BASE")
         budget_raw = (os.getenv("LLM_TOOL_SCHEMA_BUDGET_TOKENS") or "").strip()
         try:
             tool_schema_budget_tokens = int(budget_raw) if budget_raw else 0
