@@ -35,10 +35,13 @@ _CLI_CONTAINER = "/home/mcpuser/mcp-servers/recon/tools/_subdomain_takeover_cli.
 _CLI_FALLBACK = str(Path(__file__).resolve().with_name("_subdomain_takeover_cli.py"))
 
 def _cli_expr() -> str:
-    return (
-        f"$( [ -f {_CLI_CONTAINER} ] && echo {_CLI_CONTAINER} "
-        f"|| echo {_CLI_FALLBACK} )"
-    )
+    # Double-quoted at BOTH levels: the inner echo args (so a fallback path
+    # with spaces, e.g. a Windows checkout path, survives as one shell word
+    # going in) AND the outer $(...) substitution itself (bash word-splits a
+    # command substitution's *output* on whitespace at its point of use
+    # regardless of how the inner command was quoted).
+    container, fallback = shlex.quote(_CLI_CONTAINER), shlex.quote(_CLI_FALLBACK)
+    return f'"$( [ -f {container} ] && echo {container} || echo {fallback} )"'
 
 
 def build_command(**params: Any) -> str:

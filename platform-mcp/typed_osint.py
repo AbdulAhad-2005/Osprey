@@ -71,6 +71,8 @@ def _build_params(
     file_path: str = "",
     input_data: str = "",
     additional_args: str = "",
+    mode: str = "",
+    limit: int = 0,
 ) -> dict[str, Any]:
     params: dict[str, Any] = {}
     for key, val in (
@@ -84,9 +86,12 @@ def _build_params(
         ("file_path", file_path),
         ("input_data", input_data),
         ("additional_args", additional_args),
+        ("mode", mode),
     ):
         if str(val).strip():
             params[key] = str(val).strip()
+    if limit > 0:
+        params["limit"] = limit
     return params
 
 
@@ -108,6 +113,8 @@ def register_typed_osint_tools(mcp: Any, *, execute: Callable[..., str]) -> int:
                 file_path: str = "",
                 input_data: str = "",
                 additional_args: str = "",
+                mode: str = "",
+                limit: int = 0,
                 timeout_seconds: int = 300,
                 engagement_id: str = "",
             ) -> str:
@@ -122,6 +129,8 @@ def register_typed_osint_tools(mcp: Any, *, execute: Callable[..., str]) -> int:
                     file_path=file_path,
                     input_data=input_data,
                     additional_args="",
+                    mode=mode,
+                    limit=limit,
                 )
                 return execute(
                     name,
