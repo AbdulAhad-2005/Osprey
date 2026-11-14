@@ -20,7 +20,8 @@ why ``google.com``/``amazonses.com`` from a seed's SPF/MX never surface while a
 self-hosted ``geoit.tv`` does.
 
 Modules (``--modules``, comma-separated; aliases in ``_normalize_modules``):
-site_scrape, self_infra, reverse_whois, tracker_pivot, web_search, favicon.
+site_scrape, self_infra, reverse_whois, tracker_pivot, web_search, wikidata,
+favicon.
 
 Output: a human ``=== Findings ===`` table plus a machine-readable ``# DHJSON``
 line emitted after every module, so an outer timeout still leaves usable rows.
@@ -394,6 +395,128 @@ def _wikipedia_page(session: Any, query: str, *, timeout: int = 10) -> str:
 _WIKI_SELF = frozenset({"wikipedia.org", "wikimedia.org", "wiktionary.org", "wikidata.org", "creativecommons.org"})
 
 
+def _wikidata_entity_ids(session: Any, query: str, *, limit: int = 3, timeout: int = 10) -> list[str]:
+    try:
+        resp = session.get(
+            "https://www.wikidata.org/w/api.php",
+            params={"action": "wbsearchentities", "search": query, "language": "en", "format": "json", "limit": limit},
+            timeout=timeout,
+        )
+        hits = resp.json().get("search", []) if resp.ok else []
+        return [h["id"] for h in hits if h.get("id")]
+    except Exception as exc:
+        logger.info("Wikidata search failed for %s: %s", query, exc)
+        return []
+
+
+def _wikidata_entities(session: Any, qids: list[str], *, timeout: int = 10) -> dict[str, Any]:
+    """Batched wbgetentities lookup — one HTTP call for every id, not one per id
+    (Wikidata rate-limits aggressively on sequential per-entity requests)."""
+    if not qids:
+        return {}
+    try:
+        resp = session.get(
+            "https://www.wikidata.org/w/api.php",
+            params={
+                "action": "wbgetentities", "ids": "|".join(qids[:50]),
+                "props": "claims|labels", "languages": "en", "format": "json",
+            },
+            timeout=timeout,
+        )
+        if resp.status_code == 429:
+            return {}
+        return resp.json().get("entities", {}) if resp.ok else {}
+    except Exception as exc:
+        logger.info("Wikidata batch lookup failed: %s", exc)
+        return {}
+
+
+def _wikidata_claim_ids(entity: dict, prop: str) -> list[str]:
+    out = []
+    for claim in entity.get("claims", {}).get(prop, []):
+        try:
+            out.append(claim["mainsnak"]["datavalue"]["value"]["id"])
+        except (KeyError, TypeError):
+            continue
+    return out
+
+
+def _wikidata_claim_strings(entity: dict, prop: str) -> list[str]:
+    out = []
+    for claim in entity.get("claims", {}).get(prop, []):
+        try:
+            value = claim["mainsnak"]["datavalue"]["value"]
+            if isinstance(value, str) and value.strip():
+                out.append(value.strip())
+        except (KeyError, TypeError):
+            continue
+    return out
+
+
+def _wikidata_affiliated_sites(session: Any, seed_root: str, brand: str, title: str = "", *, timeout: int = 10) -> dict[str, str]:
+    """domain->context map from Wikidata's structured org graph: the seed
+    entity's P355 (subsidiary) and P749 (parent organization) claims, chased
+    to each related entity's own P856 (official website).
+
+    Deliberately excludes P127/P1830 (owned by / owner of): confirmed on
+    real public companies (Tesla, Uber) that those claims surface INSTITUTIONAL
+    SHAREHOLDERS (Fidelity, BlackRock, Vanguard, individual board members),
+    not corporate affiliates — a materially different relationship.
+
+    Curated structured data, not scraped HTML, so this is trusted as a STRONG
+    signal: empirically verified against ~10 real companies (Virgin, LVMH,
+    Nike, Samsung, Uber, Shopify, Booking, Tesla, Adidas) with ~40 hits and
+    zero false positives (see domain_hunter_overhaul research notes).
+    """
+    # The seed's own apex is the most reliable disambiguator (unambiguous,
+    # doesn't depend on successfully scraping the seed's own title/homepage —
+    # some seeds anti-bot-block that fetch entirely). Title and bare brand are
+    # fallbacks for seeds without a company-named Wikidata entity. Each query
+    # tier checks its top-3 hits (not just the top-1) for one whose OWN P856
+    # website is literally the seed — a short/ambiguous brand token (e.g. a
+    # one-word consumer brand) can rank the right entity 2nd or 3rd, or not at
+    # all, in which case this tier yields nothing and the next tier is tried.
+    entity = None
+    for query in (seed_root, " ".join(title.split()[:6]) if title else "", brand):
+        query = query.strip()
+        if not query:
+            continue
+        qids = _wikidata_entity_ids(session, query, timeout=timeout)
+        if not qids:
+            continue
+        candidates = _wikidata_entities(session, qids, timeout=timeout)
+        for qid in qids:  # preserve search-rank order
+            candidate = candidates.get(qid)
+            if not candidate:
+                continue
+            own_roots = {root_domain(urlparse(u).hostname or "") for u in _wikidata_claim_strings(candidate, "P856")}
+            if seed_root in own_roots:
+                entity = candidate
+                break
+        if entity:
+            break
+    if entity is None:
+        return {}
+
+    related_ids = _wikidata_claim_ids(entity, "P355") + _wikidata_claim_ids(entity, "P749")
+    if not related_ids:
+        return {}
+    time.sleep(0.3)  # Wikidata rate-limits rapid sequential calls
+    related = _wikidata_entities(session, related_ids, timeout=timeout)
+
+    sites: dict[str, str] = {}
+    for related_qid, related_entity in related.items():
+        rel_label = related_entity.get("labels", {}).get("en", {}).get("value", related_qid)
+        for url in _wikidata_claim_strings(related_entity, "P856"):
+            host = urlparse(url).hostname
+            if not host:
+                continue
+            rd = root_domain(host.lower())
+            if rd and rd != seed_root and rd not in sites:
+                sites[rd] = f"Wikidata: {rel_label}, a subsidiary/parent of the seed org"
+    return sites
+
+
 def _web_search_sister_domains(session: Any, seed_root: str, brand_tokens: list[str], title: str = "", *, timeout: int = 10):
     """(strong, weak) domain->context maps. Strong = the org's own/parent/
     subsidiary sites from its Wikipedia INFOBOX (owner/parent/subsidiaries/
@@ -413,29 +536,43 @@ def _web_search_sister_domains(session: Any, seed_root: str, brand_tokens: list[
         if rd and rd != seed_root and rd not in _WIKI_SELF and rd not in bucket:
             bucket[rd] = context
 
-    # Only the infobox — the article body's references link dozens of unrelated
-    # news/citation domains; the infobox is the org's own structured facts. The
-    # homepage title disambiguates a generic brand ("geo" -> the GEO TV article,
-    # not geography), and the infobox is trusted only once it is confirmed to be
-    # the seed's own entity (it references the seed apex or a brand token).
+    # Only the infobox, and only specific ROW LABELS — the article body links
+    # dozens of unrelated news/citation domains, and even within the infobox a
+    # "Traded as" row links the STOCK EXCHANGE's own site (confirmed: Adidas's
+    # infobox links boerse-frankfurt.de, Uber's links nyse.com) which is pure
+    # noise, not an affiliate. Only rows that name an affiliation relationship
+    # are trusted. "Subsidiaries"/"Owner"/"Parent" rows usually link to the
+    # OTHER entity's Wikipedia article, not its domain directly — that case is
+    # covered by the Wikidata subsidiary/parent chase below, which follows the
+    # relationship to the entity's own official-website claim.
+    _AFFILIATION_ROW_LABELS = frozenset({
+        "website", "websites", "official website", "homepage", "url",
+        "owner", "owned by", "parent", "parent company", "parent organisation",
+        "parent organization",
+    })
     wiki_query = " ".join((title or "").split()[:6]).strip() or seed_root or brand
     infobox = BeautifulSoup(_wikipedia_page(session, wiki_query, timeout=timeout) or "", "html.parser").find("table", class_="infobox")
     if not infobox and wiki_query != brand:
         infobox = BeautifulSoup(_wikipedia_page(session, brand, timeout=timeout) or "", "html.parser").find("table", class_="infobox")
     if infobox:
-        box_text = infobox.get_text(" ", strip=True).lower()
-        box_hosts = [urlparse(a["href"]).hostname for a in infobox.find_all("a", href=True) if a.get("href")]
-        box_roots = {root_domain(h.lower()) for h in box_hosts if h}
+        all_box_text = infobox.get_text(" ", strip=True).lower()
         is_seed_entity = (
-            seed_root in box_roots
-            or seed_root in box_text
-            or any(_shares_brand_token(seed_root, [bt]) and bt in box_text for bt in brand_tokens)
+            seed_root in all_box_text
+            or any(_shares_brand_token(seed_root, [bt]) and bt in all_box_text for bt in brand_tokens)
         )
         if is_seed_entity:
-            for rd in box_roots:
-                _record(strong, rd, "linked in the seed org's Wikipedia infobox")
-            for match in _DOMAIN_RE.finditer(box_text):
-                _record(strong, root_domain(match.group(1).lower()), "named in the seed org's Wikipedia infobox")
+            for row in infobox.find_all("tr"):
+                header = row.find("th")
+                label = header.get_text(" ", strip=True).lower() if header else ""
+                if label not in _AFFILIATION_ROW_LABELS:
+                    continue
+                row_text = row.get_text(" ", strip=True).lower()
+                for a in row.find_all("a", href=True):
+                    host = urlparse(a["href"]).hostname
+                    if host:
+                        _record(strong, root_domain(host.lower()), f"Wikipedia infobox '{label}' row")
+                for match in _DOMAIN_RE.finditer(row_text):
+                    _record(strong, root_domain(match.group(1).lower()), f"Wikipedia infobox '{label}' row")
 
     for query in (
         f"{seed_root} subsidiaries brands affiliated websites",
@@ -498,7 +635,7 @@ def _site_scrape_links(session: Any, seed_root: str, homepage_html: str, base_ur
 # --------------------------------------------------------------------------
 # Candidate model + confidence
 # --------------------------------------------------------------------------
-_STRONG_METHODS = frozenset({"reverse_whois", "tracker_pivot", "favicon_hash", "self_infra", "web_search"})
+_STRONG_METHODS = frozenset({"reverse_whois", "tracker_pivot", "favicon_hash", "self_infra", "web_search", "wikidata"})
 
 
 @dataclass
@@ -547,8 +684,9 @@ class DomainHunter:
         "rdap": "reverse_whois", "whois": "reverse_whois",
         "trackers": "tracker_pivot", "ga_pivot": "tracker_pivot",
         "icon": "favicon", "favicon_hash": "favicon",
+        "subsidiaries": "wikidata", "parent": "wikidata", "wikidata_chase": "wikidata",
     }
-    _DEFAULT = {"site_scrape", "self_infra", "reverse_whois", "tracker_pivot", "web_search", "favicon"}
+    _DEFAULT = {"site_scrape", "self_infra", "reverse_whois", "tracker_pivot", "web_search", "favicon", "wikidata"}
 
     def __init__(self, domain: str, *, modules: str = "", confidence_min: str = "low") -> None:
         self.seed_root = hunter_seed_apex(domain)
@@ -579,6 +717,7 @@ class DomainHunter:
             ("reverse_whois", self._collect_reverse_whois_signals),
             ("tracker_pivot", self._collect_tracker_pivot_signals),
             ("web_search", self._collect_web_search_signals),
+            ("wikidata", self._collect_wikidata_signals),
             ("favicon", self._collect_favicon_signals),
         )
         for name, collector in stages:
@@ -671,6 +810,13 @@ class DomainHunter:
             self._add_candidate(rd, method="web_search", evidence=context)
         for rd, context in weak.items():
             self._add_candidate(rd, method="web_mention", evidence=context)
+
+    def _collect_wikidata_signals(self) -> None:
+        """Subsidiary/parent sister sites from Wikidata's structured org graph
+        (P355/P749 chased to P856) — see _wikidata_affiliated_sites."""
+        brand = self.seed_root.split(".")[0]
+        for rd, context in _wikidata_affiliated_sites(self.session, self.seed_root, brand, self.seed_title).items():
+            self._add_candidate(rd, method="wikidata", evidence=context)
 
     def _collect_favicon_signals(self) -> None:
         seed_hash = _favicon_md5(self.session, self.seed_root)

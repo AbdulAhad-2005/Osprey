@@ -14,15 +14,16 @@
 # here falls back to defaults while a section present here fully replaces it.
 
 sister_discovery:        # sister/associated root domains (per frontier domain)
-  # domain_hunter queries ~10 independent external signal sources (crt.sh,
-  # Wikidata SPARQL, ASN reverse-lookup, RDAP/WHOIS, certspotter, DNS,
-  # SPF/DMARC, reverse-NS) — one slow upstream is enough to blow past the
-  # 60s bucket every other tool in this section uses, and did: domain_hunter
-  # landed consistently at ~63-64s and got killed just before finishing,
-  # every run, not as occasional bad luck. A per-entry timeout overrides the
-  # section default (see investigation_capabilities.py's sister_discovery/
-  # domain_only opportunity loop).
-  - {tool: domain_hunter, param: domain, timeout: 100}
+  # domain_hunter queries several independent signal sources (site scrape,
+  # self-hosted mail/DNS infra, reverse WHOIS, tracker-ID pivot, web search,
+  # Wikidata subsidiary/parent chase, favicon hash) then live-probes every
+  # candidate found (90s-budgeted sweep) — a large conglomerate seed with
+  # many real subsidiaries (Wikidata chase finds dozens for e.g. LVMH/Nike)
+  # produces a proportionally larger candidate set to live-probe, measured
+  # at ~110s end-to-end. A per-entry timeout overrides the 60s section
+  # default every other tool here uses (see investigation_capabilities.py's
+  # sister_discovery/domain_only opportunity loop).
+  - {tool: domain_hunter, param: domain, timeout: 130}
   - {tool: crt_sh_query, param: domain}
 
 domain_only:             # apex-only OSINT (same answer for every subdomain)

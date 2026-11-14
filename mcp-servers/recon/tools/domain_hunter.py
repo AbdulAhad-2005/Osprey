@@ -9,6 +9,7 @@ Signal modules (``modules=``, default all):
   - reverse_whois:  same WHOIS registrant/org (needs WHOXY_API_KEY)
   - tracker_pivot:  shared Google Analytics / GTM / Facebook-pixel ID
   - web_search:     the org's Wikipedia infobox + brand search snippets
+  - wikidata:       subsidiary/parent companies chased to their official sites
   - favicon:        identical favicon hash
 
 Args:
