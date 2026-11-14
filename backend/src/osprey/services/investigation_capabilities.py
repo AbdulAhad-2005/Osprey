@@ -791,7 +791,7 @@ async def _execute_tool(
     response = await execute_tool_request(ToolExecutionRequest(
         tool_name=tool_name, params=params, engagement_id=engagement_id, run_id=run_id,
         additional_args=additional_args, use_recovery=True, record_findings=True,
-        timeout=timeout or 900,
+        timeout=timeout or 900, caller="deterministic_engine",
     ))
     # Surface timed_out/partial so the reading surface (CLI/dashboard) can tell a
     # healthy-but-slow tool that hit its budget (timed_out, often with partial

@@ -36,3 +36,18 @@ def test_domain_hunter_gets_a_longer_timeout_than_its_bucket_mates():
     # Its single-source bucket-mates keep the original, tighter default.
     for tool in ("crt_sh_query", "whois_lookup", "dnsenum_scan"):
         assert by_tool.get(tool) == 60, f"{tool} timeout unexpectedly changed: {by_tool.get(tool)}"
+
+
+def test_domain_hunter_opportunity_carries_a_confidence_floor():
+    """The deterministic engine auto-confirms every sister domain_hunter
+    reports with nobody reviewing each one (see parse_domain_hunter's
+    caller == "deterministic_engine" check) — a bare low-confidence hit must
+    not reach the graph unattended, so the dispatched opportunity's own
+    params carry confidence_min=medium (the tool filters its own output by
+    it before the backend parser ever sees a row)."""
+    eid = _make_engagement("dh-floor.test")
+    get_engagement_graph().ensure_node(engagement_id=eid, asset_type=AssetType.DOMAIN, label="dh-floor.test")
+
+    step = investigation_capabilities.list_step(eid)
+    dh_opp = next(o for o in step.opportunities if o.tool == "domain_hunter")
+    assert dh_opp.params.get("confidence_min") == "medium"

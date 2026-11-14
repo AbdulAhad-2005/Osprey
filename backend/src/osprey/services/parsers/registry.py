@@ -132,6 +132,7 @@ async def parse_tool_output(
     target: str = "",
     phase: str = "",
     allow_llm_fallback: bool = True,
+    caller: str = "",
 ) -> list[Observation]:
     """A registered parser existing doesn't mean it recognized THIS run's
     output — a parser that legitimately finds nothing structured in a given
@@ -145,15 +146,20 @@ async def parse_tool_output(
     every other caller keeps the default and is unaffected. ``phase`` is
     accepted for call-site compatibility but no longer stamped onto anything
     here — Observations carry no phase; that's display-layer only now.
+    ``caller`` is an opaque passthrough a specific parser may read (e.g.
+    "deterministic_engine" — see parse_domain_hunter); most parsers ignore it.
     """
     parser = _OUTPUT_PARSERS.get(tool_name)
     parsed: list[Observation] = []
     if parser is not None:
         # Parsers vary in accepted kwargs — try full then minimal.
         try:
-            parsed = parser(stdout, engagement_id=engagement_id, run_id=run_id, target=target)
+            parsed = parser(stdout, engagement_id=engagement_id, run_id=run_id, target=target, caller=caller)
         except TypeError:
-            parsed = parser(stdout, engagement_id=engagement_id, run_id=run_id)
+            try:
+                parsed = parser(stdout, engagement_id=engagement_id, run_id=run_id, target=target)
+            except TypeError:
+                parsed = parser(stdout, engagement_id=engagement_id, run_id=run_id)
         if parsed:
             # Shared parsers (e.g. parse_subfinder handles subfinder_scan AND
             # amass_scan AND fierce_scan) may hardcode a default source_tool

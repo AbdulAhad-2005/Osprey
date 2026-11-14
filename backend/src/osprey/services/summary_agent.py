@@ -57,6 +57,7 @@ async def extract_observations_for_execution(
     stdout_path: str = "",
     stderr_path: str = "",
     allow_llm_fallback: bool = True,
+    caller: str = "",
 ) -> list[Observation]:
     """Record evidence, then extract structural Observations — registry
     parsers + freeform script/shell extraction. No ``Finding`` is created
@@ -68,6 +69,11 @@ async def extract_observations_for_execution(
     inside ``parse_tool_output`` for this call only — used by the benchmark
     replay driver so a fixture's result doesn't depend on whether the
     replaying process happens to have an LLM key configured.
+
+    ``caller`` passes through to the registered parser (e.g. "deterministic_engine"
+    from investigation_capabilities._execute_tool) — a request-scoped signal a
+    parser may need (domain_hunter's candidate-vs-confirmed role), never a global
+    one like "is an LLM key configured anywhere".
     """
     stdout = response.stdout or ""
     stderr = response.stderr or ""
@@ -102,6 +108,7 @@ async def extract_observations_for_execution(
             run_id=run_id,
             target=target,
             allow_llm_fallback=allow_llm_fallback,
+            caller=caller,
         )
 
     needs_freeform = (

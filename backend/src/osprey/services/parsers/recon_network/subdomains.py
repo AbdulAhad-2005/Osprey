@@ -229,19 +229,24 @@ def parse_domain_hunter(
     engagement_id: str = "",
     run_id: str = "",
     target: str = "",
+    caller: str = "",
 ) -> list[Observation]:
     out: list[Observation] = []
     seen: set[str] = set()
     seed_apex = registrable_apex(target) if target else ""
-    # With an LLM driving, sister domains are surfaced as candidates for it to
-    # validate and promote; with no LLM the deterministic floor stores them
-    # directly as confirmed sisters.
-    try:
-        from osprey.services.llm_service import llm_configured
-
-        role = "sister_candidate" if llm_configured() else "sister_domain"
-    except Exception:
-        role = "sister_domain"
+    # Candidate vs confirmed hinges on WHO is driving THIS call, not on
+    # whether some LLM key happens to be configured anywhere in the backend's
+    # environment (the old `llm_configured()` check — wrong signal: a backend
+    # with a key configured for other sessions would silently orphan a
+    # deterministic-engine run's sisters as unreviewed candidates forever,
+    # since nothing then ever promotes them). `caller` is request-scoped and
+    # unambiguous: "deterministic_engine" is set ONLY by
+    # investigation_capabilities._execute_tool, the no-LLM opportunity loop's
+    # own mechanical dispatch, where nobody is actively reviewing this
+    # specific call. Any other caller — an LLM's typed-tool call, or an
+    # operator driving a tool directly from the CLI — gets candidate mode,
+    # since someone is actually choosing to run this and can review it.
+    role = "sister_domain" if caller == "deterministic_engine" else "sister_candidate"
     for domain, method, conf, live, score, evidence in _domain_hunter_rows(stdout):
         if domain in seen:
             continue

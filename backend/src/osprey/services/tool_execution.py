@@ -578,6 +578,7 @@ async def execute_tool_request(
                 target=target,
                 stdout_path=stdout_path,
                 stderr_path=stderr_path,
+                caller=request.caller,
             )
             # Universal ingest — every tool inherits YAML rules (SPA demotion, banners, …).
             from osprey.services.ingest_promoter import apply_ingest_rules

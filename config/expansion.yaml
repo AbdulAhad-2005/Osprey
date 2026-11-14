@@ -23,7 +23,14 @@ sister_discovery:        # sister/associated root domains (per frontier domain)
   # at ~110s end-to-end. A per-entry timeout overrides the 60s section
   # default every other tool here uses (see investigation_capabilities.py's
   # sister_discovery/domain_only opportunity loop).
-  - {tool: domain_hunter, param: domain, timeout: 130}
+  # confidence_min: medium — the deterministic engine auto-confirms every
+  # sister domain_hunter reports (see parse_domain_hunter's caller ==
+  # "deterministic_engine" check) with nobody reviewing each one; a bare
+  # low-confidence hit (single weak signal, no brand match) must not become
+  # a confirmed graph node unattended. An LLM/operator calling the tool
+  # directly still sees every tier (candidate mode review catches noise), so
+  # this floor only needs to bind here, not in the tool's own default.
+  - {tool: domain_hunter, param: domain, timeout: 130, confidence_min: medium}
   - {tool: crt_sh_query, param: domain}
 
 domain_only:             # apex-only OSINT (same answer for every subdomain)

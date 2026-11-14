@@ -161,6 +161,16 @@ class ToolExecutionRequest(BaseModel):
         default=None,
         description="Correlates this execution to an exploit_candidates row so attempts/status update.",
     )
+    caller: str = Field(
+        default="",
+        description=(
+            "Set to 'deterministic_engine' ONLY by investigation_capabilities._execute_tool "
+            "(the no-LLM opportunity loop's own dispatch) — the unambiguous, request-scoped "
+            "signal that nobody is actively reviewing this specific call, as opposed to an "
+            "LLM/operator directly invoking the tool. Never set this from anywhere else; a "
+            "global 'is an LLM key configured somewhere' check is not the same question."
+        ),
+    )
 
 
 class ToolExecutionResponse(BaseModel):
