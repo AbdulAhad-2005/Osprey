@@ -113,10 +113,18 @@ def _is_likely_domain_or_none(host: str) -> str | None:
     return host if is_registrable_domain(host) else None
 
 
+# Generic single words that routinely show up in a homepage <title> and would
+# otherwise become a "brand token" matching unrelated domains that merely
+# contain the same common word — confirmed live: "site" (from a title like
+# "... Official Site") matched "sitemaps.org" (the XML sitemap-protocol's own
+# spec domain, present in the xmlns of virtually every auto-generated
+# sitemap.xml) as a false-positive sister.
 _BRAND_STOPWORDS = frozenset({
     "the", "and", "for", "new", "live", "news", "latest", "breaking", "today",
     "daily", "online", "watch", "video", "report", "update", "updates", "show",
     "home", "official", "website", "network", "group", "media", "www",
+    "site", "sites", "page", "pages", "portal", "welcome", "world", "global",
+    "store", "shop", "app", "apps", "mobile", "digital",
 })
 
 
@@ -147,14 +155,29 @@ def _brand_tokens(seed_root: str, title_text: str = "") -> list[str]:
 
 
 def _shares_brand_token(domain: str, brand_tokens: list[str]) -> bool:
-    """True when the candidate's label overlaps a seed brand token — the
-    affiliation signal for self-hosted infra and bare link/snippet evidence."""
+    """True when the candidate's label contains a seed brand token — the
+    affiliation signal for self-hosted infra and bare link/snippet evidence.
+
+    Forward substring only ("geo" matches "geoit", "tesla" matches
+    "teslamotors" — real variants are fused concatenations with no internal
+    delimiter, so a word-boundary requirement would miss them). The backward
+    direction ("the candidate's label is a substring of the brand token") was
+    removed — it wasn't a real affiliation pattern and wasn't needed by any
+    genuine match.
+
+    This still can't fully disambiguate a brand name that is ALSO an ordinary
+    word (confirmed live: "zameen", Urdu for "land", brand-matches an
+    unrelated government land-records domain) — no purely lexical check can.
+    That residual risk is bounded elsewhere: this is a WEAK-signal gate only
+    (a strong signal needs no brand match at all), and a brand-only match
+    lands at "low" confidence, which the deterministic engine's confidence
+    floor and the sister-domain-validation skill both treat as
+    needs-verification, not a confirmed sister.
+    """
     label = domain.split(".")[0].lower()
     collapsed = re.sub(r"[^a-z0-9]", "", label)
     for token in brand_tokens:
-        if len(token) < 3:
-            continue
-        if token in collapsed or (len(label) >= 3 and label in token):
+        if len(token) >= 3 and token in collapsed:
             return True
     return False
 
@@ -411,7 +434,9 @@ def _wikidata_entity_ids(session: Any, query: str, *, limit: int = 3, timeout: i
 
 def _wikidata_entities(session: Any, qids: list[str], *, timeout: int = 10) -> dict[str, Any]:
     """Batched wbgetentities lookup — one HTTP call for every id, not one per id
-    (Wikidata rate-limits aggressively on sequential per-entity requests)."""
+    (Wikidata rate-limits aggressively on sequential per-entity requests).
+    Includes ``descriptions`` so callers can classify an entity by its short
+    gloss (see ``_is_financial_institution``) without a second round-trip."""
     if not qids:
         return {}
     try:
@@ -419,7 +444,7 @@ def _wikidata_entities(session: Any, qids: list[str], *, timeout: int = 10) -> d
             "https://www.wikidata.org/w/api.php",
             params={
                 "action": "wbgetentities", "ids": "|".join(qids[:50]),
-                "props": "claims|labels", "languages": "en", "format": "json",
+                "props": "claims|labels|descriptions", "languages": "en", "format": "json",
             },
             timeout=timeout,
         )
@@ -453,20 +478,58 @@ def _wikidata_claim_strings(entity: dict, prop: str) -> list[str]:
     return out
 
 
+# P127 (owned by) keyword-classifies its target the same way _is_shared_edge_ip
+# classifies an ASN by organization name: match the entity's own short gloss
+# against known financial-institution vocabulary, not a hardcoded id list.
+# Confirmed live: Tesla/Uber's P127 targets are Fidelity/BlackRock/Vanguard/
+# individual board members — institutional shareholders, not affiliates. But
+# P127 is NOT always noise — a privately/foundation-held company's P127
+# points to its real controlling entity (confirmed live: IKEA/Q54078's only
+# P127 is Stichting INGKA Foundation, ingkafoundation.org — a real, directly
+# relevant domain that excluding P127 entirely would miss). So P127 is
+# followed, but only when the target does NOT look like an investment vehicle.
+_FINANCIAL_INSTITUTION_WORDS = (
+    "investment", "asset management", "capital management", "hedge fund",
+    "mutual fund", "pension fund", "sovereign wealth fund", "private equity",
+    "venture capital", "wealth management", "index fund", "fund manager",
+    "financial services",
+)
+_HUMAN_QID = "Q5"
+
+
+def _is_untrusted_p127_target(entity: dict) -> bool:
+    """True when a P127 (owned by) target must NOT be trusted as a corporate
+    affiliate: a human being (confirmed live on Tesla's P127: a major
+    shareholder/board member's P856 happens to point to their OWN unrelated
+    employer's site, e.g. Larry Ellison -> oracle.com — a person owning
+    shares is never a subsidiary/parent, regardless of what their own site
+    is), or an entity whose own gloss identifies it as a financial/investment
+    institution (confirmed live: Fidelity, Capital Group ["financial
+    services company"], Baillie Gifford, T. Rowe Price)."""
+    p31 = {
+        c["mainsnak"]["datavalue"]["value"].get("id", "")
+        for c in entity.get("claims", {}).get("P31", [])
+        if "datavalue" in c.get("mainsnak", {})
+    }
+    if _HUMAN_QID in p31:
+        return True
+    text = " ".join([
+        entity.get("labels", {}).get("en", {}).get("value", ""),
+        entity.get("descriptions", {}).get("en", {}).get("value", ""),
+    ]).lower()
+    return any(word in text for word in _FINANCIAL_INSTITUTION_WORDS)
+
+
 def _wikidata_affiliated_sites(session: Any, seed_root: str, brand: str, title: str = "", *, timeout: int = 10) -> dict[str, str]:
     """domain->context map from Wikidata's structured org graph: the seed
-    entity's P355 (subsidiary) and P749 (parent organization) claims, chased
-    to each related entity's own P856 (official website).
-
-    Deliberately excludes P127/P1830 (owned by / owner of): confirmed on
-    real public companies (Tesla, Uber) that those claims surface INSTITUTIONAL
-    SHAREHOLDERS (Fidelity, BlackRock, Vanguard, individual board members),
-    not corporate affiliates — a materially different relationship.
+    entity's P355 (subsidiary), P749 (parent organization), and P127 (owned
+    by, filtered — see ``_is_financial_institution``) claims, chased to each
+    related entity's own P856 (official website).
 
     Curated structured data, not scraped HTML, so this is trusted as a STRONG
     signal: empirically verified against ~10 real companies (Virgin, LVMH,
-    Nike, Samsung, Uber, Shopify, Booking, Tesla, Adidas) with ~40 hits and
-    zero false positives (see domain_hunter_overhaul research notes).
+    Nike, Samsung, Uber, Shopify, Booking, Tesla, Adidas, IKEA) with ~40 hits
+    and zero false positives (see domain_hunter_overhaul research notes).
     """
     # The seed's own apex is the most reliable disambiguator (unambiguous,
     # doesn't depend on successfully scraping the seed's own title/homepage —
@@ -498,7 +561,13 @@ def _wikidata_affiliated_sites(session: Any, seed_root: str, brand: str, title: 
     if entity is None:
         return {}
 
-    related_ids = _wikidata_claim_ids(entity, "P355") + _wikidata_claim_ids(entity, "P749")
+    # P127 ids are tracked separately: P355 (subsidiary) and P749 (parent) are
+    # already an unambiguous organizational relationship and are trusted
+    # outright; P127 (owned by) conflates real corporate ownership with mere
+    # shareholding, so ONLY its targets go through _is_untrusted_p127_target.
+    unconditional_ids = _wikidata_claim_ids(entity, "P355") + _wikidata_claim_ids(entity, "P749")
+    p127_ids = set(_wikidata_claim_ids(entity, "P127"))
+    related_ids = unconditional_ids + list(p127_ids)
     if not related_ids:
         return {}
     time.sleep(0.3)  # Wikidata rate-limits rapid sequential calls
@@ -506,6 +575,8 @@ def _wikidata_affiliated_sites(session: Any, seed_root: str, brand: str, title: 
 
     sites: dict[str, str] = {}
     for related_qid, related_entity in related.items():
+        if related_qid in p127_ids and _is_untrusted_p127_target(related_entity):
+            continue
         rel_label = related_entity.get("labels", {}).get("en", {}).get("value", related_qid)
         for url in _wikidata_claim_strings(related_entity, "P856"):
             host = urlparse(url).hostname
@@ -705,8 +776,14 @@ class DomainHunter:
         return {cls._ALIASES.get(p, p) for p in parts}
 
     def _emit_progress(self, stage: str) -> None:
-        print(f"# domain_hunter progress: completed={stage!r} candidates_so_far={len(self.candidates)}")
-        emit_findings_snapshot(list(self.candidates.values()))
+        # Filtered by the confidence floor, not the raw candidate pool: a kill
+        # right after this snapshot must not leave a below-floor candidate as
+        # the last recorded result (the backend parser reads the LAST
+        # # DHJSON line in stdout — see _domain_hunter_rows), since nothing
+        # downstream re-applies --confidence-min to an already-printed line.
+        filtered = [c for c in self.candidates.values() if self._passes_confidence_floor(c)]
+        print(f"# domain_hunter progress: completed={stage!r} candidates_so_far={len(filtered)}")
+        emit_findings_snapshot(filtered)
 
     def discover(self) -> list[Candidate]:
         if not self.seed_root:
@@ -836,11 +913,23 @@ class DomainHunter:
 
         with ThreadPoolExecutor(max_workers=8) as executor:
             futures = {executor.submit(probe, c): c for c in self.candidates.values()}
+            total = len(futures)
+            done = 0
             for future in as_completed(futures):
                 try:
                     futures[future].live = future.result()
                 except Exception:
                     futures[future].live = False
+                done += 1
+                # This sweep is itself budgeted up to 90s — a kill partway
+                # through must not leave the LAST discovery stage's snapshot
+                # (every candidate's live still stuck at its pre-probe False
+                # default) as the only record the backend parser ever sees.
+                # Re-emit periodically as real results land, not only once at
+                # the very end after the full sweep (plus the final sort and
+                # confidence-filtered write) actually completes.
+                if done == total or done % 5 == 0:
+                    self._emit_progress("live_probe")
 
     def _passes_confidence_floor(self, candidate: Candidate) -> bool:
         return _CONF_RANK[candidate_confidence(candidate)] >= _CONF_RANK[self.confidence_min]

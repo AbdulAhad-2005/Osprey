@@ -36,6 +36,16 @@ def test_shares_brand_token():
     assert not dh._shares_brand_token("amazonses.com", ["careem"])
 
 
+def test_brand_stopwords_block_generic_words_from_becoming_tokens():
+    """Live bug: a title like '... Official Site' derived the brand token
+    'site', which then matched sitemaps.org (the XML sitemap protocol's own
+    spec domain, present in virtually every auto-generated sitemap.xml) as a
+    false-positive sister."""
+    tokens = dh._brand_tokens("mojang.com", "Welcome to the Minecraft Official Site | Minecraft")
+    assert "site" not in tokens and "sites" not in tokens
+    assert not dh._shares_brand_token("sitemaps.org", tokens)
+
+
 def test_weak_signal_without_brand_or_corroboration_is_dropped():
     h = dh.DomainHunter("careem.com")
     h._add_candidate("apple.com", method="site_scrape", evidence="outbound link")
@@ -106,17 +116,19 @@ def _fake_session(search_by_query: dict, entities_by_qid: dict):
     return _S()
 
 
-def _entity(label, p856=None, p355=None, p749=None, p127=None):
+def _entity(label, p856=None, p355=None, p749=None, p127=None, instance_of=None, description=""):
     def claims_for(prop, values):
         return [{"mainsnak": {"datavalue": {"value": v}}} for v in values] if values else []
 
     return {
         "labels": {"en": {"value": label}},
+        "descriptions": {"en": {"value": description}},
         "claims": {
             "P856": claims_for("P856", p856),
             "P355": claims_for("P355", [{"id": q} for q in p355] if p355 else None),
             "P749": claims_for("P749", [{"id": q} for q in p749] if p749 else None),
             "P127": claims_for("P127", [{"id": q} for q in p127] if p127 else None),
+            "P31": claims_for("P31", [{"id": q} for q in instance_of] if instance_of else None),
         },
     }
 
@@ -133,16 +145,54 @@ def test_wikidata_chase_finds_subsidiary_site():
     assert out == {"sister-brand.com": "Wikidata: Sister Co, a subsidiary/parent of the seed org"}
 
 
-def test_wikidata_excludes_owned_by_investor_claims():
-    """P127 (owned by) is deliberately never chased — confirmed on real public
-    companies (Tesla, Uber) to surface institutional shareholders, not
-    corporate affiliates."""
+def test_wikidata_excludes_institutional_shareholder_p127_target():
+    """P127 (owned by) is followed (fixed from an earlier blanket exclusion —
+    see test_wikidata_includes_real_p127_owner below), but a target that is
+    itself a financial-services/investment entity is excluded — confirmed
+    live on Tesla: P127 included Capital Group Companies, Wikidata's own
+    gloss for it is literally 'financial services company'."""
     s = _fake_session(
         search_by_query={"seed.com": [{"id": "Q1"}]},
-        entities_by_qid={"Q1": _entity("Seed Co", p856=["https://seed.com"], p127=["Q9"])},
+        entities_by_qid={
+            "Q1": _entity("Seed Co", p856=["https://seed.com"], p127=["Q9"]),
+            "Q9": _entity("Some Fund", p856=["https://fund.example"], description="financial services company"),
+        },
     )
     out = dh._wikidata_affiliated_sites(s, "seed.com", "seed")
     assert out == {}
+
+
+def test_wikidata_excludes_human_p127_target():
+    """A P127 target that is a person (instance_of human, Q5) is excluded
+    even with no financial-sounding description — confirmed live on Tesla:
+    P127 included a major individual shareholder whose own P856 happened to
+    point to an unrelated company he separately chairs."""
+    s = _fake_session(
+        search_by_query={"seed.com": [{"id": "Q1"}]},
+        entities_by_qid={
+            "Q1": _entity("Seed Co", p856=["https://seed.com"], p127=["Q9"]),
+            "Q9": _entity("Some Person", p856=["https://unrelated-employer.example"], instance_of=["Q5"]),
+        },
+    )
+    out = dh._wikidata_affiliated_sites(s, "seed.com", "seed")
+    assert out == {}
+
+
+def test_wikidata_includes_real_p127_owner():
+    """A genuine P127 (owned by) relationship — neither a financial
+    institution nor a person — is trusted. Confirmed live: IKEA's only
+    P355/P749 claims are empty, but P127 is Stichting INGKA Foundation
+    (ingkafoundation.org), its real controlling entity; excluding P127
+    entirely (the prior behavior) missed this real affiliate completely."""
+    s = _fake_session(
+        search_by_query={"seed.com": [{"id": "Q1"}]},
+        entities_by_qid={
+            "Q1": _entity("Seed Co", p856=["https://seed.com"], p127=["Q9"]),
+            "Q9": _entity("Controlling Foundation", p856=["https://foundation.example"]),
+        },
+    )
+    out = dh._wikidata_affiliated_sites(s, "seed.com", "seed")
+    assert out == {"foundation.example": "Wikidata: Controlling Foundation, a subsidiary/parent of the seed org"}
 
 
 def test_wikidata_rejects_unverified_entity():
@@ -177,6 +227,61 @@ def test_wikidata_falls_back_through_query_tiers_to_find_verified_hit():
     )
     out = dh._wikidata_affiliated_sites(s, "seed.com", "seed")
     assert out == {"parent-brand.com": "Wikidata: Parent Co, a subsidiary/parent of the seed org"}
+
+
+def test_progress_snapshots_respect_the_confidence_floor():
+    """A kill mid-run must not leave a below-floor candidate as the last
+    recorded # DHJSON line — the backend parser reads only the LAST one in
+    stdout (see _domain_hunter_rows), and nothing downstream re-applies
+    --confidence-min to an already-printed line."""
+    import io
+    import contextlib
+    import json
+
+    h = dh.DomainHunter("example.com", confidence_min="medium")
+    h._add_candidate("weak.net", method="site_scrape", evidence="outbound link")  # low, single weak method
+    h._add_candidate("strong.net", method="reverse_whois", evidence="same registrant")  # high
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        h._emit_progress("test_stage")
+    lines = [ln for ln in buf.getvalue().splitlines() if ln.startswith(dh._DHJSON_PREFIX)]
+    rows = json.loads(lines[-1][len(dh._DHJSON_PREFIX):])
+    domains = {r["domain"] for r in rows}
+    assert "strong.net" in domains
+    assert "weak.net" not in domains
+
+
+def test_live_probe_sweep_emits_intermediate_progress(monkeypatch):
+    """The live-probe stage is itself budgeted up to 90s — a kill partway
+    through must not leave every candidate's `live` flag stuck at its
+    pre-probe False default with no snapshot taken since discovery ended.
+    Patch the probe itself (not time.monotonic/deadline) so the real 90s
+    wall-clock deadline never triggers inside this fast, hermetic test."""
+    import io
+    import contextlib
+
+    h = dh.DomainHunter("example.com", confidence_min="medium")
+    for i in range(12):
+        h._add_candidate(f"sister{i}.net", method="reverse_whois", evidence="same registrant")
+
+    monkeypatch.setattr(dh, "_live_probe", lambda session, domain: (True, None))
+
+    emitted: list[str] = []
+    original_emit = dh.DomainHunter._emit_progress
+
+    def _spy(self, stage):
+        emitted.append(stage)
+        original_emit(self, stage)
+
+    monkeypatch.setattr(dh.DomainHunter, "_emit_progress", _spy)
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        h._resolve_live_status()
+
+    assert emitted.count("live_probe") >= 2  # periodic, not just once at the very end
+    assert all(c.live for c in h.candidates.values())
 
 
 def test_wikidata_strips_www_before_matching_seed():
