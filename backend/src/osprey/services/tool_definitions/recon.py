@@ -57,12 +57,15 @@ RECON_TOOLS: list[ToolDefinition] = [
        {"input_data": _p("", "Input data"), "output_file": _p("", "Output file"),
         **_COMMON_PARAMS}),
     _t("domain_hunter", ToolCategory.RECON, "python3", ToolSafetyLevel.PASSIVE,
-       "Discover ALL sister/affiliated domains (10-module OSINT): cert transparency, DNS/ASN, WHOIS, "
-       "Wikidata corporate hierarchy (parent/subsidiary), email pivoting, SPF/DMARC, org certs, "
-       "reverse NS, ASN expansion, TLD variants (.pk, .com.pk, etc).",
+       "Sister/affiliate ROOT domains by same operator/brand — not subdomain enum (use "
+       "subfinder/amass/crt_sh_query for that). Signals: homepage/partner-page links, "
+       "self-hosted mail/DNS infra sharing the brand, reverse WHOIS, shared analytics/pixel "
+       "ID, Wikidata subsidiary/parent chase, Wikipedia infobox, favicon hash. Found sisters "
+       "are candidates to validate, not confirmed — see skills/recon/sister-domain-validation.md.",
        ["sister-domains", "affiliated-domains", "osint", "asset-discovery", "corporate-intel"],
        {"domain": _p("", "Seed root domain, e.g. example.com"),
-        "modules": _p("", "Comma-separated modules (default: all 12)"),
+        "modules": _p("", "Comma-separated modules (default: all 7 — site_scrape,self_infra,"
+                          "reverse_whois,tracker_pivot,web_search,wikidata,favicon)"),
         "confidence_min": _p("low", "Report tier: low/medium/high"),
         **_COMMON_PARAMS},
        install_hint="Bundled at mcp-servers/recon/tools/_domain_hunter_cli.py (deps provisioned in kali-tools/Dockerfile)."),
