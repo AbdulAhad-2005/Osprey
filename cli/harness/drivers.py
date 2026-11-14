@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable
@@ -13,6 +14,49 @@ if TYPE_CHECKING:
 
 
 EventSink = Callable[[Event], None]
+
+
+async def _ask_operator_interactively(record: dict[str, Any]) -> str:
+    """Terminal ``ask_handler`` for the interactive CLI's own ReAct loop —
+    the GUI dashboard chat already has one (``foreground_chat.py``); the CLI,
+    the primary harness, previously had none, so the model's ``ask_operator``
+    tool (an exploitation gate, a scope decision — e.g. whether to pull in a
+    newly-found sister domain) was never even offered here. Blocking
+    ``input()`` is run off-thread so it doesn't stall the event loop.
+
+    On EOF/Ctrl-C (operator unreachable) this returns a plain non-answer
+    rather than guessing one of the options — silently picking any option,
+    even a nominally "safe" one, could read back to the model as a real
+    decision it then acts on.
+    """
+    question = str(record.get("text") or "").strip()
+    options = record.get("options") or []
+    print(f"\n⏸  {question}")
+    by_number: dict[str, str] = {}
+    by_value: dict[str, str] = {}
+    for i, opt in enumerate(options, start=1):
+        value = str(opt.get("value") or "").strip()
+        label = str(opt.get("label") or value).strip()
+        detail = str(opt.get("detail") or "").strip()
+        by_number[str(i)] = value
+        by_value[value.lower()] = value
+        print(f"  {i}. {label}" + (f" — {detail}" if detail else ""))
+    if record.get("allow_freeform"):
+        print("  (or type your own answer)")
+
+    try:
+        raw = (await asyncio.to_thread(input, "Your choice: ")).strip()
+    except (EOFError, KeyboardInterrupt):
+        return "(no answer — operator unreachable, do not proceed on this)"
+    if not raw:
+        return "(no answer — operator unreachable, do not proceed on this)"
+    if raw in by_number:
+        return by_number[raw]
+    if raw.lower() in by_value:
+        return by_value[raw.lower()]
+    # Free text (allow_freeform, or the operator just typed their own words
+    # instead of a listed option) — pass it through verbatim.
+    return raw
 
 # A stale-revision (409) response means "the world moved between sense and
 # act — recompute and retry," which is a normal, expected outcome of
@@ -69,6 +113,12 @@ class LLMDriver:
             tool_gateway=self.runtime.tool_gateway,
             worker_factory=self.runtime.workers.create,
             max_turns=0,
+            # The main interactive loop has an operator attached, so offer
+            # ask_operator here (the GUI dashboard chat already does — see
+            # foreground_chat.py). Spawned sub-agents go through
+            # self.runtime.workers.create instead, which never passes this:
+            # a headless worker has no human to block on.
+            ask_handler=_ask_operator_interactively,
         )
         return self.runner
 

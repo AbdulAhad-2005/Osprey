@@ -202,6 +202,15 @@ def _render(event, transcript) -> None:  # noqa: ANN001 — event/transcript run
         else:
             detail = "summarized older turns to free context"
         console.print(f"  [dim]· context compacted ({detail}); full record kept in memory[/]")
+    elif event.type == "question":
+        # The ask_operator tool call that produced this event is already
+        # blocked awaiting the answer by the time this renders; _ask_operator_
+        # prompt (the ask_handler) owns printing the actual question/options
+        # and reading the answer, so this is just a visual marker that
+        # something is pending — avoids double-printing the same question.
+        kind = (event.data.get("kind") or "choice").strip().lower()
+        label = "exploitation/scope gate" if kind == "gate" else "operator decision"
+        console.print(f"[bold yellow]⏸[/] Waiting on a {label} below…")
     elif event.type == "error":
         print_error(event.data.get("message") or "The model request failed.")
     elif event.type == "done":

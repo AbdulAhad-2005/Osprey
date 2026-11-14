@@ -52,6 +52,12 @@ what to do with them. Nothing here blocks you — it guides.
 9. **Broken backend** — on a `tool_unavailable` flood, stop and tell the user the fix;
    don't silently run scanners outside Osprey.
 10. **Safety** — authorized targets only; exploit/destructive actions need explicit user OK.
+    When an interactive operator is attached, `ask_operator(question, options)` pauses and puts
+    a real fork to them (2-4 concrete choices) instead of guessing — use it before crossing from
+    findings into active exploitation, and before pulling a newly-discovered sister/affiliated
+    domain into scope (see the Widen step below). It returns "unavailable in this run" when no
+    operator is attached (a headless/spawned run) — in that case fall back to the
+    RulesOfEngagement flags and stay conservative.
 
 Full phase methodology lives in `platform_skills` (pull it on demand) — don't invent a
 parallel playbook.
@@ -108,7 +114,14 @@ through `platform_investigation_step`/`execute` (see point 4) — that's the no-
 baseline, not how you drive.
 
 1. **Widen** — sisters (`domain_hunter`) + subs (`subfinder`/`amass`/`crt_sh_query`), more
-   than one source if thin.
+   than one source if thin. A sister/affiliated root domain_hunter finds is NOT automatically
+   in scope — an engagement's RulesOfEngagement are per-target (see `skills/recon/
+   sister-domain-validation.md`), and a sister domain, even under the same parent org, may
+   carry its own, separate authorization. Once you've validated a candidate is real: if an
+   operator is attached, `ask_operator` whether to (a) start a new engagement for it
+   (`platform_set_target` on it), (b) work it under the current engagement, or (c) just note
+   it in the report; without one, default to (c) and surface it clearly rather than silently
+   scanning a second organization's infrastructure under the first one's authorization.
 2. **Passive intel** — `shodan_search`/`shodan_host_info` when keyed. Treat passive results
    as leads and let their ingested evidence alter the next opportunity; verify before trusting.
 3. **Credential/identity leaks** (when keyed) — `intelx_scan`/`resecurity_scan` harvest a
