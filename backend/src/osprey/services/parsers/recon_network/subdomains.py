@@ -233,6 +233,15 @@ def parse_domain_hunter(
     out: list[Observation] = []
     seen: set[str] = set()
     seed_apex = registrable_apex(target) if target else ""
+    # With an LLM driving, sister domains are surfaced as candidates for it to
+    # validate and promote; with no LLM the deterministic floor stores them
+    # directly as confirmed sisters.
+    try:
+        from osprey.services.llm_service import llm_configured
+
+        role = "sister_candidate" if llm_configured() else "sister_domain"
+    except Exception:
+        role = "sister_domain"
     for domain, method, conf, live, score, evidence in _domain_hunter_rows(stdout):
         if domain in seen:
             continue
@@ -240,13 +249,13 @@ def parse_domain_hunter(
             continue
         seen.add(domain)
         evidence_text = evidence if isinstance(evidence, str) else " | ".join(str(item) for item in evidence if item)
-        tags = ["sister_domain", "domain_hunter"]
+        tags = [role, "domain_hunter"]
         details: dict[str, Any] = {
             "hostname": domain,
             "method": method,
             "hunter_confidence": conf,
             "live": live,
-            "role": "sister_domain",
+            "role": role,
         }
         if score is not None:
             details["score"] = score

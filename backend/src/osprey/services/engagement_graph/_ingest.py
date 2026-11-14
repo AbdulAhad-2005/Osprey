@@ -273,10 +273,13 @@ class _IngestMixin:
     def _is_sister_observation(self, obs: Observation) -> bool:
         if "sister_domain" in (obs.tags or []):
             return True
-        if obs.source_tool == "domain_hunter":
-            return True
         role = str(obs.details.get("role", "")).lower()
         return role in ("sister_domain", "sister", "affiliated")
+
+    @staticmethod
+    def _is_unconfirmed_candidate(obs: Observation) -> bool:
+        role = str(obs.details.get("role", "")).lower()
+        return role == "sister_candidate" or "sister_candidate" in (obs.tags or [])
 
     def _osint_node(
         self, db, *, atype: AssetType, label: str, eid: str, rid: str,
@@ -465,6 +468,10 @@ class _IngestMixin:
         elif obs.type == ObservationType.HOST:
             label = str(d.get("hostname") or d.get("ip") or obs.target).strip().lower()
             if not label:
+                return
+            # An unconfirmed sister candidate (LLM mode) stays an observation-only
+            # lead — no graph node until the LLM validates and promotes it.
+            if self._is_unconfirmed_candidate(obs):
                 return
             meta = dict(d)
             if self._is_sister_observation(obs):

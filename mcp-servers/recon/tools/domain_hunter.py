@@ -1,26 +1,24 @@
 """
-Execute sister-domain discovery for affiliated root domains.
+Discover sister / affiliated-root domains operated by the same organisation.
 
-Discovers ALL linked/associated domains using 10 signal sources:
-  - site_scrape:    Homepage links, robots.txt, sitemap.xml
-  - certs:          Certificate transparency (crt.sh)
-  - knowledge_recon: Brand-token crt.sh + Wikidata P856 + TLD variants (.pk, .com.pk, etc.)
-  - dns:            Seed's NS/MX hosts
-  - asn:            Reverse-IP co-location
-  - whois:          RDAP registrant org tokens
-  - certs:          certspotter + crt.sh CT (token search + brand probe)
-  - email_pivot:    Extract emails from site → crt.sh registrant search
-  - spf_dmarc:      Parse SPF includes + DMARC rua for related domains
-  - reverse_ns:     Find domains sharing the same authoritative NS
+Correlates separate root domains by same operator/registrant/brand — what the
+dedicated tools (subfinder/amass, crt_sh_query, asn_enum, theHarvester) don't do.
+Signal modules (``modules=``, default all):
+  - site_scrape:    outbound links on the homepage + its about/partner pages
+  - self_infra:     MX/NS/SPF/DMARC hosts that share the seed's brand token
+  - reverse_whois:  same WHOIS registrant/org (needs WHOXY_API_KEY)
+  - tracker_pivot:  shared Google Analytics / GTM / Facebook-pixel ID
+  - web_search:     the org's Wikipedia infobox + brand search snippets
+  - favicon:        identical favicon hash
 
 Args:
     domain: Seed root domain
-    modules: Comma-separated subset of discovery modules (default: all 10)
-    confidence_min: Minimum confidence tier to report
+    modules: Comma-separated subset of discovery modules (default: all)
+    confidence_min: Minimum confidence tier to report (low/medium/high)
     additional_args: Additional CLI arguments
 
 Returns:
-    Structured sister-domain discovery results
+    Sister-domain candidates with per-signal evidence and a confidence tier.
 """
 
 from __future__ import annotations

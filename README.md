@@ -229,6 +229,7 @@ Most tools are keyless. A few tap external intel services — set their keys in
 | `intelx_scan` — email/subdomain harvest | `INTELX_API_KEY` | https://intelx.io/account?tab=developer |
 | `intelx_scan` — leaked credentials (Identity API) | `INTELX_IDENTITY_API_KEY` | IntelX Identity Portal licence |
 | `resecurity_scan` — leaked credentials | `RESECURITY_API_KEY` (+ optional `RESECURITY_API_BASE`) | https://resecurity.com |
+| `domain_hunter` — reverse-WHOIS sister domains | `WHOXY_API_KEY` | https://www.whoxy.com/account/#api |
 
 ## Run the Osprey CLI
 
