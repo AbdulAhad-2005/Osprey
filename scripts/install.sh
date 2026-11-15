@@ -14,7 +14,7 @@
 # ==============================================================================
 set -uo pipefail
 
-BRAND="${OSPREY_APP_NAME:-${BRAND}}"
+BRAND="${OSPREY_APP_NAME:-${BRAND:-Osprey}}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
