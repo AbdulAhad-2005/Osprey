@@ -23,6 +23,7 @@ try:
     from dotenv import load_dotenv
     from prompt_toolkit import PromptSession
     from prompt_toolkit.completion import Completer, Completion
+    from prompt_toolkit.filters import Condition
     from prompt_toolkit.shortcuts import CompleteStyle
     from prompt_toolkit.formatted_text import HTML
     from prompt_toolkit.history import InMemoryHistory
@@ -109,7 +110,10 @@ def _prompt_loop_body(client: APIClient, session) -> None:
             try:
                 user_input = session.prompt(
                     _prompt_message(client),
-                    complete_while_typing=True,
+                    # Only live-complete while a "/" command is being typed, not for normal freeform prompts.
+                    complete_while_typing=Condition(
+                        lambda: session.default_buffer.text.startswith("/")
+                    ),
                     bottom_toolbar=lambda: _bottom_toolbar(client),
                 )
             except KeyboardInterrupt:
