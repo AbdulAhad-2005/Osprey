@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Iterator
 from typing import Any
 
 import httpx
+
+from agent_core.net import resolve_api_base_url
 
 
 def _error_detail(exc: httpx.HTTPStatusError) -> str:
@@ -27,7 +28,7 @@ class APIClient:
     """HTTP client for communicating with the FastAPI backend."""
 
     def __init__(self, base_url: str | None = None) -> None:
-        self.base_url = (base_url or os.getenv("API_BASE_URL", "http://localhost:9000")).rstrip("/")
+        self.base_url = (base_url or resolve_api_base_url()).rstrip("/")
         self._timeout = httpx.Timeout(3600.0, connect=30.0)
         self._client = httpx.Client(timeout=self._timeout, follow_redirects=True)
 
@@ -769,7 +770,7 @@ class APIClient:
         if base_url:
             self.base_url = base_url.rstrip("/")
         else:
-            self.base_url = os.getenv("API_BASE_URL", "http://localhost:9000").rstrip("/")
+            self.base_url = resolve_api_base_url().rstrip("/")
         self._client = httpx.Client(timeout=self._timeout, follow_redirects=True)
 
     def close(self) -> None:

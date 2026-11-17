@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from contextlib import nullcontext
 
+from agent_core.net import resolve_api_base_url
 from cli.branding import APP_NAME, CLI_COMMAND
 
 _DEPS_HINT = """\
@@ -159,7 +159,7 @@ def _run_scan_noninteractive(args: argparse.Namespace) -> int:
     from cli.commands.prompt import handle_prompt
     from cli.commands.slash import _PHASE_PROMPTS, _api_error_text, _bind_engagement
 
-    api_url = os.getenv("API_BASE_URL", "http://localhost:9000")
+    api_url = resolve_api_base_url()
     client = get_runtime(APIClient(base_url=api_url))
     print_info(f"Connected to: {api_url}")
 
@@ -212,7 +212,7 @@ def _run_prompt_noninteractive(args: argparse.Namespace) -> int:
         print_error("Missing prompt. Usage: osprey run \"what should we do next?\"")
         return 2
 
-    api_url = os.getenv("API_BASE_URL", "http://localhost:9000")
+    api_url = resolve_api_base_url()
     client = get_runtime(APIClient(base_url=api_url))
     if args.target:
         try:
@@ -253,7 +253,7 @@ def _print_scorecard(sc: dict) -> None:
 def _run_benchmark_noninteractive(args: argparse.Namespace) -> int:
     """`osprey benchmark record|run|list|diff` — the CLI + CI entry point for
     plans/harness/01-replay-benchmark-harness.md. Never opens the REPL."""
-    api_url = os.getenv("API_BASE_URL", "http://localhost:9000")
+    api_url = resolve_api_base_url()
     client = get_runtime(APIClient(base_url=api_url))
     from cli.commands.slash import _api_error_text
 
@@ -415,7 +415,7 @@ def main() -> None:
     if args.command == "benchmark":
         sys.exit(_run_benchmark_noninteractive(args))
 
-    api_url = os.getenv("API_BASE_URL", "http://localhost:9000")
+    api_url = resolve_api_base_url()
     client = get_runtime(APIClient(base_url=api_url))
 
     print_banner()

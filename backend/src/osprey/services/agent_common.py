@@ -16,7 +16,6 @@ builds its ``AgentResponse`` from, and the target-extraction helpers
 
 from __future__ import annotations
 
-import os
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -35,7 +34,9 @@ def api_base_url() -> str:
     other client reaches it. Same env var and default the CLI uses, so one
     already-correct setting covers both the CLI and every backend driver
     (scoped sub-agents and the GUI foreground chat)."""
-    return os.getenv("API_BASE_URL", "http://localhost:9000")
+    from agent_core.net import resolve_api_base_url
+
+    return resolve_api_base_url()
 
 
 def resolve_model_config() -> "CLIModelConfig | None":
