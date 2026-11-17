@@ -198,6 +198,17 @@ CLI_DEPS_OK=1
 GUI_DEPS_OK=1
 
 ensure_cli_python() {
+  # Full/Lean Docker mode: the backend image already has the CLI installed
+  # (backend/Dockerfile runs `pip install -e /app/cli`), reachable via
+  # `docker exec -it osprey-backend osprey` — building a second, local-venv
+  # copy of the exact same package would just cost time and disk for no
+  # benefit.
+  if [ "${runtime_choice:-1}" = "1" ] || [ "${runtime_choice:-1}" = "2" ]; then
+    ok "${BRAND} CLI runs via the backend container — no local install needed."
+    CLI_DEPS_OK=1
+    return 0
+  fi
+
   local py; py="$(venv_python_path)"
   if [ -z "$py" ]; then
     if ! command -v python3 >/dev/null 2>&1; then
@@ -226,6 +237,15 @@ ensure_cli_python() {
 }
 
 ensure_mcp_python() {
+  # Same reasoning as ensure_cli_python(): the backend image's requirements.txt
+  # already pins mcp/httpx identically to platform-mcp's own, so the Docker
+  # exec bridge needs no separate local install either.
+  if [ "${runtime_choice:-1}" = "1" ] || [ "${runtime_choice:-1}" = "2" ]; then
+    ok "MCP bridge runs via the backend container — no local install needed."
+    MCP_DEPS_OK=1
+    return 0
+  fi
+
   local py; py="$(venv_python_path)"
   if [ -n "$py" ] && "$py" -c "import httpx, mcp" >/dev/null 2>&1; then
     return 0  # already usable
@@ -694,6 +714,67 @@ mcp_server_name="${OSPREY_MCP_SERVER_NAME:-osprey}"
 cfg_port="$(env_get BACKEND_PORT 9000)"
 mcp_api_base="$(env_get API_BASE_URL "http://localhost:${cfg_port}")"
 
+# Full/Lean Docker mode: point every harness at the backend container's own
+# `python /app/platform-mcp/server.py` via `docker exec` instead of a local
+# interpreter — same reasoning as ensure_mcp_python() above. From inside the
+# container the backend is always reachable at the internal port (9000),
+# regardless of any host port mapping.
+use_docker_mcp=0
+if [ "${runtime_choice:-1}" = "1" ] || [ "${runtime_choice:-1}" = "2" ]; then
+  use_docker_mcp=1
+  mcp_api_base="http://localhost:9000"
+fi
+
+if [ "$use_docker_mcp" -eq 1 ]; then
+cat > "$ROOT_DIR/mcp-config.json" << EOF
+{
+  "claude_desktop": {
+    "mcpServers": {
+      "$mcp_server_name": {
+        "command": "$DOCKER_CMD",
+        "args": ["exec", "-i", "-e", "PYTHONPATH=/app/platform-mcp", "osprey-backend", "python", "/app/platform-mcp/server.py"],
+        "env": {
+          "OSPREY_MCP_SERVER_NAME": "$mcp_server_name",
+          "PENTEST_API_BASE": "$mcp_api_base",
+          "PENTEST_QUICK_TIMEOUT": "30",
+          "PENTEST_HTTP_TIMEOUT": "900"
+        }
+      }
+    }
+  },
+  "cursor": {
+    "mcpServers": {
+      "$mcp_server_name": {
+        "command": "$DOCKER_CMD",
+        "args": ["exec", "-i", "-e", "PYTHONPATH=/app/platform-mcp", "osprey-backend", "python", "/app/platform-mcp/server.py"],
+        "env": {
+          "OSPREY_MCP_SERVER_NAME": "$mcp_server_name",
+          "PENTEST_API_BASE": "$mcp_api_base",
+          "PENTEST_QUICK_TIMEOUT": "60",
+          "PENTEST_HTTP_TIMEOUT": "900"
+        }
+      }
+    }
+  },
+  "opencode": {
+    "mcp": {
+      "$mcp_server_name": {
+        "type": "local",
+        "command": ["$DOCKER_CMD", "exec", "-i", "-e", "PYTHONPATH=/app/platform-mcp", "osprey-backend", "python", "/app/platform-mcp/server.py"],
+        "cwd": "$ROOT_DIR",
+        "environment": {
+          "OSPREY_MCP_SERVER_NAME": "$mcp_server_name",
+          "PENTEST_API_BASE": "$mcp_api_base",
+          "PENTEST_QUICK_TIMEOUT": "60"
+        },
+        "enabled": true,
+        "timeout": 960000
+      }
+    }
+  }
+}
+EOF
+else
 cat > "$ROOT_DIR/mcp-config.json" << EOF
 {
   "claude_desktop": {
@@ -743,6 +824,7 @@ cat > "$ROOT_DIR/mcp-config.json" << EOF
   }
 }
 EOF
+fi
 ok "Generated reference MCP config: mcp-config.json"
 
 # ── Detect and configure AI harnesses ─────────────────────────────────────────
@@ -813,6 +895,17 @@ srv = '$server_script'
 root = '$ROOT_DIR'
 mcp_name = '$mcp_server_name'
 api_base = '$mcp_api_base'
+use_docker_mcp = '$use_docker_mcp' == '1'
+docker_cmd = '$DOCKER_CMD'
+
+if use_docker_mcp:
+    command_str = docker_cmd
+    args_list = ['exec', '-i', '-e', 'PYTHONPATH=/app/platform-mcp', 'osprey-backend', 'python', '/app/platform-mcp/server.py']
+    opencode_cmd = [docker_cmd] + args_list
+else:
+    command_str = py_exe
+    args_list = [srv]
+    opencode_cmd = [py_exe, srv]
 
 data = {}
 if os.path.exists(path):
@@ -828,7 +921,7 @@ if h_type == 'opencode':
         data['mcp'] = {}
     data['mcp'][mcp_name] = {
         'type': 'local',
-        'command': [py_exe, srv],
+        'command': opencode_cmd,
         'cwd': root,
         'environment': {'OSPREY_MCP_SERVER_NAME': mcp_name, 'PENTEST_API_BASE': api_base, 'PENTEST_QUICK_TIMEOUT': '60'},
         'enabled': True,
@@ -838,16 +931,16 @@ elif h_type == 'cursor':
     if 'mcpServers' not in data or not isinstance(data['mcpServers'], dict):
         data['mcpServers'] = {}
     data['mcpServers'][mcp_name] = {
-        'command': py_exe,
-        'args': [srv],
+        'command': command_str,
+        'args': args_list,
         'env': {'OSPREY_MCP_SERVER_NAME': mcp_name, 'PENTEST_API_BASE': api_base, 'PENTEST_QUICK_TIMEOUT': '60', 'PENTEST_HTTP_TIMEOUT': '900'}
     }
 else:
     if 'mcpServers' not in data or not isinstance(data['mcpServers'], dict):
         data['mcpServers'] = {}
     data['mcpServers'][mcp_name] = {
-        'command': py_exe,
-        'args': [srv],
+        'command': command_str,
+        'args': args_list,
         'cwd': root,
         'env': {'OSPREY_MCP_SERVER_NAME': mcp_name, 'PENTEST_API_BASE': api_base, 'PENTEST_QUICK_TIMEOUT': '60', 'PENTEST_HTTP_TIMEOUT': '900'}
     }
@@ -886,10 +979,15 @@ esac
 if [ "$needs_cli_llm" -eq 1 ]; then
   printf "\n%s  * Running the ${BRAND} CLI:%s\n" "${C_CYAN}" "${C_RESET}"
   if [ "$CLI_DEPS_OK" -eq 1 ]; then
-    echo "    source .venv/bin/activate     # optional; makes the 'osprey' command available"
-    echo "    osprey                          # Interactive Commander CLI"
-    echo "    osprey scan example.com         # Direct scan entry point"
-    muted "Or run directly without activation:  \"$python_exe\" -m cli"
+    if [ "${runtime_choice:-1}" = "1" ] || [ "${runtime_choice:-1}" = "2" ]; then
+      echo "    $DOCKER_CMD exec -it osprey-backend osprey         # Interactive Commander CLI"
+      echo "    $DOCKER_CMD exec -it osprey-backend osprey scan example.com"
+    else
+      echo "    source .venv/bin/activate     # optional; makes the 'osprey' command available"
+      echo "    osprey                          # Interactive Commander CLI"
+      echo "    osprey scan example.com         # Direct scan entry point"
+      muted "Or run directly without activation:  \"$python_exe\" -m cli"
+    fi
   else
     fail "CLI installation did NOT complete — the 'osprey' command is not ready."
   fi
@@ -898,8 +996,13 @@ fi
 if [ "$wants_mcp" -eq 1 ]; then
   printf '\n%s  * AI Harness (MCP):%s\n' "${C_CYAN}" "${C_RESET}"
   if [ "$MCP_DEPS_OK" -eq 1 ]; then
-    echo "    ${BRAND} MCP is ready to be launched via:"
-    muted "$python_exe $server_script"
+    if [ "$use_docker_mcp" -eq 1 ]; then
+      echo "    ${BRAND} MCP runs via the backend container:"
+      muted "$DOCKER_CMD exec -i -e PYTHONPATH=/app/platform-mcp osprey-backend python /app/platform-mcp/server.py"
+    else
+      echo "    ${BRAND} MCP is ready to be launched via:"
+      muted "$python_exe $server_script"
+    fi
     muted "See mcp-config.json for copy-pasteable JSON configs."
   else
     fail "MCP bridge dependencies did NOT install — your AI harness (Claude/Cursor/"
