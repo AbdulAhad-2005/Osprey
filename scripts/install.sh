@@ -15,6 +15,11 @@
 set -uo pipefail
 
 BRAND="${OSPREY_APP_NAME:-${BRAND:-Osprey}}"
+# Whether a white-label override was explicitly given, independent of what
+# string BRAND resolves to (a downstream rebrand of this file's own "Osprey"
+# text would otherwise also rewrite a literal-string check against it).
+BRAND_IS_OVERRIDDEN=0
+[ -n "${OSPREY_APP_NAME:-}" ] && BRAND_IS_OVERRIDDEN=1
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -260,7 +265,7 @@ ensure_mcp_python() {
 # build gets a plain name banner instead.
 clear 2>/dev/null || true
 printf '%s' "${C_RED}"
-if [ "$BRAND" = "Osprey" ]; then
+if [ "$BRAND_IS_OVERRIDDEN" = "0" ]; then
 cat << 'BANNER'
    ____  _____ _____  _____  ________   __
   / __ \/ ___// __ \/ __ \/ ____/\ \ / /

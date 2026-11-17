@@ -19,6 +19,10 @@ $RootDir = Split-Path $ScriptDir -Parent
 Set-Location $RootDir
 
 $Brand = if ($env:OSPREY_APP_NAME) { $env:OSPREY_APP_NAME } else { "Osprey" }
+# Whether a white-label override was explicitly given, independent of what
+# string $Brand resolves to (a downstream rebrand of this file's own "Osprey"
+# text would otherwise also rewrite a literal-string check against it).
+$BrandIsOverridden = [bool]$env:OSPREY_APP_NAME
 
 # ── Styling & output helpers ──────────────────────────────────────────────────
 function Write-Header {
@@ -211,7 +215,7 @@ function Ensure-CliPython {
 # parametrized with $Brand. Show it only for the default brand; a white-labeled
 # build gets a plain name banner instead.
 Clear-Host
-if ($Brand -eq "Osprey") {
+if (-not $BrandIsOverridden) {
     Write-Host @"
    ____  _____ _____  _____  ________   __
   / __ \/ ___// __ \/ __ \/ ____/\ \ / /
