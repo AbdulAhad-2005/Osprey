@@ -197,6 +197,16 @@ MCP_DEPS_OK=1
 CLI_DEPS_OK=1
 GUI_DEPS_OK=1
 
+# A downstream build that ships PyArmor-obfuscated code (pyarmor_runtime_*
+# directories at the repo root — never present in this public, plain-source
+# checkout) bakes in a single Python minor version; local-host mode needs a
+# matching interpreter, Docker mode doesn't (the image pins its own).
+is_host_python_312() {
+  if ! command -v python3 >/dev/null 2>&1; then return 1; fi
+  local pyminor; pyminor="$(python3 -c 'import sys; print(sys.version_info.minor)' 2>/dev/null || echo "")"
+  [ "$pyminor" = "12" ]
+}
+
 ensure_cli_python() {
   # Full/Lean Docker mode: the backend image already has the CLI installed
   # (backend/Dockerfile runs `pip install -e /app/cli`), reachable via
@@ -213,6 +223,13 @@ ensure_cli_python() {
   if [ -z "$py" ]; then
     if ! command -v python3 >/dev/null 2>&1; then
       warn "python3 not found — cannot install the ${BRAND} CLI. Install Python 3.12+, then re-run."
+      CLI_DEPS_OK=0
+      return 1
+    fi
+    if ! is_host_python_312 && ls "$ROOT_DIR"/pyarmor_runtime_* >/dev/null 2>&1; then
+      local hminor; hminor="$(python3 -c 'import sys; print(sys.version_info.minor)' 2>/dev/null || echo "")"
+      warn "Host Python 3.${hminor} detected. The precompiled runtime requires Python 3.12 for local host mode."
+      muted "Tip: switch to Full Docker mode (Option 1), which bundles Python 3.12 inside Docker."
       CLI_DEPS_OK=0
       return 1
     fi
@@ -280,20 +297,15 @@ ensure_mcp_python() {
 }
 
 # ── Banner ────────────────────────────────────────────────────────────────────
-# The ASCII art literally spells "OSPREY" — it's art, not text, so it can't be
-# parametrized with $BRAND. Show it only for the default brand; a white-labeled
-# build gets a plain name banner instead.
+# The ASCII art in banner.txt spells out the brand name in block letters, so it
+# can't be parametrized with $BRAND — it's a separate, brand-specific file (not
+# inlined here) so each white-label build can carry its own art. Show it only
+# for the default brand; a white-labeled build gets a plain name banner instead.
 clear 2>/dev/null || true
 printf '%s' "${C_RED}"
 if [ "$BRAND_IS_OVERRIDDEN" = "0" ]; then
-cat << 'BANNER'
-   ____  _____ _____  _____  ________   __
-  / __ \/ ___// __ \/ __ \/ ____/\ \ / /
- / / / /\__ \/ /_/ / /_/ / __/    \ V /
-/ /_/ /___/ / ____/ _, _/ /___     / /
-\____//____/_/   /_/ |_/_____/    /_/
-Autonomous AI Offensive Security Platform
-BANNER
+cat "$ROOT_DIR/scripts/banner.txt"
+printf 'Autonomous AI Offensive Security Platform\n'
 else
   printf '\n  %s\n  Autonomous AI Offensive Security Platform\n\n' "$(printf '%s' "$BRAND" | tr '[:lower:]' '[:upper:]')"
 fi

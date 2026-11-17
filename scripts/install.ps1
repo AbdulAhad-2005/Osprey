@@ -244,19 +244,14 @@ function Ensure-CliPython {
 }
 
 # ── Banner ────────────────────────────────────────────────────────────────────
-# The ASCII art literally spells "OSPREY" — it's art, not text, so it can't be
-# parametrized with $Brand. Show it only for the default brand; a white-labeled
-# build gets a plain name banner instead.
+# The ASCII art in banner.txt spells out the brand name in block letters, so it
+# can't be parametrized with $Brand — it's a separate, brand-specific file (not
+# inlined here) so each white-label build can carry its own art. Show it only
+# for the default brand; a white-labeled build gets a plain name banner instead.
 Clear-Host
 if (-not $BrandIsOverridden) {
-    Write-Host @"
-   ____  _____ _____  _____  ________   __
-  / __ \/ ___// __ \/ __ \/ ____/\ \ / /
- / / / /\__ \/ /_/ / /_/ / __/    \ V /
-/ /_/ /___/ / ____/ _, _/ /___     / /
-\____//____/_/   /_/ |_/_____/    /_/
-Autonomous AI Offensive Security Platform
-"@ -ForegroundColor Red
+    Get-Content (Join-Path $ScriptDir "banner.txt") | ForEach-Object { Write-Host $_ -ForegroundColor Red }
+    Write-Host "Autonomous AI Offensive Security Platform" -ForegroundColor Red
 } else {
     Write-Host ""
     Write-Host "  $($Brand.ToUpper())" -ForegroundColor Red
