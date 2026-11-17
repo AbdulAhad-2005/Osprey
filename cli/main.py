@@ -149,6 +149,43 @@ def _prompt_loop_body(client: APIClient, session) -> None:
 _SCAN_PHASES = ("recon", "network", "vuln", "web", "exploit", "osint", "full")
 
 
+def _connect_with_health_check(api_url: str) -> tuple[APIClient, str, bool]:
+    """Connect and verify the backend is reachable at `api_url`, falling back
+    to the internal default port if not.
+
+    resolve_api_base_url() already corrects the common case (a host-mapped
+    localhost URL read from inside the backend's own container); this covers
+    whatever that can't catch from the URL string alone (e.g. a configured
+    value that isn't localhost/127.0.0.1 but still isn't reachable as that
+    port from inside the container) by actually trying the connection.
+    Returns (client, the URL actually connected to, whether it's reachable).
+    """
+    client = get_runtime(APIClient(base_url=api_url))
+    try:
+        health = client.health()
+        if health.get("status") != "ok":
+            print_error("Backend reported a non-ok health status.")
+        return client, api_url, True
+    except Exception:
+        pass
+
+    fallback_url = "http://localhost:9000"
+    if api_url != fallback_url:
+        try:
+            fallback_client = get_runtime(APIClient(base_url=fallback_url))
+            if fallback_client.health().get("status") == "ok":
+                client.close()
+                return fallback_client, fallback_url, True
+        except Exception:
+            pass
+
+    print_error(
+        f"Cannot reach the backend at {api_url}. "
+        "Start it with `docker compose up -d` (repo root) and try again."
+    )
+    return client, api_url, False
+
+
 def _run_scan_noninteractive(args: argparse.Namespace) -> int:
     """Scriptable entry into the same CLI harness used by the interactive UI.
 
@@ -160,18 +197,9 @@ def _run_scan_noninteractive(args: argparse.Namespace) -> int:
     from cli.commands.slash import _PHASE_PROMPTS, _api_error_text, _bind_engagement
 
     api_url = resolve_api_base_url()
-    client = get_runtime(APIClient(base_url=api_url))
+    client, api_url, reachable = _connect_with_health_check(api_url)
     print_info(f"Connected to: {api_url}")
-
-    try:
-        health = client.health()
-        if health.get("status") != "ok":
-            print_error("Backend reported a non-ok health status.")
-    except Exception:
-        print_error(
-            f"Cannot reach the backend at {api_url}. "
-            "Start it with `docker compose up -d` (repo root) and try again."
-        )
+    if not reachable:
         client.close()
         return 1
 
@@ -416,21 +444,11 @@ def main() -> None:
         sys.exit(_run_benchmark_noninteractive(args))
 
     api_url = resolve_api_base_url()
-    client = get_runtime(APIClient(base_url=api_url))
+    # Warn early when the backend is down so a first-time user knows why commands fail.
+    client, api_url, _reachable = _connect_with_health_check(api_url)
 
     print_banner()
     print_info(f"Connected to: {api_url}")
-
-    # Warn early when the backend is down so a first-time user knows why commands fail.
-    try:
-        health = client.health()
-        if health.get("status") != "ok":
-            print_error("Backend reported a non-ok health status.")
-    except Exception:
-        print_error(
-            f"Cannot reach the backend at {api_url}. "
-            "Start it with `docker compose up -d` (repo root) and try again."
-        )
 
     use_tty = sys.stdin is not None and sys.stdin.isatty()
     if use_tty:
