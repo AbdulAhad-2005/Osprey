@@ -115,8 +115,8 @@ require_docker() {
 }
 
 wait_for_backend() {
-  local bport="$(get_env_var BACKEND_PORT 9000)"
-  local base_url="$(get_env_var API_BASE_URL "http://localhost:${bport}")"
+  local bport="$(env_get BACKEND_PORT 9000)"
+  local base_url="$(env_get API_BASE_URL "http://localhost:${bport}")"
   local url="${base_url}/health" tries=60
   printf '%s  Waiting for backend at %s ' "${C_CYAN}" "$url"
   for _ in $(seq 1 "$tries"); do
@@ -691,8 +691,8 @@ server_script="$ROOT_DIR/platform-mcp/server.py"
 # OSPREY_MCP_SERVER_NAME to rebrand the generated/auto-written MCP config
 # key name — matches platform-mcp/server.py's own FastMCP(...) name.
 mcp_server_name="${OSPREY_MCP_SERVER_NAME:-osprey}"
-cfg_port="$(get_env_var BACKEND_PORT 9000)"
-mcp_api_base="$(get_env_var API_BASE_URL "http://localhost:${cfg_port}")"
+cfg_port="$(env_get BACKEND_PORT 9000)"
+mcp_api_base="$(env_get API_BASE_URL "http://localhost:${cfg_port}")"
 
 cat > "$ROOT_DIR/mcp-config.json" << EOF
 {
