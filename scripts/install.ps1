@@ -149,6 +149,13 @@ function Resolve-PythonPath {
 # "ModuleNotFoundError: No module named 'httpx'". Ensure a .venv that HAS the deps.
 $mcpDepsOk = $true
 function Resolve-McpPython {
+    # Full/Lean Docker mode: the backend image already has mcp/httpx (its
+    # requirements.txt pins them identically to platform-mcp's own), reachable
+    # via the Docker exec bridge wired up below — no local install needed.
+    if ($runtimeChoice -in @("1", "2")) {
+        Write-Success "MCP bridge runs via the backend container - no local install needed."
+        return
+    }
     $py = "$RootDir\.venv\Scripts\python.exe"
     if (Test-Path $py) {
         # try/catch: PS5.1 promotes native stderr to a terminating error under EAP=Stop.
@@ -180,6 +187,14 @@ $cliDepsOk = $true
 $guiDepsOk = $true
 
 function Ensure-CliPython {
+    # Same reasoning as Resolve-McpPython above: backend/Dockerfile already
+    # runs `pip install -e /app/cli`, reachable via `docker exec -it
+    # osprey-backend osprey` — a second, local-venv copy would just cost time
+    # and disk for no benefit.
+    if ($runtimeChoice -in @("1", "2")) {
+        Write-Success "$($Brand) CLI runs via the backend container - no local install needed."
+        return
+    }
     $py = "$RootDir\.venv\Scripts\python.exe"
     if (-not (Test-Path $py)) {
         $sys = $null
@@ -651,12 +666,29 @@ try {
 $cfgPort = Get-EnvVar "BACKEND_PORT" "9000"
 $mcpApiBase = Get-EnvVar "API_BASE_URL" "http://localhost:$cfgPort"
 
+# Full/Lean Docker mode: point every harness at the backend container's own
+# `python /app/platform-mcp/server.py` via `docker exec` instead of a local
+# interpreter/.bat wrapper — same reasoning as Resolve-McpPython above. From
+# inside the container the backend is always reachable at the internal port.
+$useDockerMcp = $runtimeChoice -in @("1", "2")
+if ($useDockerMcp) {
+    $mcpApiBase = "http://localhost:9000"
+    $dockerExecArgs = @("exec", "-i", "-e", "PYTHONPATH=/app/platform-mcp", "osprey-backend", "python", "/app/platform-mcp/server.py")
+    $claudeCmd = "docker"; $claudeArgs = $dockerExecArgs
+    $cursorCmd = "docker"; $cursorArgs = $dockerExecArgs
+    $opencodeCmd = @("docker") + $dockerExecArgs
+} else {
+    $claudeCmd = $shortPython; $claudeArgs = @($shortServer)
+    $cursorCmd = "cmd.exe"; $cursorArgs = @("/c", $shortBat)
+    $opencodeCmd = @($shortBat)
+}
+
 $mcpConfigContent = @{
     "claude_desktop" = @{
         "mcpServers" = @{
             "$McpServerName" = @{
-                "command" = $shortPython
-                "args"    = @($shortServer)
+                "command" = $claudeCmd
+                "args"    = $claudeArgs
                 "cwd"     = $shortRoot
                 "env"     = @{
                     "OSPREY_MCP_SERVER_NAME"       = $McpServerName
@@ -670,8 +702,8 @@ $mcpConfigContent = @{
     "cursor" = @{
         "mcpServers" = @{
             "$McpServerName" = @{
-                "command" = "cmd.exe"
-                "args"    = @("/c", $shortBat)
+                "command" = $cursorCmd
+                "args"    = $cursorArgs
                 "env"     = @{
                     "OSPREY_MCP_SERVER_NAME"       = $McpServerName
                     "PENTEST_API_BASE"      = $mcpApiBase
@@ -685,7 +717,7 @@ $mcpConfigContent = @{
         "mcp" = @{
             "$McpServerName" = @{
                 "type"        = "local"
-                "command"     = @($shortBat)
+                "command"     = $opencodeCmd
                 "cwd"         = $shortRoot
                 "environment" = @{
                     "OSPREY_MCP_SERVER_NAME"       = $McpServerName
@@ -825,10 +857,15 @@ if ($runtimeChoice -in @("1", "2")) {
 if ($needsCliLlm) {
     Write-Host "`n  * Running the $($Brand) CLI:" -ForegroundColor Cyan
     if ($cliDepsOk) {
-        Write-Host "    .\.venv\Scripts\Activate.ps1  # optional; makes the 'osprey' command available" -ForegroundColor White
-        Write-Host "    osprey                          # Interactive Commander CLI" -ForegroundColor White
-        Write-Host "    osprey scan example.com         # Direct scan entry point" -ForegroundColor White
-        Write-Host "    Or run directly: $pythonExe -m cli" -ForegroundColor DarkGray
+        if ($runtimeChoice -in @("1", "2")) {
+            Write-Host "    docker exec -it osprey-backend osprey         # Interactive Commander CLI" -ForegroundColor White
+            Write-Host "    docker exec -it osprey-backend osprey scan example.com" -ForegroundColor White
+        } else {
+            Write-Host "    .\.venv\Scripts\Activate.ps1  # optional; makes the 'osprey' command available" -ForegroundColor White
+            Write-Host "    osprey                          # Interactive Commander CLI" -ForegroundColor White
+            Write-Host "    osprey scan example.com         # Direct scan entry point" -ForegroundColor White
+            Write-Host "    Or run directly: $pythonExe -m cli" -ForegroundColor DarkGray
+        }
     } else {
         Write-Host "    CLI installation did NOT complete - the 'osprey' command is not ready." -ForegroundColor Red
     }
@@ -837,8 +874,13 @@ if ($needsCliLlm) {
 if ($usageChoice -eq "1" -or $usageChoice -eq "3") {
     Write-Host "`n  * AI Harness (MCP):" -ForegroundColor Cyan
     if ($mcpDepsOk) {
-        Write-Host "    $($Brand) MCP is ready to be launched via:" -ForegroundColor White
-        Write-Host "    $pythonExe $serverScript" -ForegroundColor DarkGray
+        if ($useDockerMcp) {
+            Write-Host "    $($Brand) MCP runs via the backend container:" -ForegroundColor White
+            Write-Host "    docker exec -i -e PYTHONPATH=/app/platform-mcp osprey-backend python /app/platform-mcp/server.py" -ForegroundColor DarkGray
+        } else {
+            Write-Host "    $($Brand) MCP is ready to be launched via:" -ForegroundColor White
+            Write-Host "    $pythonExe $serverScript" -ForegroundColor DarkGray
+        }
         Write-Host "    See mcp-config.json for copy-pasteable JSON configs." -ForegroundColor DarkGray
     } else {
         Write-Host "    MCP dependencies did NOT install - the harness cannot launch $($Brand) yet." -ForegroundColor Red
