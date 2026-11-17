@@ -186,6 +186,17 @@ function Resolve-McpPython {
 $cliDepsOk = $true
 $guiDepsOk = $true
 
+# A downstream build that ships PyArmor-obfuscated code (pyarmor_runtime_*
+# directories at the repo root — never present in this public, plain-source
+# checkout) bakes in a single Python minor version; local-host mode needs a
+# matching interpreter, Docker mode doesn't (the image pins its own).
+function Test-HostPython312 {
+    $cmd = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $cmd) { return $false }
+    $minor = & $cmd.Source -c "import sys; print(sys.version_info.minor)" 2>$null
+    return $minor -eq "12"
+}
+
 function Ensure-CliPython {
     # Same reasoning as Resolve-McpPython above: backend/Dockerfile already
     # runs `pip install -e /app/cli`, reachable via `docker exec -it
@@ -204,6 +215,13 @@ function Ensure-CliPython {
         }
         if (-not $sys) {
             Write-WarnItem "Python 3.12+ not found - cannot install the $($Brand) CLI."
+            $script:cliDepsOk = $false
+            return
+        }
+        if (-not (Test-HostPython312) -and (Get-ChildItem -Path $RootDir -Filter "pyarmor_runtime_*" -Directory -ErrorAction SilentlyContinue)) {
+            $hminor = & $sys -c "import sys; print(sys.version_info.minor)" 2>$null
+            Write-WarnItem "Host Python 3.$hminor detected. The precompiled runtime requires Python 3.12 for local host mode."
+            Write-Muted "Tip: switch to Full Docker mode (Option 1), which bundles Python 3.12 inside Docker."
             $script:cliDepsOk = $false
             return
         }
