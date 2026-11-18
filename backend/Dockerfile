@@ -52,11 +52,22 @@ COPY platform-mcp /app/platform-mcp
 # and installed here — otherwise foreground_chat/agent_runner fail at import.
 COPY agent_core /app/agent_core
 
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir -e . \
-    && pip install --no-cache-dir -e /app/agent_core \
-    && pip install --no-cache-dir -e /app/cli
+# Retries the whole install chain on a transient PyPI/mirror blip (seen as
+# "Could not find a version... (from versions: none)" for a package that
+# genuinely exists — the index briefly returned an empty result, not a real
+# 404) instead of failing the build outright — same pattern as the apt-get
+# retry above.
+RUN n=0; \
+    until pip install --no-cache-dir --upgrade pip \
+       && pip install --no-cache-dir -r requirements.txt \
+       && pip install --no-cache-dir -e . \
+       && pip install --no-cache-dir -e /app/agent_core \
+       && pip install --no-cache-dir -e /app/cli; do \
+      n=$((n + 1)); \
+      [ "$n" -ge 3 ] && exit 1; \
+      echo "pip install failed, retry $n/3 in $((n * 5))s..." >&2; \
+      sleep $((n * 5)); \
+    done
 
 # Keyless Python-tool runtime deps (the light set from mcp-servers/requirements.txt).
 # Installing them here means the custom Python tools (domain_hunter, js_recon, subdomain_takeover,
