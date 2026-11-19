@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Launch the Osprey operator CLI — works whether the backend runs in Docker
+# or the CLI was installed into a local .venv.
+#
+# 1. Full/Lean Docker mode: transparently runs inside the `osprey-backend`
+#    container (already has the CLI installed, zero host dependencies).
+# 2. Local mode: runs through the host .venv created by the setup wizard.
+#
+# Usage: osprey [any CLI args/flags]  (see `osprey --help`)
+set -euo pipefail
+# Resolve through the PATH symlink install_cli_launcher() creates — $0 would
+# otherwise be the symlink's own directory (e.g. ~/.local/bin), not the repo.
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+cd "$(cd -P "$(dirname "$SOURCE")" >/dev/null && pwd)/.."
+ROOT_DIR="$(pwd)"
+
+# 1. Check if the osprey-backend Docker container is running.
+DOCKER_CMD=""
+if command -v docker >/dev/null 2>&1; then
+  if docker ps >/dev/null 2>&1; then
+    DOCKER_CMD="docker"
+  elif [ "$(uname -s 2>/dev/null)" = "Linux" ] && command -v sudo >/dev/null 2>&1 && sudo -n docker ps >/dev/null 2>&1; then
+    DOCKER_CMD="sudo docker"
+  fi
+fi
+
+if [ -n "$DOCKER_CMD" ] && $DOCKER_CMD ps --format '{{.Names}}' 2>/dev/null | grep -q '^osprey-backend$'; then
+  TTY_FLAGS="-i"
+  if [ -t 0 ] && [ -t 1 ]; then
+    TTY_FLAGS="-it"
+  fi
+  exec $DOCKER_CMD exec $TTY_FLAGS -e API_BASE_URL=http://localhost:9000 osprey-backend osprey "$@"
+fi
+
+# 2. Fallback to local .venv.
+if [ -x ".venv/bin/python" ]; then
+  PY=".venv/bin/python"
+elif [ -x ".venv/Scripts/python.exe" ]; then
+  PY=".venv/Scripts/python.exe"
+else
+  echo "Osprey backend container is not running and no local .venv was found." >&2
+  echo "To start services with Docker (Recommended):" >&2
+  echo "    bash scripts/install.sh" >&2
+  echo "Or start existing containers:" >&2
+  echo "    docker compose --profile kali up -d" >&2
+  exit 1
+fi
+
+# Check Python version compatibility for a downstream PyArmor-obfuscated build.
+if ls "$ROOT_DIR"/pyarmor_runtime_* >/dev/null 2>&1; then
+  py_minor="$("$PY" -c 'import sys; print(sys.version_info.minor)' 2>/dev/null || echo "12")"
+  if [ "$py_minor" -ge 13 ]; then
+    echo "================================================================================" >&2
+    echo "  [!] Host Python 3.${py_minor} detected." >&2
+    echo "      The bundled runtime requires Python 3.12 for local host execution." >&2
+    echo "      Recommended: Run via Docker (Full Docker mode), which uses Python 3.12:" >&2
+    echo "          docker compose --profile kali up -d" >&2
+    echo "          osprey" >&2
+    echo "================================================================================" >&2
+    exit 1
+  fi
+fi
+
+if ! "$PY" -c "import cli" >/dev/null 2>&1; then
+  echo "The CLI isn't installed in .venv. Run:  \"$PY\" -m pip install -e ./cli" >&2
+  echo "(or re-run  bash scripts/install.sh  to install everything)" >&2
+  exit 1
+fi
+
+exec "$PY" -m cli "$@"

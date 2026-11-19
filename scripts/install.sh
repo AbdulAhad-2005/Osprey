@@ -207,6 +207,35 @@ is_host_python_312() {
   [ "$pyminor" = "12" ]
 }
 
+# scripts/osprey is a smart launcher: it execs into the backend container via
+# `docker exec` when it's running, else falls back to the local .venv — so a
+# bare `osprey` works for both Docker and local setups without the user
+# needing to know which one applies. This links it onto PATH; the CLI still
+# runs fine via `bash scripts/osprey` or `docker exec` directly if this fails.
+install_cli_launcher() {
+  local launcher="$ROOT_DIR/scripts/osprey"
+  chmod +x "$launcher" 2>/dev/null || true
+  local bin_dir="$HOME/.local/bin"
+  mkdir -p "$bin_dir" 2>/dev/null || true
+  # A thin wrapper that execs the real launcher by its known absolute path,
+  # rather than `ln -s`: on Windows (Git Bash/MSYS without Developer Mode),
+  # `ln -s` silently falls back to COPYING the file instead of linking it,
+  # which would freeze in a stale copy and break its own relative path
+  # resolution — a plain wrapper has no such ambiguity on any platform.
+  if printf '#!/usr/bin/env bash\nexec bash "%s" "$@"\n' "$launcher" > "$bin_dir/osprey" 2>/dev/null && chmod +x "$bin_dir/osprey" 2>/dev/null; then
+    case ":$PATH:" in
+      *":$bin_dir:"*) ok "'osprey' is ready — just type it from any terminal." ;;
+      *)
+        warn "'osprey' was installed into $bin_dir, which isn't on your PATH yet."
+        muted "Add it with:  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc && source ~/.bashrc"
+        ;;
+    esac
+  else
+    warn "Could not install the 'osprey' command onto PATH."
+    muted "Run it directly instead:  bash scripts/osprey"
+  fi
+}
+
 ensure_cli_python() {
   # Full/Lean Docker mode: the backend image already has the CLI installed
   # (backend/Dockerfile runs `pip install -e /app/cli`), reachable via
@@ -216,6 +245,7 @@ ensure_cli_python() {
   if [ "${runtime_choice:-1}" = "1" ] || [ "${runtime_choice:-1}" = "2" ]; then
     ok "${BRAND} CLI runs via the backend container — no local install needed."
     CLI_DEPS_OK=1
+    install_cli_launcher
     return 0
   fi
 
@@ -244,7 +274,8 @@ ensure_cli_python() {
   "$py" -m pip install --upgrade pip --quiet >/dev/null 2>&1 || true
   local pip_err=""
   if pip_err="$("$py" -m pip install --quiet -e "$ROOT_DIR/agent_core" -e "$ROOT_DIR/cli" 2>&1)"; then
-    ok "${BRAND} CLI installed into .venv (osprey command ready after activation)."
+    ok "${BRAND} CLI installed into .venv."
+    install_cli_launcher
   else
     warn "Failed to install the ${BRAND} CLI."
     muted "$pip_err"
@@ -621,22 +652,31 @@ if [ "$needs_cli_llm" -eq 1 ]; then
   echo "  3) Google Gemini: gemini/gemini-2.5-flash"
   echo "  4) OpenRouter   : openrouter/anthropic/claude-sonnet-5"
   echo "  5) Groq         : groq/llama-3.3-70b-versatile"
-  echo "  6) Local Ollama : ollama/llama3.3"
-  echo "  7) Custom model identifier"
+  echo "  6) DeepSeek     : deepseek/deepseek-chat"
+  echo "  7) Local Ollama : ollama/llama3.3"
+  echo "  8) Custom model identifier"
   echo "  0) Skip (configure in .env manually later)"
 
   ask "Choose provider preset [1]:"; read -r preset
   preset="${preset:-1}"
 
   chosen_model=""
+  suggested_base=""
   case "$preset" in
     1) chosen_model="anthropic/claude-sonnet-5" ;;
     2) chosen_model="openai/gpt-4o" ;;
     3) chosen_model="gemini/gemini-2.5-flash" ;;
     4) chosen_model="openrouter/anthropic/claude-sonnet-5" ;;
     5) chosen_model="groq/llama-3.3-70b-versatile" ;;
-    6) chosen_model="ollama/llama3.3" ;;
-    7) ask "Enter LiteLLM model identifier (e.g. openai/gpt-4o):"; read -r chosen_model ;;
+    6)
+      chosen_model="deepseek/deepseek-chat"
+      # LiteLLM's own DeepSeek default base is api.deepseek.com/beta (meant for
+      # FIM/prefix-completion features); plain chat completions belong on the
+      # standard endpoint, so default new setups there instead of the beta one.
+      suggested_base="https://api.deepseek.com"
+      ;;
+    7) chosen_model="ollama/llama3.3" ;;
+    8) ask "Enter LiteLLM model identifier (e.g. openai/gpt-4o):"; read -r chosen_model ;;
     0) warn "Skipped LLM configuration. Configure LLM_MODEL in .env before running CLI." ;;
   esac
 
@@ -656,6 +696,17 @@ if [ "$needs_cli_llm" -eq 1 ]; then
         fi
         ;;
     esac
+
+    if [ -n "$suggested_base" ]; then
+      ask "Enter API base URL [${suggested_base}]:"; read -r plain_base
+      plain_base="${plain_base:-$suggested_base}"
+    else
+      ask "Enter custom API base URL, for a proxy or self-hosted endpoint [Enter to use the provider default]:"; read -r plain_base
+    fi
+    if [ -n "$plain_base" ]; then
+      env_set "LLM_API_BASE" "$plain_base"
+      ok "Saved LLM_API_BASE=$plain_base"
+    fi
   fi
 else
   printf '%sIn MCP mode, your AI harness (Claude, Cursor, OpenCode, etc.) supplies its own LLM.%s\n' "${C_GREEN}" "${C_RESET}"
@@ -991,14 +1042,13 @@ esac
 if [ "$needs_cli_llm" -eq 1 ]; then
   printf "\n%s  * Running the ${BRAND} CLI:%s\n" "${C_CYAN}" "${C_RESET}"
   if [ "$CLI_DEPS_OK" -eq 1 ]; then
+    echo "    osprey                          # Interactive Commander CLI"
+    echo "    osprey scan example.com         # Direct scan entry point"
     if [ "${runtime_choice:-1}" = "1" ] || [ "${runtime_choice:-1}" = "2" ]; then
-      echo "    $DOCKER_CMD exec -it osprey-backend osprey         # Interactive Commander CLI"
-      echo "    $DOCKER_CMD exec -it osprey-backend osprey scan example.com"
+      muted "('osprey' transparently runs inside the backend container; or use directly:"
+      muted " $DOCKER_CMD exec -it osprey-backend osprey)"
     else
-      echo "    source .venv/bin/activate     # optional; makes the 'osprey' command available"
-      echo "    osprey                          # Interactive Commander CLI"
-      echo "    osprey scan example.com         # Direct scan entry point"
-      muted "Or run directly without activation:  \"$python_exe\" -m cli"
+      muted "Or run directly without the launcher:  \"$python_exe\" -m cli"
     fi
   else
     fail "CLI installation did NOT complete — the 'osprey' command is not ready."

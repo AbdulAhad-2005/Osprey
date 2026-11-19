@@ -197,6 +197,29 @@ function Test-HostPython312 {
     return $minor -eq "12"
 }
 
+# scripts\osprey.cmd/.ps1 is a smart launcher: it execs into the backend
+# container via `docker exec` when it's running, else falls back to the
+# local .venv — so a bare `osprey` works for both Docker and local setups
+# without the user needing to know which one applies. This persists the
+# scripts dir onto the User PATH; the CLI still runs fine via
+# `scripts\osprey.cmd` or `docker exec` directly if this fails.
+function Install-CliLauncher {
+    $scriptsDir = Join-Path $RootDir "scripts"
+    $userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+    $pathEntries = @()
+    if ($userPath) { $pathEntries = $userPath -split ";" | Where-Object { $_ } }
+    if ($pathEntries -notcontains $scriptsDir) {
+        $newUserPath = if ($userPath) { "$userPath;$scriptsDir" } else { $scriptsDir }
+        [Environment]::SetEnvironmentVariable("PATH", $newUserPath, "User")
+        Write-Success "'osprey' is ready - open a new terminal and just type it."
+    } else {
+        Write-Success "'osprey' is ready - just type it from any terminal."
+    }
+    if (($env:PATH -split ";") -notcontains $scriptsDir) {
+        $env:PATH = "$env:PATH;$scriptsDir"
+    }
+}
+
 function Ensure-CliPython {
     # Same reasoning as Resolve-McpPython above: backend/Dockerfile already
     # runs `pip install -e /app/cli`, reachable via `docker exec -it
@@ -204,6 +227,7 @@ function Ensure-CliPython {
     # and disk for no benefit.
     if ($runtimeChoice -in @("1", "2")) {
         Write-Success "$($Brand) CLI runs via the backend container - no local install needed."
+        Install-CliLauncher
         return
     }
     $py = "$RootDir\.venv\Scripts\python.exe"
@@ -236,7 +260,8 @@ function Ensure-CliPython {
     try { & $py -m pip install --upgrade pip --quiet 2>$null | Out-Null } catch { }
     & $py -m pip install --quiet -e "$RootDir\agent_core" -e "$RootDir\cli"
     if ($LASTEXITCODE -eq 0) {
-        Write-Success "$($Brand) CLI installed into .venv (osprey command ready after activation)."
+        Write-Success "$($Brand) CLI installed into .venv."
+        Install-CliLauncher
     } else {
         Write-WarnItem "Failed to install the $($Brand) CLI. Retry: $py -m pip install -e .\agent_core -e .\cli"
         $script:cliDepsOk = $false
@@ -550,22 +575,31 @@ if ($needsCliLlm) {
     Write-Host "  3) Google Gemini: gemini/gemini-2.5-flash"
     Write-Host "  4) OpenRouter   : openrouter/anthropic/claude-sonnet-5"
     Write-Host "  5) Groq         : groq/llama-3.3-70b-versatile"
-    Write-Host "  6) Local Ollama : ollama/llama3.3"
-    Write-Host "  7) Custom model identifier"
+    Write-Host "  6) DeepSeek     : deepseek/deepseek-chat"
+    Write-Host "  7) Local Ollama : ollama/llama3.3"
+    Write-Host "  8) Custom model identifier"
     Write-Host "  0) Skip (configure in .env manually later)"
 
     $preset = Read-Host "`nChoose provider preset [1]"
     if (-not $preset) { $preset = "1" }
 
     $chosenModel = ""
+    $suggestedBase = ""
     switch ($preset) {
         "1" { $chosenModel = "anthropic/claude-sonnet-5" }
         "2" { $chosenModel = "openai/gpt-4o" }
         "3" { $chosenModel = "gemini/gemini-2.5-flash" }
         "4" { $chosenModel = "openrouter/anthropic/claude-sonnet-5" }
         "5" { $chosenModel = "groq/llama-3.3-70b-versatile" }
-        "6" { $chosenModel = "ollama/llama3.3" }
-        "7" {
+        "6" {
+            $chosenModel = "deepseek/deepseek-chat"
+            # LiteLLM's own DeepSeek default base is api.deepseek.com/beta (meant
+            # for FIM/prefix-completion features); plain chat completions belong
+            # on the standard endpoint, so default new setups there instead.
+            $suggestedBase = "https://api.deepseek.com"
+        }
+        "7" { $chosenModel = "ollama/llama3.3" }
+        "8" {
             $chosenModel = Read-Host "Enter LiteLLM model identifier (e.g. openai/gpt-4o)"
         }
         "0" {
@@ -596,6 +630,17 @@ if ($needsCliLlm) {
             } else {
                 Write-WarnItem "Key skipped. Remember to populate LLM_API_KEY in .env."
             }
+        }
+
+        if ($suggestedBase) {
+            $plainBase = Read-Host "Enter API base URL [$suggestedBase]"
+            if (-not $plainBase) { $plainBase = $suggestedBase }
+        } else {
+            $plainBase = Read-Host "Enter custom API base URL, for a proxy or self-hosted endpoint [Enter to use the provider default]"
+        }
+        if ($plainBase) {
+            Set-EnvVar -Key "LLM_API_BASE" -Value $plainBase
+            Write-Success "Saved LLM_API_BASE=$plainBase"
         }
     }
 } else {
@@ -870,14 +915,13 @@ if ($runtimeChoice -in @("1", "2")) {
 if ($needsCliLlm) {
     Write-Host "`n  * Running the $($Brand) CLI:" -ForegroundColor Cyan
     if ($cliDepsOk) {
+        Write-Host "    osprey                          # Interactive Commander CLI" -ForegroundColor White
+        Write-Host "    osprey scan example.com         # Direct scan entry point" -ForegroundColor White
+        Write-Host "    (open a new terminal first if this was just installed)" -ForegroundColor DarkGray
         if ($runtimeChoice -in @("1", "2")) {
-            Write-Host "    docker exec -it osprey-backend osprey         # Interactive Commander CLI" -ForegroundColor White
-            Write-Host "    docker exec -it osprey-backend osprey scan example.com" -ForegroundColor White
+            Write-Host "    ('osprey' transparently runs inside the backend container; or use directly: docker exec -it osprey-backend osprey)" -ForegroundColor DarkGray
         } else {
-            Write-Host "    .\.venv\Scripts\Activate.ps1  # optional; makes the 'osprey' command available" -ForegroundColor White
-            Write-Host "    osprey                          # Interactive Commander CLI" -ForegroundColor White
-            Write-Host "    osprey scan example.com         # Direct scan entry point" -ForegroundColor White
-            Write-Host "    Or run directly: $pythonExe -m cli" -ForegroundColor DarkGray
+            Write-Host "    Or run directly without the launcher: $pythonExe -m cli" -ForegroundColor DarkGray
         }
     } else {
         Write-Host "    CLI installation did NOT complete - the 'osprey' command is not ready." -ForegroundColor Red
