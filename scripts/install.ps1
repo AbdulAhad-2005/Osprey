@@ -669,6 +669,21 @@ if ($needsCliLlm) {
     Resolve-McpPython
 }
 
+# Most MCP clients spawn platform-mcp over stdio (the config below handles
+# that). A few only accept a server URL, not a launch command — bring up the
+# same gateway over HTTP too so that option is available without an extra
+# manual step.
+if (($usageChoice -eq "1" -or $usageChoice -eq "3") -and $runtimeChoice -in @("1", "2")) {
+    Write-Step "Starting the MCP HTTP gateway (for clients that only accept a server URL)..."
+    $mcpHttpPort = Get-EnvVar "MCP_HTTP_PORT" "9100"
+    try { docker compose --profile mcp-http up -d mcp-gateway *> $null } catch { $LASTEXITCODE = 1 }
+    if ($LASTEXITCODE -eq 0) {
+        Write-Success "MCP HTTP gateway running at http://localhost:$mcpHttpPort/mcp"
+    } else {
+        Write-WarnItem "Could not start the MCP HTTP gateway. Start it manually: docker compose --profile mcp-http up -d"
+    }
+}
+
 if ($wantsGui) {
     $node = Get-Command node -ErrorAction SilentlyContinue
     $npm = Get-Command npm -ErrorAction SilentlyContinue
@@ -934,6 +949,9 @@ if ($usageChoice -eq "1" -or $usageChoice -eq "3") {
         if ($useDockerMcp) {
             Write-Host "    $($Brand) MCP runs via the backend container:" -ForegroundColor White
             Write-Host "    docker exec -i -e PYTHONPATH=/app/platform-mcp osprey-backend python /app/platform-mcp/server.py" -ForegroundColor DarkGray
+            $mcpHttpPort = Get-EnvVar "MCP_HTTP_PORT" "9100"
+            Write-Host "    Client only accepts a server URL, not a launch command? Use:" -ForegroundColor DarkGray
+            Write-Host "        http://localhost:$mcpHttpPort/mcp" -ForegroundColor DarkGray
         } else {
             Write-Host "    $($Brand) MCP is ready to be launched via:" -ForegroundColor White
             Write-Host "    $pythonExe $serverScript" -ForegroundColor DarkGray

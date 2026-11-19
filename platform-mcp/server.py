@@ -8,6 +8,7 @@ Postgres storage. Switching targets in the same chat rebinds automatically.
 
 from __future__ import annotations
 
+import os
 import uuid
 from typing import Any
 
@@ -192,4 +193,18 @@ def __getattr__(name: str) -> Any:
 
 if __name__ == "__main__":
     _log(f"session run_id={_core.SESSION_RUN_ID} (dynamic target — call platform_set_target first)")
-    mcp.run()
+    # Command-launched MCP clients (Claude Desktop, Cursor, OpenCode) spawn this
+    # over stdio — the default. A client that only accepts a server URL (no
+    # spawn command) needs the streamable-http transport instead; opt in with
+    # MCP_TRANSPORT=streamable-http (see docker-compose.yml's mcp-gateway
+    # service, under the `mcp-http` profile). One process == one shared session
+    # (module-level globals in _gateway_core), same as a single stdio instance —
+    # this is not meant for multiple concurrent clients on one gateway.
+    transport = os.environ.get("MCP_TRANSPORT", "stdio").strip().lower()
+    if transport in ("http", "streamable-http"):
+        mcp.settings.host = os.environ.get("MCP_HTTP_HOST", "0.0.0.0")
+        mcp.settings.port = int(os.environ.get("MCP_HTTP_PORT", "8000"))
+        _log(f"serving streamable-http on {mcp.settings.host}:{mcp.settings.port}{mcp.settings.streamable_http_path}")
+        mcp.run(transport="streamable-http")
+    else:
+        mcp.run()
