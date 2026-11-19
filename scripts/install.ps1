@@ -955,6 +955,8 @@ if ($usageChoice -eq "1" -or $usageChoice -eq "3") {
         } else {
             Write-Host "    $($Brand) MCP is ready to be launched via:" -ForegroundColor White
             Write-Host "    $pythonExe $serverScript" -ForegroundColor DarkGray
+            Write-Host "    Client only accepts a server URL, not a launch command? Run:" -ForegroundColor DarkGray
+            Write-Host "        powershell -ExecutionPolicy Bypass -File scripts\serve-mcp-http.ps1  # then use http://localhost:9100/mcp" -ForegroundColor DarkGray
         }
         Write-Host "    See mcp-config.json for copy-pasteable JSON configs." -ForegroundColor DarkGray
     } else {

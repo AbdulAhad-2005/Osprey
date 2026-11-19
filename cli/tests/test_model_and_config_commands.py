@@ -25,10 +25,8 @@ def test_settings_lifespan_warning_eliminated():
     with warnings.catch_warnings(record=True) as recorded:
         warnings.simplefilter("always")
         ensure_mcp_compatibility()
-        import mcp.server.fastmcp.server as s
-        s.Settings.model_rebuild(_types_namespace={"FastMCP": s.FastMCP})
-        from mcp.server.fastmcp import FastMCP
-        _ = FastMCP("test-osprey")
+        from mcp.server import MCPServer
+        _ = MCPServer("test-osprey")
 
     lifespan_warnings = [
         w for w in recorded

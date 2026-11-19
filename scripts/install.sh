@@ -1078,6 +1078,8 @@ if [ "$wants_mcp" -eq 1 ]; then
     else
       echo "    ${BRAND} MCP is ready to be launched via:"
       muted "$python_exe $server_script"
+      muted "Client only accepts a server URL, not a launch command? Run:"
+      muted "    bash scripts/serve-mcp-http.sh      # then use http://localhost:9100/mcp"
     fi
     muted "See mcp-config.json for copy-pasteable JSON configs."
   else

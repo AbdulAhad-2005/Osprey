@@ -13,7 +13,7 @@
 
 ## 1. MCP surface (what the LLM calls)
 
-The LLM talks only to `platform-mcp/server.py` over stdio. It never touches `mcp-servers/*` directly — those are Kali-side, reached through the backend. Tool families:
+The LLM talks only to `platform-mcp/server.py` — over stdio by default (command-launched clients: Claude Desktop, Cursor, OpenCode), or over the streamable-http transport for a client that only accepts a server URL (`MCP_TRANSPORT=streamable-http`; see README's MCP client configuration section). Either way it never touches `mcp-servers/*` directly — those are Kali-side, reached through the backend. Tool families:
 
 | Family | Tools |
 |--------|-------|

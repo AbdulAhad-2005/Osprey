@@ -2,5 +2,5 @@
 # previously drifted across 5 independent constraints in this repo. Bump ALL
 # FIVE (this file, mcp-servers/requirements.txt, backend/requirements.txt,
 # cli/pyproject.toml, kali-tools/Dockerfile) together, never just one.
-mcp==1.28.1
+mcp==2.3.0
 httpx>=0.27.0

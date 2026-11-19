@@ -368,7 +368,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # backend/requirements.txt, mcp-servers/requirements.txt,
 # platform-mcp/requirements.txt, cli/pyproject.toml — bump together.
 RUN --mount=type=cache,target=/root/.cache/pip \
-    retry-cmd 5 "$OSPREY_PYTHON/bin/python" -m pip install "mcp==1.28.1" \
+    retry-cmd 5 "$OSPREY_PYTHON/bin/python" -m pip install "mcp==2.3.0" \
     && "$OSPREY_PYTHON/bin/python" -c "import mcp; print('MCP import: OK')" \
     && "$OSPREY_PYTHON/bin/python" -m pip show mcp
 

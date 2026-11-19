@@ -22,7 +22,7 @@ dependencies = [
     # and reads its tool schemas off the same registry. Exact-pinned — this
     # package previously drifted across 5 independent constraints in this repo
     # (see mcp-servers/requirements.txt's comment). Bump ALL FIVE together.
-    "mcp==1.28.1",
+    "mcp==2.3.0",
 ]
 
 [project.scripts]

@@ -308,6 +308,11 @@ Point any MCP-capable AI client at `platform-mcp/server.py`. If you ran the
 setup wizard, it already wrote a ready-to-paste `mcp-config.json` and offered
 to configure detected clients automatically.
 
+Most clients (Claude Desktop, Cursor, OpenCode) launch it themselves over
+**stdio** — they run a command you give them. A client that only accepts a server
+**URL**, not a launch command, needs the streamable-http transport instead
+— see "A client that only takes a URL" further down.
+
 <details>
 <summary><b>OpenCode</b></summary>
 
@@ -331,6 +336,19 @@ Edit `~/.config/opencode/opencode.json` (global — works in any project):
 Use the venv's python (not a bare `python`) so the MCP deps are guaranteed
 present. Verify with `/tools` in the chat.
 
+**Docker setup?** Use `docker exec` instead of a local python — the backend
+container already has the CLI/MCP deps installed:
+
+```jsonc
+"osprey": {
+  "type": "local",
+  "command": ["docker", "exec", "-i", "-e", "PYTHONPATH=/app/platform-mcp", "osprey-backend", "python", "/app/platform-mcp/server.py"],
+  "env": { "PENTEST_API_BASE": "http://localhost:9000", "PENTEST_QUICK_TIMEOUT": "30", "PENTEST_HTTP_TIMEOUT": "900" },
+  "enabled": true,
+  "timeout": 600000
+}
+```
+
 </details>
 
 <details>
@@ -352,6 +370,16 @@ Settings → Developer → Edit Config → `claude_desktop_config.json`:
 ```
 
 `osprey` should show as a running MCP server in Claude's settings.
+
+**Docker setup?** Use `docker exec` instead of a local python:
+
+```json
+"osprey": {
+  "command": "docker",
+  "args": ["exec", "-i", "-e", "PYTHONPATH=/app/platform-mcp", "osprey-backend", "python", "/app/platform-mcp/server.py"],
+  "env": { "PENTEST_API_BASE": "http://localhost:9000", "PENTEST_QUICK_TIMEOUT": "30", "PENTEST_HTTP_TIMEOUT": "900" }
+}
+```
 
 </details>
 
@@ -384,6 +412,38 @@ PENTEST_HTTP_TIMEOUT = "900"
 ```
 
 Restart ChatGPT Desktop after editing.
+
+**Docker setup?** Set Command to `docker`, Arguments to `exec -i -e
+PYTHONPATH=/app/platform-mcp osprey-backend python /app/platform-mcp/server.py`
+(or the equivalent `args` array in `config.toml`).
+
+</details>
+
+<details>
+<summary><b>A client that only takes a URL</b></summary>
+
+A few clients only accept a server **URL**, not a launch command. For these,
+run the gateway over the streamable-http transport instead of stdio — same
+tools, reachable at a URL:
+
+```bash
+# Docker setup — runs automatically if you selected MCP in the installer, or:
+docker compose --profile mcp-http up -d
+
+# Local (no Docker) setup — keep this running in its own terminal:
+bash scripts/serve-mcp-http.sh        # or scripts\serve-mcp-http.ps1 on Windows
+```
+
+Then point the client at:
+
+```
+http://localhost:9100/mcp
+```
+
+Caveats: this gateway holds one shared session per process — it's built for
+one client at a time, not several concurrent connections to the same URL.
+It also has no built-in auth, so don't expose port 9100 beyond localhost
+without your own auth/reverse-proxy in front of it.
 
 </details>
 

@@ -30,7 +30,7 @@ except ImportError:
     except (ImportError, AttributeError):
         pass
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 
 API_BASE = (
     os.environ.get("PENTEST_API_BASE")
@@ -222,7 +222,7 @@ _DOMAIN_RE = re.compile(
 # private Ababeel overlay sets OSPREY_MCP_SERVER_NAME to rebrand the server's
 # self-reported MCP identity without forking this module — same pattern as
 # cli/branding.py and gui/src/lib/brand.ts.
-mcp = FastMCP(os.environ.get("OSPREY_MCP_SERVER_NAME", "osprey"))
+mcp = MCPServer(os.environ.get("OSPREY_MCP_SERVER_NAME", "osprey"))
 
 
 _QUIET = os.environ.get("PENTEST_MCP_QUIET", "").strip().lower() in ("1", "true", "yes")

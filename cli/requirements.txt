@@ -15,4 +15,4 @@ litellm>=1.50,<2.0
 # this file, cli/pyproject.toml, mcp-servers/requirements.txt,
 # platform-mcp/requirements.txt, backend/requirements.txt, and
 # kali-tools/Dockerfile together, never just one.
-mcp==1.28.1
+mcp==2.3.0

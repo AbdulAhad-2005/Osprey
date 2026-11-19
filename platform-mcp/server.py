@@ -202,9 +202,14 @@ if __name__ == "__main__":
     # this is not meant for multiple concurrent clients on one gateway.
     transport = os.environ.get("MCP_TRANSPORT", "stdio").strip().lower()
     if transport in ("http", "streamable-http"):
-        mcp.settings.host = os.environ.get("MCP_HTTP_HOST", "0.0.0.0")
-        mcp.settings.port = int(os.environ.get("MCP_HTTP_PORT", "8000"))
-        _log(f"serving streamable-http on {mcp.settings.host}:{mcp.settings.port}{mcp.settings.streamable_http_path}")
-        mcp.run(transport="streamable-http")
+        http_host = os.environ.get("MCP_HTTP_HOST", "0.0.0.0")
+        http_port = int(os.environ.get("MCP_HTTP_PORT", "8000"))
+        # streamable_http_app()'s default path is /mcp; this one endpoint
+        # auto-negotiates both the session-based (2025-era) and sessionless
+        # (2026-07-28) protocol revisions, so every client generation works
+        # against it with no extra configuration (verified against the SDK's
+        # own Client in both "legacy" and "auto" modes).
+        _log(f"serving streamable-http on {http_host}:{http_port}/mcp")
+        mcp.run(transport="streamable-http", host=http_host, port=http_port)
     else:
         mcp.run()

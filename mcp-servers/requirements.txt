@@ -17,7 +17,7 @@
 # ceiling at all) — a fresh build of the unbounded ones could silently pull a
 # breaking mcp 2.0 while the others stayed on 1.x. Bump ALL FIVE together,
 # never just one.
-mcp==1.28.1
+mcp==2.3.0
 
 # Custom-tool runtime deps (keyless — the "works on a laptop" set)
 requests>=2.28
