@@ -741,17 +741,10 @@ if [ "$wants_mcp" -eq 1 ]; then
     ensure_mcp_python
   fi
   # Most MCP clients spawn platform-mcp over stdio (the config below handles
-  # that). A few only accept a server URL, not a launch command — bring up
-  # the same gateway over HTTP too so that option is available without an
-  # extra manual step.
-  if [ "${runtime_choice:-1}" = "1" ] || [ "${runtime_choice:-1}" = "2" ]; then
-    info "Starting the MCP HTTP gateway (for clients that only accept a server URL)..."
-    if $DOCKER_CMD compose --profile mcp-http up -d mcp-gateway >/dev/null 2>&1; then
-      ok "MCP HTTP gateway running at http://localhost:${MCP_HTTP_PORT:-9100}/mcp"
-    else
-      warn "Could not start the MCP HTTP gateway. Start it manually: $DOCKER_CMD compose --profile mcp-http up -d"
-    fi
-  fi
+  # that). A few only accept a server URL, not a launch command — for those,
+  # the backend mounts the same gateway at /mcp on its own port, so this is
+  # all it takes: no separate process, port, or script.
+  env_set "OSPREY_MCP_HTTP" "1"
 fi
 
 if [ "$needs_cli_llm" -eq 1 ] && [ "$wants_mcp" -eq 0 ]; then
@@ -1073,14 +1066,12 @@ if [ "$wants_mcp" -eq 1 ]; then
     if [ "$use_docker_mcp" -eq 1 ]; then
       echo "    ${BRAND} MCP runs via the backend container:"
       muted "$DOCKER_CMD exec -i -e PYTHONPATH=/app/platform-mcp osprey-backend python /app/platform-mcp/server.py"
-      muted "Client only accepts a server URL, not a launch command? Use:"
-      muted "    http://localhost:${MCP_HTTP_PORT:-9100}/mcp"
     else
       echo "    ${BRAND} MCP is ready to be launched via:"
       muted "$python_exe $server_script"
-      muted "Client only accepts a server URL, not a launch command? Run:"
-      muted "    bash scripts/serve-mcp-http.sh      # then use http://localhost:9100/mcp"
     fi
+    muted "Client only accepts a server URL, not a launch command? Use:"
+    muted "    http://localhost:${cfg_port}/mcp      # same backend, no extra process"
     muted "See mcp-config.json for copy-pasteable JSON configs."
   else
     fail "MCP bridge dependencies did NOT install — your AI harness (Claude/Cursor/"

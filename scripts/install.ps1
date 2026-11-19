@@ -670,18 +670,11 @@ if ($needsCliLlm) {
 }
 
 # Most MCP clients spawn platform-mcp over stdio (the config below handles
-# that). A few only accept a server URL, not a launch command — bring up the
-# same gateway over HTTP too so that option is available without an extra
-# manual step.
-if (($usageChoice -eq "1" -or $usageChoice -eq "3") -and $runtimeChoice -in @("1", "2")) {
-    Write-Step "Starting the MCP HTTP gateway (for clients that only accept a server URL)..."
-    $mcpHttpPort = Get-EnvVar "MCP_HTTP_PORT" "9100"
-    try { docker compose --profile mcp-http up -d mcp-gateway *> $null } catch { $LASTEXITCODE = 1 }
-    if ($LASTEXITCODE -eq 0) {
-        Write-Success "MCP HTTP gateway running at http://localhost:$mcpHttpPort/mcp"
-    } else {
-        Write-WarnItem "Could not start the MCP HTTP gateway. Start it manually: docker compose --profile mcp-http up -d"
-    }
+# that). A few only accept a server URL, not a launch command — for those,
+# the backend mounts the same gateway at /mcp on its own port, so this is
+# all it takes: no separate process, port, or script.
+if ($usageChoice -eq "1" -or $usageChoice -eq "3") {
+    Set-EnvVar -Key "OSPREY_MCP_HTTP" -Value "1"
 }
 
 if ($wantsGui) {
@@ -949,15 +942,12 @@ if ($usageChoice -eq "1" -or $usageChoice -eq "3") {
         if ($useDockerMcp) {
             Write-Host "    $($Brand) MCP runs via the backend container:" -ForegroundColor White
             Write-Host "    docker exec -i -e PYTHONPATH=/app/platform-mcp osprey-backend python /app/platform-mcp/server.py" -ForegroundColor DarkGray
-            $mcpHttpPort = Get-EnvVar "MCP_HTTP_PORT" "9100"
-            Write-Host "    Client only accepts a server URL, not a launch command? Use:" -ForegroundColor DarkGray
-            Write-Host "        http://localhost:$mcpHttpPort/mcp" -ForegroundColor DarkGray
         } else {
             Write-Host "    $($Brand) MCP is ready to be launched via:" -ForegroundColor White
             Write-Host "    $pythonExe $serverScript" -ForegroundColor DarkGray
-            Write-Host "    Client only accepts a server URL, not a launch command? Run:" -ForegroundColor DarkGray
-            Write-Host "        powershell -ExecutionPolicy Bypass -File scripts\serve-mcp-http.ps1  # then use http://localhost:9100/mcp" -ForegroundColor DarkGray
         }
+        Write-Host "    Client only accepts a server URL, not a launch command? Use:" -ForegroundColor DarkGray
+        Write-Host "        http://localhost:$cfgPort/mcp      # same backend, no extra process" -ForegroundColor DarkGray
         Write-Host "    See mcp-config.json for copy-pasteable JSON configs." -ForegroundColor DarkGray
     } else {
         Write-Host "    MCP dependencies did NOT install - the harness cannot launch $($Brand) yet." -ForegroundColor Red

@@ -88,6 +88,12 @@ services:
       LLM_MAX_AGENT_TURNS: ${LLM_MAX_AGENT_TURNS:-40}
       LLM_TOOL_TIMEOUT: ${LLM_TOOL_TIMEOUT:-900}
       SHODAN_API_KEY: ${SHODAN_API_KEY:-}
+      # Mounts the MCP gateway's tools onto this same backend/port at /mcp —
+      # for a client that only accepts a server URL, not a launch command
+      # (most clients spawn platform-mcp/server.py themselves over stdio
+      # instead; see README's MCP client configuration section). Set by the
+      # installer when MCP is selected; no separate service/port needed.
+      OSPREY_MCP_HTTP: ${OSPREY_MCP_HTTP:-}
     volumes:
       - ./backend:/app
       - ./config:/config
@@ -123,38 +129,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-
-  # Most MCP clients (Claude Desktop, Cursor, OpenCode) launch platform-mcp
-  # themselves over stdio (`docker exec -i osprey-backend python
-  # platform-mcp/server.py` — see install.sh/install.ps1's generated config).
-  # A client that only accepts a server URL, not a spawn command, needs this
-  # instead: the same gateway, listening over the streamable-http transport.
-  # Opt-in (separate port, not started by default):
-  #   docker compose --profile mcp-http up -d
-  # Then point the client at:  http://localhost:9100/mcp
-  # One process serves one shared session (see server.py) — not meant for
-  # multiple concurrent client connections against the same gateway.
-  mcp-gateway:
-    profiles: ["mcp-http"]
-    image: osprey-backend:latest
-    container_name: osprey-mcp-gateway
-    env_file:
-      - .env
-    environment:
-      API_BASE_URL: http://backend:9000
-      MCP_TRANSPORT: streamable-http
-      MCP_HTTP_HOST: 0.0.0.0
-      MCP_HTTP_PORT: "9100"
-    volumes:
-      - ./platform-mcp:/app/platform-mcp
-      - ./cli:/app/cli
-      - ./agent_core:/app/agent_core
-    working_dir: /app/platform-mcp
-    command: ["python", "server.py"]
-    ports:
-      - "${MCP_HTTP_PORT:-9100}:9100"
-    depends_on:
-      - backend
 
 volumes:
   postgres_data:

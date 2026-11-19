@@ -194,12 +194,15 @@ def __getattr__(name: str) -> Any:
 if __name__ == "__main__":
     _log(f"session run_id={_core.SESSION_RUN_ID} (dynamic target — call platform_set_target first)")
     # Command-launched MCP clients (Claude Desktop, Cursor, OpenCode) spawn this
-    # over stdio — the default. A client that only accepts a server URL (no
-    # spawn command) needs the streamable-http transport instead; opt in with
-    # MCP_TRANSPORT=streamable-http (see docker-compose.yml's mcp-gateway
-    # service, under the `mcp-http` profile). One process == one shared session
-    # (module-level globals in _gateway_core), same as a single stdio instance —
-    # this is not meant for multiple concurrent clients on one gateway.
+    # over stdio — the default. A client that only accepts a server URL
+    # normally gets that by setting OSPREY_MCP_HTTP=1, which mounts this same
+    # gateway onto the backend's own port (osprey/main.py) — no second
+    # process needed. This standalone transport is a lower-level building
+    # block for anyone who deliberately wants the gateway on its own separate
+    # process/port instead; opt in with MCP_TRANSPORT=streamable-http. One
+    # process == one shared session (module-level globals in _gateway_core),
+    # same as a single stdio instance — this is not meant for multiple
+    # concurrent clients on one gateway.
     transport = os.environ.get("MCP_TRANSPORT", "stdio").strip().lower()
     if transport in ("http", "streamable-http"):
         http_host = os.environ.get("MCP_HTTP_HOST", "0.0.0.0")

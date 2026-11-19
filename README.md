@@ -423,27 +423,28 @@ PYTHONPATH=/app/platform-mcp osprey-backend python /app/platform-mcp/server.py`
 <summary><b>A client that only takes a URL</b></summary>
 
 A few clients only accept a server **URL**, not a launch command. For these,
-run the gateway over the streamable-http transport instead of stdio — same
-tools, reachable at a URL:
-
-```bash
-# Docker setup — runs automatically if you selected MCP in the installer, or:
-docker compose --profile mcp-http up -d
-
-# Local (no Docker) setup — keep this running in its own terminal:
-bash scripts/serve-mcp-http.sh        # or scripts\serve-mcp-http.ps1 on Windows
-```
-
-Then point the client at:
+the backend mounts the same gateway at `/mcp` on its own port — no extra
+process, container, or script. The installer turns this on automatically
+when you select MCP; to enable it by hand, set in `.env`:
 
 ```
-http://localhost:9100/mcp
+OSPREY_MCP_HTTP=1
 ```
 
-Caveats: this gateway holds one shared session per process — it's built for
-one client at a time, not several concurrent connections to the same URL.
-It also has no built-in auth, so don't expose port 9100 beyond localhost
-without your own auth/reverse-proxy in front of it.
+then (re)start the backend as usual (`docker compose up -d`, or
+`bash scripts/serve.sh` / `osprey serve` for a local setup) and point the
+client at:
+
+```
+http://localhost:9000/mcp
+```
+
+(or whatever `BACKEND_PORT` you configured).
+
+Caveats: this gateway holds one shared session per backend process — it's
+built for one client at a time, not several concurrent connections to the
+same URL. It also has no built-in auth, so don't expose this beyond
+localhost without your own auth/reverse-proxy in front of it.
 
 </details>
 

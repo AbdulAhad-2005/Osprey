@@ -8,6 +8,7 @@ import os
 from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 
+from agent_core.mcp_http import load_mcp_server, mcp_http_enabled
 from osprey.api.v1.router import api_v1_router
 from osprey.contract import APP_VERSION
 from osprey.db.migrate import run_migrations
@@ -19,6 +20,11 @@ from osprey.services.startup_readiness import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Loaded at import time (not inside lifespan) so app.mount() below can see it
+# — a client that only accepts a server URL, not a launch command, then
+# points at http://localhost:9000/mcp with zero extra process to run.
+_mcp_server = load_mcp_server() if mcp_http_enabled() else None
 
 
 @asynccontextmanager
@@ -48,7 +54,14 @@ async def lifespan(_app: FastAPI):
         rehydrate_bans()
     except Exception:
         logger.debug("Ban rehydration skipped (non-fatal)", exc_info=True)
-    yield
+    # The mounted sub-app's own lifespan never runs — the outer app must
+    # enter the MCP session manager itself, or the first /mcp request fails
+    # with "Task group is not initialized."
+    if _mcp_server is not None:
+        async with _mcp_server.session_manager.run():
+            yield
+    else:
+        yield
 
 
 app = FastAPI(title="Osprey Pentest Platform", version=APP_VERSION, lifespan=lifespan)
@@ -76,3 +89,11 @@ def health(response: Response) -> dict[str, object]:
     if not payload["ready"]:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     return payload
+
+
+# Mounted LAST: a "/" mount matches every path, so any route added after this
+# one would be unreachable. With the default streamable_http_path ("/mcp"),
+# the endpoint is just http://localhost:9000/mcp.
+if _mcp_server is not None:
+    logger.info("Mounting the MCP gateway at /mcp (OSPREY_MCP_HTTP=1)")
+    app.mount("/", _mcp_server.streamable_http_app())
