@@ -449,7 +449,18 @@ if ($runtimeChoice -eq "3") {
                     Write-Host "  Installing Go, required for ProjectDiscovery tools..." -ForegroundColor Cyan
                     winget install --id GoLang.Go -e --silent --accept-source-agreements --accept-package-agreements
                     if ($LASTEXITCODE -eq 0) {
-                        Write-WarnItem "Go installation completed. Restart PowerShell and re-run the wizard to install ProjectDiscovery tools."
+                        # winget updates the Machine/User PATH at the registry level, which this
+                        # already-running process never re-reads on its own (unlike bash's `hash
+                        # -r`, there's no cache to clear — `go` just genuinely isn't in $env:Path
+                        # yet) — without this, ProjectDiscovery tools silently never get installed
+                        # this run, and the only sign is a warning easy to miss among several.
+                        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+                        $hasGo = [bool](Get-Command go -ErrorAction SilentlyContinue)
+                        if ($hasGo) {
+                            Write-Success "Go installed and detected, installing ProjectDiscovery tools now."
+                        } else {
+                            Write-WarnItem "Go installation completed, but it's not detected yet. Restart PowerShell and re-run the wizard to install ProjectDiscovery tools."
+                        }
                     } else {
                         Write-WarnItem "Could not install Go; ProjectDiscovery tools were not installed."
                     }
@@ -514,6 +525,7 @@ if ($runtimeChoice -eq "3") {
                 winget install --id Insecure.Nmap -e --silent --accept-source-agreements --accept-package-agreements
                 if ($LASTEXITCODE -eq 0) {
                     Write-Success "Nmap installation invoked."
+                    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
                 } else {
                     Write-WarnItem "Winget install failed. Download Nmap manually: https://nmap.org/download.html"
                 }
