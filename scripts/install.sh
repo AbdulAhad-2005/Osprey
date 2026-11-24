@@ -83,7 +83,9 @@ env_get() {
 DOCKER_CMD="docker"
 require_docker() {
   if ! command -v docker >/dev/null 2>&1; then
-    fail "docker is not installed or not in PATH. Please install Docker Engine / Desktop first."
+    fail "Docker is required for this mode, but wasn't found on this machine."
+    muted "Install it from https://docs.docker.com/get-docker/, then run this wizard again."
+    muted "(Or re-run and pick option 3 — Fully Local — which doesn't need Docker at all.)"
     return 1
   fi
   if docker info >/dev/null 2>&1; then
@@ -110,7 +112,8 @@ require_docker() {
       return 0
     fi
   fi
-  fail "docker is installed but the daemon is unreachable (is Docker running? do you need sudo?)."
+  fail "Docker is installed, but its daemon isn't reachable."
+  muted "Start Docker Desktop (or: sudo systemctl start docker), then run this wizard again."
   return 1
 }
 
@@ -345,6 +348,72 @@ printf '%s\n' "${C_RESET}"
 muted "Welcome to the ${BRAND} setup wizard. Press Ctrl+C anytime to exit."
 muted "Re-running this wizard is always safe and preserves existing work."
 
+# ── Environment check ─────────────────────────────────────────────────────────
+# Shown up front, before any question, so you know what's on this machine
+# BEFORE picking an option that needs it — e.g. picking "Full Docker" only to
+# have it fail three steps later because Docker isn't installed. This is
+# informational (nothing here exits); each step below still re-checks what it
+# actually needs and tells you exactly what to install if it's missing.
+DOCKER_DETECTED=0
+DOCKER_DAEMON_UP=0
+PYTHON3_DETECTED=0
+PYTHON3_VENV_OK=0
+NODE_DETECTED=0
+
+write_header "Checking your environment"
+
+if command -v git >/dev/null 2>&1; then
+  ok "git          $(git --version 2>/dev/null | awk '{print $3}')"
+else
+  warn "git          not found — needed to update this checkout later (not required to run this wizard)"
+fi
+
+if command -v docker >/dev/null 2>&1; then
+  DOCKER_DETECTED=1
+  docker_ver="$(docker --version 2>/dev/null | sed -E 's/^Docker version ([0-9.]+).*/\1/')"
+  if docker info >/dev/null 2>&1; then
+    DOCKER_DAEMON_UP=1
+    ok "docker       ${docker_ver} (daemon running)"
+  else
+    warn "docker       ${docker_ver} installed, but the daemon isn't reachable"
+    muted "             Start Docker Desktop (or: sudo systemctl start docker), then re-run this wizard"
+    muted "             if you plan to use Full or Lean Docker mode."
+  fi
+else
+  warn "docker       not found — only needed for Full/Lean Docker mode (options 1/2 below)"
+  muted "             Install it from https://docs.docker.com/get-docker/, then re-run this wizard —"
+  muted "             or pick option 3 (Fully Local) now, which doesn't need Docker at all."
+fi
+
+if command -v python3 >/dev/null 2>&1; then
+  PYTHON3_DETECTED=1
+  ok "python3      $(python3 --version 2>&1 | awk '{print $2}')"
+  if python3 -m venv --help >/dev/null 2>&1; then
+    PYTHON3_VENV_OK=1
+  else
+    warn "python3's venv module isn't available — only needed for Fully Local mode (option 3)"
+    muted "             Install it, e.g.: sudo apt install python3-venv  (Debian/Ubuntu/Kali)"
+  fi
+  if python3 -m pip --version >/dev/null 2>&1; then
+    ok "pip          $(python3 -m pip --version 2>/dev/null | awk '{print $2}')"
+  else
+    warn "pip          not found for python3 — only needed for Fully Local mode (option 3)"
+    muted "             Install it, e.g.: sudo apt install python3-pip  (Debian/Ubuntu/Kali)"
+  fi
+else
+  warn "python3      not found — only needed for Fully Local mode (option 3 below) and the CLI"
+  muted "             Install Python 3.12+ from https://www.python.org/downloads/, then re-run —"
+  muted "             or pick Full/Lean Docker mode (1/2) instead, which bundles its own Python."
+fi
+
+if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
+  NODE_DETECTED=1
+  ok "node/npm     $(node --version 2>/dev/null) / $(npm --version 2>/dev/null)"
+else
+  warn "node/npm     not found — only needed if you want the Operator Console GUI"
+  muted "             Install Node.js 18.18+ from https://nodejs.org, then re-run if you want the GUI."
+fi
+
 # ── Ensure .env exists ────────────────────────────────────────────────────────
 if [ ! -f .env ]; then
   cp .env.example .env
@@ -358,14 +427,22 @@ fi
 # ==============================================================================
 write_header "[1/5] How should ${BRAND} & security tools run?"
 
-printf '%s  1) Full Docker (Recommended)%s\n' "${C_BOLD}" "${C_RESET}"
+if [ "$DOCKER_DAEMON_UP" -eq 1 ]; then docker_tag=" ${C_GREEN}[docker detected]${C_RESET}"
+elif [ "$DOCKER_DETECTED" -eq 1 ]; then docker_tag=" ${C_YELLOW}[docker installed, daemon not running]${C_RESET}"
+else docker_tag=" ${C_RED}[docker NOT detected]${C_RESET}"
+fi
+printf '%s  1) Full Docker (Recommended)%s%s\n' "${C_BOLD}" "${C_RESET}" "$docker_tag"
 muted "All-in-one: Postgres DB, Backend API & 90+ Kali tools in Docker."
 muted "Zero tool installation required on your host system."
 
-printf '%s  2) Lean Docker (Custom Tools Container)%s\n' "${C_BOLD}" "${C_RESET}"
+printf '%s  2) Lean Docker (Custom Tools Container)%s%s\n' "${C_BOLD}" "${C_RESET}" "$docker_tag"
 muted "Postgres & Backend in Docker; tools executed via your own existing container."
 
-printf '%s  3) Fully Local, No Docker (Self-contained / SQLite)%s\n' "${C_BOLD}" "${C_RESET}"
+if [ "$PYTHON3_DETECTED" -eq 1 ] && [ "$PYTHON3_VENV_OK" -eq 1 ]; then local_tag=" ${C_GREEN}[python3 detected]${C_RESET}"
+elif [ "$PYTHON3_DETECTED" -eq 1 ]; then local_tag=" ${C_YELLOW}[python3 detected, venv module missing]${C_RESET}"
+else local_tag=" ${C_RED}[python3 NOT detected]${C_RESET}"
+fi
+printf '%s  3) Fully Local, No Docker (Self-contained / SQLite)%s%s\n' "${C_BOLD}" "${C_RESET}" "$local_tag"
 muted "Backend and tools run on this machine with a local SQLite database — no Docker, no Postgres."
 
 printf '%s  0) Manual Setup%s\n' "${C_BOLD}" "${C_RESET}"

@@ -73,14 +73,17 @@ function Get-EnvVar {
 
 function Test-DockerReady {
     if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-        Write-FailItem "docker is not installed or not in PATH. Please install Docker Desktop first."
+        Write-FailItem "Docker is required for this mode, but wasn't found on this machine."
+        Write-Muted "Install Docker Desktop from https://docs.docker.com/get-docker/, then run this wizard again."
+        Write-Muted "(Or re-run and pick option 3 - Fully Local - which doesn't need Docker at all.)"
         return $false
     }
     try {
         docker info *> $null
         if ($LASTEXITCODE -ne 0) { throw "daemon unreachable" }
     } catch {
-        Write-FailItem "Docker daemon is not reachable. Ensure Docker Desktop is running."
+        Write-FailItem "Docker is installed, but its daemon isn't reachable."
+        Write-Muted "Start Docker Desktop, then run this wizard again."
         return $false
     }
     return $true
@@ -287,6 +290,71 @@ if (-not $BrandIsOverridden) {
 Write-Host "Welcome to the $($Brand) setup wizard. Press Ctrl+C anytime to exit." -ForegroundColor DarkGray
 Write-Host "Re-running this wizard is always safe and preserves existing work.`n" -ForegroundColor DarkGray
 
+# ── Environment check ────────────────────────────────────────────────────────
+# Shown up front, before any question, so you know what's on this machine
+# BEFORE picking an option that needs it — e.g. picking "Full Docker" only to
+# have it fail three steps later because Docker isn't installed. This is
+# informational (nothing here exits); each step below still re-checks what it
+# actually needs and tells you exactly what to install if it's missing.
+$dockerDetected = $false
+$dockerDaemonUp = $false
+$python312Detected = $false
+$nodeDetected = $false
+
+Write-Header "Checking your environment"
+
+$gitCmd = Get-Command git -ErrorAction SilentlyContinue
+if ($gitCmd) {
+    try { $gitVer = (& git --version 2>$null) } catch { $gitVer = "" }
+    Write-Success "git          $gitVer"
+} else {
+    Write-WarnItem "git          not found - needed to update this checkout later (not required to run this wizard)"
+}
+
+$dockerCmd = Get-Command docker -ErrorAction SilentlyContinue
+if ($dockerCmd) {
+    $dockerDetected = $true
+    try { $dockerVer = (& docker --version 2>$null) } catch { $dockerVer = "" }
+    try { docker info *> $null; $dockerDaemonUp = ($LASTEXITCODE -eq 0) } catch { $dockerDaemonUp = $false }
+    if ($dockerDaemonUp) {
+        Write-Success "docker       $dockerVer (daemon running)"
+    } else {
+        Write-WarnItem "docker       $dockerVer installed, but the daemon isn't reachable"
+        Write-Muted "Start Docker Desktop, then re-run this wizard if you plan to use Full or Lean Docker mode."
+    }
+} else {
+    Write-WarnItem "docker       not found - only needed for Full/Lean Docker mode (options 1/2 below)"
+    Write-Muted "Install it from https://docs.docker.com/get-docker/, then re-run this wizard -"
+    Write-Muted "or pick option 3 (Fully Local) now, which doesn't need Docker at all."
+}
+
+foreach ($cand in @("python.exe", "python3.exe", "py.exe")) {
+    $c = Get-Command $cand -ErrorAction SilentlyContinue
+    if ($c) {
+        try { $pyVerOut = (& $c.Source --version 2>&1) } catch { $pyVerOut = "" }
+        if ($pyVerOut -match "3\.12") { $python312Detected = $true }
+        Write-Success "python       $pyVerOut"
+        break
+    }
+}
+if (-not $c) {
+    Write-WarnItem "python       not found - only needed for Fully Local mode (option 3 below) and the CLI"
+    Write-Muted "Install Python 3.12+ from https://www.python.org/downloads/, then re-run -"
+    Write-Muted "or pick Full/Lean Docker mode (1/2) instead, which bundles its own Python."
+}
+
+$nodeCmdFound = Get-Command node -ErrorAction SilentlyContinue
+$npmCmdFound = Get-Command npm -ErrorAction SilentlyContinue
+if ($nodeCmdFound -and $npmCmdFound) {
+    $nodeDetected = $true
+    try { $nodeVer = (& node --version 2>$null) } catch { $nodeVer = "" }
+    try { $npmVer = (& npm --version 2>$null) } catch { $npmVer = "" }
+    Write-Success "node/npm     $nodeVer / $npmVer"
+} else {
+    Write-WarnItem "node/npm     not found - only needed if you want the Operator Console GUI"
+    Write-Muted "Install Node.js 18.18+ from https://nodejs.org, then re-run if you want the GUI."
+}
+
 # ── Ensure .env exists ────────────────────────────────────────────────────────
 if (-not (Test-Path ".env")) {
     Copy-Item ".env.example" ".env"
@@ -300,14 +368,29 @@ if (-not (Test-Path ".env")) {
 # ==============================================================================
 Write-Header "[1/5] How should $($Brand) & security tools run?"
 
-Write-Host "  1) Full Docker (Recommended)" -ForegroundColor White
+if ($dockerDaemonUp) {
+    $dockerTagText = "[docker detected]"; $dockerTagColor = "Green"
+} elseif ($dockerDetected) {
+    $dockerTagText = "[docker installed, daemon not running]"; $dockerTagColor = "Yellow"
+} else {
+    $dockerTagText = "[docker NOT detected]"; $dockerTagColor = "Red"
+}
+Write-Host "  1) Full Docker (Recommended) " -ForegroundColor White -NoNewline
+Write-Host $dockerTagText -ForegroundColor $dockerTagColor
 Write-Muted "All-in-one: Postgres DB, Backend API & 90+ Kali tools in Docker."
 Write-Muted "Zero tool installation required on your host system."
 
-Write-Host "  2) Lean Docker (Custom Tools Container)" -ForegroundColor White
+Write-Host "  2) Lean Docker (Custom Tools Container) " -ForegroundColor White -NoNewline
+Write-Host $dockerTagText -ForegroundColor $dockerTagColor
 Write-Muted "Postgres & Backend in Docker; tools executed via your own existing container."
 
-Write-Host "  3) Fully Local, No Docker (Self-contained / SQLite)" -ForegroundColor White
+if ($python312Detected) {
+    $localTagText = "[python3 detected]"; $localTagColor = "Green"
+} else {
+    $localTagText = "[python3 NOT detected or not 3.12]"; $localTagColor = "Red"
+}
+Write-Host "  3) Fully Local, No Docker (Self-contained / SQLite) " -ForegroundColor White -NoNewline
+Write-Host $localTagText -ForegroundColor $localTagColor
 Write-Muted "Backend and tools run on this machine with a local SQLite database - no Docker, no Postgres."
 
 Write-Host "  0) Manual Setup" -ForegroundColor White
