@@ -18,6 +18,7 @@ while [ -h "$SOURCE" ]; do
 done
 cd "$(cd -P "$(dirname "$SOURCE")" >/dev/null && pwd)/.."
 ROOT_DIR="$(pwd)"
+. "$ROOT_DIR/scripts/lib_local_python.sh"
 
 # 1. Check if the osprey-backend Docker container is running.
 DOCKER_CMD=""
@@ -51,19 +52,20 @@ else
   exit 1
 fi
 
-# Check Python version compatibility for a downstream PyArmor-obfuscated build.
-if ls "$ROOT_DIR"/pyarmor_runtime_* >/dev/null 2>&1; then
-  py_minor="$("$PY" -c 'import sys; print(sys.version_info.minor)' 2>/dev/null || echo "12")"
-  if [ "$py_minor" -ge 13 ]; then
-    echo "================================================================================" >&2
-    echo "  [!] Host Python 3.${py_minor} detected." >&2
-    echo "      The bundled runtime requires Python 3.12 for local host execution." >&2
-    echo "      Recommended: Run via Docker (Full Docker mode), which uses Python 3.12:" >&2
-    echo "          docker compose --profile kali up -d" >&2
-    echo "          osprey" >&2
-    echo "================================================================================" >&2
-    exit 1
-  fi
+# Check Python version compatibility for a downstream PyArmor-obfuscated
+# build (any mismatch, not just a newer host Python — an older one is just
+# as broken). Never present for Osprey itself — no pyarmor_runtime_* marker
+# at the repo root — so this is a no-op here.
+if local_venv_python_is_wrong "$PY"; then
+  echo "================================================================================" >&2
+  echo "  [!] This .venv's Python doesn't match what this build's precompiled runtime needs." >&2
+  echo "      Re-run the setup wizard to fix it (it will recreate .venv automatically):" >&2
+  echo "          bash scripts/setup.sh      # or: bash scripts/install.sh" >&2
+  echo "      Or run via Docker (Full Docker mode), which bundles its own Python:" >&2
+  echo "          docker compose --profile kali up -d" >&2
+  echo "          osprey" >&2
+  echo "================================================================================" >&2
+  exit 1
 fi
 
 if ! "$PY" -c "import cli" >/dev/null 2>&1; then

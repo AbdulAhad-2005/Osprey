@@ -8,7 +8,8 @@
 # Usage: osprey [any CLI args/flags]  (see `osprey --help`)
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
-$RootDir = Get-Location
+$RootDir = (Get-Location).Path
+. (Join-Path $PSScriptRoot "lib_local_python.ps1")
 
 # 1. Check if the osprey-backend Docker container is running.
 $dockerAvailable = $false
@@ -37,19 +38,19 @@ if (-not (Test-Path $venvPython)) {
     exit 1
 }
 
-# Check Python version compatibility for a downstream PyArmor-obfuscated build.
-if (Get-ChildItem -Path $RootDir -Filter "pyarmor_runtime_*" -Directory -ErrorAction SilentlyContinue) {
-    $pyMinor = & $venvPython -c "import sys; print(sys.version_info.minor)" 2>$null
-    if ($pyMinor -and [int]$pyMinor -ge 13) {
-        Write-Host "================================================================================" -ForegroundColor Red
-        Write-Host "  [!] Host Python 3.$pyMinor detected." -ForegroundColor Red
-        Write-Host "      The bundled runtime requires Python 3.12 for local host execution." -ForegroundColor Red
-        Write-Host "      Recommended: Run via Docker (Full Docker mode), which uses Python 3.12:" -ForegroundColor White
-        Write-Host "          docker compose --profile kali up -d" -ForegroundColor White
-        Write-Host "          osprey" -ForegroundColor White
-        Write-Host "================================================================================" -ForegroundColor Red
-        exit 1
-    }
+# Check Python version compatibility for a downstream PyArmor-obfuscated
+# build (any mismatch, not just a newer host Python -- an older one is just
+# as broken). Never present for Osprey itself, so this is a no-op here.
+if (Test-LocalVenvPythonIsWrong (Resolve-Path $venvPython).Path) {
+    Write-Host "================================================================================" -ForegroundColor Red
+    Write-Host "  [!] This .venv's Python doesn't match what this build's precompiled runtime needs." -ForegroundColor Red
+    Write-Host "      Re-run the setup wizard to fix it (it will recreate .venv automatically):" -ForegroundColor White
+    Write-Host "          powershell -ExecutionPolicy Bypass -File scripts\setup.ps1" -ForegroundColor White
+    Write-Host "      Or run via Docker (Full Docker mode), which bundles its own Python:" -ForegroundColor White
+    Write-Host "          docker compose --profile kali up -d" -ForegroundColor White
+    Write-Host "          osprey" -ForegroundColor White
+    Write-Host "================================================================================" -ForegroundColor Red
+    exit 1
 }
 
 # try/catch: PS5.1 promotes native stderr to a terminating error under EAP=Stop.
