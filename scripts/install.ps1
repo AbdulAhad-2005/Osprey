@@ -17,6 +17,7 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = $PSScriptRoot
 $RootDir = Split-Path $ScriptDir -Parent
 Set-Location $RootDir
+. (Join-Path $ScriptDir "lib_local_python.ps1")
 
 $Brand = if ($env:OSPREY_APP_NAME) { $env:OSPREY_APP_NAME } else { "Osprey" }
 # Whether a white-label override was explicitly given, independent of what
@@ -160,6 +161,11 @@ function Resolve-McpPython {
         return
     }
     $py = "$RootDir\.venv\Scripts\python.exe"
+    if ((Test-Path $py) -and (Test-LocalVenvPythonIsWrong $py)) {
+        Write-WarnItem "The existing .venv's Python doesn't match what this build's precompiled runtime needs."
+        Write-Step "Recreating .venv with a matching interpreter..."
+        Remove-Item -Recurse -Force "$RootDir\.venv" -ErrorAction SilentlyContinue
+    }
     if (Test-Path $py) {
         # try/catch: PS5.1 promotes native stderr to a terminating error under EAP=Stop.
         try { & $py -c "import httpx, mcp" 2>$null } catch { }
@@ -167,12 +173,8 @@ function Resolve-McpPython {
     }
     Write-Step "Preparing a local Python environment for the $($Brand) MCP bridge..."
     if (-not (Test-Path $py)) {
-        $sys = $null
-        foreach ($cand in @("python.exe", "python3.exe", "py.exe")) {
-            $c = Get-Command $cand -ErrorAction SilentlyContinue
-            if ($c) { $sys = $c.Source; break }
-        }
-        if (-not $sys) { Write-WarnItem "Python not found - cannot prepare the MCP environment. Install Python 3, then re-run."; $script:mcpDepsOk = $false; return }
+        $sys = Resolve-LocalVenvPython
+        if (-not $sys) { $script:mcpDepsOk = $false; return }
         & $sys -m venv "$RootDir\.venv"
         if (-not (Test-Path $py)) { Write-WarnItem "Could not create .venv; MCP may fail to launch."; $script:mcpDepsOk = $false; return }
     }
@@ -192,13 +194,9 @@ $guiDepsOk = $true
 # A downstream build that ships PyArmor-obfuscated code (pyarmor_runtime_*
 # directories at the repo root — never present in this public, plain-source
 # checkout) bakes in a single Python minor version; local-host mode needs a
-# matching interpreter, Docker mode doesn't (the image pins its own).
-function Test-HostPython312 {
-    $cmd = Get-Command python -ErrorAction SilentlyContinue
-    if (-not $cmd) { return $false }
-    $minor = & $cmd.Source -c "import sys; print(sys.version_info.minor)" 2>$null
-    return $minor -eq "12"
-}
+# matching interpreter, Docker mode doesn't (the image pins its own). See
+# lib_local_python.ps1 (dot-sourced above) for how that interpreter gets
+# resolved or provisioned — this file never needs to know the exact version.
 
 # scripts\osprey.cmd/.ps1 is a smart launcher: it execs into the backend
 # container via `docker exec` when it's running, else falls back to the
@@ -234,21 +232,14 @@ function Ensure-CliPython {
         return
     }
     $py = "$RootDir\.venv\Scripts\python.exe"
+    if ((Test-Path $py) -and (Test-LocalVenvPythonIsWrong $py)) {
+        Write-WarnItem "The existing .venv's Python doesn't match what this build's precompiled runtime needs."
+        Write-Step "Recreating .venv with a matching interpreter..."
+        Remove-Item -Recurse -Force "$RootDir\.venv" -ErrorAction SilentlyContinue
+    }
     if (-not (Test-Path $py)) {
-        $sys = $null
-        foreach ($cand in @("python.exe", "python3.exe", "py.exe")) {
-            $c = Get-Command $cand -ErrorAction SilentlyContinue
-            if ($c) { $sys = $c.Source; break }
-        }
+        $sys = Resolve-LocalVenvPython
         if (-not $sys) {
-            Write-WarnItem "Python 3.12+ not found - cannot install the $($Brand) CLI."
-            $script:cliDepsOk = $false
-            return
-        }
-        if (-not (Test-HostPython312) -and (Get-ChildItem -Path $RootDir -Filter "pyarmor_runtime_*" -Directory -ErrorAction SilentlyContinue)) {
-            $hminor = & $sys -c "import sys; print(sys.version_info.minor)" 2>$null
-            Write-WarnItem "Host Python 3.$hminor detected. The precompiled runtime requires Python 3.12 for local host mode."
-            Write-Muted "Tip: switch to Full Docker mode (Option 1), which bundles Python 3.12 inside Docker."
             $script:cliDepsOk = $false
             return
         }

@@ -7,30 +7,25 @@ param(
 )
 $ErrorActionPreference = "Stop"
 
-Set-Location (Join-Path $PSScriptRoot "..")
+$RootDir = Join-Path $PSScriptRoot ".."
+Set-Location $RootDir
+$RootDir = (Get-Location).Path
+. (Join-Path $PSScriptRoot "lib_local_python.ps1")
 
-$pyExe = $null
-foreach ($cand in @("python", "py", "python3")) {
-    if (Get-Command $cand -ErrorAction SilentlyContinue) {
-        try {
-            $ver = & $cand -c "import sys; print(sys.version_info.major)" 2>$null
-            if ($ver -eq "3") { $pyExe = $cand; break }
-        } catch {}
-    }
+$venvPython = ".\.venv\Scripts\python.exe"
+if ((Test-Path $venvPython) -and (Test-LocalVenvPythonIsWrong (Resolve-Path $venvPython).Path)) {
+    Write-Host "The existing .venv's Python doesn't match what this build's precompiled runtime needs." -ForegroundColor Yellow
+    Write-Host "Recreating .venv with a matching interpreter..." -ForegroundColor Cyan
+    Remove-Item -Recurse -Force ".venv" -ErrorAction SilentlyContinue
 }
 
-if (-not $pyExe) {
-    Write-Error "Python 3.12 is not installed or not on PATH. Please install Python 3.12+."
-    exit 1
-}
-
-Write-Host "Using Python: $pyExe" -ForegroundColor Cyan
 if (-not (Test-Path ".venv")) {
+    $pyExe = Resolve-LocalVenvPython
+    if (-not $pyExe) { exit 1 }
+    Write-Host "Using Python: $pyExe" -ForegroundColor Cyan
     Write-Host "Creating .venv virtual environment..." -ForegroundColor Cyan
     & $pyExe -m venv .venv
 }
-
-$venvPython = ".\.venv\Scripts\python.exe"
 if (-not (Test-Path $venvPython)) {
     Write-Host ""
     Write-Host "Virtual environment creation failed (.venv\Scripts\python.exe not found)." -ForegroundColor Red

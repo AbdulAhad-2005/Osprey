@@ -24,6 +24,7 @@ BRAND_IS_OVERRIDDEN=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
+. "$SCRIPT_DIR/lib_local_python.sh"
 
 # ── Styling & output helpers ──────────────────────────────────────────────────
 if [ -t 1 ]; then
@@ -203,12 +204,9 @@ GUI_DEPS_OK=1
 # A downstream build that ships PyArmor-obfuscated code (pyarmor_runtime_*
 # directories at the repo root — never present in this public, plain-source
 # checkout) bakes in a single Python minor version; local-host mode needs a
-# matching interpreter, Docker mode doesn't (the image pins its own).
-is_host_python_312() {
-  if ! command -v python3 >/dev/null 2>&1; then return 1; fi
-  local pyminor; pyminor="$(python3 -c 'import sys; print(sys.version_info.minor)' 2>/dev/null || echo "")"
-  [ "$pyminor" = "12" ]
-}
+# matching interpreter, Docker mode doesn't (the image pins its own). See
+# lib_local_python.sh (sourced above) for how that interpreter gets resolved
+# or provisioned — this file never needs to know the exact version.
 
 # scripts/osprey is a smart launcher: it execs into the backend container via
 # `docker exec` when it's running, else falls back to the local .venv — so a
@@ -253,21 +251,20 @@ ensure_cli_python() {
   fi
 
   local py; py="$(venv_python_path)"
+  if [ -n "$py" ] && local_venv_python_is_wrong "$py"; then
+    warn "The existing .venv's Python doesn't match what this build's precompiled runtime needs."
+    info "Recreating .venv with a matching interpreter..."
+    rm -rf "$ROOT_DIR/.venv"
+    py=""
+  fi
   if [ -z "$py" ]; then
-    if ! command -v python3 >/dev/null 2>&1; then
-      warn "python3 not found — cannot install the ${BRAND} CLI. Install Python 3.12+, then re-run."
+    local venv_py; venv_py="$(resolve_local_venv_python)" || {
+      warn "Could not find or provision a Python interpreter for the ${BRAND} CLI."
       CLI_DEPS_OK=0
       return 1
-    fi
-    if ! is_host_python_312 && ls "$ROOT_DIR"/pyarmor_runtime_* >/dev/null 2>&1; then
-      local hminor; hminor="$(python3 -c 'import sys; print(sys.version_info.minor)' 2>/dev/null || echo "")"
-      warn "Host Python 3.${hminor} detected. The precompiled runtime requires Python 3.12 for local host mode."
-      muted "Tip: switch to Full Docker mode (Option 1), which bundles Python 3.12 inside Docker."
-      CLI_DEPS_OK=0
-      return 1
-    fi
+    }
     info "Preparing a local Python environment for the ${BRAND} CLI..."
-    python3 -m venv "$ROOT_DIR/.venv" || {
+    "$venv_py" -m venv "$ROOT_DIR/.venv" || {
       warn "Could not create .venv; the CLI is not installed."
       CLI_DEPS_OK=0
       return 1
@@ -298,19 +295,24 @@ ensure_mcp_python() {
   fi
 
   local py; py="$(venv_python_path)"
+  if [ -n "$py" ] && local_venv_python_is_wrong "$py"; then
+    warn "The existing .venv's Python doesn't match what this build's precompiled runtime needs."
+    info "Recreating .venv with a matching interpreter..."
+    rm -rf "$ROOT_DIR/.venv"
+    py=""
+  fi
   if [ -n "$py" ] && "$py" -c "import httpx, mcp" >/dev/null 2>&1; then
     return 0  # already usable
   fi
   info "Preparing a local Python environment for the ${BRAND} MCP bridge..."
   if [ -z "$py" ]; then
-    if command -v python3 >/dev/null 2>&1; then
-      python3 -m venv "$ROOT_DIR/.venv" || { warn "Could not create .venv; MCP may fail to launch."; MCP_DEPS_OK=0; return 1; }
-      py="$(venv_python_path)"
-    else
-      warn "python3 not found — cannot prepare the MCP environment. Install Python 3, then re-run."
+    local venv_py; venv_py="$(resolve_local_venv_python)" || {
+      warn "Could not find or provision a Python interpreter for the MCP bridge."
       MCP_DEPS_OK=0
       return 1
-    fi
+    }
+    "$venv_py" -m venv "$ROOT_DIR/.venv" || { warn "Could not create .venv; MCP may fail to launch."; MCP_DEPS_OK=0; return 1; }
+    py="$(venv_python_path)"
   fi
   "$py" -m pip install --upgrade pip --quiet >/dev/null 2>&1 || true
   local pip_err=""

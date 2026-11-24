@@ -4,7 +4,10 @@
 # Pass --gui to also install the Operator Console (gui/) web dashboard deps.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$ROOT_DIR"
+. "$SCRIPT_DIR/lib_local_python.sh"
 
 WITH_GUI=0
 for arg in "$@"; do
@@ -13,11 +16,6 @@ for arg in "$@"; do
     *) echo "Unknown option: $arg (supported: --gui)"; exit 1 ;;
   esac
 done
-
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "python3 is not installed or not on PATH. Install Python 3.12+ and re-run." >&2
-  exit 1
-fi
 
 # A venv's python lives at .venv/bin/python on Linux/macOS/WSL, but at
 # .venv/Scripts/python.exe when it was created by a native Windows Python —
@@ -38,12 +36,21 @@ venv_python() {
 # a fresh machine. Detect that specific failure, install the matching package,
 # and retry once, instead of just dying on `set -e` with a raw traceback.
 ensure_venv() {
-  if [ -n "$(venv_python)" ]; then
-    return 0  # already created (e.g. re-running setup.sh, or set up via a .ps1)
+  local existing; existing="$(venv_python)"
+  if [ -n "$existing" ]; then
+    if local_venv_python_is_wrong "$existing"; then
+      echo "==> The existing .venv's Python doesn't match what this build's precompiled runtime needs."
+      echo "    Recreating .venv with a matching interpreter..."
+      rm -rf .venv
+    else
+      return 0  # already created and matches (e.g. re-running setup.sh, or set up via a .ps1)
+    fi
   fi
 
+  local target_py; target_py="$(resolve_local_venv_python)" || exit 1
+
   local venv_err=""
-  if venv_err="$(python3 -m venv .venv 2>&1)"; then
+  if venv_err="$("$target_py" -m venv .venv 2>&1)"; then
     return 0
   fi
   printf '%s\n' "$venv_err" >&2
@@ -51,12 +58,12 @@ ensure_venv() {
 
   if command -v apt-get >/dev/null 2>&1; then
     echo
-    echo "==> python3 -m venv failed. On Debian/Ubuntu/Kali this almost always means"
+    echo "==> python -m venv failed. On Debian/Ubuntu/Kali this almost always means"
     echo "    the 'python3-venv' system package isn't installed (python3 ships without"
     echo "    venv/ensurepip by default on these distros)."
 
     local py_minor pkgs
-    py_minor="$(python3 -c 'import sys; print(sys.version_info.minor)' 2>/dev/null || echo "")"
+    py_minor="$("$target_py" -c 'import sys; print(sys.version_info.minor)' 2>/dev/null || echo "")"
     if [ -n "$py_minor" ]; then
       pkgs=("python3.${py_minor}-venv" "python3-venv")
     else
@@ -71,7 +78,7 @@ ensure_venv() {
     echo "    Attempting to install it automatically: ${SUDO:+$SUDO }apt-get install -y ${pkgs[*]}"
     if $SUDO apt-get update -qq 2>/dev/null && $SUDO apt-get install -y "${pkgs[@]}" 2>/dev/null; then
       echo "    Installed. Retrying..."
-      if python3 -m venv .venv; then
+      if "$target_py" -m venv .venv; then
         echo "    Virtual environment created."
         return 0
       fi
