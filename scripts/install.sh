@@ -621,7 +621,10 @@ if [ "$runtime_choice" = "3" ]; then
         case "$mt" in
           nmap|whois|amass|ffuf)
             if command -v apt-get >/dev/null 2>&1; then
-              $SUDO apt-get update -qq && $SUDO apt-get install -y "$mt" || warn "apt-get install $mt failed"
+              apt_err="$($SUDO apt-get update -qq 2>&1 && $SUDO apt-get install -y "$mt" 2>&1)" || {
+                warn "apt-get install $mt failed"
+                muted "$(printf '%s' "$apt_err" | tail -3)"
+              }
             elif command -v brew >/dev/null 2>&1; then
               brew install "$mt" || warn "brew install $mt failed"
             else
@@ -655,7 +658,10 @@ if [ "$runtime_choice" = "3" ]; then
             ;;
           searchsploit)
             if command -v apt-get >/dev/null 2>&1; then
-              $SUDO apt-get update -qq && $SUDO apt-get install -y exploitdb || warn "apt-get install exploitdb failed"
+              apt_err="$($SUDO apt-get update -qq 2>&1 && $SUDO apt-get install -y exploitdb 2>&1)" || {
+                warn "apt-get install exploitdb failed"
+                muted "$(printf '%s' "$apt_err" | tail -3)"
+              }
             elif command -v brew >/dev/null 2>&1; then
               brew install exploitdb || warn "brew install exploitdb failed"
             else
@@ -675,7 +681,12 @@ if [ "$runtime_choice" = "3" ]; then
         ok "All requested host tools are now available on PATH."
       else
         warn "Still unavailable after installation attempt: ${remaining_tools[*]}"
-        muted "Re-run the wizard after fixing the package manager, Go, or PATH."
+        muted "Re-run the wizard after fixing the package manager, Go, or PATH — see the"
+        muted "install errors printed above for the exact reason (e.g. a package your"
+        muted "distro's repos don't carry, like 'exploitdb'/'amass' on plain Ubuntu/WSL)."
+        muted "${BRAND} still runs fine without these — it adapts to whichever tools are"
+        muted "present. If you'd rather not fight your host's package manager, Full Docker"
+        muted "mode (re-run this wizard and pick option 1) ships every tool pre-installed."
       fi
     fi
   fi
