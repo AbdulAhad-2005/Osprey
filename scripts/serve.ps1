@@ -6,7 +6,10 @@
 # directly through it, so you never have to remember `.venv\Scripts\Activate.ps1`
 # followed by a uvicorn invocation.
 $ErrorActionPreference = "Stop"
-Set-Location (Join-Path $PSScriptRoot "..")
+$RootDir = Join-Path $PSScriptRoot ".."
+Set-Location $RootDir
+$RootDir = (Get-Location).Path
+. (Join-Path $PSScriptRoot "lib_local_python.ps1")
 
 $venvPython = ".\.venv\Scripts\python.exe"
 if (-not (Test-Path $venvPython)) {
@@ -15,11 +18,27 @@ if (-not (Test-Path $venvPython)) {
     exit 1
 }
 
+if (Test-LocalVenvPythonIsWrong (Resolve-Path $venvPython).Path) {
+    Write-Host "This .venv's Python doesn't match what this build's precompiled runtime needs." -ForegroundColor Red
+    Write-Host "Re-run the setup wizard to fix it:  powershell -ExecutionPolicy Bypass -File scripts\setup.ps1" -ForegroundColor White
+    exit 1
+}
+
+# Distinguish "genuinely not installed yet" from "installed, but the import
+# itself failed" (e.g. a PyArmor runtime/Python mismatch) — the latter used
+# to get misreported as "not installed", sending people in circles
+# reinstalling something that wasn't the actual problem.
 # try/catch: PS5.1 promotes native stderr to a terminating error under EAP=Stop.
-try { & $venvPython -c "import osprey" 2>$null } catch { }
+$importErr = ""
+try { $importErr = (& $venvPython -c "import osprey" 2>&1 | Out-String) } catch { $importErr = "$_" }
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "The backend isn't installed in .venv. Run:  pip install -e .\backend" -ForegroundColor Red
-    Write-Host "(or re-run  powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 )" -ForegroundColor White
+    if ($importErr -match "ModuleNotFoundError") {
+        Write-Host "The backend isn't installed in .venv. Run:  pip install -e .\backend" -ForegroundColor Red
+        Write-Host "(or re-run  powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 )" -ForegroundColor White
+    } else {
+        Write-Host "The backend is installed, but failed to import:" -ForegroundColor Red
+        Write-Host $importErr -ForegroundColor Red
+    }
     exit 1
 }
 
