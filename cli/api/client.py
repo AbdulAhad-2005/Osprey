@@ -62,12 +62,14 @@ class APIClient:
             return []
 
     def list_engagements(self) -> list[dict[str, Any]]:
-        try:
-            resp = self._client.get(self._url("/api/v1/engagements"))
-            resp.raise_for_status()
-            return resp.json()
-        except httpx.HTTPStatusError:
-            return []
+        # Trailing slash: the route is `@router.get("/")` under the
+        # `/engagements` prefix, so the canonical path IS `/engagements/`.
+        #
+        # Deliberately NOT swallowing errors into `[]` here: a 404/500/timeout
+        # must not look identical to "no engagements exist."
+        resp = self._client.get(self._url("/api/v1/engagements/"))
+        resp.raise_for_status()
+        return resp.json()
 
     def get_pipeline_activity(self, engagement_id: str) -> dict[str, Any]:
         try:

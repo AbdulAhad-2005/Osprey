@@ -40,10 +40,10 @@ def handle_help(args: list[str], client: APIClient) -> None:
         "/model [set <model> [key]] | [reload]": (
             "Show active model, switch model/key (/model set ...), or reload .env in place"
         ),
-        "/scan [target] [--engine|--supervised] [--fresh]": (
+        "/scan [target] [--offline|--supervised] [--fresh]": (
             "Bind target + run a full pentest. Default: the model drives every "
-            "tool itself (full LLM judgment/cost). --engine: deterministic, "
-            "no-LLM opportunity engine. --supervised: the deterministic engine "
+            "tool itself (full LLM judgment/cost). --offline (alias --engine): "
+            "deterministic, no-LLM opportunity engine. --supervised: the deterministic engine "
             "runs itself with the LLM checking in only at bounded checkpoints "
             "-- zero tokens on the obvious mechanical work, full LLM judgment "
             "when there's actually something worth deciding. --fresh: start a "
@@ -302,7 +302,15 @@ def _print_cli_model_status() -> None:
 
 def handle_engagements(args: list[str], client: APIClient) -> None:
     if not args or args[0] == "list":
-        engagements = client.list_engagements()
+        try:
+            engagements = client.list_engagements()
+        except Exception as exc:  # noqa: BLE001 — show WHY, not a false "empty"
+            print_error(_api_error_text(exc))
+            print_info(
+                "Could not list engagements — this is a backend error, not an "
+                "empty list. Check the backend is up (/health) and reachable."
+            )
+            return
         print_engagements(engagements)
     elif args[0] == "new" and len(args) >= 2:
         target = " ".join(args[1:])

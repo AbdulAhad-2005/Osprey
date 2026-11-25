@@ -167,6 +167,14 @@ class HarnessRuntime:
             return
         self._event_stop.clear()
 
+        # Highest event `seq` already delivered to the sink, per engagement.
+        # The stream replays recent history on every (re)connect, so without
+        # this a dropped/reopened connection reprints the same background
+        # events over and over — the duplicate "[source]" log flood. Keyed by
+        # engagement so switching targets and back doesn't lose the high-water
+        # mark. Events predating the seq field (seq==0) are always shown.
+        last_seq: dict[str, int] = {}
+
         def _listen() -> None:
             watched: str | None = None
             while not self._event_stop.is_set():
@@ -179,6 +187,11 @@ class HarnessRuntime:
                     for event_type, data in self.client.stream_events(engagement_id):
                         if self._event_stop.is_set() or self.active_engagement_id != watched:
                             break
+                        seq = int(data.get("seq") or 0)
+                        if seq and seq <= last_seq.get(watched, 0):
+                            continue  # already rendered (replayed history)
+                        if seq:
+                            last_seq[watched] = seq
                         sink(data.get("source", ""), event_type, data)
                 except Exception:
                     pass

@@ -20,6 +20,7 @@ an `asyncio.Queue`-based fan-out needs no external broker.
 from __future__ import annotations
 
 import asyncio
+import itertools
 import time
 from collections import deque
 from collections.abc import AsyncIterator
@@ -33,6 +34,13 @@ _QUEUE_CAP = 500
 _history: dict[str, deque[dict[str, Any]]] = {}
 _subscribers: dict[str, set[asyncio.Queue[dict[str, Any]]]] = {}
 
+# Process-global monotonic event id. `next()` on an itertools.count is atomic
+# under the GIL, so this is safe across the asyncio loop and tool-exec threads
+# without a lock. A subscriber that reconnects replays recent history (see
+# `subscribe`), which re-sends events it already saw; the strictly-increasing
+# `seq` lets that subscriber drop the ones it has
+_seq_counter = itertools.count(1)
+
 
 def publish(engagement_id: str, event: str, data: dict[str, Any], *, source: str = "") -> None:
     """Record + fan out one event. Never blocks: a full/slow subscriber queue
@@ -41,7 +49,7 @@ def publish(engagement_id: str, event: str, data: dict[str, Any], *, source: str
     eid = (engagement_id or "").strip()
     if not eid:
         return
-    record = {"ts": time.time(), "event": event, "source": source, "data": data}
+    record = {"seq": next(_seq_counter), "ts": time.time(), "event": event, "source": source, "data": data}
     buf = _history.pop(eid, None) or deque(maxlen=_HISTORY_CAP)
     buf.append(record)
     _history[eid] = buf  # reinsert newest-last for LRU eviction

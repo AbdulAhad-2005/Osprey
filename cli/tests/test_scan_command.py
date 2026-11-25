@@ -48,6 +48,35 @@ def test_scan_fresh_flag_is_stripped_from_the_target(monkeypatch):
     assert client.compile_calls == [("samaa.tv", True)]
 
 
+def test_scan_offline_is_an_alias_for_engine(monkeypatch):
+    """--offline must run the no-LLM engine, not the full LLM loop. Before the
+    fix it was an unknown token folded into the target, so mode stayed "" and
+    the LLM loop ran — the opposite of "offline"."""
+    client = _FakeClient()
+    engine_calls: list[str] = []
+    monkeypatch.setattr(
+        "cli.commands.slash._scan._run_engine_scan",
+        lambda client, target, **kw: engine_calls.append(target) or True,
+    )
+    monkeypatch.setattr("cli.commands.slash._scan._bind_engagement", lambda client, data: None)
+
+    handle_scan(["samaa.tv", "--offline"], client)
+
+    assert client.compile_calls == [("samaa.tv", False)]
+    assert engine_calls == ["samaa.tv"]  # engine ran, target has no flag in it
+
+
+def test_scan_rejects_unknown_flag(monkeypatch):
+    """A typo'd flag fails loudly instead of becoming part of the target and
+    silently running the LLM against "samaa.tv --offlin"."""
+    _patch_runtime(monkeypatch)
+    client = _FakeClient()
+
+    handle_scan(["samaa.tv", "--offlin"], client)
+
+    assert client.compile_calls == []  # nothing bound; aborted before binding
+
+
 def test_scan_supervised_with_fresh(monkeypatch):
     _patch_runtime(monkeypatch)
     client = _FakeClient()

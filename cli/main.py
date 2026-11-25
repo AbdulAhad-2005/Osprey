@@ -398,8 +398,8 @@ def main() -> None:
     scan_parser.add_argument("--target", help="Domain, IP, CIDR, or URL")
     scan_parser.add_argument("--phase", default="full", choices=_SCAN_PHASES)
     scan_parser.add_argument(
-        "--engine", action="store_true",
-        help="Deterministic sense-decide-act investigation, no LLM",
+        "--engine", "--offline", dest="engine", action="store_true",
+        help="Deterministic sense-decide-act investigation, no LLM (--offline is an alias)",
     )
     scan_parser.add_argument("--force-new", action="store_true", help="Force a new engagement instead of reusing")
 

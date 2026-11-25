@@ -75,7 +75,7 @@ def handle_scan(args: list[str], client: "APIClient") -> None:
       This is the default division of labor for "save tokens on the obvious
       steps, keep LLM judgment for what needs it."
 
-    Usage: /scan [target] [recon|network|full] [--mcp|--engine|--supervised] [--fresh]
+    Usage: /scan [target] [recon|network|full] [--offline/--engine|--supervised|--mcp] [--fresh]
     Missing targets are asked for interactively; ``recon``/``network``/etc.
     single-phase scans always use the free ReAct loop (--engine/--supervised
     only apply to a full scan). ``--fresh`` starts a brand-new engagement
@@ -90,12 +90,26 @@ def handle_scan(args: list[str], client: "APIClient") -> None:
     elif "--supervised" in args:
         mode = "supervised"
         args = [a for a in args if a != "--supervised"]
-    elif "--engine" in args:
+    elif "--engine" in args or "--offline" in args:
+        # --offline is the operator-facing name for the no-LLM deterministic
+        # engine; --engine is the original internal name. They mean the same
+        # mode. Both must strip here.
         mode = "engine"
-        args = [a for a in args if a != "--engine"]
+        args = [a for a in args if a not in ("--engine", "--offline")]
 
     force_new = "--fresh" in args
     args = [a for a in args if a != "--fresh"]
+
+    # Reject any remaining --flag instead of silently treating it as part of
+    # the target. A typo like "--offlin" must fail loudly, never quietly run
+    # the LLM against a bogus target "<domain> --offlin".
+    unknown = [a for a in args if a.startswith("-")]
+    if unknown:
+        print_error(
+            f"Unknown option(s): {' '.join(unknown)}. "
+            "Valid flags: --offline (= --engine), --supervised, --mcp, --fresh."
+        )
+        return
 
     phase = "full"
     if args and args[-1].lower() in _SCAN_PHASES:

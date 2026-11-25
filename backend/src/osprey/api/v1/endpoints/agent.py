@@ -91,7 +91,15 @@ async def agent_events_stream(engagement_id: str, replay: int = 30) -> EventSour
         async for record in event_bus.subscribe(engagement_id, replay=max(0, replay)):
             yield {
                 "event": record["event"],
-                "data": json.dumps({**record["data"], "source": record["source"], "ts": record["ts"]}),
+                "data": json.dumps({
+                    **record["data"],
+                    "source": record["source"],
+                    "ts": record["ts"],
+                    # Monotonic id so a reconnecting client can drop the
+                    # replayed-history events it has already rendered instead
+                    # of reprinting them.
+                    "seq": record.get("seq", 0),
+                }),
             }
 
     return EventSourceResponse(event_generator())
