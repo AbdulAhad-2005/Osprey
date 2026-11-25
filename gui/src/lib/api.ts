@@ -28,7 +28,23 @@ async function getJSON<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new ApiError(res.status, `${res.status} ${res.statusText} — ${body.slice(0, 300)}`);
+    let detailMessage = "";
+    if (body) {
+      try {
+        const parsed = JSON.parse(body);
+        if (typeof parsed?.detail === "string") {
+          detailMessage = parsed.detail;
+        } else if (typeof parsed?.error === "string") {
+          detailMessage = parsed.error;
+        }
+      } catch {
+        detailMessage = body.slice(0, 300);
+      }
+    }
+    const message = detailMessage
+      ? `${res.status} ${res.statusText} — ${detailMessage}`
+      : `${res.status} ${res.statusText}`;
+    throw new ApiError(res.status, message);
   }
   return (await res.json()) as T;
 }

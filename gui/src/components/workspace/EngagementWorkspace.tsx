@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { MessageSquare, Radar, Share2, ShieldAlert, FileText, Copy, Check } from "lucide-react";
@@ -11,6 +11,9 @@ import { AttackSurfaceTab } from "@/components/tabs/AttackSurfaceTab";
 import { FindingsTab } from "@/components/tabs/FindingsTab";
 import { ReportTab } from "@/components/tabs/ReportTab";
 import { TabNav, type TabDef } from "@/components/ui/Tabs";
+import { WorkspaceSkeleton } from "./WorkspaceSkeleton";
+import { getEngagement } from "@/lib/api";
+import type { Engagement } from "@/lib/types";
 import { cn } from "@/lib/cn";
 
 type TabKey = "chat" | "surface" | "graph" | "findings" | "evidence" | "report";
@@ -21,11 +24,48 @@ const GraphTab = dynamic(() => import("@/components/tabs/GraphTab").then((module
 });
 
 export function EngagementWorkspace({ engagementId }: { engagementId: string }) {
-  const { engagements } = useWorkspace();
+  const { engagements, loading } = useWorkspace();
   const router = useRouter();
   const search = useSearchParams();
-  const engagement = engagements.find((e) => e.id === engagementId);
+
+  const [directEngagement, setDirectEngagement] = useState<Engagement | null>(null);
+  const [checkingDirect, setCheckingDirect] = useState(false);
+  const [notFound, setNotFound] = useState(false);
+
+  const engagement = engagements.find((e) => e.id === engagementId) ?? directEngagement;
   const initialPrompt = search.get("intent") ?? undefined;
+
+  useEffect(() => {
+    if (engagements.some((e) => e.id === engagementId)) {
+      setNotFound(false);
+      return;
+    }
+    if (loading) return;
+
+    let cancelled = false;
+    setCheckingDirect(true);
+    getEngagement(engagementId)
+      .then((eng) => {
+        if (!cancelled) {
+          setDirectEngagement(eng);
+          setNotFound(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setNotFound(true);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setCheckingDirect(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [engagementId, engagements, loading]);
 
   const urlTab = (search.get("tab") as TabKey) ?? "chat";
   const tab: TabKey = VALID.includes(urlTab) ? urlTab : "chat";
@@ -50,6 +90,46 @@ export function EngagementWorkspace({ engagementId }: { engagementId: string }) 
     { key: "evidence", label: "Evidence", icon: FileText },
     { key: "report", label: "Report", icon: FileText },
   ];
+
+  if (notFound) {
+    const fallback = engagements[0];
+    return (
+      <div className="flex h-full flex-col items-center justify-center p-6 text-center">
+        <div className="mx-auto max-w-md">
+          <div className="mb-4 inline-flex h-14 w-14 items-center justify-center rounded-2xl border border-danger/30 bg-danger/10 text-danger shadow-sm">
+            <ShieldAlert size={28} />
+          </div>
+          <h2 className="font-serif text-2xl font-semibold tracking-tight text-ink">
+            Engagement Not Found
+          </h2>
+          <p className="mt-2 text-sm text-ink-dim leading-relaxed">
+            The engagement <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs text-ink">{engagementId}</code> does not exist in the active database. It may have been deleted, or the database was recreated.
+          </p>
+
+          <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3">
+            <button
+              onClick={() => router.push("/")}
+              className="btn-primary w-full sm:w-auto px-4 py-2"
+            >
+              Start New Engagement
+            </button>
+            {fallback && (
+              <button
+                onClick={() => router.push(`/engagement/${encodeURIComponent(fallback.id)}`)}
+                className="btn-outline w-full sm:w-auto px-4 py-2"
+              >
+                Go to {fallback.target || fallback.id}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if ((loading || checkingDirect) && !engagement) {
+    return <WorkspaceSkeleton engagementId={engagementId} />;
+  }
 
   return (
     <div className="flex h-full flex-col">
