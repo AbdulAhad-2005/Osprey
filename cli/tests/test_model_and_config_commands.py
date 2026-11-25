@@ -8,7 +8,17 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from pydantic_settings import IncompleteFieldDefinitionWarning
+
+# ensure_mcp_compatibility() (agent_core/llm.py) already treats this import as
+# optional — it doesn't exist in any pydantic-settings release actually on
+# PyPI (checked 2.14.2, the version this repo pins), only guarded against a
+# hypothetical future one. An unconditional import here crashed collection of
+# this WHOLE file (not just the one test below) on every real install, so the
+# ~15 other /model, /models, /config, /status tests silently never ran.
+try:
+    from pydantic_settings import IncompleteFieldDefinitionWarning
+except ImportError:
+    IncompleteFieldDefinitionWarning = None
 
 from agent_core.llm import ensure_mcp_compatibility
 from cli.commands.slash._meta import (
@@ -20,6 +30,10 @@ from cli.commands.slash._meta import (
 )
 
 
+@pytest.mark.skipif(
+    IncompleteFieldDefinitionWarning is None,
+    reason="pydantic_settings has no IncompleteFieldDefinitionWarning in the installed version",
+)
 def test_settings_lifespan_warning_eliminated():
     """Verify that ensure_mcp_compatibility eliminates IncompleteFieldDefinitionWarning for lifespan."""
     with warnings.catch_warnings(record=True) as recorded:
