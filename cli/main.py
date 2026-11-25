@@ -392,6 +392,10 @@ def main() -> None:
         description=f"{APP_NAME} command-line operator",
     )
     parser.add_argument("--version", action="version", version=f"{APP_NAME} CLI 0.1.0")
+    parser.add_argument(
+        "--classic", action="store_true",
+        help="Use the classic single-line REPL instead of the full-screen shell",
+    )
     subparsers = parser.add_subparsers(dest="command")
     scan_parser = subparsers.add_parser("scan", help="Run a scan non-interactively (scriptable/CI)")
     scan_parser.add_argument("target_arg", nargs="?", help="Domain, IP, CIDR, or URL")
@@ -443,6 +447,19 @@ def main() -> None:
     if args.command == "benchmark":
         sys.exit(_run_benchmark_noninteractive(args))
 
+    use_tty = sys.stdin is not None and sys.stdin.isatty()
+
+    # Default interactive mode is the full-screen shell (the same CLI command
+    # stack, rendered live, with an always-on input box and a sidepane). It
+    # owns its own connection + banner, so return straight into it. Fall back
+    # to the classic line REPL for --classic, a non-TTY (pipes/CI), or a
+    # missing Textual install.
+    if use_tty and not args.classic:
+        from cli.tui import run_tui, textual_available
+
+        if textual_available():
+            sys.exit(run_tui())
+
     api_url = resolve_api_base_url()
     # Warn early when the backend is down so a first-time user knows why commands fail.
     client, api_url, _reachable = _connect_with_health_check(api_url)
@@ -450,7 +467,6 @@ def main() -> None:
     print_banner()
     print_info(f"Connected to: {api_url}")
 
-    use_tty = sys.stdin is not None and sys.stdin.isatty()
     if use_tty:
         session = PromptSession(
             completer=CommandCompleter(),

@@ -16,3 +16,8 @@ litellm>=1.50,<2.0
 # platform-mcp/requirements.txt, backend/requirements.txt, and
 # kali-tools/Dockerfile together, never just one.
 mcp==2.3.0
+
+# Powers the default full-screen interactive shell (cli/tui). The CLI falls
+# back to the classic line REPL without it (`osprey --classic` / non-TTY), but
+# the default experience needs it. Mirrors cli/pyproject.toml.
+textual>=0.80,<2.0

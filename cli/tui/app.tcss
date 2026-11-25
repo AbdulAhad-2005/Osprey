@@ -1,0 +1,87 @@
+/* Osprey shell layout.
+   Standard chat-app structure: Header docks top, Footer docks bottom, and
+   between them a vertical stack — the body (log + sidebar) takes all the
+   flexible space, with a one-row status line and the input box at the bottom.
+   Nothing is wrapped in a dock container (the bug that let the input area
+   expand to full height and bury the log). */
+
+Screen {
+    layout: vertical;
+    background: $background;
+}
+
+#body {
+    height: 1fr;              /* fill everything between header and input */
+}
+
+#log {
+    width: 1fr;
+    height: 1fr;
+    padding: 0 1;
+    background: $surface;
+    scrollbar-size-vertical: 1;
+}
+
+Sidebar {
+    width: 40;
+    height: 1fr;
+    padding: 0 1;
+    background: $panel;
+    border-left: tall $primary 40%;
+}
+
+Sidebar .s-title {
+    color: $accent;
+    text-style: bold;
+    margin-top: 1;
+}
+
+Sidebar .s-title.first {
+    margin-top: 0;
+}
+
+#statusline {
+    height: 1;
+    padding: 0 2;
+    color: $text-muted;
+    background: $panel-darken-1;
+}
+
+#completions {
+    height: auto;
+    max-height: 12;
+    margin: 0 1;
+    border: round $accent;
+    background: $panel;
+    display: none;
+}
+
+#completions.show {
+    display: block;
+}
+
+#prompt {
+    height: 3;
+    margin: 0 1 1 1;
+    border: round $primary 60%;
+}
+
+#prompt:focus {
+    border: round $accent;
+}
+
+PromptModal {
+    align: center middle;
+}
+
+PromptModal #box {
+    width: 70%;
+    height: auto;
+    padding: 1 2;
+    border: round $accent;
+    background: $surface;
+}
+
+PromptModal #q {
+    margin-bottom: 1;
+}

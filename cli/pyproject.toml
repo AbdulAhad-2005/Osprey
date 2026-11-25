@@ -23,6 +23,11 @@ dependencies = [
     # package previously drifted across 5 independent constraints in this repo
     # (see mcp-servers/requirements.txt's comment). Bump ALL FIVE together.
     "mcp==2.3.0",
+    # Powers the default full-screen interactive shell (cli/tui). The CLI still
+    # runs without it — `osprey --classic`, a non-TTY, or a missing Textual all
+    # fall back to the single-line REPL — but the default experience needs it,
+    # so it's a core dep, not an extra. Same rich<14 ecosystem as the renderers.
+    "textual>=0.80,<2.0",
 ]
 
 [project.scripts]
@@ -39,3 +44,7 @@ package-dir = {"" = ".."}
 [tool.setuptools.packages.find]
 where = [".."]
 include = ["cli*"]
+
+[tool.setuptools.package-data]
+# Ship the shell's stylesheet so a wheel install (not just editable) finds it.
+"cli.tui" = ["*.tcss"]
