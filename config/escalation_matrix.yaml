@@ -83,7 +83,18 @@ techniques:
       - action: alternate_tool
         from_tool: naabu_port_scan
         tool_name: rustscan_fast_scan
-        reason: "Fallback fast scanner when naabu thin/fails"
+        # Bounded on purpose: with no ports= set, rustscan_fast_scan's own
+        # wrapper omits -p entirely and rustscan defaults to the FULL
+        # 1-65535 range. This fallback inherits the SAME tight timeout that
+        # just killed naabu (_LIVE_HOST_TIMEOUT=120s in
+        # investigation_capabilities.py), so an unbounded rustscan can only
+        # ever time out too — confirmed live: 30 consecutive naabu-timeout ->
+        # rustscan-timeout pairs across distinct geo.tv hosts, zero useful
+        # output, every single one. Capping to the top 1000 ports mirrors the
+        # identical fix already applied to nmap_service_scan/nmap_custom_scan
+        # below in this same file.
+        additional_args: "-p 1-1000"
+        reason: "Fallback fast scanner when naabu thin/fails (top-1000 ports — unbounded would inherit naabu's timeout budget and always time out itself)"
       - action: alternate_tool
         from_tool: naabu_port_scan
         tool_name: masscan_high_speed
