@@ -76,6 +76,8 @@ def test_handle_model_set_command(monkeypatch, tmp_path):
     dotenv_file = tmp_path / ".env"
     dotenv_file.write_text("LLM_MODEL='initial/model'\n", encoding="utf-8")
     monkeypatch.setenv("OSPREY_ENV_FILE", str(dotenv_file))
+    from osprey.core import config as osprey_config
+    monkeypatch.setattr(osprey_config, "_DOTENV", str(dotenv_file))
 
     reloaded_model = []
     mock_runtime = MagicMock()
@@ -103,6 +105,7 @@ def test_handle_model_set_command(monkeypatch, tmp_path):
     assert os.environ.get("LLM_API_BASE") == "https://api.groq.com/openai/v1"
     assert len(reloaded_model) == 1
     assert any("Model updated to: groq/llama-3.3-70b-versatile" in s for s in successes)
+    assert "groq/llama-3.3-70b-versatile" in dotenv_file.read_text(encoding="utf-8")
 
 
 def test_handle_model_reload_command(monkeypatch, tmp_path):

@@ -35,6 +35,14 @@ def _find_dotenv() -> str:
     return str(_HERE / ".env")
 
 
+def get_dotenv_path() -> str:
+    """Get the active .env path, respecting OSPREY_ENV_FILE if set dynamically."""
+    explicit = os.environ.get("OSPREY_ENV_FILE", "").strip()
+    if explicit:
+        return str(Path(explicit).resolve())
+    return _DOTENV
+
+
 _DOTENV = _find_dotenv()
 _DOTENV_WRITE_LOCK = Lock()
 
@@ -54,7 +62,7 @@ def set_dotenv_values(updates: dict[str, str]) -> str:
 
 
 def _write_dotenv_values(updates: dict[str, str]) -> str:
-    path = Path(_DOTENV)
+    path = Path(get_dotenv_path())
     lines: list[str] = []
     if path.is_file():
         lines = path.read_text(encoding="utf-8").splitlines()
