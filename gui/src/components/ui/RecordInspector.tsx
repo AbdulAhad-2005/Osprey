@@ -40,7 +40,7 @@ export function RecordInspector({
     >
       <header className="mb-4 flex items-start justify-between gap-4">
         <div>
-          <p className="text-xs uppercase tracking-wider text-amber">
+          <p className="text-xs uppercase tracking-wider text-accent">
             Original evidence · read only
           </p>
           <h2 className="mt-1 break-all text-lg font-semibold">{title}</h2>

@@ -3,61 +3,62 @@ import type { Config } from "tailwindcss";
 /**
  * Osprey design tokens.
  *
- * Brand: Logo 1 — a geometric osprey in flight. Deep navy base, slate mids,
- * off-white ink, a single amber "eye" accent. Dark-first; calm and spacious
- * like Claude desktop, but with the restrained, high-contrast seriousness a
- * security console wants. Colors are exposed both as Tailwind utilities and
- * as CSS variables (globals.css) so one source of truth drives both.
+ * A restrained, enterprise-grade system: cool neutral slate surfaces, one
+ * confident blue accent, and a clear semantic ramp for severity/status. Every
+ * colour resolves to a CSS variable (globals.css) holding an "R G B" triplet,
+ * so a single token set drives both the light and dark themes and Tailwind's
+ * opacity modifiers (`bg-accent/10`) keep working.
  */
+const token = (name: string) => `rgb(var(--c-${name}) / <alpha-value>)`;
+
 const config: Config = {
+  darkMode: ["class", ".dark"],
   content: ["./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
       colors: {
-        // Structural surfaces (deep navy → raised slate)
-        abyss: "#070b14",
-        base: "#0a1020",
-        surface: "#0e1526",
-        "surface-2": "#141d31",
-        "surface-3": "#1b2740",
-        border: "#223049",
-        "border-strong": "#2d3d59",
+        // Structural surfaces
+        abyss: token("abyss"), // recessed wells: code blocks, terminals
+        base: token("base"), // page background
+        surface: token("surface"), // cards, panels, sidebar
+        "surface-2": token("surface-2"), // inputs, raised rows
+        "surface-3": token("surface-3"), // hover / selected
+        border: token("border"),
+        "border-strong": token("border-strong"),
 
         // Ink
-        ink: "#e8edf6",
-        "ink-dim": "#94a2ba",
-        "ink-faint": "#5d6b83",
+        ink: token("ink"),
+        "ink-dim": token("ink-dim"),
+        "ink-faint": token("ink-faint"),
 
-        // Brand — amber osprey eye
-        amber: {
-          DEFAULT: "#f5a623",
-          soft: "#f7b94e",
-          deep: "#c47d10",
-          glow: "rgba(245, 166, 35, 0.16)",
+        // Brand accent — primary actions, selection, links
+        accent: {
+          DEFAULT: token("accent"),
+          soft: token("accent-soft"), // accent-coloured text on a tinted surface
+          deep: token("accent-deep"), // pressed / hover fill
         },
-        // Secondary — a cool slate-cyan for "live / in-flight" states
+        "on-accent": token("on-accent"),
+        // Secondary — "live / in-flight" states
         signal: {
-          DEFAULT: "#38bdf8",
-          soft: "#7dd3fc",
-          deep: "#0e7490",
+          DEFAULT: token("signal"),
+          soft: token("signal-soft"),
+          deep: token("signal-deep"),
         },
 
-        // Severity ramp (reads clearly on deep navy)
+        // Severity ramp
         sev: {
-          critical: "#ff5d6c",
-          high: "#ff8a4c",
-          medium: "#ffc53d",
-          low: "#5eb0ef",
-          info: "#8595ab",
+          critical: token("sev-critical"),
+          high: token("sev-high"),
+          medium: token("sev-medium"),
+          low: token("sev-low"),
+          info: token("sev-info"),
         },
-        ok: "#35c08f",
-        warn: "#ffc53d",
-        danger: "#ff5d6c",
+        ok: token("ok"),
+        warn: token("warn"),
+        danger: token("danger"),
       },
       fontFamily: {
         sans: ["var(--font-sans)", "ui-sans-serif", "system-ui", "sans-serif"],
-        serif: ["var(--font-serif)", "ui-serif", "Georgia", "serif"],
-        display: ["var(--font-display)", "ui-sans-serif", "system-ui", "sans-serif"],
         mono: [
           "var(--font-mono)",
           "ui-monospace",
@@ -67,13 +68,13 @@ const config: Config = {
         ],
       },
       borderRadius: {
-        xl: "0.875rem",
-        "2xl": "1.125rem",
+        xl: "0.625rem",
+        "2xl": "0.875rem",
       },
       boxShadow: {
-        card: "0 1px 0 0 rgba(255,255,255,0.02) inset, 0 8px 24px -12px rgba(0,0,0,0.6)",
-        lift: "0 12px 40px -16px rgba(0,0,0,0.7)",
-        "glow-amber": "0 0 0 1px rgba(245,166,35,0.35), 0 0 24px -6px rgba(245,166,35,0.35)",
+        card: "0 1px 2px 0 rgb(var(--shadow) / 0.06), 0 1px 1px 0 rgb(var(--shadow) / 0.04)",
+        lift: "0 8px 24px -8px rgb(var(--shadow) / 0.18), 0 2px 6px -2px rgb(var(--shadow) / 0.10)",
+        focus: "0 0 0 3px rgb(var(--c-accent) / 0.22)",
       },
       keyframes: {
         "fade-in": {
@@ -81,9 +82,9 @@ const config: Config = {
           to: { opacity: "1", transform: "none" },
         },
         "pulse-ring": {
-          "0%": { boxShadow: "0 0 0 0 rgba(245,166,35,0.5)" },
-          "70%": { boxShadow: "0 0 0 7px rgba(245,166,35,0)" },
-          "100%": { boxShadow: "0 0 0 0 rgba(245,166,35,0)" },
+          "0%": { boxShadow: "0 0 0 0 rgb(var(--c-ok) / 0.45)" },
+          "70%": { boxShadow: "0 0 0 6px rgb(var(--c-ok) / 0)" },
+          "100%": { boxShadow: "0 0 0 0 rgb(var(--c-ok) / 0)" },
         },
         shimmer: {
           "100%": { transform: "translateX(100%)" },

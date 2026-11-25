@@ -14,21 +14,25 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0a1020",
-  colorScheme: "dark",
+  themeColor: "#f7f9fc",
+  colorScheme: "light",
 };
+
+/* Light by default; applies a saved dark choice before first paint so it never flashes. */
+const THEME_BOOT = `try{var t=localStorage.getItem("osprey-theme");if(t==="dark")document.documentElement.classList.add("dark")}catch(e){}`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
         {/* Runtime webfonts (not fetched at build time, so builds stay hermetic;
             falls back to system fonts if the network is unavailable). */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
           rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,wght@0,500;0,600;1,500&family=Quicksand:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
         />
       </head>
       <body>

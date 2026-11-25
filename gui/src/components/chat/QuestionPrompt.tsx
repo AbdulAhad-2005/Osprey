@@ -31,9 +31,9 @@ export function QuestionPrompt({
       className={cn(
         "rounded-xl border p-3.5",
         resolved
-          ? "border-border bg-surface/50"
+          ? "border-border bg-surface"
           : isGate
-            ? "border-amber/40 bg-amber/[0.06] shadow-glow-amber"
+            ? "border-warn/40 bg-warn/[0.07]"
             : "border-signal/35 bg-signal/[0.05]",
       )}
     >
@@ -41,7 +41,7 @@ export function QuestionPrompt({
         <span
           className={cn(
             "mt-0.5 grid h-6 w-6 flex-none place-items-center rounded-md",
-            isGate ? "bg-amber/15 text-amber" : "bg-signal/15 text-signal",
+            isGate ? "bg-warn/15 text-warn" : "bg-signal/15 text-signal",
           )}
         >
           <ShieldQuestion size={14} />
@@ -69,8 +69,8 @@ export function QuestionPrompt({
                       o.intent === "danger"
                         ? "border-sev-critical/40 hover:border-sev-critical hover:bg-sev-critical/10"
                         : o.intent === "primary"
-                          ? "border-amber/40 hover:border-amber hover:bg-amber/10"
-                          : "border-border hover:border-border-strong hover:bg-white/[0.04]",
+                          ? "border-accent/40 hover:border-accent hover:bg-accent/10"
+                          : "border-border hover:border-border-strong hover:bg-ink/[0.04]",
                     )}
                   >
                     <span
@@ -79,7 +79,7 @@ export function QuestionPrompt({
                         o.intent === "danger"
                           ? "bg-sev-critical"
                           : o.intent === "primary"
-                            ? "bg-amber"
+                            ? "bg-accent"
                             : "bg-ink-faint group-hover:bg-ink-dim",
                       )}
                     />
@@ -96,7 +96,7 @@ export function QuestionPrompt({
               </div>
 
               {question.allow_freeform && (
-                <div className="mt-2 flex items-center gap-2 rounded-lg border border-border bg-base/50 px-3 py-1.5 focus-within:border-border-strong">
+                <div className="mt-2 flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 focus-within:border-accent/60">
                   <input
                     value={freeform}
                     onChange={(e) => setFreeform(e.target.value)}

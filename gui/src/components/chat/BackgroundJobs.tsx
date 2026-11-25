@@ -60,7 +60,7 @@ export function BackgroundJobs({
   }
   return (
     <details
-      className="mb-5 rounded-xl border border-border bg-surface/60 p-3"
+      className="mb-5 rounded-xl border border-border bg-surface p-3"
       open={active.length > 0 || undefined}
     >
       <summary className="cursor-pointer text-xs font-semibold text-ink-dim">

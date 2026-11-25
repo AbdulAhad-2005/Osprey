@@ -46,7 +46,7 @@ export function Composer({
         <div
           className={cn(
             "panel flex items-end gap-2 px-3 py-2.5 shadow-lift transition-colors",
-            !disabled && "focus-within:border-border-strong",
+            !disabled && "focus-within:border-accent/60",
           )}
         >
           <textarea
@@ -78,7 +78,7 @@ export function Composer({
             <button
               onClick={() => text.trim() ? void submit() : onResume()}
               disabled={submitting || disabled || (!text.trim() && !resumable)}
-              className="grid h-9 w-9 flex-none place-items-center rounded-lg bg-amber text-abyss transition-colors hover:bg-amber-soft disabled:bg-surface-3 disabled:text-ink-faint"
+              className="grid h-9 w-9 flex-none place-items-center rounded-lg bg-accent text-on-accent transition-colors hover:bg-accent-deep disabled:bg-surface-3 disabled:text-ink-faint"
               title={text.trim() ? streaming ? "Send and redirect the current run" : "Send" : resumable ? "Resume engagement" : "Send"}
               aria-label={text.trim() ? "Send" : resumable ? "Resume engagement" : "Send"}
             >

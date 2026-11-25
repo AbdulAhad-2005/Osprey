@@ -27,13 +27,13 @@ import { outputFailed, toolOutput } from "@/lib/toolOutput";
 const CAT_META: Record<ToolCategory, { icon: LucideIcon; color: string; ring: string }> = {
   recon: { icon: Radar, color: "text-signal", ring: "bg-signal/12" },
   network: { icon: Network, color: "text-signal-soft", ring: "bg-signal/12" },
-  web: { icon: Globe, color: "text-amber-soft", ring: "bg-amber/12" },
+  web: { icon: Globe, color: "text-accent-soft", ring: "bg-accent/12" },
   vuln: { icon: ShieldAlert, color: "text-sev-high", ring: "bg-sev-high/12" },
   exploit: { icon: Crosshair, color: "text-sev-critical", ring: "bg-sev-critical/12" },
-  osint: { icon: Satellite, color: "text-[#a78bfa]", ring: "bg-[#a78bfa]/12" },
-  creds: { icon: KeyRound, color: "text-amber", ring: "bg-amber/12" },
-  memory: { icon: Database, color: "text-ink-dim", ring: "bg-white/5" },
-  shell: { icon: Terminal, color: "text-ink-dim", ring: "bg-white/5" },
+  osint: { icon: Satellite, color: "text-sev-low", ring: "bg-sev-low/12" },
+  creds: { icon: KeyRound, color: "text-warn", ring: "bg-warn/12" },
+  memory: { icon: Database, color: "text-ink-dim", ring: "bg-ink/[0.06]" },
+  shell: { icon: Terminal, color: "text-ink-dim", ring: "bg-ink/[0.06]" },
   agent: { icon: Users, color: "text-ok", ring: "bg-ok/12" },
 };
 
@@ -49,7 +49,7 @@ export function ToolCallCard({ call }: { call: ToolCallView }) {
   return (
     <div
       className={cn(
-        "overflow-hidden rounded-lg border bg-surface/70 transition-colors",
+        "overflow-hidden rounded-lg border bg-surface transition-colors",
         status === "fail" ? "border-sev-critical/35" : "border-border hover:border-border-strong",
       )}
     >
@@ -72,7 +72,7 @@ export function ToolCallCard({ call }: { call: ToolCallView }) {
             </span>
           )}
           {call.source && call.source !== "tool" && (
-            <span className="rounded bg-white/5 px-1 py-0.5 font-mono text-[9.5px] text-ink-faint">
+            <span className="rounded bg-ink/[0.06] px-1 py-0.5 font-mono text-[9.5px] text-ink-faint">
               {call.source}
             </span>
           )}
@@ -80,7 +80,7 @@ export function ToolCallCard({ call }: { call: ToolCallView }) {
 
         <span className="ml-auto flex flex-none items-center gap-2.5 text-[11px] text-ink-faint">
           {call.findingTitles && call.findingTitles.length > 0 && (
-            <span className="rounded-full bg-amber/12 px-1.5 py-0.5 font-medium text-amber-soft">
+            <span className="rounded-full bg-accent/12 px-1.5 py-0.5 font-medium text-accent-soft">
               {call.findingTitles.length} finding{call.findingTitles.length > 1 ? "s" : ""}
             </span>
           )}
@@ -106,7 +106,7 @@ export function ToolCallCard({ call }: { call: ToolCallView }) {
             className="overflow-hidden border-t border-border"
           >
             {prettyArgs && (
-              <div className="border-b border-border bg-base/40 px-3 py-2">
+              <div className="border-b border-border bg-surface-2 px-3 py-2">
                 <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-ink-faint">
                   Arguments
                 </div>
@@ -131,7 +131,7 @@ export function ToolCallCard({ call }: { call: ToolCallView }) {
                   {call.findingTitles.map((f, i) => (
                     <span
                       key={i}
-                      className="rounded-md border border-amber/25 bg-amber/10 px-2 py-0.5 font-mono text-[11px] text-amber-soft"
+                      className="rounded-md border border-accent/25 bg-accent/10 px-2 py-0.5 font-mono text-[11px] text-accent-soft"
                     >
                       {f}
                     </span>
@@ -150,7 +150,7 @@ function OutputText({text}: {text: string}) {
   const [limit, setLimit] = useState(16000);
   return <>
     <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap break-words font-mono text-[11.5px] leading-relaxed text-ink-dim">{text.slice(0, limit) || "(no output)"}</pre>
-    {text.length > limit && <button className="mt-2 text-xs text-amber" onClick={() => setLimit((n) => n + 16000)}>Show more · {Math.min(limit, text.length).toLocaleString()} / {text.length.toLocaleString()} characters</button>}
+    {text.length > limit && <button className="mt-2 text-xs text-accent" onClick={() => setLimit((n) => n + 16000)}>Show more · {Math.min(limit, text.length).toLocaleString()} / {text.length.toLocaleString()} characters</button>}
   </>;
 }
 
@@ -173,7 +173,7 @@ function ToolOutput({result, name}: {result: string; name: string}) {
     {parsed.guidance && <details><summary className="cursor-pointer text-xs text-ink-faint">Tool guidance</summary><p className="whitespace-pre-wrap break-words pt-2 text-xs text-ink-dim">{parsed.guidance}</p></details>}
     <div className="flex items-start gap-3 border-t border-border pt-2">
       {parsed.sections.length > 0 && <details className="min-w-0 flex-1"><summary className="cursor-pointer text-xs text-ink-faint">Complete recorded result · command, metadata and evidence references</summary><OutputText text={result}/></details>}
-      <button onClick={download} className="flex-none text-xs text-amber">Download output</button>
+      <button onClick={download} className="flex-none text-xs text-accent">Download output</button>
     </div>
   </div>;
 }

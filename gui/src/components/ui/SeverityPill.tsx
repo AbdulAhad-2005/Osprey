@@ -26,7 +26,7 @@ export function ConfidenceDot({ confidence }: { confidence: string }) {
     c === "confirmed"
       ? "bg-ok"
       : c === "likely" || c === "probable"
-        ? "bg-amber"
+        ? "bg-warn"
         : c === "observed"
           ? "bg-signal"
           : "bg-ink-faint";

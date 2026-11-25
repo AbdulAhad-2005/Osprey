@@ -3,7 +3,8 @@
 import { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
-import { MessageSquare, Radar, Share2, ShieldAlert, FileText, Copy, Check } from "lucide-react";
+import { MessageSquare, Radar, Share2, ShieldAlert, FileText, Copy, Check, Database, ChevronRight } from "lucide-react";
+import Link from "next/link";
 import { useWorkspace } from "@/components/shell/WorkspaceProvider";
 import { ChatView } from "@/components/chat/ChatView";
 import { EvidenceTab } from "@/components/tabs/EvidenceTab";
@@ -87,7 +88,7 @@ export function EngagementWorkspace({ engagementId }: { engagementId: string }) 
     { key: "surface", label: "Attack Surface", icon: Radar },
     { key: "graph", label: "Graph", icon: Share2 },
     { key: "findings", label: "Findings", icon: ShieldAlert },
-    { key: "evidence", label: "Evidence", icon: FileText },
+    { key: "evidence", label: "Evidence", icon: Database },
     { key: "report", label: "Report", icon: FileText },
   ];
 
@@ -133,17 +134,40 @@ export function EngagementWorkspace({ engagementId }: { engagementId: string }) 
 
   return (
     <div className="flex h-full flex-col">
-      {/* Workspace top bar */}
-      <header className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-2 pl-14">
-        <TargetLabel target={engagement?.target ?? engagementId} id={engagementId} />
-        {engagement && (
-          <span className="hidden items-center gap-2 text-[12px] text-ink-faint md:flex">
-            <span className="text-border-strong">·</span>
-            {engagement.tools_executed} tools
-          </span>
-        )}
-        <div className="w-full overflow-x-auto pb-1 lg:ml-auto lg:w-auto">
-          <TabNav tabs={tabs} active={tab} onChange={changeTab} />
+      {/* Workspace hero */}
+      <header className="hero-bg relative flex-none overflow-hidden text-white">
+        <img
+          src="/osprey-mark.svg"
+          alt=""
+          aria-hidden
+          className="pointer-events-none absolute -right-6 -top-6 w-[320px] select-none opacity-[0.13] [filter:brightness(3)_saturate(0)]"
+        />
+        <div className="relative px-8 pt-5">
+          <div className="flex items-center gap-1.5 text-[12.5px] text-[#a9bde8]">
+            <Link href="/" className="hover:text-white">Engagements</Link>
+            <ChevronRight size={12} className="opacity-60" />
+            <span className="truncate">{engagement?.name || engagementId}</span>
+          </div>
+          <div className="mt-2 flex items-end justify-between gap-6">
+            <div className="min-w-0">
+              <div className="flex items-center gap-3">
+                <h1 className="truncate text-[28px] font-bold leading-tight tracking-[-0.03em]">
+                  {engagement?.target ?? engagementId}
+                </h1>
+                {engagement && <StatusBadge status={engagement.status} />}
+              </div>
+              <CopyId id={engagementId} />
+            </div>
+            {engagement && (
+              <dl className="hidden flex-none items-center gap-7 pb-1 md:flex">
+                <HeaderStat label="Findings" value={engagement.findings_count} />
+                <HeaderStat label="Tools run" value={engagement.tools_executed} />
+              </dl>
+            )}
+          </div>
+        </div>
+        <div className="relative mt-3 overflow-x-auto px-6">
+          <TabNav tabs={tabs} active={tab} onChange={changeTab} onHero />
         </div>
       </header>
 
@@ -178,26 +202,44 @@ export function EngagementWorkspace({ engagementId }: { engagementId: string }) 
   );
 }
 
-function TargetLabel({ target, id }: { target: string; id: string }) {
+function HeaderStat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="text-right">
+      <dd className="text-[22px] font-semibold leading-none tabular-nums tracking-[-0.02em]">{value.toLocaleString()}</dd>
+      <dt className="mt-1 text-[10.5px] font-semibold uppercase tracking-[0.1em] text-[#8fa6d8]">{label}</dt>
+    </div>
+  );
+}
+
+const STATUS_DOT: Record<string, string> = { active: "bg-[#34d399]", running: "bg-[#34d399]", paused: "bg-[#fbbf24]", completed: "bg-[#8db7ff]", failed: "bg-[#f87171]" };
+
+function StatusBadge({ status }: { status: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-white/20 bg-white/10 px-2.5 py-0.5 text-[11.5px] font-semibold capitalize">
+      <span className={cn("h-1.5 w-1.5 rounded-full", STATUS_DOT[status.toLowerCase()] ?? "bg-white/60")} />
+      {status}
+    </span>
+  );
+}
+
+function CopyId({ id }: { id: string }) {
   const [copied, setCopied] = useState(false);
   return (
-    <div className="flex items-center gap-2">
-      <span className="truncate font-mono text-[14px] font-medium text-ink">{target}</span>
-      <button
-        onClick={() =>
-          navigator.clipboard?.writeText(id).then(
-            () => {
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1200);
-            },
-            () => {},
-          )
-        }
-        className="text-ink-faint transition-colors hover:text-ink-dim"
-        title="Copy engagement id"
-      >
-        {copied ? <Check size={13} className="text-ok" /> : <Copy size={13} />}
-      </button>
-    </div>
+    <button
+      onClick={() =>
+        navigator.clipboard?.writeText(id).then(
+          () => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1200);
+          },
+          () => {},
+        )
+      }
+      className="mt-1 inline-flex items-center gap-1.5 font-mono text-[12px] text-[#9db3e3] transition-colors hover:text-white"
+      title="Copy engagement id"
+    >
+      {id}
+      {copied ? <Check size={11} className="text-[#34d399]" /> : <Copy size={11} />}
+    </button>
   );
 }

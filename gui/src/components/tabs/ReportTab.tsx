@@ -8,7 +8,7 @@ import type { ReportData, ReportFinding, Severity } from "@/lib/types";
 import { SEVERITY_META } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { SeverityPill } from "@/components/ui/SeverityPill";
-import { Chip } from "@/components/ui/primitives";
+import { Chip, IconChip } from "@/components/ui/primitives";
 import { Loading, EmptyState, ErrorState } from "@/components/ui/States";
 import { RecordInspector } from "@/components/ui/RecordInspector";
 
@@ -70,7 +70,11 @@ export function ReportTab({ engagementId }: { engagementId: string }) {
   return (
     <div className="relative">
       {/* Export toolbar (not printed) */}
-      <div className="no-print sticky top-0 z-10 flex items-center justify-end gap-2 border-b border-border bg-base/80 px-5 py-2 backdrop-blur">
+      <div className="no-print sticky top-0 z-10 flex items-center gap-2 border-b border-border bg-surface/95 px-6 py-2.5 backdrop-blur">
+        <IconChip icon={FileText} size="sm" />
+        <span className="text-[13.5px] font-semibold text-ink">Penetration test report</span>
+        <span className="chip hidden font-mono sm:inline-flex">{report.meta.engagement_id}</span>
+        <span className="flex-1" />
         <button onClick={rep.refetch} className="btn-ghost" disabled={rep.loading}><RefreshCw size={14}/> Refresh</button>
         <button
           onClick={toggleTheme}
@@ -91,7 +95,7 @@ export function ReportTab({ engagementId }: { engagementId: string }) {
 
       <article
         id="osprey-report"
-        className={cn("mx-auto max-w-4xl px-6 py-8", light && "report-light")}
+        className={cn("mx-auto my-6 max-w-4xl rounded-xl border border-border px-10 py-10 shadow-lift", light && "report-light")}
       >
         <ReportHeader report={report} />
         <ExecutiveSummary report={report} />
@@ -113,8 +117,8 @@ export function ReportTab({ engagementId }: { engagementId: string }) {
 
 function H2({ icon: Icon, children }: { icon: typeof Radar; children: React.ReactNode }) {
   return (
-    <h2 className="mb-3 mt-9 flex items-center gap-2 border-b border-border pb-1.5 text-[16px] font-semibold text-ink">
-      <Icon size={16} className="text-amber" />
+    <h2 className="mb-4 mt-10 flex items-center gap-2.5 border-b border-border pb-2.5 text-[16px] font-semibold tracking-[-0.01em] text-ink">
+      <IconChip icon={Icon} size="sm" />
       {children}
     </h2>
   );
@@ -123,24 +127,37 @@ function H2({ icon: Icon, children }: { icon: typeof Radar; children: React.Reac
 function ReportHeader({ report }: { report: ReportData }) {
   const risk = report.executive_summary.overall_risk;
   const meta = SEVERITY_META[risk] ?? SEVERITY_META.none;
+  const facts: [string, string][] = [
+    ["Engagement", report.meta.engagement_id],
+    ["Status", report.meta.status],
+    ["Tool runs", String(report.meta.tools_executed)],
+    ["Generated", report.meta.generated_at.slice(0, 10)],
+  ];
   return (
-    <header className="flex flex-wrap items-start justify-between gap-4">
-      <div>
-        <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-ink-faint">
-          Penetration Test Report
+    <header>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="eyebrow text-accent">Penetration Test Report</div>
+          <h1 className="mt-1.5 text-[32px] font-semibold leading-tight tracking-[-0.02em] text-ink">
+            {report.meta.target}
+          </h1>
         </div>
-        <h1 className="mt-1 font-serif text-[30px] font-semibold leading-tight text-ink">
-          {report.meta.target}
-        </h1>
-        <div className="mt-1.5 text-[12.5px] text-ink-faint">
-          Engagement <span className="font-mono text-ink-dim">{report.meta.engagement_id}</span> · status{" "}
-          {report.meta.status} · {report.meta.tools_executed} tool runs
+        <div className={cn("min-w-[150px] rounded-xl border px-4 py-3", meta.border, meta.bg)}>
+          <div className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-ink-faint">Highest severity</div>
+          <div className={cn("mt-1 flex items-center gap-2 text-[22px] font-semibold", meta.text)}>
+            <span className={cn("h-2.5 w-2.5 rounded-full", meta.dot)} />
+            {report.executive_summary.overall_risk_label}
+          </div>
         </div>
       </div>
-      <div className={cn("rounded-xl border px-4 py-3 text-center", meta.border, meta.bg)}>
-        <div className="text-[10px] font-medium uppercase tracking-wider text-ink-faint">Highest technical severity</div>
-        <div className={cn("mt-0.5 text-[22px] font-bold", meta.text)}>{report.executive_summary.overall_risk_label}</div>
-      </div>
+      <dl className="mt-6 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-4">
+        {facts.map(([k, v]) => (
+          <div key={k} className="bg-surface-2 px-4 py-3">
+            <dt className="text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-faint">{k}</dt>
+            <dd className="mt-0.5 truncate font-mono text-[13px] capitalize text-ink">{v}</dd>
+          </div>
+        ))}
+      </dl>
     </header>
   );
 }
@@ -161,14 +178,12 @@ function ExecutiveSummary({ report }: { report: ReportData }) {
     <section>
       <H2 icon={ScrollText}>Executive Summary</H2>
       <p className="text-[14px] leading-relaxed text-ink-dim">{es.narrative}</p>
-      <div className="mt-5 grid gap-2 sm:grid-cols-5" aria-label="Security findings by severity">
-        {(["critical", "high", "medium", "low", "info"] as Severity[]).map((severity) => <div key={severity} className="rounded-lg border border-border p-3"><div className="flex items-center justify-between"><SeverityPill severity={severity} /><span className="font-mono text-lg text-ink">{report.totals.by_severity[severity] || 0}</span></div><div className="mt-3 h-1.5 rounded bg-surface-2"><div className={cn("h-full rounded", SEVERITY_META[severity].dot)} style={{width: `${100 * (report.totals.by_severity[severity] || 0) / Math.max(1, report.totals.findings)}%`}} /></div></div>)}
-      </div>
+      <SeverityDistribution report={report} />
       <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-7">
         {STAT_LABELS.map(([key, label]) => (
-          <div key={key} className="rounded-lg border border-border bg-surface/60 px-2.5 py-2 text-center">
-            <div className="font-mono text-[18px] font-semibold text-ink">{es.key_stats[key] ?? 0}</div>
-            <div className="text-[10px] uppercase tracking-wide text-ink-faint">{label}</div>
+          <div key={key} className="rounded-lg border border-border bg-surface-2 px-2.5 py-2.5 text-center">
+            <div className="text-[20px] font-semibold tabular-nums text-ink">{es.key_stats[key] ?? 0}</div>
+            <div className="mt-0.5 text-[10px] font-medium uppercase tracking-[0.05em] text-ink-faint">{label}</div>
           </div>
         ))}
       </div>
@@ -190,6 +205,30 @@ function ExecutiveSummary({ report }: { report: ReportData }) {
   );
 }
 
+const SEV_ORDER: Severity[] = ["critical", "high", "medium", "low", "info"];
+
+function SeverityDistribution({ report }: { report: ReportData }) {
+  const total = Math.max(1, report.totals.findings);
+  return (
+    <div className="mt-5" aria-label="Security findings by severity">
+      <div className="flex h-2.5 overflow-hidden rounded-full bg-surface-3">
+        {SEV_ORDER.map((s) => {
+          const n = report.totals.by_severity[s] || 0;
+          return n ? <div key={s} className={SEVERITY_META[s].dot} style={{ width: `${(100 * n) / total}%` }} title={`${SEVERITY_META[s].label}: ${n}`} /> : null;
+        })}
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-5">
+        {SEV_ORDER.map((s) => (
+          <div key={s} className={cn("rounded-lg border px-3 py-2.5", SEVERITY_META[s].border, SEVERITY_META[s].bg)}>
+            <div className={cn("text-[11.5px] font-semibold uppercase tracking-[0.05em]", SEVERITY_META[s].text)}>{SEVERITY_META[s].label}</div>
+            <div className="mt-0.5 text-[24px] font-semibold tabular-nums text-ink">{report.totals.by_severity[s] || 0}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex gap-3 py-1 text-[13px]">
@@ -205,7 +244,7 @@ function ScopeSection({ report }: { report: ReportData }) {
   return (
     <section>
       <H2 icon={ListChecks}>Scope &amp; Rules of Engagement</H2>
-      <div className="rounded-xl border border-border bg-surface/50 px-4 py-2">
+      <div className="rounded-xl border border-border bg-surface px-4 py-2">
         <Row label="In scope" value={s.in_scope.join(", ") || "—"} />
         <Row label="Out of scope" value={s.out_of_scope.join(", ") || "—"} />
         <Row label="Exploitation allowed" value={<span className={s.allow_exploitation ? "text-sev-high" : "text-ok"}>{yn(s.allow_exploitation)}</span>} />
@@ -271,18 +310,25 @@ function FindingsSection({ report }: { report: ReportData }) {
   );
 }
 
-export function FindingBlock({ f, engagementId }: { f: ReportFinding; engagementId?: string }) {
+/** `embedded` renders the body only (no card chrome or title) for use inside an
+ *  already-titled container such as an expanded findings row. */
+export function FindingBlock({ f, engagementId, embedded = false }: { f: ReportFinding; engagementId?: string; embedded?: boolean }) {
   const [inspect, setInspect] = useState(false);
   return (
-    <div id={`finding-${f.id}`} className={cn("break-inside-avoid rounded-xl border bg-surface/50 p-4", SEVERITY_META[f.severity].border)}>
-      <div className="flex items-start gap-2.5">
-        <SeverityPill severity={f.severity} size="sm" />
-        <div className="text-[14.5px] font-semibold text-ink">{f.title}</div>
-        <span className="ml-auto font-mono text-[10px] text-ink-faint">{f.id}</span>
-      </div>
-      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-ink-faint">
-        <span className="font-mono text-ink-dim">{f.target || "—"}</span>
-        {f.type && <Chip>{f.type.replace(/_/g, " ")}</Chip>}
+    <div id={`finding-${f.id}`} className={cn("break-inside-avoid", !embedded && "relative overflow-hidden rounded-xl border border-border bg-surface p-4 pl-5 shadow-card")}>
+      {!embedded && (
+        <>
+          <span className={cn("absolute inset-y-0 left-0 w-1", SEVERITY_META[f.severity].dot)} />
+          <div className="flex items-start gap-2.5">
+            <SeverityPill severity={f.severity} size="sm" />
+            <div className="text-[14.5px] font-semibold text-ink">{f.title}</div>
+            <span className="ml-auto font-mono text-[10px] text-ink-faint">{f.id}</span>
+          </div>
+        </>
+      )}
+      <div className={cn("flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-ink-faint", !embedded && "mt-1.5")}>
+        {!embedded && <span className="font-mono text-ink-dim">{f.target || "—"}</span>}
+        {!embedded && f.type && <Chip>{f.type.replace(/_/g, " ")}</Chip>}
         {f.source_tool && <span>via {f.source_tool}</span>}
         <span>confidence: {f.confidence}</span>
       </div>
@@ -297,8 +343,8 @@ export function FindingBlock({ f, engagementId }: { f: ReportFinding; engagement
       )}
       {!!f.observation_ids?.length && <p className="mt-2 break-all font-mono text-[10px] text-ink-faint">Observation references: {f.observation_ids.join(", ")}</p>}
       {engagementId && <button className="btn-outline no-print mt-3 text-xs" onClick={()=>setInspect(true)}>Inspect original record &amp; observations</button>}
-      <div className={cn("mt-2.5 rounded-lg border px-3 py-2 text-[12.5px] text-ink-dim",f.remediation_recorded ? "border-ok/25 bg-ok/[0.06]" : "border-amber/25 bg-amber/[0.06]")}>
-        <span className={cn("font-semibold", f.remediation_recorded ? "text-ok" : "text-amber")}>{f.remediation_recorded ? "Recorded remediation. " : "Remediation needs authoring. "}</span>
+      <div className={cn("mt-2.5 rounded-lg border px-3 py-2 text-[12.5px] text-ink-dim",f.remediation_recorded ? "border-ok/25 bg-ok/[0.06]" : "border-warn/30 bg-warn/[0.07]")}>
+        <span className={cn("font-semibold", f.remediation_recorded ? "text-ok" : "text-warn")}>{f.remediation_recorded ? "Recorded remediation. " : "Remediation needs authoring. "}</span>
         {f.remediation_hint}
       </div>
       {inspect && engagementId && <RecordInspector engagementId={engagementId} records={[{kind:"finding",id:f.id},...(f.observation_ids || []).map(id=>({kind:"observation" as const,id}))]} title={f.title} onClose={()=>setInspect(false)}/>}

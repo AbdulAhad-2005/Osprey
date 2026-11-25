@@ -1,16 +1,27 @@
 "use client";
 
 import { useState } from "react";
-import { Radar, RefreshCw, ArrowUpRight } from "lucide-react";
+import { Radar, RefreshCw, ArrowUpRight, Globe, Server, Cpu, Layers, Mail, KeyRound, Network, type LucideIcon } from "lucide-react";
 import { getReport } from "@/lib/api";
 import type { ReportData } from "@/lib/types";
 import { useResource } from "@/hooks/useResource";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { RecordInspector } from "@/components/ui/RecordInspector";
 import type { RecordReference } from "@/lib/types";
-import { Chip } from "@/components/ui/primitives";
+import { Chip, Page, Card, StatTile } from "@/components/ui/primitives";
 import { Loading, EmptyState, ErrorState } from "@/components/ui/States";
-import { cn } from "@/lib/cn";
+
+const SECTION_ICON: Record<string, LucideIcon> = {
+  subdomains: Globe,
+  hosts: Server,
+  ports: Network,
+  services: Cpu,
+  tech: Layers,
+  technologies: Layers,
+  emails: Mail,
+  identities: Mail,
+  secrets: KeyRound,
+};
 
 type Item = ReportData["recon_appendix"][number]["items"][number];
 
@@ -103,81 +114,57 @@ export function AttackSurfaceTab({ engagementId }: { engagementId: string }) {
       />
     );
   return (
-    <div className="mx-auto max-w-7xl p-5 md:p-7">
-      <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-[11px] uppercase tracking-[.18em] text-amber">
-            Asset intelligence
-          </p>
-          <h2 className="mt-1 font-serif text-2xl text-ink">
-            Attack surface inventory
-          </h2>
-          <p className="mt-2 text-sm text-ink-dim">
-            {total.toLocaleString()} recorded entries across {sections.length}{" "}
-            categories. Select a category to explore its evidence.
-          </p>
-          {resource.data?.data_limits?.possibly_partial && (
-            <p className="mt-2 text-xs text-amber-soft">
-              Inventory assembly reached a record limit; use Evidence to search
-              and page through the complete original store.
-            </p>
-          )}
-        </div>
+    <Page
+      eyebrow="Attack surface"
+      title={`${total.toLocaleString()} assets mapped.`}
+      subtitle={`${sections.length} categories discovered.`}
+      description="Select a category to explore its evidence. Discovery records establish surface, not exploitability."
+      actions={
         <button className="btn-outline" onClick={resource.refetch}>
           <RefreshCw size={14} /> Refresh
         </button>
+      }
+    >
+      {resource.data?.data_limits?.possibly_partial && (
+        <p className="rounded-lg border border-warn/30 bg-warn/[0.07] px-3 py-2 text-[12.5px] text-warn">
+          Inventory assembly reached a record limit; use Evidence to search and page through the complete original store.
+        </p>
+      )}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        {sections.map((section) => (
+          <StatTile
+            key={section.key}
+            icon={SECTION_ICON[section.key] ?? Network}
+            tone={active.key === section.key ? "accent" : "neutral"}
+            label={section.label}
+            value={section.count}
+            active={active.key === section.key}
+            onClick={() => setSelected(section.key)}
+          />
+        ))}
       </div>
-      <div className="grid items-start gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
-        <nav
-          aria-label="Asset categories"
-          className="grid grid-cols-2 gap-2 lg:grid-cols-1"
-        >
-          {sections.map((section) => (
-            <button
-              key={section.key}
-              onClick={() => setSelected(section.key)}
-              aria-pressed={active.key === section.key}
-              className={cn(
-                "flex items-center justify-between rounded-xl border px-4 py-3 text-left text-sm",
-                active.key === section.key
-                  ? "border-amber/40 bg-amber/10 text-amber-soft"
-                  : "border-border bg-surface text-ink-dim hover:text-ink",
-              )}
-            >
-              <span>{section.label}</span>
-              <span className="ml-3 font-mono text-xs">
-                {section.count.toLocaleString()}
-              </span>
-            </button>
-          ))}
-        </nav>
-        <section className="min-w-0 rounded-2xl border border-border bg-surface/50 p-4">
-          <div className="mb-4 flex items-center gap-2">
-            <Radar size={16} className="text-signal" />
-            <h3 className="text-sm font-semibold">{active.label}</h3>
-            <span className="ml-auto text-xs text-ink-faint">
-              {active.count.toLocaleString()} assets
-            </span>
-          </div>
+      <Card
+        title={active.label}
+        icon={SECTION_ICON[active.key] ?? Network}
+        count={active.count.toLocaleString()}
+        padded={false}
+      >
+        <div className="p-4">
           <DataTable
             key={active.key}
             rows={active.items}
             columns={detailColumns}
             getRowKey={(item, i) => `${item.type}:${item.value}:${i}`}
             initialSort={{ key: "value", dir: "asc" }}
-            filter={(item, query) =>
-              `${item.value} ${item.detail} ${item.source_tool}`
-                .toLowerCase()
-                .includes(query)
-            }
+            filter={(item, query) => `${item.value} ${item.detail} ${item.source_tool}`.toLowerCase().includes(query)}
             searchPlaceholder={`Search ${active.label.toLowerCase()}…`}
           />
-          <p className="mt-4 flex items-center gap-1 text-xs text-ink-faint">
-            <ArrowUpRight size={12} /> Discovery records establish surface, not
-            exploitability. Review security conclusions in Findings.
+          <p className="mt-4 flex items-center gap-1.5 text-[12px] text-ink-faint">
+            <ArrowUpRight size={12} /> Discovery records establish surface, not exploitability. Review security conclusions in
+            Findings.
           </p>
-        </section>
-      </div>
+        </div>
+      </Card>
       {inspect && (
         <RecordInspector
           engagementId={engagementId}
@@ -186,6 +173,6 @@ export function AttackSurfaceTab({ engagementId }: { engagementId: string }) {
           onClose={() => setInspect(null)}
         />
       )}
-    </div>
+    </Page>
   );
 }

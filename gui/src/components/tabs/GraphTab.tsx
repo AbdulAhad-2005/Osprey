@@ -53,26 +53,26 @@ function ensureDagre() {
  * RISK (the severity border, below) is the thing that pops, not a rainbow of
  * node colours. */
 const TYPE_BG: Record<string, string> = {
-  domain: "#273751",
-  subdomain: "#233044",
-  host: "#1f3647",
-  ip: "#1f3647",
-  service: "#1d3a37",
-  port: "#1b2f3a",
-  technology: "#1e3630",
-  email: "#2b2846",
-  person: "#2b2846",
-  username: "#2b2846",
-  phone: "#2b2846",
-  organization: "#39273f",
-  credential: "#3a2a1c",
-  secret: "#3a2a1c",
-  url: "#222a39",
-  cluster: "#1a2233",
+  domain: "#1f3b6b",
+  subdomain: "#1d3459",
+  host: "#1b3a53",
+  ip: "#1b3a53",
+  service: "#18423f",
+  port: "#173a4c",
+  technology: "#19442f",
+  email: "#33295f",
+  person: "#33295f",
+  username: "#33295f",
+  phone: "#33295f",
+  organization: "#4b2a53",
+  credential: "#4e3419",
+  secret: "#4e3419",
+  url: "#26324a",
+  cluster: "#1a2640",
 };
 // A small leading dot per type so the category is still legible at a glance.
 const TYPE_DOT: Record<string, string> = {
-  domain: "#f5a623",
+  domain: "#6096f5",
   subdomain: "#58b0f0",
   host: "#7fa7c8",
   ip: "#7fa7c8",
@@ -103,7 +103,7 @@ function dot(d: GNodeData): string {
   );
 }
 function bg(d: GNodeData): string {
-  if (d.primary) return "#7a5415";
+  if (d.primary) return "#1f3d73";
   return (
     TYPE_BG[d.isCluster ? (d.clusterType ?? "cluster") : d.type] ?? "#222a39"
   );
@@ -124,7 +124,7 @@ function buildStyle(): cytoscape.Stylesheet[] {
         height: 48,
         padding: "8px",
         label: "data(label)",
-        color: "#dbe2ee",
+        color: "#eef3fb",
         "font-size": 14,
         "font-family":
           "ui-monospace, 'JetBrains Mono', SFMono-Regular, Menlo, monospace",
@@ -138,7 +138,7 @@ function buildStyle(): cytoscape.Stylesheet[] {
     {
       selector: "node[primaryFlag = 1]",
       style: {
-        color: "#fff6e6",
+        color: "#eaf2ff",
         "font-size": 13,
         "font-weight": 700,
         height: 34,
@@ -161,7 +161,7 @@ function buildStyle(): cytoscape.Stylesheet[] {
     {
       selector: "node.lit",
       style: {
-        "border-color": "#f5a623",
+        "border-color": "#6096f5",
         "border-width": 2.5,
         "z-index": 30,
         color: "#fff",
@@ -169,7 +169,7 @@ function buildStyle(): cytoscape.Stylesheet[] {
     },
     {
       selector: "node.pinned, node[focusFlag = 1]",
-      style: { "border-color": "#f5a623", "border-width": 3 },
+      style: { "border-color": "#6096f5", "border-width": 3 },
     },
     {
       selector: "node[overviewFlag = 1]",
@@ -201,7 +201,7 @@ function buildStyle(): cytoscape.Stylesheet[] {
         label: "data(label)",
         "font-size": 11,
         color: "#bcc9db",
-        "text-background-color": "#0b1020",
+        "text-background-color": "#0c1221",
         "text-background-opacity": 0.95,
         "text-background-padding": "4px",
         "text-rotation": "autorotate",
@@ -211,8 +211,8 @@ function buildStyle(): cytoscape.Stylesheet[] {
       selector: "edge[hypothesisFlag = 1]",
       style: {
         "line-style": "dashed",
-        "line-color": "#c47d10",
-        "target-arrow-color": "#c47d10",
+        "line-color": "#c98a1b",
+        "target-arrow-color": "#c98a1b",
       },
     },
     {
@@ -489,8 +489,8 @@ export function GraphTab({ engagementId }: { engagementId: string }) {
           dot: dot(n.data),
           fullLabel: n.data.label,
           label: isOverview ? n.data.label : labelWith(n.data),
-          ring: sev ? 2.5 : 1,
-          ringColor: SEV_COLOR[sev || "none"] ?? "rgba(120,140,175,0.35)",
+          ring: sev ? 2.5 : 1.5,
+          ringColor: sev ? SEV_COLOR[sev] : `${dot(n.data)}88`,
           isClusterFlag: n.data.isCluster ? 1 : 0,
           primaryFlag: n.data.primary ? 1 : 0,
           kind: n.data.type,
@@ -695,7 +695,7 @@ export function GraphTab({ engagementId }: { engagementId: string }) {
       )}
     >
       {/* Controls */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface/50 px-4 py-3">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface px-4 py-2.5 shadow-card">
         <button
           className="btn-outline"
           disabled={!history.length && !focus}
@@ -728,7 +728,7 @@ export function GraphTab({ engagementId }: { engagementId: string }) {
             setHistory([]);
             setSearchMessage("");
           }}
-          className="rounded-lg border border-border bg-surface px-2 py-1.5 text-xs"
+          className="rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[12.5px] shadow-card"
         >
           <option value="overview">Engagement overview</option>
           <option value="map">Detailed topology</option>
@@ -752,7 +752,7 @@ export function GraphTab({ engagementId }: { engagementId: string }) {
             aria-label="Graph layout"
             value={layout}
             onChange={(e) => setLayout(e.target.value)}
-            className="rounded-lg border border-border bg-surface px-2 py-1.5 text-xs"
+            className="rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[12.5px] shadow-card"
           >
             <option value="neighborhood">Balanced</option>
             <option value="dagre">Hierarchy</option>
@@ -763,7 +763,7 @@ export function GraphTab({ engagementId }: { engagementId: string }) {
         {focus && (
           <select
             aria-label="Connection depth"
-            className="rounded-lg border border-border bg-surface px-2 py-1.5 text-xs"
+            className="rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[12.5px] shadow-card"
             value={hops}
             onChange={(e) => setHops(Number(e.target.value))}
           >
@@ -771,6 +771,7 @@ export function GraphTab({ engagementId }: { engagementId: string }) {
             <option value={2}>Two hops</option>
           </select>
         )}
+        <span className="mx-1 hidden h-5 w-px bg-border sm:block" />
         <button
           onClick={() =>
             cyRef.current?.animate(
@@ -780,7 +781,7 @@ export function GraphTab({ engagementId }: { engagementId: string }) {
               { duration: 350 },
             )
           }
-          className="btn-outline bg-surface/80 backdrop-blur"
+          className="btn-outline"
           title="Fit to view"
         >
           <Maximize2 size={13} /> Fit all
@@ -810,9 +811,10 @@ export function GraphTab({ engagementId }: { engagementId: string }) {
           {fullscreen ? <Minimize2 size={14} /> : <Expand size={14} />}{" "}
           {fullscreen ? "Exit fullscreen" : "Fullscreen"}
         </button>
+        <span className="mx-1 hidden h-5 w-px bg-border sm:block" />
         <button
           onClick={() => graphRes.refetch()}
-          className="btn-outline bg-surface/80 backdrop-blur"
+          className="btn-outline"
           title="Refresh graph evidence"
         >
           <RefreshCw size={13} /> Refresh
@@ -835,7 +837,7 @@ export function GraphTab({ engagementId }: { engagementId: string }) {
         >
           Relationships
         </button>
-        <div className="flex items-center gap-1.5 rounded-lg border border-border-strong bg-surface/80 px-2.5 py-1.5 backdrop-blur">
+        <div className="ml-auto flex items-center gap-1.5 rounded-lg border border-border-strong bg-surface-2 px-2.5 py-1.5 focus-within:border-accent/60 focus-within:shadow-focus">
           <Search size={13} className="text-ink-faint" />
           <input
             value={query}
@@ -854,7 +856,7 @@ export function GraphTab({ engagementId }: { engagementId: string }) {
 
       <div className="border-b border-border px-4 py-2 text-xs text-ink-dim">
         {!isOverview && effectiveLayout !== layout && (
-          <p className="mb-1 text-amber-soft">
+          <p className="mb-1 text-warn">
             Large-map grid layout keeps all records available without blocking
             the browser. Focus on an asset to use hierarchy.
           </p>
@@ -865,10 +867,10 @@ export function GraphTab({ engagementId }: { engagementId: string }) {
             ? "All loaded assets are represented. Pan/zoom the map or choose an asset to follow its connections. Recenter restores readable scale; Fit all shows the whole topology."
             : "Every loaded record is included. Select a category to browse its members; select an arrow for its relationships. Counts are stored asset records, not unique hosts or vulnerabilities."}
         {searchMessage && (
-          <p className="mt-1 text-amber-soft">{searchMessage}</p>
+          <p className="mt-1 text-warn">{searchMessage}</p>
         )}
         {graphRes.data?.meta?.truncated && (
-          <p className="mt-1 text-amber-soft">
+          <p className="mt-1 text-warn">
             Server display limit reached ({graphRes.data.meta.node_limit} nodes
             / {graphRes.data.meta.edge_limit} edges). This graph is not the
             entire engagement store.
@@ -920,7 +922,7 @@ export function GraphTab({ engagementId }: { engagementId: string }) {
                 <button
                   key={data.id}
                   onClick={() => focusNode(data.id)}
-                  className="mb-1 block w-full rounded-lg border border-transparent p-2 text-left hover:border-border hover:bg-white/5"
+                  className="mb-1 block w-full rounded-lg border border-transparent p-2 text-left hover:border-border hover:bg-ink/[0.06]"
                 >
                   <span className="block text-[10px] uppercase text-ink-faint">
                     {data.type} · {data.confidence || "confidence not recorded"}
@@ -951,7 +953,10 @@ export function GraphTab({ engagementId }: { engagementId: string }) {
             </button>
           </div>
         </aside>
-        <div className="relative min-w-0 flex-1">
+        <div
+          className="theme-dark relative min-w-0 flex-1 bg-base"
+          style={{ backgroundImage: "radial-gradient(rgb(var(--c-border)) 1px, transparent 1px)", backgroundSize: "24px 24px" }}
+        >
           <div className="absolute left-3 top-3 z-10 flex gap-1">
             <button
               className="btn-outline"
@@ -997,7 +1002,7 @@ export function GraphTab({ engagementId }: { engagementId: string }) {
             <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-ink-dim">
               <span className="font-medium text-ink-faint">Asset types</span>
               <span className="flex items-center gap-1">
-                <Swatch c={TYPE_DOT.domain ?? "#f5a623"} /> domain
+                <Swatch c={TYPE_DOT.domain ?? "#6096f5"} /> domain
               </span>
               <span className="flex items-center gap-1">
                 <Swatch c={TYPE_DOT.host ?? "#7fa7c8"} /> host
@@ -1023,7 +1028,7 @@ export function GraphTab({ engagementId }: { engagementId: string }) {
                       className="h-2.5 w-3.5 rounded-sm border-2"
                       style={{
                         borderColor: SEV_COLOR[s],
-                        background: "#141d31",
+                        background: "#131c30",
                       }}
                     />
                     {SEVERITY_META[s].label}
@@ -1135,7 +1140,7 @@ export function GraphTab({ engagementId }: { engagementId: string }) {
                       <button
                         key={m.id}
                         onClick={() => focusNode(m.id)}
-                        className="flex w-full items-center gap-1.5 rounded p-1 text-left text-[12px] hover:bg-white/5"
+                        className="flex w-full items-center gap-1.5 rounded p-1 text-left text-[12px] hover:bg-ink/[0.06]"
                         title={m.label}
                       >
                         {m.severity && m.severity !== "none" && (
@@ -1215,10 +1220,10 @@ export function GraphTab({ engagementId }: { engagementId: string }) {
                   {nodeIndex.get(inspect.id)?.findings?.map((f) => (
                     <button
                       key={f.id}
-                      className="mt-2 block w-full rounded border border-border p-2 text-left text-xs hover:bg-white/5"
+                      className="mt-2 block w-full rounded border border-border p-2 text-left text-xs hover:bg-ink/[0.06]"
                       onClick={() => setEvidence({ kind: "finding", id: f.id })}
                     >
-                      <span className="block text-amber">
+                      <span className="block text-accent">
                         {f.severity} · {f.confidence}
                       </span>
                       {f.title}
@@ -1271,7 +1276,7 @@ export function GraphTab({ engagementId }: { engagementId: string }) {
                     <button
                       key={i}
                       onClick={() => focusNode(nb.id)}
-                      className="flex w-full items-start gap-1.5 rounded p-1 text-left text-[12px] text-ink-dim hover:bg-white/5"
+                      className="flex w-full items-start gap-1.5 rounded p-1 text-left text-[12px] text-ink-dim hover:bg-ink/[0.06]"
                     >
                       <span className="font-mono text-[10px] text-ink-faint">
                         {nb.dir === "out" ? "→" : "←"}
@@ -1306,7 +1311,7 @@ export function GraphTab({ engagementId }: { engagementId: string }) {
               Arrows retain their stored direction. These are evidence
               relationships, not an attack path or proof of exploitability.
             </p>
-            <p className="text-xs text-amber">
+            <p className="text-xs text-accent">
               {selectedEdges.length} stored relationships
             </p>
             <div className="my-3 flex flex-wrap gap-1">
@@ -1347,7 +1352,7 @@ export function GraphTab({ engagementId }: { engagementId: string }) {
                     <span className="font-mono">
                       {nodeIndex.get(edge.data.source)?.label}
                     </span>
-                    <span className="my-1 block text-amber">
+                    <span className="my-1 block text-accent">
                       {edge.data.hypothesis ? "Hypothesis · " : ""}
                       {edge.data.label} →
                     </span>

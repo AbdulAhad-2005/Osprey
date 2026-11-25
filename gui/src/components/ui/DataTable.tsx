@@ -68,7 +68,7 @@ export function DataTable<T>({
   return (
     <div>
       {filter && (
-        <div className="mb-2 flex items-center gap-2 rounded-lg border border-border bg-base/50 px-2.5 py-1.5 focus-within:border-border-strong sm:max-w-xs">
+        <div className="mb-2 flex items-center gap-2 rounded-lg border border-border bg-surface px-2.5 py-1.5 focus-within:border-accent/60 focus-within:shadow-focus sm:max-w-xs">
           <Search size={13} className="text-ink-faint" />
           <input
             value={q}
@@ -83,7 +83,7 @@ export function DataTable<T>({
           )}
         </div>
       )}
-      <div className="overflow-x-auto rounded-xl border border-border">
+      <div className="overflow-x-auto rounded-xl border border-border bg-surface shadow-card">
         <table className="w-full border-collapse text-[13px]">
           <thead>
             <tr className="bg-surface-2">
@@ -91,7 +91,7 @@ export function DataTable<T>({
                 <th
                   key={c.key}
                   className={cn(
-                    "border-b border-border px-3 py-2 text-left font-medium text-ink-dim",
+                    "border-b border-border px-3 py-2 text-left text-[11.5px] font-semibold uppercase tracking-[0.05em] text-ink-faint",
                     c.align === "right" && "text-right",
                     c.sortKey && "cursor-pointer select-none hover:text-ink",
                   )}
@@ -102,9 +102,9 @@ export function DataTable<T>({
                     {c.sortKey &&
                       (sort?.key === c.key ? (
                         sort.dir === "asc" ? (
-                          <ArrowUp size={11} className="text-amber" />
+                          <ArrowUp size={11} className="text-accent" />
                         ) : (
-                          <ArrowDown size={11} className="text-amber" />
+                          <ArrowDown size={11} className="text-accent" />
                         )
                       ) : (
                         <ArrowUpDown size={11} className="text-ink-faint/60" />
@@ -120,8 +120,8 @@ export function DataTable<T>({
                 key={getRowKey(row, i)}
                 onClick={() => onRowClick?.(row)}
                 className={cn(
-                  "border-b border-border/60 last:border-0 transition-colors",
-                  onRowClick && "cursor-pointer hover:bg-white/[0.025]",
+                  "border-b border-border/70 last:border-0 transition-colors",
+                  onRowClick && "cursor-pointer hover:bg-accent/[0.05]",
                 )}
               >
                 {columns.map((c) => (

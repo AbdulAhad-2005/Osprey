@@ -24,12 +24,12 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [backendUp, setBackendUp] = useState<boolean | null>(null);
-  const [sidebarCollapsed, setCollapsedState] = useState(false);
+  const [sidebarCollapsed, setCollapsedState] = useState(true);
 
   useEffect(() => {
     try {
       const v = localStorage.getItem(SIDEBAR_KEY);
-      if (v === "1") setCollapsedState(true);
+      if (v === "0") setCollapsedState(false);
     } catch {
       /* private mode / blocked storage — ignore */
     }

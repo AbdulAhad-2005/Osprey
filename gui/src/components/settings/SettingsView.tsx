@@ -1,9 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import {
-  ArrowLeft,
   BrainCircuit,
   Check,
   KeyRound,
@@ -24,6 +22,8 @@ import {
   type ModelInfo,
 } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { BRAND } from "@/lib/brand";
+import { Page, Card, TONE } from "@/components/ui/primitives";
 
 export function SettingsView() {
   const [cfg, setCfg] = useState<LlmConfig | null>(null);
@@ -104,39 +104,35 @@ export function SettingsView() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-2xl px-6 py-8">
-        <Link href="/" className="mb-6 inline-flex items-center gap-1.5 text-[13px] text-ink-dim hover:text-ink">
-          <ArrowLeft size={14} /> Back
-        </Link>
-        <h1 className="font-serif text-[28px] font-semibold tracking-tight text-ink">Settings</h1>
-        <p className="mt-1 text-[14px] text-ink-dim">
-          Configure the model that drives Osprey and check the backend. These settings apply to this
-          local instance and are stored in the project <code className="font-mono text-ink-faint">.env</code>.
-        </p>
-
+      <Page
+        title="Settings"
+        description={<>Configure the model that drives {BRAND} and check the backend. These settings apply to this local instance and are stored in the project <code className="font-mono text-ink">.env</code>.</>}
+        width="max-w-3xl"
+      >
         {loading ? (
-          <div className="mt-10 flex items-center gap-2 text-ink-faint">
+          <div className="flex items-center gap-2 text-ink-faint">
             <Loader2 size={16} className="animate-spin" /> Loading settings…
           </div>
         ) : (
           <>
             {/* Model card */}
-            <section className="panel mt-6 p-5">
-              <div className="flex items-center gap-2">
-                <BrainCircuit size={17} className="text-amber" />
-                <h2 className="text-[15px] font-semibold text-ink">Model / LLM provider</h2>
-                {cfg && (
+            <Card
+              title="Model / LLM provider"
+              icon={BrainCircuit}
+              actions={
+                cfg && (
                   <span
                     className={cn(
-                      "ml-auto inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px]",
-                      status?.model_active ? "bg-ok/15 text-ok" : "bg-danger/15 text-danger",
+                      "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                      status?.model_active ? TONE.ok.soft : TONE.danger.soft,
                     )}
                   >
                     {status?.model_active ? <Check size={11} /> : <TriangleAlert size={11} />}
                     {status?.model_active ? "configured" : "not configured"}
                   </span>
-                )}
-              </div>
+                )
+              }
+            >
               <p className="mt-1.5 text-[12.5px] text-ink-faint">
                 Any LiteLLM model id — e.g. <code className="font-mono">anthropic/claude-sonnet-4</code>,{" "}
                 <code className="font-mono">openrouter/meta-llama/llama-3.1-70b-instruct</code>,{" "}
@@ -151,7 +147,7 @@ export function SettingsView() {
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
                 placeholder="provider/model-name"
-                className="mt-1 w-full rounded-lg border border-border bg-base/60 px-3 py-2 font-mono text-[13px] text-ink placeholder:text-ink-faint focus:border-border-strong focus:outline-none"
+                className="mt-1 w-full rounded-lg border border-border bg-surface-2 px-3 py-2 font-mono text-[13px] text-ink placeholder:text-ink-faint focus:border-accent/60 focus:shadow-focus focus:outline-none"
               />
               <datalist id="osprey-models">
                 {models.map((m) => (
@@ -164,7 +160,7 @@ export function SettingsView() {
               <label htmlFor="api-key" className="mt-4 block text-[12px] font-medium text-ink-dim">
                 API key {cfg?.has_api_key && <span className="text-ink-faint">· currently set</span>}
               </label>
-              <div className="mt-1 flex items-center gap-2 rounded-lg border border-border bg-base/60 px-3 focus-within:border-border-strong">
+              <div className="mt-1 flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 focus-within:border-accent/60">
                 <KeyRound size={14} className="text-ink-faint" />
                 <input
                   id="api-key"
@@ -177,7 +173,7 @@ export function SettingsView() {
                 />
               </div>
               {cfg?.has_api_key && <label className="mt-2 flex gap-2 text-xs text-ink-dim"><input type="checkbox" checked={removeKey} onChange={(e) => setRemoveKey(e.target.checked)} /> Remove saved key</label>}
-              {model.split("/")[0] !== cfg?.model.split("/")[0] && <p className="mt-2 text-xs text-amber-soft">Changing providers clears the previous key and custom URL. Enter credentials for the new provider.</p>}
+              {model.split("/")[0] !== cfg?.model.split("/")[0] && <p className="mt-2 text-xs text-warn">Changing providers clears the previous key and custom URL. Enter credentials for the new provider.</p>}
 
               <label htmlFor="api-base" className="mt-4 block text-[12px] font-medium text-ink-dim">
                 API base URL <span className="text-ink-faint">· optional (proxies / local Ollama)</span>
@@ -187,7 +183,7 @@ export function SettingsView() {
                 value={apiBase}
                 onChange={(e) => { setApiBase(e.target.value); setBaseChanged(true); }}
                 placeholder={cfg?.has_custom_base ? "custom base set — blank keeps it" : "https://… (leave blank for default)"}
-                className="mt-1 w-full rounded-lg border border-border bg-base/60 px-3 py-2 font-mono text-[13px] text-ink placeholder:text-ink-faint focus:border-border-strong focus:outline-none"
+                className="mt-1 w-full rounded-lg border border-border bg-surface-2 px-3 py-2 font-mono text-[13px] text-ink placeholder:text-ink-faint focus:border-accent/60 focus:shadow-focus focus:outline-none"
               />
               {cfg?.has_custom_base && <button className="btn-ghost mt-1 text-xs" onClick={() => { setApiBase(""); setBaseChanged(true); }}>Use provider default URL</button>}
 
@@ -215,23 +211,19 @@ export function SettingsView() {
                 The key is written to <code className="font-mono">.env</code> on this machine and never shown
                 back here. Configuration checks do not verify network access, API-key validity, or tool-calling support. Changes apply to the next message; a running assessment keeps its current model.
               </p>
-            </section>
+            </Card>
 
             {/* Backend & tools card */}
-            <section className="panel mt-4 p-5">
-              <div className="flex items-center gap-2">
-                <ServerCog size={17} className="text-amber" />
-                <h2 className="text-[15px] font-semibold text-ink">Backend &amp; tools</h2>
-                <span
-                  className={cn(
-                    "ml-auto inline-flex items-center gap-1.5 text-[12px]",
-                    backendUp ? "text-ok" : "text-danger",
-                  )}
-                >
+            <Card
+              title="Backend & tools"
+              icon={ServerCog}
+              actions={
+                <span className={cn("inline-flex items-center gap-1.5 text-[12px] font-medium", backendUp ? "text-ok" : "text-danger")}>
                   <span className={cn("h-1.5 w-1.5 rounded-full", backendUp ? "bg-ok" : "bg-danger")} />
                   {backendUp == null ? "—" : backendUp ? "live" : "offline"}
                 </span>
-              </div>
+              }
+            >
               <dl className="mt-3 grid grid-cols-2 gap-3">
                 <Stat label="Active model" value={status?.model || cfg?.model || "—"} mono />
                 <Stat label="Tools available" value={status ? String(status.tools_available) : "—"} />
@@ -242,18 +234,18 @@ export function SettingsView() {
                 Tool availability is cached for the backend process; after starting/stopping the Kali tools
                 container, hit <span className="text-ink-dim">Reload from .env</span> above to refresh it.
               </p>
-            </section>
+            </Card>
           </>
         )}
-      </div>
+      </Page>
     </div>
   );
 }
 
 function Stat({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
-    <div className="rounded-lg border border-border bg-base/40 px-3 py-2">
-      <dt className="text-[11px] uppercase tracking-wider text-ink-faint">{label}</dt>
+    <div className="rounded-lg border border-border bg-surface-2 px-3 py-2">
+      <dt className="eyebrow">{label}</dt>
       <dd className={cn("mt-0.5 truncate text-[13px] text-ink", mono && "font-mono")} title={value}>
         {value}
       </dd>

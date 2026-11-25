@@ -2,14 +2,15 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { motion } from "framer-motion";
-import { ArrowUp, Loader2 } from "lucide-react";
+import { ArrowRight, ChevronRight, Loader2, Crosshair } from "lucide-react";
 import { useWorkspace } from "@/components/shell/WorkspaceProvider";
 import { resolveEngagement } from "@/lib/api";
 import { QUICK_INTENTS as QUICK } from "@/lib/intents";
 import { cn } from "@/lib/cn";
-import { BRAND, IS_DEFAULT_BRAND } from "@/lib/brand";
-import { OspreyWordmark } from "@/components/brand/OspreyLogo";
+import { BRAND } from "@/lib/brand";
+import { TONE, type Tone } from "@/components/ui/primitives";
+
+const STATUS_TONE: Record<string, Tone> = { active: "ok", running: "ok", paused: "warn", completed: "accent", failed: "danger" };
 
 function greeting(): string {
   const h = new Date().getHours();
@@ -47,133 +48,116 @@ export default function HomePage() {
   const recent = engagements.slice(0, 6);
 
   return (
-    <div className="flex h-full flex-col items-center overflow-y-auto px-6">
-      <div className="flex w-full max-w-2xl flex-1 flex-col justify-center py-16">
-        {/* Brand lockup */}
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          className="mb-6 flex justify-center"
-        >
-          {IS_DEFAULT_BRAND ? (
-            <motion.img
-              src="/osprey-lockup-light.png"
-              alt={BRAND}
-              width={248}
-              height={99}
-              animate={{ y: [0, -5, 0] }}
-              transition={{ duration: 4.5, repeat: Infinity, ease: "easeInOut" }}
-              className="h-auto w-[248px] select-none"
-              draggable={false}
+    <div className="h-full overflow-y-auto">
+      {/* Hero */}
+      <section className="hero-bg relative overflow-hidden text-white">
+        <img
+          src="/osprey-mark.svg"
+          alt=""
+          aria-hidden
+          className="pointer-events-none absolute -right-10 -top-10 w-[460px] select-none opacity-[0.12] [filter:brightness(3)_saturate(0)]"
+        />
+        <div className="relative mx-auto max-w-3xl px-8 pb-24 pt-12 text-center">
+          <img src="/osprey-lockup-light.png" alt={BRAND} width={260} height={104} className="mx-auto h-auto w-[260px] select-none" draggable={false} />
+          <p className="mt-7 text-[12px] font-semibold uppercase tracking-[0.16em] text-[#8db7ff]">{greeting()}</p>
+          <h1 className="mt-2 text-[40px] font-bold leading-[1.06] tracking-[-0.035em]">
+            Start an engagement.
+            <br />
+            <span className="text-[#8fa6d8]">Point {BRAND} at a target.</span>
+          </h1>
+        </div>
+      </section>
+
+      <div className="relative mx-auto -mt-14 max-w-3xl px-8 pb-14">
+        {/* Composer */}
+        <div className="rounded-2xl border border-border bg-surface shadow-lift transition-shadow focus-within:border-accent/60 focus-within:shadow-focus">
+          <div className="px-5 pt-4">
+            <label htmlFor="target" className="eyebrow">Target</label>
+            <input
+              id="target"
+              autoFocus
+              value={target}
+              onChange={(e) => setTarget(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && begin()}
+              placeholder="example.com   ·   10.0.0.0/24   ·   https://app.example.com"
+              className="mt-1 w-full bg-transparent py-1.5 font-mono text-[17px] text-ink placeholder:text-ink-faint focus:outline-none"
             />
-          ) : (
-            <OspreyWordmark size="lg" className="text-[44px]" />
-          )}
-        </motion.div>
-
-        <motion.h1
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.05 }}
-          className="text-center font-serif text-[34px] font-semibold tracking-tight text-ink"
-        >
-          {greeting()}, operator
-        </motion.h1>
-        <p className="mt-2 text-center text-[15px] text-ink-dim">
-          Point {BRAND} at a target and start the hunt.
-        </p>
-
-        {/* Target composer */}
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.12 }}
-          className="mt-8"
-        >
-          <div className="panel overflow-hidden shadow-lift focus-within:border-border-strong">
-            <div className="flex items-center gap-3 px-4 pt-3.5">
-              <span className="font-mono text-[13px] text-ink-faint">target</span>
-              <input
-                autoFocus
-                value={target}
-                onChange={(e) => setTarget(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && begin()}
-                placeholder="example.com   ·   10.0.0.0/24   ·   https://app.example.com"
-                className="w-full bg-transparent py-1 font-mono text-[15px] text-ink placeholder:text-ink-faint focus:outline-none"
-              />
-            </div>
-            <div className="flex items-center justify-between px-3 pb-3 pt-3">
-              <div className="flex flex-wrap gap-1.5">
-                {QUICK.map((q) => (
-                  <button
-                    key={q.label}
-                    onClick={() => setIntent(intent === q.prompt ? "" : q.prompt)}
-                    className={cn(
-                      "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] transition-colors",
-                      intent === q.prompt
-                        ? "border-amber/50 bg-amber/10 text-amber-soft"
-                        : "border-border text-ink-dim hover:border-border-strong hover:text-ink",
-                    )}
-                  >
-                    <q.icon size={12.5} />
-                    {q.label}
-                  </button>
-                ))}
-              </div>
-              <button
-                onClick={begin}
-                disabled={!target.trim() || busy}
-                className="grid h-9 w-9 flex-none place-items-center rounded-lg bg-amber text-abyss transition-colors hover:bg-amber-soft disabled:bg-surface-3 disabled:text-ink-faint"
-                aria-label="Begin engagement"
-              >
-                {busy ? <Loader2 size={16} className="animate-spin" /> : <ArrowUp size={16} strokeWidth={2.5} />}
-              </button>
-            </div>
           </div>
-          {intent && (
-            <p className="mt-2 px-1 text-[12.5px] text-ink-faint">
-              First instruction: <span className="text-ink-dim">{intent}</span>
-            </p>
-          )}
-          {error && <p className="mt-2 px-1 text-[12.5px] text-danger">{error}</p>}
-          <p className="mt-2 px-1 text-[11.5px] text-ink-faint">
-            Authorized targets only. Osprey binds an engagement to this target and reuses prior
-            findings unless you start fresh.
-            <label className="mt-2 flex items-center justify-center gap-2"><input type="checkbox" checked={forceNew} onChange={event=>setForceNew(event.target.checked)}/> Start a fresh engagement for this target (keep previous evidence separately)</label>
-          </p>
-        </motion.div>
-
-        {/* Recent */}
-        {recent.length > 0 && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.5, delay: 0.2 }}
-            className="mt-10"
-          >
-            <div className="mb-2.5 text-[11px] font-medium uppercase tracking-wider text-ink-faint">
-              Recent engagements
-            </div>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {recent.map((e) => (
+          <div className="mt-3 border-t border-border px-5 py-3.5">
+            <div className="eyebrow mb-2">First objective <span className="font-normal normal-case tracking-normal">(optional)</span></div>
+            <div className="flex flex-wrap gap-2">
+              {QUICK.map((q) => (
                 <button
-                  key={e.id}
-                  onClick={() => router.push(`/engagement/${encodeURIComponent(e.id)}`)}
-                  className="group flex items-center justify-between rounded-xl border border-border bg-surface/60 px-4 py-3 text-left transition-colors hover:border-border-strong hover:bg-surface-2"
+                  key={q.label}
+                  onClick={() => setIntent(intent === q.prompt ? "" : q.prompt)}
+                  aria-pressed={intent === q.prompt}
+                  className={cn(
+                    "flex items-center gap-2 rounded-lg border px-3 py-1.5 text-[12.5px] font-medium transition-colors",
+                    intent === q.prompt
+                      ? "border-accent bg-accent/10 text-accent-soft ring-1 ring-accent/30"
+                      : "border-border bg-surface-2 text-ink-dim hover:border-border-strong hover:text-ink",
+                  )}
                 >
-                  <div className="min-w-0">
-                    <div className="truncate font-mono text-[13.5px] text-ink group-hover:text-amber-soft">
-                      {e.target || e.id}
-                    </div>
-                    <div className="mt-0.5 text-[11.5px] text-ink-faint">
-                      {e.findings_count} records · {e.tools_executed} tools · {e.status}
-                    </div>
-                  </div>
+                  <q.icon size={14} />
+                  {q.label}
                 </button>
               ))}
             </div>
-          </motion.div>
+            {intent && <p className="mt-2 text-[12px] text-ink-faint">First instruction: <span className="text-ink-dim">{intent}</span></p>}
+          </div>
+          <div className="flex items-center justify-between gap-4 rounded-b-2xl border-t border-border bg-surface-2/60 px-5 py-3">
+            <label className="flex items-center gap-2 text-[12.5px] text-ink-dim">
+              <input type="checkbox" checked={forceNew} onChange={(event) => setForceNew(event.target.checked)} />
+              Start fresh for this target
+            </label>
+            <button onClick={begin} disabled={!target.trim() || busy} className="btn-primary gap-2 px-5 disabled:opacity-50">
+              {busy ? <Loader2 size={15} className="animate-spin" /> : null}
+              Begin engagement
+              {!busy && <ArrowRight size={15} />}
+            </button>
+          </div>
+        </div>
+        {error && <p className="mt-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</p>}
+        <p className="mt-3 text-center text-[12px] text-ink-faint">
+          Authorized targets only. {BRAND} reuses prior findings for a target unless you start fresh.
+        </p>
+
+        {/* Recent */}
+        {recent.length > 0 && (
+          <section className="mt-12">
+            <div className="mb-3 flex items-end justify-between">
+              <div>
+                <p className="eyebrow !text-accent">Pick up where you left off</p>
+                <h2 className="mt-1 text-[20px] font-bold tracking-[-0.02em] text-ink">Recent engagements</h2>
+              </div>
+              <span className="text-[12.5px] text-ink-faint">{engagements.length.toLocaleString()} total</span>
+            </div>
+            <ul className="divide-y divide-border overflow-hidden rounded-2xl border border-border bg-surface shadow-card">
+              {recent.map((e) => {
+                const tone = STATUS_TONE[e.status.toLowerCase()] ?? "neutral";
+                return (
+                  <li key={e.id}>
+                    <button
+                      onClick={() => router.push(`/engagement/${encodeURIComponent(e.id)}`)}
+                      className="group flex w-full items-center gap-4 px-5 py-3.5 text-left transition-colors hover:bg-accent/[0.05]"
+                    >
+                      <span className={cn("grid h-9 w-9 flex-none place-items-center rounded-lg", TONE[tone].chip)}>
+                        <Crosshair size={17} />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate font-mono text-[14px] font-medium text-ink group-hover:text-accent-soft">{e.target || e.id}</div>
+                        <div className="mt-0.5 text-[12px] text-ink-faint">
+                          {e.tools_executed.toLocaleString()} tools run · {e.findings_count.toLocaleString()} records
+                        </div>
+                      </div>
+                      <span className={cn("rounded-full border px-2.5 py-0.5 text-[11px] font-semibold capitalize", TONE[tone].soft)}>{e.status}</span>
+                      <ChevronRight size={16} className="flex-none text-ink-faint transition-transform group-hover:translate-x-0.5" />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
         )}
       </div>
     </div>

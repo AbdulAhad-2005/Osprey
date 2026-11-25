@@ -17,7 +17,7 @@ export function TurnView({
   if (turn.role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-2xl rounded-br-md border border-border bg-surface-2 px-3.5 py-2.5 text-[14.5px] leading-relaxed text-ink">
+        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-accent px-4 py-2.5 text-[14.5px] leading-relaxed text-on-accent shadow-card">
           {turn.text}
         </div>
       </div>
@@ -27,7 +27,7 @@ export function TurnView({
   return (
     <div className="flex gap-3">
       <div className="mt-0.5 flex-none">
-        <span className="grid h-7 w-7 place-items-center rounded-lg border border-border bg-surface">
+        <span className="grid h-7 w-7 place-items-center rounded-lg bg-[#16213a] ring-1 ring-inset ring-white/10">
           <OspreyMark size={18} />
         </span>
       </div>
