@@ -459,6 +459,14 @@ def main() -> None:
 
         if textual_available():
             sys.exit(run_tui())
+        # Falling through to the classic REPL with no explanation — this environment (often a
+        # stale .venv that predates Textual becoming a dependency) just needs
+        # `pip install -e ./cli` re-run.
+        print_error(
+            "Textual isn't installed in this environment — using the classic "
+            "line REPL instead of the full-screen shell.\n"
+            "  Fix:  pip install -e ./cli   (or: pip install -r cli/requirements.txt)"
+        )
 
     api_url = resolve_api_base_url()
     # Warn early when the backend is down so a first-time user knows why commands fail.

@@ -36,15 +36,23 @@ from cli.commands.slash import SLASH_COMMANDS, execute_command
 from cli.harness import get_runtime
 from cli.tui import console_redirect
 from cli.tui.widgets import PromptModal, Sidebar
+from cli.ui.display import BRAND_ACCENT
 
 _INTERRUPTS = {"/cancel", "/pause", "/stop"}
 
-_WELCOME = """[b cyan]Osprey[/]  ·  integrated operator shell
+# Braille-pattern spinner frames (the same idiom as npm/cargo/the classic
+# REPL's own "Thinking…" spinner, and the spirit of the GUI's spinning
+# Loader2 icon on a running tool call) — picked over a plain circle glyph
+# (○/●) after that circle rendered as a squashed oval in the operator's
+# terminal font; these braille cells are a single fixed-width glyph in every
+# common monospace font, so they never distort.
+_SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
-Type a prompt to drive the agent, or a [b]/command[/] ([b]Tab[/] to complete, [b]↑[/] for history).
-The input stays live while a job runs — new lines queue and send when it finishes.
-Every CLI command works here: [cyan]/scan /engage /findings /status /context /report[/] …
-[dim]/help lists them all · Ctrl+C quit · Ctrl+L clear[/]"""
+_QUICK_REFERENCE = (
+    "Type a prompt to drive the agent, or a [b]/command[/] "
+    "([b]Tab[/] completes · [b]↑↓[/] history · [b]Esc[/] stops a running job).\n"
+    "The input stays live while a job runs — new lines queue and send when it finishes."
+)
 
 
 class OspreyShell(App[int]):
@@ -66,6 +74,7 @@ class OspreyShell(App[int]):
         self._activity = ""
         self._history: list[str] = []
         self._hist_idx = 0
+        self._spinner_frame = 0
 
     # ---- layout ---------------------------------------------------------
     def compose(self) -> ComposeResult:
@@ -81,14 +90,14 @@ class OspreyShell(App[int]):
     def on_mount(self) -> None:
         self.title = "Osprey"
         self.sub_title = "operator shell"
-        self.query_one("#log", RichLog).write(Text.from_markup(_WELCOME))
         self.query_one("#prompt", Input).focus()
         self._refresh_statusline()
-        self.set_interval(1.0, self._tick)  # live elapsed timer while busy
+        self.set_interval(0.1, self._tick)  # drives the spinner; elapsed-time text only changes once/s
         threading.Thread(target=self._setup, name="osprey-setup", daemon=True).start()
 
     def _tick(self) -> None:
         if self._busy:
+            self._spinner_frame = (self._spinner_frame + 1) % len(_SPINNER_FRAMES)
             self._refresh_statusline()
 
     # ---- connection + worker lifecycle ---------------------------------
@@ -98,6 +107,10 @@ class OspreyShell(App[int]):
             self._runtime = get_runtime(client)
             width = self.query_one("#log", RichLog).size.width - 2
             console_redirect.install(self, width)
+            from cli.ui.display import print_banner
+
+            print_banner(standalone=False)
+            self.write_line(Text.from_markup(_QUICK_REFERENCE, style="dim"))
             try:
                 reachable = client.health().get("status") == "ok"
             except Exception:
@@ -124,8 +137,8 @@ class OspreyShell(App[int]):
         self.query_one(Sidebar).set_model(Text(model, style="green" if "NOT" not in model else "red"))
         self.sub_title = f"{model}  ·  {'connected' if reachable else 'offline'}"
         log = self.query_one("#log", RichLog)
-        log.write(f"[green]● connected[/]  {base_url}" if reachable
-                  else f"[red]● backend unreachable[/]  {base_url} — run [b]docker compose up -d[/]")
+        log.write(f"[green]✓ connected[/]  {base_url}" if reachable
+                  else f"[red]✗ backend unreachable[/]  {base_url} — run [b]docker compose up -d[/]")
         self._refresh_tokens()
 
     def _worker(self) -> None:
@@ -240,9 +253,9 @@ class OspreyShell(App[int]):
         phases = pr.get("phases") or {}
         sig = pr.get("signals") or {}
         recon = phases.get("recon") or {}
-        rows = [("recon", "[green]● active[/]" if recon.get("always_active") else "[dim]idle[/]")]
+        rows = [("recon", "[green]active[/]" if recon.get("always_active") else "[dim]idle[/]")]
         for name in ("vuln", "exploit"):
-            rows.append((name, "[green]✓ unlocked[/]" if (phases.get(name) or {}).get("unlocked") else "[dim]🔒 locked[/]"))
+            rows.append((name, "[green]✓ unlocked[/]" if (phases.get(name) or {}).get("unlocked") else "[dim]locked[/]"))
         body = "\n".join(f"{n:<9}{s}" for n, s in rows)
         counts = (f"[dim]subs {sig.get('subdomains',0)}  hosts {sig.get('live_hosts',0)}  "
                   f"svcs {sig.get('services',0)}  tech {sig.get('technologies',0)}\n"
@@ -300,12 +313,13 @@ class OspreyShell(App[int]):
         depth = self._jobs.qsize()
         if self._busy:
             elapsed = int(time.monotonic() - self._busy_since) if self._busy_since else 0
-            parts = [f"[yellow]● running {elapsed}s[/]"]
+            spinner = _SPINNER_FRAMES[self._spinner_frame]
+            parts = [f"[{BRAND_ACCENT}]{spinner} running {elapsed}s[/]"]
             if self._activity:
                 parts.append(f"[dim]{self._activity[:56]}[/]")
             parts.append("[dim]Esc to stop[/]")
         else:
-            parts = ["[dim]○ idle[/]"]
+            parts = ["[dim]idle[/]"]
         if depth:
             parts.append(f"[cyan]{depth} queued[/]")
         self.query_one("#statusline", Static).update(Text.from_markup("  ·  ".join(parts)))

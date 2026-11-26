@@ -590,15 +590,29 @@ def json_dump_pretty(data: Any) -> str:
     return json.dumps(data, indent=2, sort_keys=True, default=str)
 
 
-def print_banner() -> None:
+# The GUI's dark "Obsidian" theme accent (gui/src/app/globals.css --c-accent
+# under .dark) — reused here so the CLI/TUI banner, running-state color, and
+# the web dashboard read as one product instead of the CLI's old unrelated
+# green. Rich/Textual both take truecolor hex directly.
+BRAND_ACCENT = "#4b8cff"
+
+
+def print_banner(*, standalone: bool = True) -> None:
+    """Shared banner for the classic REPL and the TUI shell (console_redirect
+    pipes this same call into the shell's log) — one banner, not two, so a
+    fix here benefits both. ``standalone=False`` (used by the TUI, which
+    already shows the launch command/help affordances in its own status line
+    and footer) drops the lines that would otherwise repeat them."""
     banner = Text()
-    banner.append(APP_NAME, style="bold green")
-    banner.append(f" — {APP_TAGLINE}\n", style="dim")
-    banner.append("Type ", style="dim")
-    banner.append("/help", style="bold cyan")
-    banner.append(" for commands, ", style="dim")
-    banner.append("/status", style="bold cyan")
-    banner.append(" for session detail, or enter a prompt to work with Osprey.\n", style="dim")
-    banner.append(f"Launch from anywhere with `{CLI_COMMAND}`", style="dim")
-    banner.append(f" (`{LEGACY_CLI_COMMAND}` still works as an alias).", style="dim")
-    console.print(Panel(banner, border_style="green", box=box.ROUNDED, padding=(0, 1)))
+    banner.append("◆ ", style=f"bold {BRAND_ACCENT}")
+    banner.append(APP_NAME, style=f"bold {BRAND_ACCENT}")
+    banner.append(f"  —  {APP_TAGLINE}", style="dim")
+    if standalone:
+        banner.append("\nType ", style="dim")
+        banner.append("/help", style=f"bold {BRAND_ACCENT}")
+        banner.append(" for commands, ", style="dim")
+        banner.append("/status", style=f"bold {BRAND_ACCENT}")
+        banner.append(" for session detail, or enter a prompt to work with Osprey.\n", style="dim")
+        banner.append(f"Launch from anywhere with `{CLI_COMMAND}`", style="dim")
+        banner.append(f" (`{LEGACY_CLI_COMMAND}` still works as an alias).", style="dim")
+    console.print(Panel(banner, border_style=BRAND_ACCENT, box=box.ROUNDED, padding=(0, 1)))

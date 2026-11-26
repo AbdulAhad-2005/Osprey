@@ -20,6 +20,7 @@ Screen {
     padding: 0 1;
     background: $surface;
     scrollbar-size-vertical: 1;
+    scrollbar-size-horizontal: 1;
 }
 
 Sidebar {
