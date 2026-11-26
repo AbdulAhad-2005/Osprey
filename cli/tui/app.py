@@ -26,6 +26,7 @@ from typing import Any
 from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.widgets import Footer, Header, Input, OptionList, RichLog, Static
 from textual.widgets.option_list import Option
@@ -39,6 +40,7 @@ from cli.tui.widgets import PromptModal, Sidebar
 from cli.ui.display import BRAND_ACCENT
 
 _INTERRUPTS = {"/cancel", "/pause", "/stop"}
+_EXIT_COMMANDS = {"/exit", "/quit", "/q"}
 
 # Braille-pattern spinner frames (the same idiom as npm/cargo/the classic
 # REPL's own "Thinking…" spinner, and the spirit of the GUI's spinning
@@ -57,9 +59,25 @@ _QUICK_REFERENCE = (
 
 class OspreyShell(App[int]):
     CSS_PATH = "app.tcss"
+    # The command palette isn't useful here (it lists Textual's generic
+    # system actions, not Osprey's own commands — / already does that, better)
+    # — and leaving it on means Header's icon defaults to a plain "⭘" circle
+    # (the top-left glyph that rendered as a squashed oval) solely to be a
+    # palette-launcher button. Off, so a custom icon below is purely cosmetic.
+    ENABLE_COMMAND_PALETTE = False
     BINDINGS = [
-        ("ctrl+c", "quit", "Quit"),
+        # priority=True: confirmed live this is load-bearing, not cosmetic —
+        # Input (the always-focused prompt box) has its OWN built-in
+        # ctrl+c -> "copy selected text" binding, and the focus chain reaches
+        # a focused widget's bindings before the App's, so a plain (non-
+        # priority) App-level "ctrl+c" binding never even ran: Input's copy
+        # action fired instead (a silent no-op with nothing selected — which
+        # is exactly what "ignored the Ctrl-C" looked like). priority=True
+        # bindings are checked at the App level first, ahead of that.
+        Binding("ctrl+c", "quit", "Quit", priority=True),
         ("ctrl+l", "clear_log", "Clear"),
+        ("ctrl+r", "reconnect", "Reconnect"),
+        ("f1", "show_help", "Help"),
     ]
 
     def __init__(self, *, initial_target: str | None = None) -> None:
@@ -78,7 +96,10 @@ class OspreyShell(App[int]):
 
     # ---- layout ---------------------------------------------------------
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        # icon="◆" replaces Header's default "⭘" (a thick-stroke circle many
+        # fonts render as a squashed oval — the top-left glyph complaint) with
+        # the same brand-accent diamond the banner and sidebar already use.
+        yield Header(show_clock=True, icon="◆")
         with Horizontal(id="body"):
             yield RichLog(id="log", wrap=True, markup=True, highlight=True, auto_scroll=True)
             yield Sidebar(id="side")
@@ -162,9 +183,8 @@ class OspreyShell(App[int]):
         self.call_from_thread(self.write_line, Text(f"❯ {text}", style="bold cyan"))
         if text.startswith("/"):
             cmd = text.split()[0].lower()
-            if cmd in {"/exit", "/quit", "/q"}:
-                self._stop.set()
-                self.call_from_thread(self.exit, 0)
+            if cmd in _EXIT_COMMANDS:  # defensive — on_input_submitted exits
+                self.call_from_thread(self._do_exit)  # before this is ever queued
                 return
             if cmd == "/clear":
                 self.call_from_thread(self.query_one("#log", RichLog).clear)
@@ -335,6 +355,13 @@ class OspreyShell(App[int]):
             return
         self._history.append(text)
         self._hist_idx = len(self._history)
+        # Quit must always work NOW — never sit behind a running job in the
+        # queue (a long /scan previously blocked /exit for its whole
+        # duration — "can't quit" was really "queued behind a scan"), and
+        # never depend on the backend connection being up.
+        if text.split()[0].lower() in _EXIT_COMMANDS:
+            self._do_exit()
+            return
         if self._runtime is None:
             self.write_line(Text("connecting… try again in a moment", style="dim"))
             return
@@ -382,10 +409,14 @@ class OspreyShell(App[int]):
     def on_key(self, event: events.Key) -> None:
         comp = self.query_one("#completions", OptionList)
         showing = comp.has_class("show")
-        if showing and event.key in ("tab", "down", "up", "escape", "enter"):
+        # Enter deliberately does NOT accept a completion here (Tab does,
+        # same as every shell) — it used to, which meant typing an
+        # already-exact command like "/model" and pressing Enter just
+        # re-filled the input with "/model " and hid the menu instead of
+        # submitting, so the operator had to press Enter a second time to
+        # actually run it. Enter must always mean "submit what's typed."
+        if showing and event.key in ("tab", "down", "up", "escape"):
             if event.key == "tab":
-                self._accept_completion()
-            elif event.key == "enter":
                 self._accept_completion()
             elif event.key == "down":
                 comp.highlighted = min((comp.highlighted or 0) + 1, comp.option_count - 1)
@@ -433,13 +464,36 @@ class OspreyShell(App[int]):
         self.query_one("#log", RichLog).clear()
 
     def action_quit(self) -> None:  # type: ignore[override]
+        self._do_exit()
+
+    def action_reconnect(self) -> None:
+        if self._runtime is None:
+            return
+        self.write_line(Text("Reconnecting…", style="dim"))
+        threading.Thread(target=self._run_interrupt, args=("/reconnect",), daemon=True).start()
+
+    def action_show_help(self) -> None:
+        if self._runtime is None:
+            return
+        threading.Thread(target=self._run_interrupt, args=("/help",), daemon=True).start()
+
+    def _do_exit(self) -> None:
+        """Quit immediately. Ctrl+C freezing (or /exit silently doing
+        nothing) was this synchronously calling runtime.close() first —
+        that joins the background event-stream thread, which sits inside an
+        open-ended SSE read with NO socket timeout, so a quiet backend could
+        block this for a long time right here on the UI thread, during which
+        the app looks hung and takes no further input at all. Exiting is the
+        one action that must never wait on network cleanup: tell Textual to
+        exit first, then best-effort close the runtime in the background —
+        the process is on its way down regardless of whether that finishes.
+        """
+        if self._stop.is_set():
+            return  # already exiting (e.g. Ctrl+C then /exit)
         self._stop.set()
-        if self._runtime is not None:
-            try:
-                self._runtime.close()
-            except Exception:
-                pass
         self.exit(0)
+        if self._runtime is not None:
+            threading.Thread(target=self._runtime.close, daemon=True).start()
 
 
 # Belt-and-braces: guarantee the stylesheet resolves next to this module even

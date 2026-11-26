@@ -212,12 +212,20 @@ def _run_investigation_events(
             elif event.type == "state_stale":
                 print_info(str(data.get("message") or "Evidence changed; replanning."))
             elif event.type == "paused":
+                _resolve_abandoned_inflight(inflight, transcript, source, note="paused — still running server-side")
                 print_info(
                     "Investigation paused; the active capability job was left running. "
                     "Use /resume to reattach and continue, or /cancel to stop it."
                 )
                 return False
             elif event.type == "cancelled":
+                # The driver abandons this generator without yielding a
+                # capability_completed for whatever was still in flight (the
+                # backend job keeps running — cancel_investigation only
+                # targets one job id, see HarnessRuntime.cancel_investigation)
+                # — left alone, /tool kept showing these as "running" forever
+                # with no resolution, even long after the operator moved on.
+                _resolve_abandoned_inflight(inflight, transcript, source, note="cancelled client-side — check /job <id> for its real status")
                 print_info("Investigation cancelled. Evidence gathered so far remains saved.")
                 return False
             elif event.type in {"waiting", "blocked"}:
@@ -235,6 +243,34 @@ def _run_investigation_events(
                     print_info(summary.strip())
                 return True
     return succeeded
+
+
+def _resolve_abandoned_inflight(
+    inflight: dict[str, dict], transcript: "ToolTranscript", source: str, *, note: str,
+) -> None:
+    """Close out every tool-call card this render loop started a start card
+    for but never got a matching completion for, because the driver
+    generator is about to be abandoned (/pause or /cancel). Confirmed live:
+    without this, /tool kept listing them as "running" forever — no terminal
+    status ever arrived once the CLI stopped iterating the generator, even
+    though the backend job itself may still be going. There's no "we simply
+    stopped watching" status in ToolRecord, so this renders the honest
+    middle ground — timed_out (a yellow warning, not a red failure, per
+    ``ToolRecord.is_warning``) rather than falsely claiming success OR
+    failure for an outcome that's genuinely still unknown from here."""
+    for opp_id, started in list(inflight.items()):
+        print_tool_end_live(
+            str(started.get("tool") or "?"),
+            {
+                "success": False,
+                "timed_out": True,
+                "duration_seconds": time.monotonic() - float(started.get("started_at", time.monotonic())),
+                "preview": f"**Note:** {note}",
+                "tool_call_id": opp_id,
+            },
+            transcript=transcript, source=source,
+        )
+    inflight.clear()
 
 
 def _render_checkpoint_llm_event(data: dict, transcript: "ToolTranscript") -> None:

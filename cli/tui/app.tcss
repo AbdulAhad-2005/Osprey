@@ -10,6 +10,10 @@ Screen {
     background: $background;
 }
 
+HeaderIcon {
+    color: #4b8cff;  /* the brand accent — see cli/ui/display.py's BRAND_ACCENT */
+}
+
 #body {
     height: 1fr;              /* fill everything between header and input */
 }
